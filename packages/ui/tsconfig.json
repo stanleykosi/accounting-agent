@@ -1,0 +1,17 @@
+{
+  // Purpose: Configure TypeScript compilation for the shared UI package.
+  // Scope: React component source, design tokens, declaration output, and reusable workspace exports.
+  // Dependencies: tsconfig.base.json and the React runtime supplied by consuming apps.
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "composite": true,
+    "declaration": true,
+    "declarationMap": true,
+    "jsx": "react-jsx",
+    "noEmit": false,
+    "outDir": "dist",
+    "rootDir": "src"
+  },
+  "include": ["src/**/*.ts", "src/**/*.tsx"],
+  "exclude": ["dist", "node_modules"]
+}

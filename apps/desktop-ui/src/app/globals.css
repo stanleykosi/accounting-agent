@@ -1,0 +1,173 @@
+/*
+Purpose: Establish the initial visual language for the desktop UI foundation.
+Scope: Global tokens, layout primitives, and first-route styling for the Next.js App Router.
+Dependencies: apps/desktop-ui/src/app/layout.tsx and shared UI components rendered on the home page.
+*/
+
+:root {
+  color-scheme: light;
+  --page-bg: #f5f1e8;
+  --page-bg-accent: #d6e6dd;
+  --panel: rgba(255, 251, 245, 0.86);
+  --panel-strong: rgba(254, 248, 240, 0.96);
+  --panel-border: rgba(52, 72, 63, 0.16);
+  --text-strong: #162019;
+  --text-muted: #4d5b52;
+  --shadow-soft: 0 28px 80px rgba(22, 32, 25, 0.12);
+  --shadow-card: 0 18px 50px rgba(22, 32, 25, 0.08);
+  --radius-xl: 30px;
+  --radius-lg: 22px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background:
+    radial-gradient(circle at top left, rgba(201, 221, 211, 0.9), transparent 45%),
+    radial-gradient(circle at top right, rgba(255, 215, 176, 0.55), transparent 32%),
+    linear-gradient(180deg, var(--page-bg) 0%, #f8f6f2 100%);
+  color: var(--text-strong);
+  font-family: "Sora", "Avenir Next", "Segoe UI", sans-serif;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+.app-shell {
+  width: min(1200px, calc(100vw - 48px));
+  margin: 0 auto;
+  padding: 48px 0 72px;
+}
+
+.hero-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(320px, 0.9fr);
+  gap: 24px;
+  align-items: stretch;
+}
+
+.hero-copy {
+  padding: 24px 8px 0;
+}
+
+.eyebrow {
+  margin: 0 0 12px;
+  color: var(--text-muted);
+  font-size: 0.86rem;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+
+.hero-copy h1 {
+  margin: 0;
+  max-width: 14ch;
+  font-size: clamp(3rem, 5vw, 5.6rem);
+  line-height: 0.95;
+  letter-spacing: -0.06em;
+}
+
+.lede {
+  max-width: 65ch;
+  margin: 20px 0 0;
+  color: var(--text-muted);
+  font-size: 1.04rem;
+  line-height: 1.7;
+}
+
+.content-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 24px;
+}
+
+.detail-list,
+.confidence-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.detail-list {
+  display: grid;
+  gap: 14px;
+  color: var(--text-muted);
+  line-height: 1.65;
+}
+
+.detail-list li {
+  position: relative;
+  padding-left: 18px;
+}
+
+.detail-list li::before {
+  content: "";
+  position: absolute;
+  top: 0.72em;
+  left: 0;
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: linear-gradient(135deg, #0f766e 0%, #f97316 100%);
+}
+
+.confidence-list {
+  display: grid;
+  gap: 12px;
+}
+
+.confidence-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: var(--text-muted);
+}
+
+.confidence-swatch {
+  width: 14px;
+  height: 14px;
+  border-radius: 999px;
+  box-shadow: 0 0 0 1px rgba(22, 32, 25, 0.08);
+}
+
+@media (max-width: 980px) {
+  .app-shell {
+    width: min(100vw - 32px, 1200px);
+    padding-top: 36px;
+  }
+
+  .hero-grid,
+  .content-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .hero-copy h1 {
+    max-width: none;
+  }
+}
+
+@media (max-width: 640px) {
+  .app-shell {
+    width: min(100vw - 24px, 1200px);
+    padding-bottom: 48px;
+  }
+
+  .hero-copy {
+    padding-top: 8px;
+  }
+
+  .lede,
+  .detail-list {
+    font-size: 0.98rem;
+  }
+}

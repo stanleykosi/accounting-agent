@@ -1,0 +1,6 @@
+# Purpose: Register the canonical pnpm workspace packages used by the TypeScript surfaces.
+# Scope: Workspace package discovery for apps and reusable packages.
+# Dependencies: package.json at the repository root and package manifests under apps/ and packages/.
+packages:
+  - "apps/*"
+  - "packages/*"

@@ -1,0 +1,16 @@
+{
+  // Purpose: Configure TypeScript for the Next.js desktop UI application.
+  // Scope: App Router source files, generated Next.js types, and workspace package imports.
+  // Dependencies: tsconfig.base.json, Next.js type generation, and packages/ui.
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "allowJs": false,
+    "incremental": true,
+    "jsx": "preserve",
+    "module": "ESNext",
+    "noEmit": true,
+    "plugins": [{ "name": "next" }]
+  },
+  "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts"],
+  "exclude": ["node_modules"]
+}

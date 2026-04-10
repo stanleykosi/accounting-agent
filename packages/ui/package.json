@@ -1,0 +1,26 @@
+{
+  "name": "@accounting-ai-agent/ui",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Shared React UI primitives and visual tokens for the Accounting AI Agent desktop surfaces.",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "peerDependencies": {
+    "react": "19.2.5",
+    "react-dom": "19.2.5"
+  },
+  "scripts": {
+    "build": "pnpm exec tsc --project tsconfig.json",
+    "lint": "pnpm exec eslint src --max-warnings 0",
+    "typecheck": "pnpm exec tsc --project tsconfig.json --pretty false --noEmit"
+  }
+}

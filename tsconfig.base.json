@@ -1,0 +1,29 @@
+{
+  // Purpose: Share strict TypeScript compiler defaults across the frontend workspace.
+  // Scope: Base settings for the Next.js desktop UI app and shared TypeScript packages.
+  // Dependencies: Extended by package-level tsconfig files in apps/desktop-ui and packages/ui.
+  "compilerOptions": {
+    "target": "ES2023",
+    "lib": ["DOM", "DOM.Iterable", "ES2023"],
+    "allowJs": false,
+    "skipLibCheck": true,
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "ignoreDeprecations": "6.0",
+    "noFallthroughCasesInSwitch": true,
+    "noImplicitOverride": true,
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "verbatimModuleSyntax": true,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "baseUrl": ".",
+    "paths": {
+      "@accounting-ai-agent/ui": ["packages/ui/src/index.ts"],
+      "@accounting-ai-agent/ui/*": ["packages/ui/src/*"]
+    }
+  }
+}
