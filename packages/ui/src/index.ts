@@ -6,6 +6,8 @@ Dependencies: The component, token, and domain modules within packages/ui/src.
 
 export { SurfaceCard } from "./components/SurfaceCard";
 export type { SurfaceCardProps, SurfaceTone } from "./components/SurfaceCard";
+export { AuthGate } from "./components/auth/AuthGate";
+export type { AuthGateProps, AuthGateTone } from "./components/auth/AuthGate";
 export { WorkflowPhaseStrip } from "./components/WorkflowPhaseStrip";
 export type { WorkflowPhaseItem, WorkflowPhaseStripProps } from "./components/WorkflowPhaseStrip";
 export {
