@@ -1,5 +1,5 @@
 """
-Purpose: Persist and query local-auth users and session rows through SQLAlchemy.
+Purpose: Persist and query local-auth users, sessions, and API tokens through SQLAlchemy.
 Scope: Auth-specific CRUD operations, transactional commits, and thin record
 mapping for the service layer.
 Dependencies: SQLAlchemy ORM sessions plus the canonical auth models under
@@ -12,9 +12,10 @@ from dataclasses import dataclass
 from datetime import datetime
 from uuid import UUID
 
+from services.db.models.auth import ApiToken as ApiTokenModel
 from services.db.models.auth import Session as SessionModel
 from services.db.models.auth import User, UserStatus
-from sqlalchemy import delete, select
+from sqlalchemy import delete, desc, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -49,6 +50,30 @@ class AuthSessionWithUserRecord:
     """Join a persisted session with its owning user for auth validation workflows."""
 
     session: AuthSessionRecord
+    user: AuthUserRecord
+
+
+@dataclass(frozen=True, slots=True)
+class ApiTokenRecord:
+    """Describe the subset of a personal access token row used by token services and responses."""
+
+    id: UUID
+    user_id: UUID
+    name: str
+    token_hash: str
+    scope: tuple[str, ...]
+    created_at: datetime
+    updated_at: datetime
+    last_used_at: datetime | None
+    revoked_at: datetime | None
+    expires_at: datetime | None
+
+
+@dataclass(frozen=True, slots=True)
+class ApiTokenWithUserRecord:
+    """Join a persisted personal access token with its owning user for bearer auth checks."""
+
+    api_token: ApiTokenRecord
     user: AuthUserRecord
 
 
@@ -175,6 +200,97 @@ class AuthRepository:
         self._db_session.execute(statement)
         self._db_session.flush()
 
+    def create_api_token(
+        self,
+        *,
+        user_id: UUID,
+        name: str,
+        token_hash: str,
+        scope: tuple[str, ...],
+        expires_at: datetime | None,
+    ) -> ApiTokenRecord:
+        """Stage a new personal access token for CLI authentication and flush it immediately."""
+
+        api_token = ApiTokenModel(
+            user_id=user_id,
+            name=name,
+            token_hash=token_hash,
+            scope=list(scope),
+            expires_at=expires_at,
+        )
+        self._db_session.add(api_token)
+        self._db_session.flush()
+        return _map_api_token(api_token)
+
+    def list_api_tokens_for_user(self, *, user_id: UUID) -> tuple[ApiTokenRecord, ...]:
+        """Return a deterministic newest-first list of personal access tokens for one user."""
+
+        statement = (
+            select(ApiTokenModel)
+            .where(ApiTokenModel.user_id == user_id)
+            .order_by(desc(ApiTokenModel.created_at), desc(ApiTokenModel.id))
+        )
+        api_tokens = self._db_session.execute(statement).scalars().all()
+        return tuple(_map_api_token(api_token) for api_token in api_tokens)
+
+    def get_api_token_by_id_for_user(
+        self,
+        *,
+        token_id: UUID,
+        user_id: UUID,
+    ) -> ApiTokenRecord | None:
+        """Return one personal access token by UUID when it belongs to the specified user."""
+
+        statement = select(ApiTokenModel).where(
+            ApiTokenModel.id == token_id,
+            ApiTokenModel.user_id == user_id,
+        )
+        api_token = self._db_session.execute(statement).scalar_one_or_none()
+        if api_token is None:
+            return None
+
+        return _map_api_token(api_token)
+
+    def get_api_token_with_user_by_hash(
+        self,
+        *,
+        token_hash: str,
+    ) -> ApiTokenWithUserRecord | None:
+        """Return one personal access token plus its user when the caller presents a known hash."""
+
+        statement = (
+            select(ApiTokenModel, User)
+            .join(User, ApiTokenModel.user_id == User.id)
+            .where(ApiTokenModel.token_hash == token_hash)
+        )
+        row = self._db_session.execute(statement).one_or_none()
+        if row is None:
+            return None
+
+        api_token, user = row
+        return ApiTokenWithUserRecord(api_token=_map_api_token(api_token), user=_map_user(user))
+
+    def update_api_token_last_used(
+        self,
+        *,
+        token_id: UUID,
+        last_used_at: datetime,
+    ) -> ApiTokenRecord:
+        """Persist the latest successful bearer-auth use timestamp for one token."""
+
+        api_token = self._load_api_token(token_id=token_id)
+        api_token.last_used_at = last_used_at
+        self._db_session.flush()
+        return _map_api_token(api_token)
+
+    def revoke_api_token(self, *, token_id: UUID, revoked_at: datetime) -> ApiTokenRecord:
+        """Mark one personal access token as revoked so future bearer auth fails fast."""
+
+        api_token = self._load_api_token(token_id=token_id)
+        api_token.revoked_at = revoked_at
+        self._db_session.flush()
+        return _map_api_token(api_token)
+
     def commit(self) -> None:
         """Commit the current auth transaction and surface integrity problems unchanged."""
 
@@ -213,6 +329,17 @@ class AuthRepository:
 
         return session
 
+    def _load_api_token(self, *, token_id: UUID) -> ApiTokenModel:
+        """Load a personal access token row by UUID or fail fast on missing references."""
+
+        statement = select(ApiTokenModel).where(ApiTokenModel.id == token_id)
+        api_token = self._db_session.execute(statement).scalar_one_or_none()
+        if api_token is None:
+            message = f"API token {token_id} does not exist."
+            raise LookupError(message)
+
+        return api_token
+
 
 def _map_user(user: User) -> AuthUserRecord:
     """Convert an ORM user model into the immutable record consumed by auth services."""
@@ -241,7 +368,26 @@ def _map_session(session: SessionModel) -> AuthSessionRecord:
     )
 
 
+def _map_api_token(api_token: ApiTokenModel) -> ApiTokenRecord:
+    """Convert an ORM API token model into the immutable record consumed by token services."""
+
+    return ApiTokenRecord(
+        id=api_token.id,
+        user_id=api_token.user_id,
+        name=api_token.name,
+        token_hash=api_token.token_hash,
+        scope=tuple(str(scope_value) for scope_value in api_token.scope),
+        created_at=api_token.created_at,
+        updated_at=api_token.updated_at,
+        last_used_at=api_token.last_used_at,
+        revoked_at=api_token.revoked_at,
+        expires_at=api_token.expires_at,
+    )
+
+
 __all__ = [
+    "ApiTokenRecord",
+    "ApiTokenWithUserRecord",
     "AuthRepository",
     "AuthSessionRecord",
     "AuthSessionWithUserRecord",

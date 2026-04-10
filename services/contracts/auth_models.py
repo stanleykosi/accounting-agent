@@ -1,14 +1,24 @@
 """
-Purpose: Define strict API contracts for local authentication and session lifecycle routes.
-Scope: Registration, login, current-session introspection, and logout response payloads.
-Dependencies: Pydantic contract defaults and shared time-aware response fields.
+Purpose: Define strict API contracts for local authentication, session lifecycle routes,
+and CLI personal access token management.
+Scope: Registration, login, current-session introspection, logout, and API token
+issue/list/revoke payloads.
+Dependencies: Pydantic contract defaults, shared time-aware response fields, and
+the canonical PAT scope definitions.
 """
 
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Literal
 
 from pydantic import Field, field_validator
+from services.auth.api_tokens import (
+    DEFAULT_API_TOKEN_EXPIRY_DAYS,
+    DEFAULT_API_TOKEN_SCOPES,
+    MAX_API_TOKEN_EXPIRY_DAYS,
+    ApiTokenScope,
+)
 from services.contracts.api_models import ContractModel
 
 
@@ -152,4 +162,205 @@ class LogoutResponse(ContractModel):
     status: str = Field(
         default="logged_out",
         description="Deterministic marker confirming the caller no longer has an active session.",
+    )
+
+
+class ApiTokenCreateRequest(ContractModel):
+    """Capture the inputs required to issue a PAT for an already authenticated user."""
+
+    name: str = Field(
+        min_length=1,
+        max_length=120,
+        description=(
+            "Operator-friendly label shown when listing or revoking personal access tokens."
+        ),
+    )
+    scopes: tuple[ApiTokenScope, ...] = Field(
+        default=DEFAULT_API_TOKEN_SCOPES,
+        min_length=1,
+        description="Scope set granted to the newly created personal access token.",
+    )
+    expires_in_days: int = Field(
+        default=DEFAULT_API_TOKEN_EXPIRY_DAYS,
+        ge=1,
+        le=MAX_API_TOKEN_EXPIRY_DAYS,
+        description="Number of days before the new personal access token expires.",
+    )
+
+    @field_validator("name")
+    @classmethod
+    def normalize_name(cls, value: str) -> str:
+        """Trim PAT names and reject blank values after normalization."""
+
+        normalized = value.strip()
+        if not normalized:
+            message = "Token name cannot be blank."
+            raise ValueError(message)
+
+        return normalized
+
+    @field_validator("scopes")
+    @classmethod
+    def normalize_scopes(cls, value: tuple[ApiTokenScope, ...]) -> tuple[ApiTokenScope, ...]:
+        """Remove duplicate PAT scopes while preserving the caller's declared order."""
+
+        resolved: list[ApiTokenScope] = []
+        seen_values: set[str] = set()
+        for scope in value:
+            if scope.value in seen_values:
+                continue
+            seen_values.add(scope.value)
+            resolved.append(scope)
+
+        if not resolved:
+            message = "At least one personal access token scope is required."
+            raise ValueError(message)
+
+        return tuple(resolved)
+
+
+class ApiTokenLoginRequest(ContractModel):
+    """Capture the credentials and token settings used by the CLI login flow."""
+
+    email: str = Field(
+        min_length=3,
+        max_length=320,
+        description="Email address associated with the local account requesting a PAT.",
+    )
+    password: str = Field(
+        min_length=1,
+        max_length=1_024,
+        description="Plaintext password used to verify the local account before issuing a PAT.",
+    )
+    token_name: str = Field(
+        min_length=1,
+        max_length=120,
+        description="Operator-friendly label stored alongside the issued personal access token.",
+    )
+    scopes: tuple[ApiTokenScope, ...] = Field(
+        default=DEFAULT_API_TOKEN_SCOPES,
+        min_length=1,
+        description="Scope set granted to the issued personal access token.",
+    )
+    expires_in_days: int = Field(
+        default=DEFAULT_API_TOKEN_EXPIRY_DAYS,
+        ge=1,
+        le=MAX_API_TOKEN_EXPIRY_DAYS,
+        description="Number of days before the issued personal access token expires.",
+    )
+
+    @field_validator("email")
+    @classmethod
+    def normalize_token_email(cls, value: str) -> str:
+        """Normalize CLI login identifiers so credential checks remain case-insensitive."""
+
+        return _normalize_email(value)
+
+    @field_validator("password")
+    @classmethod
+    def normalize_token_password(cls, value: str) -> str:
+        """Reject blank CLI login passwords before credential verification."""
+
+        if value.isspace():
+            message = "Password cannot be blank."
+            raise ValueError(message)
+
+        return value
+
+    @field_validator("token_name")
+    @classmethod
+    def normalize_token_name(cls, value: str) -> str:
+        """Trim the PAT label the CLI stores on the server."""
+
+        normalized = value.strip()
+        if not normalized:
+            message = "Token name cannot be blank."
+            raise ValueError(message)
+
+        return normalized
+
+    @field_validator("scopes")
+    @classmethod
+    def normalize_login_scopes(cls, value: tuple[ApiTokenScope, ...]) -> tuple[ApiTokenScope, ...]:
+        """Reuse the canonical deduplication rules for CLI-requested PAT scopes."""
+
+        return ApiTokenCreateRequest.normalize_scopes(value)
+
+
+class ApiTokenSummary(ContractModel):
+    """Describe a persisted personal access token without exposing its raw secret value."""
+
+    id: str = Field(description="Stable UUID for the stored personal access token row.")
+    name: str = Field(min_length=1, max_length=120, description="Operator-friendly token label.")
+    scopes: tuple[ApiTokenScope, ...] = Field(
+        min_length=1,
+        description="Scope set granted to the personal access token.",
+    )
+    created_at: datetime = Field(description="UTC timestamp when the token was originally issued.")
+    updated_at: datetime = Field(
+        description="UTC timestamp when the token row was last mutated."
+    )
+    last_used_at: datetime | None = Field(
+        default=None,
+        description="UTC timestamp for the most recent successful bearer-auth use.",
+    )
+    revoked_at: datetime | None = Field(
+        default=None,
+        description="UTC timestamp when the token was revoked, if it is no longer active.",
+    )
+    expires_at: datetime | None = Field(
+        default=None,
+        description="UTC timestamp after which the token can no longer authenticate.",
+    )
+
+
+class IssuedApiToken(ApiTokenSummary):
+    """Describe a newly created PAT and include the raw secret returned exactly once."""
+
+    token: str = Field(
+        min_length=1,
+        description=(
+            "Opaque bearer token value. This field is only returned when a token is created."
+        ),
+    )
+    token_type: Literal["Bearer"] = Field(
+        default="Bearer",
+        description="Authorization scheme callers must use when sending the token back to the API.",
+    )
+
+
+class ApiTokenAuthResponse(ContractModel):
+    """Return the authenticated user plus a newly issued personal access token."""
+
+    user: AuthenticatedUser = Field(description="User profile that owns the issued PAT.")
+    api_token: IssuedApiToken = Field(description="Newly issued personal access token details.")
+
+
+class ApiTokenCurrentResponse(ContractModel):
+    """Return the authenticated user and currently validated PAT metadata for bearer auth checks."""
+
+    user: AuthenticatedUser = Field(description="User profile that owns the authenticated PAT.")
+    api_token: ApiTokenSummary = Field(
+        description="Stored metadata for the personal access token used on the current request."
+    )
+
+
+class ApiTokenListResponse(ContractModel):
+    """Return the current user's stored personal access tokens in deterministic order."""
+
+    tokens: tuple[ApiTokenSummary, ...] = Field(
+        default=(),
+        description="Newest-first list of personal access tokens for the authenticated user.",
+    )
+
+
+class ApiTokenRevocationResponse(ContractModel):
+    """Acknowledge that a PAT was revoked and can no longer authenticate future requests."""
+
+    status: Literal["revoked"] = Field(
+        default="revoked",
+        description="Deterministic marker confirming the personal access token is revoked.",
+    )
+    api_token: ApiTokenSummary = Field(
+        description="Updated metadata for the token after revocation was persisted."
     )
