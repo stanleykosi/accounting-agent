@@ -1,34 +1,28 @@
 """
-Purpose: Provide the canonical worker service runtime used by the local demo stack before task routing is layered in.
-Scope: Startup validation, dependency connectivity checks, healthcheck execution, structured logging, and a long-running worker process loop.
-Dependencies: Shared runtime settings and logging, PostgreSQL, Redis, and MinIO client libraries declared in pyproject.toml.
+Purpose: Provide the canonical worker runtime entrypoint for Celery-based background processing.
+Scope: Startup parsing, dependency health checks, structured logging, and Celery worker launch.
+Dependencies: apps/worker/app/celery_app.py, shared settings/logging, PostgreSQL, Redis, and MinIO.
 """
 
 from __future__ import annotations
 
 import argparse
-import signal
 import sys
-import time
 from collections.abc import Sequence
 from dataclasses import dataclass
-from threading import Event
 
 import psycopg
 from minio import Minio
 from redis import Redis
 from services.common.logging import configure_logging, get_logger
 from services.common.settings import AppSettings, get_settings
-
-DEFAULT_HEARTBEAT_SECONDS = 30
-SHUTDOWN_EVENT = Event()
+from services.jobs.task_names import task_queue_names
 
 
 @dataclass(frozen=True)
 class RuntimeArguments:
     """Capture the supported command-line controls for the worker runtime."""
 
-    heartbeat_seconds: int
     healthcheck: bool
 
 
@@ -40,21 +34,12 @@ def parse_args(argv: Sequence[str] | None = None) -> RuntimeArguments:
         description="Run the canonical worker runtime for the local demo stack.",
     )
     parser.add_argument(
-        "--heartbeat-seconds",
-        type=_positive_integer,
-        default=DEFAULT_HEARTBEAT_SECONDS,
-        help="Number of seconds between worker heartbeat log events.",
-    )
-    parser.add_argument(
         "--healthcheck",
         action="store_true",
         help="Validate worker dependencies and exit without starting the service loop.",
     )
     parsed_args = parser.parse_args(list(argv) if argv is not None else None)
-    return RuntimeArguments(
-        heartbeat_seconds=parsed_args.heartbeat_seconds,
-        healthcheck=parsed_args.healthcheck,
-    )
+    return RuntimeArguments(healthcheck=parsed_args.healthcheck)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -71,31 +56,45 @@ def main(argv: Sequence[str] | None = None) -> int:
             logger.info("Worker dependency healthcheck passed.")
             return 0
 
-        run_service_loop(settings=settings, heartbeat_seconds=arguments.heartbeat_seconds)
-        return 0
+        run_celery_worker(settings=settings)
     except Exception:
         logger.exception("Worker runtime failed.")
         return 1
 
+    return 0
 
-def run_service_loop(*, settings: AppSettings, heartbeat_seconds: int) -> None:
-    """Start the long-running worker process loop after fail-fast dependency validation."""
 
+def run_celery_worker(*, settings: AppSettings) -> None:
+    """Validate dependencies and launch the canonical Celery worker process."""
+
+    from apps.worker.app.celery_app import celery_app
+
+    queue_names = task_queue_names(include_dead_letter=False)
     logger = get_logger(__name__)
     run_dependency_healthcheck(settings)
-    install_signal_handlers()
     logger.info(
-        "Worker runtime started.",
-        heartbeat_seconds=heartbeat_seconds,
+        "Launching Celery worker runtime.",
+        concurrency=settings.worker.concurrency,
         database_host=settings.database.host,
+        queue_names=queue_names,
         redis_broker_url=settings.redis.broker_url,
         storage_endpoint=settings.storage.endpoint_url,
     )
-
-    while not SHUTDOWN_EVENT.wait(timeout=heartbeat_seconds):
-        logger.info("Worker runtime heartbeat.", heartbeat_seconds=heartbeat_seconds)
-
-    logger.info("Worker runtime stopping after shutdown signal.")
+    celery_app.worker_main(
+        [
+            "worker",
+            "--loglevel",
+            settings.logging.level.lower(),
+            "--concurrency",
+            str(settings.worker.concurrency),
+            "--prefetch-multiplier",
+            str(settings.worker.prefetch_multiplier),
+            "--max-tasks-per-child",
+            str(settings.worker.max_tasks_per_child),
+            "--queues",
+            ",".join(queue_names),
+        ]
+    )
 
 
 def run_dependency_healthcheck(settings: AppSettings) -> None:
@@ -160,33 +159,6 @@ def verify_object_storage_connectivity(settings: AppSettings) -> None:
             "Worker object-storage validation failed. Missing required MinIO buckets: "
             f"{formatted_bucket_names}."
         )
-
-
-def install_signal_handlers() -> None:
-    """Install POSIX signal handlers so container shutdown stays graceful and explicit."""
-
-    signal.signal(signal.SIGINT, _request_shutdown)
-    signal.signal(signal.SIGTERM, _request_shutdown)
-
-
-def _positive_integer(value: str) -> int:
-    """Parse a strictly positive integer for heartbeat configuration."""
-
-    try:
-        parsed_value = int(value)
-    except ValueError as error:
-        raise argparse.ArgumentTypeError("Expected an integer value.") from error
-
-    if parsed_value <= 0:
-        raise argparse.ArgumentTypeError("Expected a value greater than zero.")
-
-    return parsed_value
-
-
-def _request_shutdown(_: int, __: object | None) -> None:
-    """Record a shutdown request from the container runtime without raising immediately."""
-
-    SHUTDOWN_EVENT.set()
 
 
 if __name__ == "__main__":

@@ -22,6 +22,13 @@ from services.contracts.api_models import (
     ApiHealthStatus,
     ApiRouteDescriptor,
 )
+from services.observability.context import (
+    REQUEST_ID_HEADER,
+    activate_incoming_context,
+    bind_runtime_log_context,
+    release_context,
+)
+from services.observability.otel import configure_observability
 
 API_VERSION = "0.1.0"
 
@@ -34,10 +41,16 @@ def create_app(*, settings: AppSettings | None = None) -> FastAPI:
     api_router = APIRouter(prefix=_resolve_router_prefix(api_base_path))
 
     @asynccontextmanager
-    async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+    async def lifespan(application: FastAPI) -> AsyncIterator[None]:
         """Configure runtime logging and emit deterministic startup and shutdown events."""
 
         configure_logging(resolved_settings, service_name="api")
+        configure_observability(
+            resolved_settings,
+            service_name="api",
+            service_version=API_VERSION,
+            app=application,
+        )
         logger = get_logger(__name__)
         logger.info(
             "API service starting.",
@@ -63,6 +76,35 @@ def create_app(*, settings: AppSettings | None = None) -> FastAPI:
         lifespan=lifespan,
         generate_unique_id_function=_build_operation_id,
     )
+
+    @app.middleware("http")
+    async def bind_request_context(request: Request, call_next: Any) -> Any:
+        """Attach request IDs and inbound trace context to logs and downstream task dispatch."""
+
+        activation = activate_incoming_context(
+            headers=dict(request.headers),
+            bind_values={
+                "http_method": request.method,
+                "http_path": request.url.path,
+                "source_surface": "api",
+            },
+        )
+        request.state.request_id = activation.request_id
+        bind_runtime_log_context(
+            request_id=activation.request_id,
+            http_method=request.method,
+            http_path=request.url.path,
+            source_surface="api",
+        )
+
+        response: Any | None = None
+        try:
+            response = await call_next(request)
+            return response
+        finally:
+            if response is not None:
+                response.headers[REQUEST_ID_HEADER] = activation.request_id
+            release_context(activation)
 
     @api_router.get(
         "/health",

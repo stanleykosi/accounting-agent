@@ -11,7 +11,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from functools import lru_cache
 
-from pydantic import BaseModel, Field, SecretStr, computed_field, field_validator
+from pydantic import BaseModel, Field, SecretStr, computed_field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from services.common.types import (
     DeploymentEnvironment,
@@ -90,6 +90,24 @@ class WorkerSettings(BaseModel):
     concurrency: PositiveInteger = Field(default=2)
     prefetch_multiplier: PositiveInteger = Field(default=1)
     max_tasks_per_child: PositiveInteger = Field(default=100)
+    task_soft_time_limit_seconds: PositiveInteger = Field(default=1_500)
+    task_time_limit_seconds: PositiveInteger = Field(default=1_800)
+    result_expires_seconds: PositiveInteger = Field(default=86_400)
+    visibility_timeout_seconds: PositiveInteger = Field(default=3_600)
+
+    @model_validator(mode="after")
+    def validate_time_limits(self) -> WorkerSettings:
+        """Ensure the soft task timeout never exceeds the hard task timeout."""
+
+        if self.task_soft_time_limit_seconds > self.task_time_limit_seconds:
+            message = (
+                "Worker soft task time limit cannot exceed the hard task time limit. "
+                "Update ACCOUNTING_AGENT_WORKER__TASK_SOFT_TIME_LIMIT_SECONDS or "
+                "ACCOUNTING_AGENT_WORKER__TASK_TIME_LIMIT_SECONDS."
+            )
+            raise ValueError(message)
+
+        return self
 
 
 class DatabaseSettings(BaseModel):
