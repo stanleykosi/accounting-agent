@@ -12,11 +12,10 @@ from __future__ import annotations
 from datetime import datetime
 
 from pydantic import Field, model_validator
-
 from services.common.enums import (
+    CANONICAL_WORKFLOW_PHASES,
     ArtifactType,
     AutonomyMode,
-    CANONICAL_WORKFLOW_PHASES,
     CanonicalDomainEnum,
     CloseRunPhaseStatus,
     CloseRunStatus,
@@ -84,7 +83,7 @@ class CloseRunPhaseState(ContractModel):
     )
 
     @model_validator(mode="after")
-    def validate_blocking_reason(self) -> "CloseRunPhaseState":
+    def validate_blocking_reason(self) -> CloseRunPhaseState:
         """Require blocking details only when the phase gate is blocked."""
 
         if self.status is CloseRunPhaseStatus.BLOCKED and self.blocking_reason is None:
@@ -115,7 +114,7 @@ class CloseRunWorkflowState(ContractModel):
     )
 
     @model_validator(mode="after")
-    def validate_phase_coverage(self) -> "CloseRunWorkflowState":
+    def validate_phase_coverage(self) -> CloseRunWorkflowState:
         """Ensure the phase state list covers the full workflow backbone in order."""
 
         actual_order = tuple(phase_state.phase for phase_state in self.phase_states)
@@ -210,9 +209,9 @@ def build_domain_language_catalog() -> DomainLanguageCatalog:
 DEFAULT_DOMAIN_LANGUAGE_CATALOG = build_domain_language_catalog()
 
 __all__ = [
+    "DEFAULT_DOMAIN_LANGUAGE_CATALOG",
     "CloseRunPhaseState",
     "CloseRunWorkflowState",
-    "DEFAULT_DOMAIN_LANGUAGE_CATALOG",
     "DomainLanguageCatalog",
     "DomainValueDefinition",
     "WorkflowPhaseDefinition",

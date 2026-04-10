@@ -248,9 +248,9 @@ class ArtifactType(CanonicalDomainEnum):
 CANONICAL_WORKFLOW_PHASES: tuple[WorkflowPhase, ...] = tuple(WorkflowPhase)
 
 __all__ = [
+    "CANONICAL_WORKFLOW_PHASES",
     "ArtifactType",
     "AutonomyMode",
-    "CANONICAL_WORKFLOW_PHASES",
     "CanonicalDomainEnum",
     "CloseRunPhaseStatus",
     "CloseRunStatus",

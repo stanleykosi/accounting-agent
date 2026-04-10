@@ -347,7 +347,12 @@ export const artifactTypeDefinitions = buildDomainDefinitions(
  * Behavior: Reads from the shared ordered definition list so UI surfaces stay aligned.
  */
 export function getWorkflowPhaseDefinition(phase: WorkflowPhase): WorkflowPhaseDefinition {
-  return workflowPhaseDefinitions[workflowPhaseOrder.indexOf(phase)];
+  const definition = workflowPhaseDefinitions.find((candidate) => candidate.code === phase);
+  if (definition === undefined) {
+    throw new Error(`Unknown workflow phase: ${phase}`);
+  }
+
+  return definition;
 }
 
 /**

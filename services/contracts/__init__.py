@@ -6,11 +6,15 @@ Dependencies: services/contracts/api_models.py, services/contracts/domain_models
 and future contract modules added in later steps.
 """
 
-from services.contracts.api_models import ApiContractMetadata, ApiHealthStatus, ApiRouteDescriptor
+from services.contracts.api_models import (
+    ApiContractMetadata,
+    ApiHealthStatus,
+    ApiRouteDescriptor,
+)
 from services.contracts.domain_models import (
+    DEFAULT_DOMAIN_LANGUAGE_CATALOG,
     CloseRunPhaseState,
     CloseRunWorkflowState,
-    DEFAULT_DOMAIN_LANGUAGE_CATALOG,
     DomainLanguageCatalog,
     DomainValueDefinition,
     WorkflowPhaseDefinition,
@@ -18,12 +22,12 @@ from services.contracts.domain_models import (
 )
 
 __all__ = [
+    "DEFAULT_DOMAIN_LANGUAGE_CATALOG",
     "ApiContractMetadata",
     "ApiHealthStatus",
     "ApiRouteDescriptor",
     "CloseRunPhaseState",
     "CloseRunWorkflowState",
-    "DEFAULT_DOMAIN_LANGUAGE_CATALOG",
     "DomainLanguageCatalog",
     "DomainValueDefinition",
     "WorkflowPhaseDefinition",

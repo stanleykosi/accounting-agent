@@ -11,11 +11,10 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 import pytest
-
 from services.common.enums import (
+    CANONICAL_WORKFLOW_PHASES,
     ArtifactType,
     AutonomyMode,
-    CANONICAL_WORKFLOW_PHASES,
     CloseRunPhaseStatus,
     CloseRunStatus,
     JobStatus,

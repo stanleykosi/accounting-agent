@@ -8,9 +8,9 @@ services/common/types.py, and services/common/enums.py.
 """
 
 from services.common.enums import (
+    CANONICAL_WORKFLOW_PHASES,
     ArtifactType,
     AutonomyMode,
-    CANONICAL_WORKFLOW_PHASES,
     CloseRunPhaseStatus,
     CloseRunStatus,
     JobStatus,
@@ -27,10 +27,10 @@ from services.common.settings import AppSettings, get_settings, reset_settings_c
 from services.common.types import DeploymentEnvironment, StructuredLogFormat
 
 __all__ = [
+    "CANONICAL_WORKFLOW_PHASES",
     "AppSettings",
     "ArtifactType",
     "AutonomyMode",
-    "CANONICAL_WORKFLOW_PHASES",
     "CloseRunPhaseStatus",
     "CloseRunStatus",
     "DeploymentEnvironment",

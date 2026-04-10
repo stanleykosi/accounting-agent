@@ -10,9 +10,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from services.common.enums import (
+    CANONICAL_WORKFLOW_PHASES,
     ArtifactType,
     AutonomyMode,
-    CANONICAL_WORKFLOW_PHASES,
     CloseRunStatus,
     JobStatus,
     ReviewStatus,
