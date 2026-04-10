@@ -14,6 +14,7 @@ from typing import Any
 
 from apps.api.app.routes.api_tokens import router as api_tokens_router
 from apps.api.app.routes.auth import router as auth_router
+from apps.api.app.routes.entities import router as entities_router
 from fastapi import APIRouter, FastAPI, Request
 from fastapi.routing import APIRoute
 from services.common.logging import configure_logging, get_logger
@@ -146,6 +147,7 @@ def create_app(*, settings: AppSettings | None = None) -> FastAPI:
 
     api_router.include_router(auth_router)
     api_router.include_router(api_tokens_router)
+    api_router.include_router(entities_router)
     app.include_router(api_router)
     return app
 

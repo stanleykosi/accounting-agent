@@ -357,6 +357,178 @@ a {
   gap: 24px;
 }
 
+.entity-directory,
+.entity-workspace-page {
+  display: grid;
+  gap: 24px;
+}
+
+.entity-grid,
+.entity-workspace-grid {
+  display: grid;
+  grid-template-columns: minmax(320px, 0.92fr) minmax(0, 1.08fr);
+  gap: 24px;
+  align-items: start;
+}
+
+.entity-form {
+  display: grid;
+  gap: 16px;
+}
+
+.entity-form-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  align-items: end;
+}
+
+.checkbox-field {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 56px;
+  padding: 0 16px;
+  border: 1px solid rgba(52, 72, 63, 0.12);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.62);
+  color: var(--text-muted);
+}
+
+.checkbox-field input {
+  width: 18px;
+  height: 18px;
+}
+
+.entity-card-list,
+.membership-list,
+.activity-list {
+  display: grid;
+  gap: 14px;
+}
+
+.entity-card-link {
+  display: block;
+}
+
+.entity-card,
+.membership-card,
+.activity-card {
+  display: grid;
+  gap: 14px;
+  padding: 18px 20px;
+  border: 1px solid rgba(52, 72, 63, 0.12);
+  border-radius: 22px;
+  background: rgba(255, 255, 255, 0.56);
+  box-shadow: 0 14px 34px rgba(22, 32, 25, 0.06);
+  transition:
+    transform 180ms ease,
+    box-shadow 180ms ease,
+    border-color 180ms ease;
+}
+
+.entity-card:hover,
+.membership-card:hover,
+.activity-card:hover {
+  transform: translateY(-1px);
+  border-color: rgba(15, 118, 110, 0.16);
+  box-shadow: 0 18px 40px rgba(22, 32, 25, 0.08);
+}
+
+.entity-card-header,
+.membership-card-header,
+.activity-card-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: flex-start;
+}
+
+.entity-card-header h2 {
+  margin: 6px 0 0;
+  font-size: 1.4rem;
+  letter-spacing: -0.04em;
+}
+
+.entity-card-eyebrow {
+  margin-bottom: 0;
+}
+
+.entity-status-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 32px;
+  padding: 0 12px;
+  border-radius: 999px;
+  background: rgba(214, 230, 221, 0.68);
+  color: #114f49;
+  font-size: 0.82rem;
+  font-weight: 700;
+  text-transform: capitalize;
+}
+
+.default-actor-chip {
+  background: rgba(255, 216, 179, 0.72);
+  color: #945400;
+}
+
+.entity-meta-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px 18px;
+  margin: 0;
+}
+
+.entity-meta-grid dt {
+  color: var(--text-muted);
+  font-size: 0.82rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.entity-meta-grid dd {
+  margin: 6px 0 0;
+  font-size: 1rem;
+}
+
+.entity-card-footer {
+  display: flex;
+  justify-content: space-between;
+  gap: 18px;
+  align-items: flex-end;
+  color: var(--text-muted);
+}
+
+.entity-card-footer p,
+.activity-card p,
+.membership-card-header span {
+  margin: 6px 0 0;
+  color: var(--text-muted);
+}
+
+.workspace-snapshot-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.membership-card-actions {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
+.compact-input {
+  min-width: 0;
+}
+
+.compact-button {
+  white-space: nowrap;
+}
+
+.entity-activity-section {
+  display: grid;
+}
+
 .detail-list,
 .confidence-list {
   margin: 0;
@@ -420,7 +592,12 @@ a {
 
   .workspace-topbar,
   .hero-grid,
-  .content-grid {
+  .content-grid,
+  .entity-grid,
+  .entity-workspace-grid,
+  .entity-form-row,
+  .entity-meta-grid,
+  .workspace-snapshot-grid {
     grid-template-columns: 1fr;
   }
 
@@ -447,6 +624,13 @@ a {
 
   .hero-copy {
     padding-top: 8px;
+  }
+
+  .entity-card-footer,
+  .membership-card-actions,
+  .activity-card-header {
+    flex-direction: column;
+    align-items: flex-start;
   }
 
   .mode-toggle {

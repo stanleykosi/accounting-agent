@@ -10,6 +10,278 @@ Dependencies: FastAPI OpenAPI schema output and the openapi-typescript generator
  */
 
 export interface paths {
+  "/api/api-tokens": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * List the current user's personal access tokens
+     * @description Return the authenticated browser user's current PAT inventory.
+     */
+    get: operations["list_api_tokens"];
+    put?: never;
+    /**
+     * Create a personal access token for the current user
+     * @description Issue a new PAT for the authenticated browser user and return it once.
+     */
+    post: operations["create_api_token"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/api-tokens/current": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Validate the current bearer token and return its owner
+     * @description Validate the provided PAT, enforce CLI scope, and return token metadata.
+     */
+    get: operations["read_current_api_token"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/api-tokens/current/revoke": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Revoke the current bearer token
+     * @description Authenticate the provided PAT, then revoke that exact token.
+     */
+    post: operations["revoke_current_api_token"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/api-tokens/login": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Exchange local credentials for a CLI personal access token
+     * @description Verify email/password credentials and return a newly issued PAT for the CLI.
+     */
+    post: operations["login_for_api_token"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/api-tokens/{token_id}/revoke": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Revoke one personal access token for the current user
+     * @description Revoke a PAT by UUID after validating the caller's browser session.
+     */
+    post: operations["revoke_api_token"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/auth/login": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Log in with local email and password
+     * @description Verify local credentials and issue a fresh authenticated session cookie.
+     */
+    post: operations["login_user"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/auth/logout": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Log out the current local session
+     * @description Revoke the caller's current session cookie and clear it from the response.
+     */
+    post: operations["logout_user"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/auth/register": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Register a new local user
+     * @description Create a new local user account and issue the initial authenticated session cookie.
+     */
+    post: operations["register_user"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/auth/session": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Read the current authenticated session
+     * @description Validate the caller's session cookie and rotate it when the configured window is reached.
+     */
+    get: operations["read_current_session"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/entities": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * List the current user's entity workspaces
+     * @description Return the authenticated caller's accessible workspaces.
+     */
+    get: operations["list_entities"];
+    put?: never;
+    /**
+     * Create a new entity workspace
+     * @description Create a workspace, seed the owner membership, and return the hydrated workspace detail.
+     */
+    post: operations["create_entity"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/entities/{entity_id}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Read one entity workspace
+     * @description Return one accessible workspace detail including memberships and activity history.
+     */
+    get: operations["read_entity_workspace"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    /**
+     * Update one entity workspace
+     * @description Update one accessible workspace and return the refreshed detail view.
+     */
+    patch: operations["update_entity"];
+    trace?: never;
+  };
+  "/api/entities/{entity_id}/memberships": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Add a membership to one entity workspace
+     * @description Add an existing local operator to a workspace and return the refreshed detail view.
+     */
+    post: operations["create_entity_membership"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/entities/{entity_id}/memberships/{membership_id}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    /**
+     * Update one entity workspace membership
+     * @description Update one workspace membership and return the refreshed workspace detail.
+     */
+    patch: operations["update_entity_membership"];
+    trace?: never;
+  };
   "/api/health": {
     parameters: {
       query?: never;
@@ -159,11 +431,749 @@ export interface components {
       tags: string[];
     };
     /**
+     * ApiTokenAuthResponse
+     * @description Return the authenticated user plus a newly issued personal access token.
+     */
+    ApiTokenAuthResponse: {
+      /** @description Newly issued personal access token details. */
+      api_token: components["schemas"]["IssuedApiToken"];
+      /** @description User profile that owns the issued PAT. */
+      user: components["schemas"]["AuthenticatedUser"];
+    };
+    /**
+     * ApiTokenCreateRequest
+     * @description Capture the inputs required to issue a PAT for an already authenticated user.
+     */
+    ApiTokenCreateRequest: {
+      /**
+       * Expires In Days
+       * @description Number of days before the new personal access token expires.
+       * @default 30
+       */
+      expires_in_days: number;
+      /**
+       * Name
+       * @description Operator-friendly label shown when listing or revoking personal access tokens.
+       */
+      name: string;
+      /**
+       * Scopes
+       * @description Scope set granted to the newly created personal access token.
+       * @default [
+       *       "cli:access"
+       *     ]
+       */
+      scopes: components["schemas"]["ApiTokenScope"][];
+    };
+    /**
+     * ApiTokenCurrentResponse
+     * @description Return the authenticated user and currently validated PAT metadata for bearer auth checks.
+     */
+    ApiTokenCurrentResponse: {
+      /** @description Stored metadata for the personal access token used on the current request. */
+      api_token: components["schemas"]["ApiTokenSummary"];
+      /** @description User profile that owns the authenticated PAT. */
+      user: components["schemas"]["AuthenticatedUser"];
+    };
+    /**
+     * ApiTokenListResponse
+     * @description Return the current user's stored personal access tokens in deterministic order.
+     */
+    ApiTokenListResponse: {
+      /**
+       * Tokens
+       * @description Newest-first list of personal access tokens for the authenticated user.
+       * @default []
+       */
+      tokens: components["schemas"]["ApiTokenSummary"][];
+    };
+    /**
+     * ApiTokenLoginRequest
+     * @description Capture the credentials and token settings used by the CLI login flow.
+     */
+    ApiTokenLoginRequest: {
+      /**
+       * Email
+       * @description Email address associated with the local account requesting a PAT.
+       */
+      email: string;
+      /**
+       * Expires In Days
+       * @description Number of days before the issued personal access token expires.
+       * @default 30
+       */
+      expires_in_days: number;
+      /**
+       * Password
+       * @description Plaintext password used to verify the local account before issuing a PAT.
+       */
+      password: string;
+      /**
+       * Scopes
+       * @description Scope set granted to the issued personal access token.
+       * @default [
+       *       "cli:access"
+       *     ]
+       */
+      scopes: components["schemas"]["ApiTokenScope"][];
+      /**
+       * Token Name
+       * @description Operator-friendly label stored alongside the issued personal access token.
+       */
+      token_name: string;
+    };
+    /**
+     * ApiTokenRevocationResponse
+     * @description Acknowledge that a PAT was revoked and can no longer authenticate future requests.
+     */
+    ApiTokenRevocationResponse: {
+      /** @description Updated metadata for the token after revocation was persisted. */
+      api_token: components["schemas"]["ApiTokenSummary"];
+      /**
+       * Status
+       * @description Deterministic marker confirming the personal access token is revoked.
+       * @default revoked
+       * @constant
+       */
+      status: "revoked";
+    };
+    /**
+     * ApiTokenScope
+     * @description Enumerate the supported CLI bearer-token scopes for current API surfaces.
+     * @enum {string}
+     */
+    ApiTokenScope: "cli:access";
+    /**
+     * ApiTokenSummary
+     * @description Describe a persisted personal access token without exposing its raw secret value.
+     */
+    ApiTokenSummary: {
+      /**
+       * Created At
+       * Format: date-time
+       * @description UTC timestamp when the token was originally issued.
+       */
+      created_at: string;
+      /**
+       * Expires At
+       * @description UTC timestamp after which the token can no longer authenticate.
+       */
+      expires_at?: string | null;
+      /**
+       * Id
+       * @description Stable UUID for the stored personal access token row.
+       */
+      id: string;
+      /**
+       * Last Used At
+       * @description UTC timestamp for the most recent successful bearer-auth use.
+       */
+      last_used_at?: string | null;
+      /**
+       * Name
+       * @description Operator-friendly token label.
+       */
+      name: string;
+      /**
+       * Revoked At
+       * @description UTC timestamp when the token was revoked, if it is no longer active.
+       */
+      revoked_at?: string | null;
+      /**
+       * Scopes
+       * @description Scope set granted to the personal access token.
+       */
+      scopes: components["schemas"]["ApiTokenScope"][];
+      /**
+       * Updated At
+       * Format: date-time
+       * @description UTC timestamp when the token row was last mutated.
+       */
+      updated_at: string;
+    };
+    /**
+     * AuthSessionResponse
+     * @description Return the authenticated user plus current session metadata after auth mutations.
+     */
+    AuthSessionResponse: {
+      /** @description Current cookie-backed session metadata. */
+      session: components["schemas"]["SessionDetails"];
+      /** @description Authenticated operator profile. */
+      user: components["schemas"]["AuthenticatedUser"];
+    };
+    /**
+     * AuthenticatedUser
+     * @description Describe the signed-in operator associated with the current local auth session.
+     */
+    AuthenticatedUser: {
+      /**
+       * Email
+       * @description Canonical user email address.
+       */
+      email: string;
+      /**
+       * Full Name
+       * @description Audit-friendly display name.
+       */
+      full_name: string;
+      /**
+       * Id
+       * @description Stable UUID for the authenticated local user.
+       */
+      id: string;
+      /**
+       * Last Login At
+       * @description UTC timestamp for the user's most recent successful credential login.
+       */
+      last_login_at?: string | null;
+      /**
+       * Status
+       * @description Current user lifecycle state.
+       */
+      status: string;
+    };
+    /**
+     * AutonomyMode
+     * @description Enumerate the user-controlled routing modes for AI-suggested changes.
+     * @enum {string}
+     */
+    AutonomyMode: "human_review" | "reduced_interruption";
+    /**
+     * CreateEntityMembershipRequest
+     * @description Capture the inputs required to add an existing local operator to an entity workspace.
+     */
+    CreateEntityMembershipRequest: {
+      /**
+       * Is Default Actor
+       * @description Whether the new membership should become the workspace's default actor.
+       * @default false
+       */
+      is_default_actor: boolean;
+      /**
+       * Role
+       * @description Role label stored on the membership row.
+       * @default member
+       */
+      role: string;
+      /**
+       * User Email
+       * @description Canonical email address for the already-provisioned local operator.
+       */
+      user_email: string;
+    };
+    /**
+     * CreateEntityRequest
+     * @description Capture the fields required to create a new entity workspace.
+     */
+    CreateEntityRequest: {
+      /**
+       * Accounting Standard
+       * @description Optional accounting standard label for the workspace.
+       */
+      accounting_standard?: string | null;
+      /**
+       * @description Approval-routing mode to seed on the new workspace.
+       * @default human_review
+       */
+      autonomy_mode: components["schemas"]["AutonomyMode"];
+      /**
+       * Base Currency
+       * @description Primary base currency for the workspace. Defaults to NGN.
+       * @default NGN
+       */
+      base_currency: string;
+      /**
+       * Country Code
+       * @description Country code used for workspace defaults.
+       * @default NG
+       */
+      country_code: string;
+      /**
+       * Legal Name
+       * @description Optional legal entity name used in documents and reports.
+       */
+      legal_name?: string | null;
+      /**
+       * Name
+       * @description Display name shown throughout the workspace shell.
+       */
+      name: string;
+      /**
+       * Timezone
+       * @description IANA timezone identifier used for workspace-local timing.
+       * @default Africa/Lagos
+       */
+      timezone: string;
+    };
+    /**
      * DeploymentEnvironment
      * @description Enumerate the supported runtime environments for local and packaged deployments.
      * @enum {string}
      */
     DeploymentEnvironment: "development" | "test" | "staging" | "production";
+    /**
+     * EntityActivityEvent
+     * @description Describe one immutable entity-scoped activity event shown in the timeline.
+     */
+    EntityActivityEvent: {
+      /** @description Operator who caused the event, when the event is actor-driven. */
+      actor?: components["schemas"]["EntityOperatorSummary"] | null;
+      /**
+       * Created At
+       * Format: date-time
+       * @description UTC timestamp when the event was recorded.
+       */
+      created_at: string;
+      /**
+       * Event Type
+       * @description Stable event type label such as `entity.created` or `entity.membership_added`.
+       */
+      event_type: string;
+      /**
+       * Id
+       * @description Stable UUID for the audit event row.
+       */
+      id: string;
+      /**
+       * Source Surface
+       * @description Surface that emitted the event, such as desktop or worker.
+       */
+      source_surface: string;
+      /**
+       * Summary
+       * @description Operator-facing summary shown in the entity activity timeline.
+       */
+      summary: string;
+      /**
+       * Trace Id
+       * @description Request or trace identifier that links the event back to runtime logs.
+       */
+      trace_id?: string | null;
+    };
+    /**
+     * EntityListResponse
+     * @description Return the authenticated caller's accessible entity workspaces.
+     */
+    EntityListResponse: {
+      /**
+       * Entities
+       * @description Entity workspaces the authenticated operator can access.
+       * @default []
+       */
+      entities: components["schemas"]["EntitySummary"][];
+    };
+    /**
+     * EntityMembershipSummary
+     * @description Describe one operator's membership inside an entity workspace.
+     */
+    EntityMembershipSummary: {
+      /**
+       * Id
+       * @description Stable UUID for the membership row.
+       */
+      id: string;
+      /**
+       * Is Default Actor
+       * @description Indicates whether this member is the current default actor for the workspace.
+       */
+      is_default_actor: boolean;
+      /**
+       * Role
+       * @description Normalized role label stored for the member.
+       */
+      role: string;
+      /** @description Operator attached to the membership row. */
+      user: components["schemas"]["EntityOperatorSummary"];
+    };
+    /**
+     * EntityOperatorSummary
+     * @description Describe a local operator shown in workspace membership and activity responses.
+     */
+    EntityOperatorSummary: {
+      /**
+       * Email
+       * @description Canonical local user email.
+       */
+      email: string;
+      /**
+       * Full Name
+       * @description Audit-friendly operator display name.
+       */
+      full_name: string;
+      /**
+       * Id
+       * @description Stable UUID for the local operator.
+       */
+      id: string;
+    };
+    /**
+     * EntitySummary
+     * @description Describe one entity workspace returned by list and detail reads.
+     */
+    EntitySummary: {
+      /**
+       * Accounting Standard
+       * @description Optional accounting-standard label captured for the workspace.
+       */
+      accounting_standard?: string | null;
+      /** @description Approval-routing mode currently configured for the workspace. */
+      autonomy_mode: components["schemas"]["AutonomyMode"];
+      /**
+       * Base Currency
+       * @description Primary base currency for the workspace, defaulting to NGN.
+       */
+      base_currency: string;
+      /**
+       * Country Code
+       * @description Workspace country code used for defaults and formatting.
+       */
+      country_code: string;
+      /**
+       * Created At
+       * Format: date-time
+       * @description UTC timestamp when the workspace was created.
+       */
+      created_at: string;
+      /** @description Membership row for the authenticated caller. */
+      current_user_membership: components["schemas"]["EntityMembershipSummary"];
+      /** @description Current default actor highlighted for the workspace. */
+      default_actor?: components["schemas"]["EntityOperatorSummary"] | null;
+      /**
+       * Default Confidence Thresholds
+       * @description Entity-level confidence thresholds used by later workflow features.
+       */
+      default_confidence_thresholds: {
+        [key: string]: number;
+      };
+      /**
+       * Id
+       * @description Stable UUID for the entity workspace.
+       */
+      id: string;
+      /** @description Most recent entity-scoped activity event, if one exists. */
+      last_activity?: components["schemas"]["EntityActivityEvent"] | null;
+      /**
+       * Legal Name
+       * @description Optional legal entity name used in reporting and exports.
+       */
+      legal_name?: string | null;
+      /**
+       * Member Count
+       * @description Number of active membership rows attached to the workspace.
+       */
+      member_count: number;
+      /**
+       * Name
+       * @description Primary workspace display name.
+       */
+      name: string;
+      /**
+       * Status
+       * @description Workspace lifecycle state.
+       * @enum {string}
+       */
+      status: "active" | "archived";
+      /**
+       * Timezone
+       * @description Canonical IANA timezone identifier for workspace-local scheduling.
+       */
+      timezone: string;
+      /**
+       * Updated At
+       * Format: date-time
+       * @description UTC timestamp when the workspace was last updated.
+       */
+      updated_at: string;
+      /**
+       * Workspace Language
+       * @description Current UI language scope for the workspace. English is the only supported value now.
+       * @default en
+       * @constant
+       */
+      workspace_language: "en";
+    };
+    /**
+     * EntityWorkspace
+     * @description Describe one full workspace detail response including members and activity history.
+     */
+    EntityWorkspace: {
+      /**
+       * Accounting Standard
+       * @description Optional accounting-standard label captured for the workspace.
+       */
+      accounting_standard?: string | null;
+      /**
+       * Activity Events
+       * @description Recent entity-scoped activity events ordered newest first.
+       * @default []
+       */
+      activity_events: components["schemas"]["EntityActivityEvent"][];
+      /** @description Approval-routing mode currently configured for the workspace. */
+      autonomy_mode: components["schemas"]["AutonomyMode"];
+      /**
+       * Base Currency
+       * @description Primary base currency for the workspace, defaulting to NGN.
+       */
+      base_currency: string;
+      /**
+       * Country Code
+       * @description Workspace country code used for defaults and formatting.
+       */
+      country_code: string;
+      /**
+       * Created At
+       * Format: date-time
+       * @description UTC timestamp when the workspace was created.
+       */
+      created_at: string;
+      /** @description Membership row for the authenticated caller. */
+      current_user_membership: components["schemas"]["EntityMembershipSummary"];
+      /** @description Current default actor highlighted for the workspace. */
+      default_actor?: components["schemas"]["EntityOperatorSummary"] | null;
+      /**
+       * Default Confidence Thresholds
+       * @description Entity-level confidence thresholds used by later workflow features.
+       */
+      default_confidence_thresholds: {
+        [key: string]: number;
+      };
+      /**
+       * Id
+       * @description Stable UUID for the entity workspace.
+       */
+      id: string;
+      /** @description Most recent entity-scoped activity event, if one exists. */
+      last_activity?: components["schemas"]["EntityActivityEvent"] | null;
+      /**
+       * Legal Name
+       * @description Optional legal entity name used in reporting and exports.
+       */
+      legal_name?: string | null;
+      /**
+       * Member Count
+       * @description Number of active membership rows attached to the workspace.
+       */
+      member_count: number;
+      /**
+       * Memberships
+       * @description All current workspace memberships in deterministic display order.
+       * @default []
+       */
+      memberships: components["schemas"]["EntityMembershipSummary"][];
+      /**
+       * Name
+       * @description Primary workspace display name.
+       */
+      name: string;
+      /**
+       * Status
+       * @description Workspace lifecycle state.
+       * @enum {string}
+       */
+      status: "active" | "archived";
+      /**
+       * Timezone
+       * @description Canonical IANA timezone identifier for workspace-local scheduling.
+       */
+      timezone: string;
+      /**
+       * Updated At
+       * Format: date-time
+       * @description UTC timestamp when the workspace was last updated.
+       */
+      updated_at: string;
+      /**
+       * Workspace Language
+       * @description Current UI language scope for the workspace. English is the only supported value now.
+       * @default en
+       * @constant
+       */
+      workspace_language: "en";
+    };
+    /** HTTPValidationError */
+    HTTPValidationError: {
+      /** Detail */
+      detail?: components["schemas"]["ValidationError"][];
+    };
+    /**
+     * IssuedApiToken
+     * @description Describe a newly created PAT and include the raw secret returned exactly once.
+     */
+    IssuedApiToken: {
+      /**
+       * Created At
+       * Format: date-time
+       * @description UTC timestamp when the token was originally issued.
+       */
+      created_at: string;
+      /**
+       * Expires At
+       * @description UTC timestamp after which the token can no longer authenticate.
+       */
+      expires_at?: string | null;
+      /**
+       * Id
+       * @description Stable UUID for the stored personal access token row.
+       */
+      id: string;
+      /**
+       * Last Used At
+       * @description UTC timestamp for the most recent successful bearer-auth use.
+       */
+      last_used_at?: string | null;
+      /**
+       * Name
+       * @description Operator-friendly token label.
+       */
+      name: string;
+      /**
+       * Revoked At
+       * @description UTC timestamp when the token was revoked, if it is no longer active.
+       */
+      revoked_at?: string | null;
+      /**
+       * Scopes
+       * @description Scope set granted to the personal access token.
+       */
+      scopes: components["schemas"]["ApiTokenScope"][];
+      /**
+       * Token
+       * @description Opaque bearer token value. This field is only returned when a token is created.
+       */
+      token: string;
+      /**
+       * Token Type
+       * @description Authorization scheme callers must use when sending the token back to the API.
+       * @default Bearer
+       * @constant
+       */
+      token_type: "Bearer";
+      /**
+       * Updated At
+       * Format: date-time
+       * @description UTC timestamp when the token row was last mutated.
+       */
+      updated_at: string;
+    };
+    /**
+     * LoginRequest
+     * @description Capture the credentials required to exchange for an authenticated session cookie.
+     */
+    LoginRequest: {
+      /**
+       * Email
+       * @description Email address associated with a previously registered local account.
+       */
+      email: string;
+      /**
+       * Password
+       * @description Plaintext password submitted for verification against the stored hash.
+       */
+      password: string;
+    };
+    /**
+     * LogoutResponse
+     * @description Acknowledge that the current browser or desktop session has been cleared.
+     */
+    LogoutResponse: {
+      /**
+       * Status
+       * @description Deterministic marker confirming the caller no longer has an active session.
+       * @default logged_out
+       */
+      status: string;
+    };
+    /**
+     * RegistrationRequest
+     * @description Capture the fields required to create a new locally authenticated user account.
+     */
+    RegistrationRequest: {
+      /**
+       * Email
+       * @description Unique email address used to sign in to the local demo.
+       */
+      email: string;
+      /**
+       * Full Name
+       * @description Human-readable operator name shown in audit trails and approvals.
+       */
+      full_name: string;
+      /**
+       * Password
+       * @description Plaintext password that will be hashed before persistence.
+       */
+      password: string;
+    };
+    /**
+     * SessionDetails
+     * @description Describe the server-side session row currently bound to the caller's cookie.
+     */
+    SessionDetails: {
+      /**
+       * Expires At
+       * Format: date-time
+       * @description UTC timestamp after which the session becomes invalid.
+       */
+      expires_at: string;
+      /**
+       * Id
+       * @description Stable UUID for the current session row.
+       */
+      id: string;
+      /**
+       * Last Seen At
+       * Format: date-time
+       * @description UTC timestamp for the latest successful use or rotation of the session.
+       */
+      last_seen_at: string;
+      /**
+       * Rotated
+       * @description Indicates whether the session token was rotated during the current request.
+       */
+      rotated: boolean;
+    };
+    /**
+     * UpdateEntityMembershipRequest
+     * @description Capture the optional fields that can be updated on an existing workspace membership.
+     */
+    UpdateEntityMembershipRequest: {
+      /** Is Default Actor */
+      is_default_actor?: boolean | null;
+      /** Role */
+      role?: string | null;
+    };
+    /**
+     * UpdateEntityRequest
+     * @description Capture the optional fields that can be updated on an existing entity workspace.
+     */
+    UpdateEntityRequest: {
+      /** Accounting Standard */
+      accounting_standard?: string | null;
+      autonomy_mode?: components["schemas"]["AutonomyMode"] | null;
+      /** Base Currency */
+      base_currency?: string | null;
+      /** Country Code */
+      country_code?: string | null;
+      /** Legal Name */
+      legal_name?: string | null;
+      /** Name */
+      name?: string | null;
+      /** Timezone */
+      timezone?: string | null;
+    };
+    /** ValidationError */
+    ValidationError: {
+      /** Context */
+      ctx?: Record<string, never>;
+      /** Input */
+      input?: unknown;
+      /** Location */
+      loc: (string | number)[];
+      /** Message */
+      msg: string;
+      /** Error Type */
+      type: string;
+    };
   };
   responses: never;
   parameters: never;
@@ -173,6 +1183,459 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+  list_api_tokens: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ApiTokenListResponse"];
+        };
+      };
+    };
+  };
+  create_api_token: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["ApiTokenCreateRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ApiTokenAuthResponse"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  read_current_api_token: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ApiTokenCurrentResponse"];
+        };
+      };
+    };
+  };
+  revoke_current_api_token: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ApiTokenRevocationResponse"];
+        };
+      };
+    };
+  };
+  login_for_api_token: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["ApiTokenLoginRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ApiTokenAuthResponse"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  revoke_api_token: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        token_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ApiTokenRevocationResponse"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  login_user: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["LoginRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["AuthSessionResponse"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  logout_user: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["LogoutResponse"];
+        };
+      };
+    };
+  };
+  register_user: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["RegistrationRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["AuthSessionResponse"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  read_current_session: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["AuthSessionResponse"];
+        };
+      };
+    };
+  };
+  list_entities: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["EntityListResponse"];
+        };
+      };
+    };
+  };
+  create_entity: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["CreateEntityRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["EntityWorkspace"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  read_entity_workspace: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        entity_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["EntityWorkspace"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  update_entity: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        entity_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["UpdateEntityRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["EntityWorkspace"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  create_entity_membership: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        entity_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["CreateEntityMembershipRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["EntityWorkspace"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  update_entity_membership: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        entity_id: string;
+        membership_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["UpdateEntityMembershipRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["EntityWorkspace"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
   read_health_status: {
     parameters: {
       query?: never;

@@ -63,6 +63,9 @@ export default async function ProtectedAppLayout({
             <Link className="workspace-link" href={DEFAULT_WORKSPACE_PATH}>
               Workspace
             </Link>
+            <Link className="workspace-link" href="/entities">
+              Entities
+            </Link>
           </nav>
 
           <div className="workspace-user-pill">

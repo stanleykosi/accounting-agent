@@ -47,6 +47,9 @@ importers:
 
   apps/desktop-ui:
     dependencies:
+      '@accounting-ai-agent/ts-sdk':
+        specifier: workspace:*
+        version: link:../../packages/ts-sdk
       '@accounting-ai-agent/ui':
         specifier: workspace:*
         version: link:../../packages/ui
