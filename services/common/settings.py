@@ -206,6 +206,7 @@ class SecuritySettings(BaseModel):
 
     session_secret: SecretStr | None = Field(default=None, repr=False)
     token_signing_secret: SecretStr | None = Field(default=None, repr=False)
+    credential_encryption_key: SecretStr | None = Field(default=None, repr=False)
     session_cookie_name: str = Field(default="accounting_agent_session", min_length=1)
     session_ttl_hours: PositiveInteger = Field(default=12)
     session_rotation_minutes: PositiveInteger = Field(default=30)

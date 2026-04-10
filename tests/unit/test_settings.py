@@ -20,6 +20,7 @@ def test_app_settings_reads_flat_environment_variable_names(
     monkeypatch.setenv("runtime_api_base_path", "internal-api")
     monkeypatch.setenv("database_user", "finance_user")
     monkeypatch.setenv("security_session_ttl_hours", "24")
+    monkeypatch.setenv("security_credential_encryption_key", "ZmFrZS1rZXktZm9yLXNldHRpbmdzLXRlc3Q=")
     monkeypatch.setitem(AppSettings.model_config, "env_file", None)
 
     settings = AppSettings()
@@ -27,6 +28,7 @@ def test_app_settings_reads_flat_environment_variable_names(
     assert settings.api.host == "0.0.0.0"
     assert settings.runtime.api_base_path == "/internal-api"
     assert settings.database.user == "finance_user"
+    assert settings.security.credential_encryption_key is not None
     assert settings.security.session_ttl_hours == 24
 
 

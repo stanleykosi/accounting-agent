@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import services.db.models  # noqa: F401  # Register ORM models for metadata inspection.
 from services.db.base import Base
-from sqlalchemy import CheckConstraint, DefaultClause
+from sqlalchemy import CheckConstraint, DefaultClause, UniqueConstraint
 
 
 def test_baseline_metadata_registers_expected_tables() -> None:
@@ -21,6 +21,7 @@ def test_baseline_metadata_registers_expected_tables() -> None:
         "close_runs",
         "entities",
         "entity_memberships",
+        "integration_connections",
         "review_actions",
         "sessions",
         "users",
@@ -58,3 +59,16 @@ def test_entities_have_canonical_confidence_threshold_default() -> None:
     assert "coding" in default_expression
     assert "reconciliation" in default_expression
     assert "posting" in default_expression
+
+
+def test_integration_connections_enforce_unique_provider_per_entity() -> None:
+    """Ensure one entity cannot persist duplicate connections for the same provider."""
+
+    table = Base.metadata.tables["integration_connections"]
+    unique_constraints = {
+        tuple(column.name for column in constraint.columns)
+        for constraint in table.constraints
+        if isinstance(constraint, UniqueConstraint)
+    }
+
+    assert ("entity_id", "provider") in unique_constraints

@@ -115,11 +115,13 @@ def test_authenticate_token_rejects_expired_tokens() -> None:
         name="desktop-cli",
         expires_in_days=1,
     )
+    expires_at = issued.api_token.expires_at
+    assert expires_at is not None
 
     with pytest.raises(ApiTokenServiceError) as error:
         service.authenticate_token(
             token=issued.plain_text_token,
-            now=issued.api_token.expires_at + timedelta(seconds=1),
+            now=expires_at + timedelta(seconds=1),
         )
 
     assert error.value.status_code == 401

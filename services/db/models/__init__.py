@@ -14,6 +14,11 @@ from services.db.models.entity import (
     EntityStatus,
     build_default_confidence_thresholds,
 )
+from services.db.models.integration import (
+    IntegrationConnection,
+    IntegrationConnectionStatus,
+    IntegrationProvider,
+)
 
 __all__ = [
     "DEFAULT_ENTITY_CONFIDENCE_THRESHOLDS",
@@ -25,6 +30,9 @@ __all__ = [
     "Entity",
     "EntityMembership",
     "EntityStatus",
+    "IntegrationConnection",
+    "IntegrationConnectionStatus",
+    "IntegrationProvider",
     "ReviewAction",
     "Session",
     "User",

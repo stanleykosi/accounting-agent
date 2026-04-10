@@ -15,6 +15,7 @@ authors = [
 dependencies = [
   "alembic>=1.17,<2.0",
   "celery>=5.5,<6.0",
+  "cryptography>=46.0,<47.0",
   "fastapi>=0.135,<0.136",
   "httpx>=0.28,<0.29",
   "langgraph>=1.1,<1.2",
