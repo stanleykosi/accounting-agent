@@ -52,5 +52,5 @@ wait_for_service_health worker
 "${SCRIPT_DIR}/healthcheck-demo.sh"
 
 log "Demo stack is up."
-log "API: http://127.0.0.1:${ACCOUNTING_AGENT_API__PORT:-8000}${ACCOUNTING_AGENT_RUNTIME__API_BASE_PATH:-/api}"
+log "API: http://127.0.0.1:${api_port:-8000}${runtime_api_base_path:-/api}"
 log "MinIO Console: http://127.0.0.1:9001"

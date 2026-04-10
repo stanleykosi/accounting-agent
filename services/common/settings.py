@@ -10,9 +10,17 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from functools import lru_cache
+from typing import Any
 
 from pydantic import BaseModel, Field, SecretStr, computed_field, field_validator, model_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic.fields import FieldInfo
+from pydantic_settings import (
+    BaseSettings,
+    DotEnvSettingsSource,
+    EnvSettingsSource,
+    PydanticBaseSettingsSource,
+    SettingsConfigDict,
+)
 from services.common.types import (
     DeploymentEnvironment,
     PortNumber,
@@ -102,8 +110,8 @@ class WorkerSettings(BaseModel):
         if self.task_soft_time_limit_seconds > self.task_time_limit_seconds:
             message = (
                 "Worker soft task time limit cannot exceed the hard task time limit. "
-                "Update ACCOUNTING_AGENT_WORKER__TASK_SOFT_TIME_LIMIT_SECONDS or "
-                "ACCOUNTING_AGENT_WORKER__TASK_TIME_LIMIT_SECONDS."
+                "Update worker_task_soft_time_limit_seconds or "
+                "worker_task_time_limit_seconds."
             )
             raise ValueError(message)
 
@@ -198,6 +206,9 @@ class SecuritySettings(BaseModel):
 
     session_secret: SecretStr | None = Field(default=None, repr=False)
     token_signing_secret: SecretStr | None = Field(default=None, repr=False)
+    session_cookie_name: str = Field(default="accounting_agent_session", min_length=1)
+    session_ttl_hours: PositiveInteger = Field(default=12)
+    session_rotation_minutes: PositiveInteger = Field(default=30)
 
 
 class AppSettings(BaseSettings):
@@ -205,8 +216,7 @@ class AppSettings(BaseSettings):
 
     model_config = SettingsConfigDict(
         env_file=".env",
-        env_prefix="ACCOUNTING_AGENT_",
-        env_nested_delimiter="__",
+        env_prefix="",
         extra="ignore",
         validate_default=True,
     )
@@ -250,6 +260,77 @@ class AppSettings(BaseSettings):
                 f"{formatted_variables}."
             )
             raise ValueError(message)
+
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls: type[BaseSettings],
+        init_settings: PydanticBaseSettingsSource,
+        env_settings: PydanticBaseSettingsSource,
+        dotenv_settings: PydanticBaseSettingsSource,
+        file_secret_settings: PydanticBaseSettingsSource,
+    ) -> tuple[PydanticBaseSettingsSource, ...]:
+        """Load settings from flat env names such as `api_host` and `runtime_api_base_path`."""
+
+        return (
+            init_settings,
+            FlatEnvironmentSettingsSource(settings_cls),
+            file_secret_settings,
+        )
+
+
+class FlatEnvironmentSettingsSource(PydanticBaseSettingsSource):
+    """Map flat environment variable names into the nested `AppSettings` structure."""
+
+    def __init__(self, settings_cls: type[BaseSettings]) -> None:
+        """Capture parsed OS and dotenv environment values for flat-name remapping."""
+
+        super().__init__(settings_cls)
+        self._env_source = EnvSettingsSource(settings_cls)
+        self._dotenv_source = DotEnvSettingsSource(settings_cls)
+        self._field_mapping = _build_flat_field_mapping(settings_cls)
+
+    def get_field_value(self, field: FieldInfo, field_name: str) -> tuple[Any, str, bool]:
+        """Return a null field value because this source materializes all settings at once."""
+
+        return None, field_name, False
+
+    def __call__(self) -> dict[str, Any]:
+        """Build nested settings data from canonical flat env names and fail fast on collisions."""
+
+        raw_values = {
+            **self._dotenv_source.env_vars,
+            **self._env_source.env_vars,
+        }
+        resolved: dict[str, dict[str, str | None]] = {}
+
+        for env_name, raw_value in raw_values.items():
+            if raw_value is None:
+                continue
+
+            mapping = self._field_mapping.get(env_name.casefold())
+            if mapping is None:
+                continue
+
+            section_name, field_name = mapping
+            resolved.setdefault(section_name, {})[field_name] = raw_value
+
+        return resolved
+
+
+def _build_flat_field_mapping(settings_cls: type[BaseSettings]) -> dict[str, tuple[str, str]]:
+    """Build the canonical flat env-name mapping for every nested `AppSettings` field."""
+
+    mapping: dict[str, tuple[str, str]] = {}
+    for section_name, section_field in settings_cls.model_fields.items():
+        annotation = section_field.annotation
+        if not isinstance(annotation, type) or not issubclass(annotation, BaseModel):
+            continue
+
+        for field_name in annotation.model_fields:
+            mapping[f"{section_name}_{field_name}".casefold()] = (section_name, field_name)
+
+    return mapping
 
 
 def _is_missing(value: SecretStr | str | None) -> bool:

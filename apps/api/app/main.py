@@ -12,6 +12,7 @@ from collections.abc import AsyncIterator, Iterable
 from contextlib import asynccontextmanager
 from typing import Any
 
+from apps.api.app.routes.auth import router as auth_router
 from fastapi import APIRouter, FastAPI, Request
 from fastapi.routing import APIRoute
 from services.common.logging import configure_logging, get_logger
@@ -142,6 +143,7 @@ def create_app(*, settings: AppSettings | None = None) -> FastAPI:
             routes=_collect_route_descriptors(request.app.routes),
         )
 
+    api_router.include_router(auth_router)
     app.include_router(api_router)
     return app
 

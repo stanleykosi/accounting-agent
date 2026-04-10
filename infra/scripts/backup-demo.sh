@@ -47,21 +47,21 @@ log "Running demo healthcheck before backup."
 
 log "Dumping PostgreSQL database to ${database_dump_path}."
 docker_compose exec -T \
-  -e "PGPASSWORD=${ACCOUNTING_AGENT_DATABASE__PASSWORD}" \
+  -e "PGPASSWORD=${database_password}" \
   postgres \
   pg_dump \
   --format=custom \
-  --dbname="${ACCOUNTING_AGENT_DATABASE__NAME}" \
-  --username="${ACCOUNTING_AGENT_DATABASE__USER}" \
+  --dbname="${database_name}" \
+  --username="${database_user}" \
   > "${database_dump_path}"
 
 cat > "${manifest_path}" <<EOF
 backup_name=${backup_name}
 created_at_utc=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
-database_name=${ACCOUNTING_AGENT_DATABASE__NAME}
-document_bucket=${ACCOUNTING_AGENT_STORAGE__DOCUMENT_BUCKET}
-artifact_bucket=${ACCOUNTING_AGENT_STORAGE__ARTIFACT_BUCKET}
-derivative_bucket=${ACCOUNTING_AGENT_STORAGE__DERIVATIVE_BUCKET}
+database_name=${database_name}
+document_bucket=${storage_document_bucket}
+artifact_bucket=${storage_artifact_bucket}
+derivative_bucket=${storage_derivative_bucket}
 EOF
 
 log "Mirroring MinIO buckets into ${objects_dir}."
@@ -73,12 +73,12 @@ docker_compose run --rm --no-deps \
     set -eu
     mc alias set local "$MINIO_ENDPOINT_URL" "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" >/dev/null
     mkdir -p /backup/documents /backup/artifacts /backup/derivatives /backup/manifests
-    mc mirror --overwrite "local/$ACCOUNTING_AGENT_STORAGE__DOCUMENT_BUCKET" /backup/documents
-    mc mirror --overwrite "local/$ACCOUNTING_AGENT_STORAGE__ARTIFACT_BUCKET" /backup/artifacts
-    mc mirror --overwrite "local/$ACCOUNTING_AGENT_STORAGE__DERIVATIVE_BUCKET" /backup/derivatives
-    mc ls --recursive --json "local/$ACCOUNTING_AGENT_STORAGE__DOCUMENT_BUCKET" > /backup/manifests/documents.jsonl
-    mc ls --recursive --json "local/$ACCOUNTING_AGENT_STORAGE__ARTIFACT_BUCKET" > /backup/manifests/artifacts.jsonl
-    mc ls --recursive --json "local/$ACCOUNTING_AGENT_STORAGE__DERIVATIVE_BUCKET" > /backup/manifests/derivatives.jsonl
+    mc mirror --overwrite "local/$storage_document_bucket" /backup/documents
+    mc mirror --overwrite "local/$storage_artifact_bucket" /backup/artifacts
+    mc mirror --overwrite "local/$storage_derivative_bucket" /backup/derivatives
+    mc ls --recursive --json "local/$storage_document_bucket" > /backup/manifests/documents.jsonl
+    mc ls --recursive --json "local/$storage_artifact_bucket" > /backup/manifests/artifacts.jsonl
+    mc ls --recursive --json "local/$storage_derivative_bucket" > /backup/manifests/derivatives.jsonl
   '
 
 log "Backup complete at ${backup_dir}."

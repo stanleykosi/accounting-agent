@@ -35,16 +35,16 @@ load_env_file
 
 log "Checking API health endpoint."
 curl --silent --show-error --fail \
-  "http://127.0.0.1:${ACCOUNTING_AGENT_API__PORT}${ACCOUNTING_AGENT_RUNTIME__API_BASE_PATH}/health" \
+  "http://127.0.0.1:${api_port}${runtime_api_base_path}/health" \
   >/dev/null
 
 log "Checking PostgreSQL connectivity."
 docker_compose exec -T \
-  -e "PGPASSWORD=${ACCOUNTING_AGENT_DATABASE__PASSWORD}" \
+  -e "PGPASSWORD=${database_password}" \
   postgres \
   psql \
-  --username="${ACCOUNTING_AGENT_DATABASE__USER}" \
-  --dbname="${ACCOUNTING_AGENT_DATABASE__NAME}" \
+  --username="${database_user}" \
+  --dbname="${database_name}" \
   --tuples-only \
   --command="SELECT 1;" \
   >/dev/null
@@ -60,9 +60,9 @@ docker_compose run --rm --no-deps \
   -lc '
     set -eu
     mc alias set local "$MINIO_ENDPOINT_URL" "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" >/dev/null
-    mc ls "local/$ACCOUNTING_AGENT_STORAGE__DOCUMENT_BUCKET" >/dev/null
-    mc ls "local/$ACCOUNTING_AGENT_STORAGE__ARTIFACT_BUCKET" >/dev/null
-    mc ls "local/$ACCOUNTING_AGENT_STORAGE__DERIVATIVE_BUCKET" >/dev/null
+    mc ls "local/$storage_document_bucket" >/dev/null
+    mc ls "local/$storage_artifact_bucket" >/dev/null
+    mc ls "local/$storage_derivative_bucket" >/dev/null
   ' \
   >/dev/null
 

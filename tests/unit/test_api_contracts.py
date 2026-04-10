@@ -18,6 +18,9 @@ def test_openapi_schema_exposes_seed_contract_routes() -> None:
     schema = app.openapi()
 
     assert schema["info"]["version"] == API_VERSION
+    assert "/api/auth/login" in schema["paths"]
+    assert "/api/auth/register" in schema["paths"]
+    assert "/api/auth/session" in schema["paths"]
     assert "/api/health" in schema["paths"]
     assert "/api/metadata" in schema["paths"]
 
@@ -34,4 +37,11 @@ def test_metadata_endpoint_returns_contract_catalog() -> None:
     route_names = {route["name"] for route in payload["routes"]}
     assert payload["version"] == API_VERSION
     assert payload["openapi_url"] == "/api/openapi.json"
-    assert {"read_api_metadata", "read_health_status"} <= route_names
+    assert {
+        "login_user",
+        "logout_user",
+        "read_api_metadata",
+        "read_current_session",
+        "read_health_status",
+        "register_user",
+    } <= route_names

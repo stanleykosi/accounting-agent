@@ -70,28 +70,28 @@ docker_compose stop api worker >/dev/null 2>&1 || true
 
 log "Restoring PostgreSQL database from ${database_dump_path}."
 docker_compose exec -T \
-  -e "PGPASSWORD=${ACCOUNTING_AGENT_DATABASE__PASSWORD}" \
+  -e "PGPASSWORD=${database_password}" \
   postgres \
   psql \
-  --username="${ACCOUNTING_AGENT_DATABASE__USER}" \
+  --username="${database_user}" \
   --dbname=postgres \
-  --command="DROP DATABASE IF EXISTS ${ACCOUNTING_AGENT_DATABASE__NAME};"
+  --command="DROP DATABASE IF EXISTS ${database_name};"
 docker_compose exec -T \
-  -e "PGPASSWORD=${ACCOUNTING_AGENT_DATABASE__PASSWORD}" \
+  -e "PGPASSWORD=${database_password}" \
   postgres \
   psql \
-  --username="${ACCOUNTING_AGENT_DATABASE__USER}" \
+  --username="${database_user}" \
   --dbname=postgres \
-  --command="CREATE DATABASE ${ACCOUNTING_AGENT_DATABASE__NAME};"
+  --command="CREATE DATABASE ${database_name};"
 docker_compose exec -T \
-  -e "PGPASSWORD=${ACCOUNTING_AGENT_DATABASE__PASSWORD}" \
+  -e "PGPASSWORD=${database_password}" \
   postgres \
   pg_restore \
   --clean \
   --if-exists \
   --no-owner \
-  --username="${ACCOUNTING_AGENT_DATABASE__USER}" \
-  --dbname="${ACCOUNTING_AGENT_DATABASE__NAME}" \
+  --username="${database_user}" \
+  --dbname="${database_name}" \
   < "${database_dump_path}"
 
 log "Restoring MinIO bucket contents from ${objects_dir}."
@@ -102,12 +102,12 @@ docker_compose run --rm --no-deps \
   -lc '
     set -eu
     mc alias set local "$MINIO_ENDPOINT_URL" "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" >/dev/null
-    mc rm --recursive --force "local/$ACCOUNTING_AGENT_STORAGE__DOCUMENT_BUCKET" >/dev/null 2>&1 || true
-    mc rm --recursive --force "local/$ACCOUNTING_AGENT_STORAGE__ARTIFACT_BUCKET" >/dev/null 2>&1 || true
-    mc rm --recursive --force "local/$ACCOUNTING_AGENT_STORAGE__DERIVATIVE_BUCKET" >/dev/null 2>&1 || true
-    mc mirror --overwrite /backup/documents "local/$ACCOUNTING_AGENT_STORAGE__DOCUMENT_BUCKET"
-    mc mirror --overwrite /backup/artifacts "local/$ACCOUNTING_AGENT_STORAGE__ARTIFACT_BUCKET"
-    mc mirror --overwrite /backup/derivatives "local/$ACCOUNTING_AGENT_STORAGE__DERIVATIVE_BUCKET"
+    mc rm --recursive --force "local/$storage_document_bucket" >/dev/null 2>&1 || true
+    mc rm --recursive --force "local/$storage_artifact_bucket" >/dev/null 2>&1 || true
+    mc rm --recursive --force "local/$storage_derivative_bucket" >/dev/null 2>&1 || true
+    mc mirror --overwrite /backup/documents "local/$storage_document_bucket"
+    mc mirror --overwrite /backup/artifacts "local/$storage_artifact_bucket"
+    mc mirror --overwrite /backup/derivatives "local/$storage_derivative_bucket"
   '
 
 log "Starting application services after restore."

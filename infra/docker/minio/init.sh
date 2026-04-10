@@ -1,7 +1,7 @@
 #!/bin/sh
 # Purpose: Create the canonical MinIO buckets required by the local demo stack.
 # Scope: Wait for MinIO to become reachable, configure an administrative alias, and create private buckets idempotently.
-# Dependencies: Runs inside the minio/mc image and relies on the MINIO_* and ACCOUNTING_AGENT_STORAGE__* environment variables provided by Docker Compose.
+# Dependencies: Runs inside the minio/mc image and relies on the MINIO_* and storage_* environment variables provided by Docker Compose.
 
 set -eu
 
@@ -39,14 +39,14 @@ create_bucket() {
 require_env MINIO_ENDPOINT_URL
 require_env MINIO_ROOT_USER
 require_env MINIO_ROOT_PASSWORD
-require_env ACCOUNTING_AGENT_STORAGE__DOCUMENT_BUCKET
-require_env ACCOUNTING_AGENT_STORAGE__ARTIFACT_BUCKET
-require_env ACCOUNTING_AGENT_STORAGE__DERIVATIVE_BUCKET
+require_env storage_document_bucket
+require_env storage_artifact_bucket
+require_env storage_derivative_bucket
 
 wait_for_minio
 
-create_bucket "$ACCOUNTING_AGENT_STORAGE__DOCUMENT_BUCKET"
-create_bucket "$ACCOUNTING_AGENT_STORAGE__ARTIFACT_BUCKET"
-create_bucket "$ACCOUNTING_AGENT_STORAGE__DERIVATIVE_BUCKET"
+create_bucket "$storage_document_bucket"
+create_bucket "$storage_artifact_bucket"
+create_bucket "$storage_derivative_bucket"
 
 log "MinIO bucket initialization complete."
