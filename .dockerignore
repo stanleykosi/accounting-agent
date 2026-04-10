@@ -1,0 +1,26 @@
+# Purpose: Keep the canonical local-demo container build context focused on source files.
+# Scope: Exclude generated assets, local virtual environments, caches, secrets, and heavyweight frontend build output from Docker builds.
+# Dependencies: Used by the Dockerfiles under infra/docker when Docker Compose builds the API and worker images.
+
+.git
+.github
+.venv
+.pytest_cache
+.mypy_cache
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.env
+.DS_Store
+
+node_modules
+apps/desktop-ui/node_modules
+apps/desktop-ui/.next
+packages/**/node_modules
+packages/**/dist
+
+dist
+build
+coverage
+htmlcov

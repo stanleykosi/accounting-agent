@@ -1,0 +1,56 @@
+# Purpose: Configure the canonical OpenTelemetry collector for the local demo stack.
+# Scope: Receive OTLP traces, metrics, and logs from local services, expose a collector health endpoint, and emit debug output for operator verification.
+# Dependencies: Mounted by infra/docker/docker-compose.yml into the collector container.
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  batch:
+    send_batch_size: 512
+    timeout: 5s
+
+exporters:
+  debug:
+    verbosity: normal
+
+extensions:
+  health_check:
+    endpoint: 0.0.0.0:13133
+  pprof:
+    endpoint: 0.0.0.0:1777
+  zpages:
+    endpoint: 0.0.0.0:55679
+
+service:
+  extensions:
+    - health_check
+    - pprof
+    - zpages
+  pipelines:
+    traces:
+      receivers:
+        - otlp
+      processors:
+        - batch
+      exporters:
+        - debug
+    metrics:
+      receivers:
+        - otlp
+      processors:
+        - batch
+      exporters:
+        - debug
+    logs:
+      receivers:
+        - otlp
+      processors:
+        - batch
+      exporters:
+        - debug

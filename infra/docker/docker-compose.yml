@@ -1,0 +1,194 @@
+# Purpose: Define the canonical local demo runtime stack for the Accounting AI Agent.
+# Scope: PostgreSQL with pgvector, Redis, MinIO, MinIO bucket initialization, OpenTelemetry collector, API, and worker services.
+# Dependencies: Dockerfiles and init assets under infra/docker, the OTEL collector config under infra/otel, and backend settings declared in .env.example.
+
+x-backend-environment: &backend-environment
+  ACCOUNTING_AGENT_RUNTIME__ENVIRONMENT: ${ACCOUNTING_AGENT_RUNTIME__ENVIRONMENT:-development}
+  ACCOUNTING_AGENT_RUNTIME__DEBUG: ${ACCOUNTING_AGENT_RUNTIME__DEBUG:-false}
+  ACCOUNTING_AGENT_RUNTIME__TIMEZONE_NAME: ${ACCOUNTING_AGENT_RUNTIME__TIMEZONE_NAME:-Africa/Lagos}
+  ACCOUNTING_AGENT_RUNTIME__API_BASE_PATH: ${ACCOUNTING_AGENT_RUNTIME__API_BASE_PATH:-/api}
+  ACCOUNTING_AGENT_LOGGING__LEVEL: ${ACCOUNTING_AGENT_LOGGING__LEVEL:-INFO}
+  ACCOUNTING_AGENT_LOGGING__FORMAT: ${ACCOUNTING_AGENT_LOGGING__FORMAT:-json}
+  ACCOUNTING_AGENT_LOGGING__INCLUDE_STACK_INFO: ${ACCOUNTING_AGENT_LOGGING__INCLUDE_STACK_INFO:-false}
+  ACCOUNTING_AGENT_API__HOST: 0.0.0.0
+  ACCOUNTING_AGENT_API__PORT: ${ACCOUNTING_AGENT_API__PORT:-8000}
+  ACCOUNTING_AGENT_API__RELOAD: "false"
+  ACCOUNTING_AGENT_API__REQUEST_TIMEOUT_SECONDS: ${ACCOUNTING_AGENT_API__REQUEST_TIMEOUT_SECONDS:-30}
+  ACCOUNTING_AGENT_WORKER__CONCURRENCY: ${ACCOUNTING_AGENT_WORKER__CONCURRENCY:-2}
+  ACCOUNTING_AGENT_WORKER__PREFETCH_MULTIPLIER: ${ACCOUNTING_AGENT_WORKER__PREFETCH_MULTIPLIER:-1}
+  ACCOUNTING_AGENT_WORKER__MAX_TASKS_PER_CHILD: ${ACCOUNTING_AGENT_WORKER__MAX_TASKS_PER_CHILD:-100}
+  ACCOUNTING_AGENT_DATABASE__HOST: postgres
+  ACCOUNTING_AGENT_DATABASE__PORT: ${ACCOUNTING_AGENT_DATABASE__PORT:-5432}
+  ACCOUNTING_AGENT_DATABASE__NAME: ${ACCOUNTING_AGENT_DATABASE__NAME:-accounting_agent}
+  ACCOUNTING_AGENT_DATABASE__USER: ${ACCOUNTING_AGENT_DATABASE__USER:-accounting_agent}
+  ACCOUNTING_AGENT_DATABASE__PASSWORD: ${ACCOUNTING_AGENT_DATABASE__PASSWORD:-accounting_agent}
+  ACCOUNTING_AGENT_DATABASE__SCHEMA_NAME: ${ACCOUNTING_AGENT_DATABASE__SCHEMA_NAME:-public}
+  ACCOUNTING_AGENT_DATABASE__ECHO_SQL: ${ACCOUNTING_AGENT_DATABASE__ECHO_SQL:-false}
+  ACCOUNTING_AGENT_REDIS__BROKER_URL: redis://redis:6379/0
+  ACCOUNTING_AGENT_REDIS__RESULT_BACKEND_URL: redis://redis:6379/1
+  ACCOUNTING_AGENT_REDIS__CACHE_URL: redis://redis:6379/2
+  ACCOUNTING_AGENT_STORAGE__ENDPOINT: minio:9000
+  ACCOUNTING_AGENT_STORAGE__ACCESS_KEY: ${MINIO_ROOT_USER:-minioadmin}
+  ACCOUNTING_AGENT_STORAGE__SECRET_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
+  ACCOUNTING_AGENT_STORAGE__SECURE: "false"
+  ACCOUNTING_AGENT_STORAGE__REGION: ${ACCOUNTING_AGENT_STORAGE__REGION:-us-east-1}
+  ACCOUNTING_AGENT_STORAGE__DOCUMENT_BUCKET: ${ACCOUNTING_AGENT_STORAGE__DOCUMENT_BUCKET:-close-run-documents}
+  ACCOUNTING_AGENT_STORAGE__ARTIFACT_BUCKET: ${ACCOUNTING_AGENT_STORAGE__ARTIFACT_BUCKET:-close-run-artifacts}
+  ACCOUNTING_AGENT_STORAGE__DERIVATIVE_BUCKET: ${ACCOUNTING_AGENT_STORAGE__DERIVATIVE_BUCKET:-close-run-derivatives}
+  ACCOUNTING_AGENT_MODEL_GATEWAY__PROVIDER: ${ACCOUNTING_AGENT_MODEL_GATEWAY__PROVIDER:-openrouter}
+  ACCOUNTING_AGENT_MODEL_GATEWAY__BASE_URL: ${ACCOUNTING_AGENT_MODEL_GATEWAY__BASE_URL:-https://openrouter.ai/api/v1}
+  ACCOUNTING_AGENT_MODEL_GATEWAY__API_KEY: ${ACCOUNTING_AGENT_MODEL_GATEWAY__API_KEY:-}
+  ACCOUNTING_AGENT_MODEL_GATEWAY__DEFAULT_MODEL: ${ACCOUNTING_AGENT_MODEL_GATEWAY__DEFAULT_MODEL:-openai/gpt-4.1-mini}
+  ACCOUNTING_AGENT_MODEL_GATEWAY__TIMEOUT_SECONDS: ${ACCOUNTING_AGENT_MODEL_GATEWAY__TIMEOUT_SECONDS:-60}
+  ACCOUNTING_AGENT_QUICKBOOKS__CLIENT_ID: ${ACCOUNTING_AGENT_QUICKBOOKS__CLIENT_ID:-}
+  ACCOUNTING_AGENT_QUICKBOOKS__CLIENT_SECRET: ${ACCOUNTING_AGENT_QUICKBOOKS__CLIENT_SECRET:-}
+  ACCOUNTING_AGENT_QUICKBOOKS__REDIRECT_URI: ${ACCOUNTING_AGENT_QUICKBOOKS__REDIRECT_URI:-http://127.0.0.1:8000/api/integrations/quickbooks/callback}
+  ACCOUNTING_AGENT_QUICKBOOKS__SANDBOX_COMPANY_ID: ${ACCOUNTING_AGENT_QUICKBOOKS__SANDBOX_COMPANY_ID:-}
+  ACCOUNTING_AGENT_QUICKBOOKS__USE_SANDBOX: ${ACCOUNTING_AGENT_QUICKBOOKS__USE_SANDBOX:-true}
+  ACCOUNTING_AGENT_OBSERVABILITY__ENABLED: ${ACCOUNTING_AGENT_OBSERVABILITY__ENABLED:-true}
+  ACCOUNTING_AGENT_OBSERVABILITY__SERVICE_NAMESPACE: ${ACCOUNTING_AGENT_OBSERVABILITY__SERVICE_NAMESPACE:-accounting-agent}
+  ACCOUNTING_AGENT_OBSERVABILITY__OTLP_ENDPOINT: http://otel-collector:4317
+  ACCOUNTING_AGENT_OBSERVABILITY__SAMPLE_RATIO: ${ACCOUNTING_AGENT_OBSERVABILITY__SAMPLE_RATIO:-1.0}
+  ACCOUNTING_AGENT_SECURITY__SESSION_SECRET: ${ACCOUNTING_AGENT_SECURITY__SESSION_SECRET:-change-me-before-demo-auth}
+  ACCOUNTING_AGENT_SECURITY__TOKEN_SIGNING_SECRET: ${ACCOUNTING_AGENT_SECURITY__TOKEN_SIGNING_SECRET:-change-me-before-cli-auth}
+  TZ: ${ACCOUNTING_AGENT_RUNTIME__TIMEZONE_NAME:-Africa/Lagos}
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${ACCOUNTING_AGENT_DATABASE__NAME:-accounting_agent}
+      POSTGRES_USER: ${ACCOUNTING_AGENT_DATABASE__USER:-accounting_agent}
+      POSTGRES_PASSWORD: ${ACCOUNTING_AGENT_DATABASE__PASSWORD:-accounting_agent}
+      TZ: ${ACCOUNTING_AGENT_RUNTIME__TIMEZONE_NAME:-Africa/Lagos}
+    ports:
+      - "${ACCOUNTING_AGENT_DATABASE__PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./postgres/init.sql:/docker-entrypoint-initdb.d/10-init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  redis:
+    image: redis:7.4-alpine
+    restart: unless-stopped
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"
+      - --save
+      - "60"
+      - "1000"
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+
+  minio:
+    image: minio/minio:latest
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      TZ: ${ACCOUNTING_AGENT_RUNTIME__TIMEZONE_NAME:-Africa/Lagos}
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+
+  minio-init:
+    image: minio/mc:latest
+    restart: "no"
+    depends_on:
+      minio:
+        condition: service_started
+    environment:
+      MINIO_ENDPOINT_URL: http://minio:9000
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      ACCOUNTING_AGENT_STORAGE__DOCUMENT_BUCKET: ${ACCOUNTING_AGENT_STORAGE__DOCUMENT_BUCKET:-close-run-documents}
+      ACCOUNTING_AGENT_STORAGE__ARTIFACT_BUCKET: ${ACCOUNTING_AGENT_STORAGE__ARTIFACT_BUCKET:-close-run-artifacts}
+      ACCOUNTING_AGENT_STORAGE__DERIVATIVE_BUCKET: ${ACCOUNTING_AGENT_STORAGE__DERIVATIVE_BUCKET:-close-run-derivatives}
+    entrypoint: ["/bin/sh", "/init/init.sh"]
+    volumes:
+      - ./minio/init.sh:/init/init.sh:ro
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:latest
+    restart: unless-stopped
+    command:
+      - --config=/etc/otelcol-contrib/config.yaml
+    ports:
+      - "4317:4317"
+      - "4318:4318"
+      - "13133:13133"
+    volumes:
+      - ../otel/otel-collector.yaml:/etc/otelcol-contrib/config.yaml:ro
+
+  api:
+    build:
+      context: ../..
+      dockerfile: infra/docker/api.Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+      otel-collector:
+        condition: service_started
+    environment:
+      <<: *backend-environment
+      ACCOUNTING_AGENT_RUNTIME__SERVICE_NAME: accounting-ai-agent-api
+    ports:
+      - "${ACCOUNTING_AGENT_API__PORT:-8000}:8000"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+
+  worker:
+    build:
+      context: ../..
+      dockerfile: infra/docker/worker.Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+      otel-collector:
+        condition: service_started
+    environment:
+      <<: *backend-environment
+      ACCOUNTING_AGENT_RUNTIME__SERVICE_NAME: accounting-ai-agent-worker
+    healthcheck:
+      test: ["CMD", "python", "-m", "apps.worker.app.runtime", "--healthcheck"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 20s
+
+volumes:
+  postgres_data:
+  redis_data:
+  minio_data:
