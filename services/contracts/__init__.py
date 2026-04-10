@@ -11,6 +11,15 @@ from services.contracts.api_models import (
     ApiHealthStatus,
     ApiRouteDescriptor,
 )
+from services.contracts.close_run_models import (
+    CloseRunDecisionRequest,
+    CloseRunListResponse,
+    CloseRunReopenResponse,
+    CloseRunSummary,
+    CloseRunTransitionResponse,
+    CreateCloseRunRequest,
+    TransitionCloseRunRequest,
+)
 from services.contracts.domain_models import (
     DEFAULT_DOMAIN_LANGUAGE_CATALOG,
     CloseRunPhaseState,
@@ -26,10 +35,17 @@ __all__ = [
     "ApiContractMetadata",
     "ApiHealthStatus",
     "ApiRouteDescriptor",
+    "CloseRunDecisionRequest",
+    "CloseRunListResponse",
     "CloseRunPhaseState",
+    "CloseRunReopenResponse",
+    "CloseRunSummary",
+    "CloseRunTransitionResponse",
     "CloseRunWorkflowState",
+    "CreateCloseRunRequest",
     "DomainLanguageCatalog",
     "DomainValueDefinition",
+    "TransitionCloseRunRequest",
     "WorkflowPhaseDefinition",
     "build_domain_language_catalog",
 ]
