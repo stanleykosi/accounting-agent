@@ -1,0 +1,16 @@
+{
+  // Purpose: Compile the generated TypeScript SDK into a reusable workspace package.
+  // Scope: SDK source files, generated OpenAPI types, and emitted dist artifacts.
+  // Dependencies: ../../tsconfig.base.json, openapi-fetch, and src/generated/openapi.ts.
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "declaration": true,
+    "emitDeclarationOnly": false,
+    "module": "ESNext",
+    "noEmit": false,
+    "outDir": "dist",
+    "rootDir": "src"
+  },
+  "include": ["src/**/*.ts"],
+  "exclude": ["dist", "node_modules"]
+}

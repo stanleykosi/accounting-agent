@@ -22,6 +22,8 @@
     "forceConsistentCasingInFileNames": true,
     "baseUrl": ".",
     "paths": {
+      "@accounting-ai-agent/ts-sdk": ["packages/ts-sdk/src/index.ts"],
+      "@accounting-ai-agent/ts-sdk/*": ["packages/ts-sdk/src/*"],
       "@accounting-ai-agent/ui": ["packages/ui/src/index.ts"],
       "@accounting-ai-agent/ui/*": ["packages/ui/src/*"]
     }

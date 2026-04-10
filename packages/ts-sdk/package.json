@@ -1,0 +1,32 @@
+{
+  "name": "@accounting-ai-agent/ts-sdk",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Generated TypeScript SDK for the Accounting AI Agent API.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "scripts": {
+    "build": "pnpm run generate && pnpm exec tsc --project tsconfig.json",
+    "generate": "../../infra/scripts/generate-ts-sdk.sh",
+    "lint": "pnpm exec eslint src --max-warnings 0",
+    "publish-local": "pnpm run build && pnpm pack --pack-destination dist",
+    "typecheck": "pnpm exec tsc --project tsconfig.json --pretty false --noEmit"
+  },
+  "dependencies": {
+    "openapi-fetch": "^0.15.0"
+  },
+  "devDependencies": {
+    "openapi-typescript": "^7.10.1"
+  }
+}
