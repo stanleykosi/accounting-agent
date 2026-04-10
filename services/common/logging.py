@@ -126,7 +126,7 @@ def _redact_sensitive_fields(redact_fields: tuple[str, ...]) -> Processor:
 
     def processor(_: Any, __: str, event_dict: EventDict) -> EventDict:
         redacted = _redact_mapping(dict(event_dict), lowered_keys)
-        return cast(EventDict, redacted)
+        return redacted
 
     return processor
 

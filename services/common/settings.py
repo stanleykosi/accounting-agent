@@ -103,7 +103,7 @@ class DatabaseSettings(BaseModel):
     schema_name: str = Field(default="public", min_length=1)
     echo_sql: bool = Field(default=False)
 
-    @computed_field(return_type=str)
+    @computed_field(return_type=str)  # type: ignore[prop-decorator]
     @property
     def sqlalchemy_url(self) -> str:
         """Build the canonical SQLAlchemy DSN for synchronous database access."""
@@ -134,7 +134,7 @@ class StorageSettings(BaseModel):
     artifact_bucket: str = Field(default="close-run-artifacts", min_length=3)
     derivative_bucket: str = Field(default="close-run-derivatives", min_length=3)
 
-    @computed_field(return_type=str)
+    @computed_field(return_type=str)  # type: ignore[prop-decorator]
     @property
     def endpoint_url(self) -> str:
         """Return the fully qualified object-storage endpoint URL."""
@@ -205,7 +205,7 @@ class AppSettings(BaseSettings):
     observability: ObservabilitySettings = Field(default_factory=ObservabilitySettings)
     security: SecuritySettings = Field(default_factory=SecuritySettings)
 
-    @computed_field(return_type=str)
+    @computed_field(return_type=str)  # type: ignore[prop-decorator]
     @property
     def api_base_url(self) -> str:
         """Build the base loopback URL that local clients should target."""
