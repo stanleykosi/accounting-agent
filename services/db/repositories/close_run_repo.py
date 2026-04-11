@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from uuid import UUID
 
+from services.audit.service import AuditService
 from services.close_runs.gates import EvaluatedPhaseState, PhaseGateSignals
 from services.common.enums import (
     CANONICAL_WORKFLOW_PHASES,
@@ -22,7 +23,7 @@ from services.common.enums import (
     WorkflowPhase,
 )
 from services.common.types import JsonObject
-from services.db.models.audit import AuditEvent, AuditSourceSurface, ReviewAction
+from services.db.models.audit import AuditSourceSurface
 from services.db.models.close_run import CloseRun, CloseRunPhaseState
 from services.db.models.entity import Entity, EntityMembership, EntityStatus
 from sqlalchemy import desc, func, select
@@ -317,29 +318,37 @@ class CloseRunRepository:
     def create_review_action(
         self,
         *,
+        entity_id: UUID,
         close_run_id: UUID,
+        target_type: str,
+        target_id: UUID,
         actor_user_id: UUID,
         autonomy_mode: AutonomyMode,
+        source_surface: AuditSourceSurface,
         action: str,
         reason: str | None,
         before_payload: JsonObject | None,
         after_payload: JsonObject | None,
+        trace_id: str | None,
+        audit_payload: JsonObject | None = None,
     ) -> None:
         """Persist one immutable close-run review action for a lifecycle decision."""
 
-        review_action = ReviewAction(
+        AuditService(db_session=self._db_session).record_review_action(
+            entity_id=entity_id,
             close_run_id=close_run_id,
-            target_type="close_run",
-            target_id=close_run_id,
+            target_type=target_type,
+            target_id=target_id,
             action=action,
             actor_user_id=actor_user_id,
-            autonomy_mode=autonomy_mode.value,
+            autonomy_mode=autonomy_mode,
+            source_surface=source_surface,
             reason=reason,
             before_payload=before_payload,
             after_payload=after_payload,
+            trace_id=trace_id,
+            audit_payload=audit_payload,
         )
-        self._db_session.add(review_action)
-        self._db_session.flush()
 
     def create_activity_event(
         self,
@@ -354,17 +363,15 @@ class CloseRunRepository:
     ) -> None:
         """Persist one close-run-scoped activity event for the workspace timeline."""
 
-        event = AuditEvent(
+        AuditService(db_session=self._db_session).emit_audit_event(
             entity_id=entity_id,
             close_run_id=close_run_id,
             event_type=event_type,
             actor_user_id=actor_user_id,
-            source_surface=source_surface.value,
+            source_surface=source_surface,
             payload=dict(payload),
             trace_id=trace_id,
         )
-        self._db_session.add(event)
-        self._db_session.flush()
 
     def commit(self) -> None:
         """Commit the current close-run transaction after a successful mutation."""

@@ -174,13 +174,19 @@ class CloseRunRepositoryProtocol(Protocol):
     def create_review_action(
         self,
         *,
+        entity_id: UUID,
         close_run_id: UUID,
+        target_type: str,
+        target_id: UUID,
         actor_user_id: UUID,
         autonomy_mode: AutonomyMode,
+        source_surface: AuditSourceSurface,
         action: str,
         reason: str | None,
         before_payload: JsonObject | None,
         after_payload: JsonObject | None,
+        trace_id: str | None,
+        audit_payload: JsonObject | None = None,
     ) -> None:
         """Persist an immutable review action for a close-run decision."""
 
@@ -486,13 +492,19 @@ class CloseRunService:
                 approved_at=approved_at,
             )
             self._repository.create_review_action(
+                entity_id=entity_id,
                 close_run_id=close_run_id,
+                target_type="close_run",
+                target_id=close_run_id,
                 actor_user_id=actor_user.id,
                 autonomy_mode=access_record.entity.autonomy_mode,
+                source_surface=source_surface,
                 action="approve",
                 reason=reason,
                 before_payload=before_payload,
                 after_payload=_build_close_run_payload(close_run),
+                trace_id=trace_id,
+                audit_payload={"summary": f"{actor_user.full_name} approved the close run."},
             )
             self._repository.create_activity_event(
                 entity_id=entity_id,
@@ -546,13 +558,19 @@ class CloseRunService:
                 archived_at=archived_at,
             )
             self._repository.create_review_action(
+                entity_id=entity_id,
                 close_run_id=close_run_id,
+                target_type="close_run",
+                target_id=close_run_id,
                 actor_user_id=actor_user.id,
                 autonomy_mode=access_record.entity.autonomy_mode,
+                source_surface=source_surface,
                 action="archive",
                 reason=reason,
                 before_payload=before_payload,
                 after_payload=_build_close_run_payload(close_run),
+                trace_id=trace_id,
+                audit_payload={"summary": f"{actor_user.full_name} archived the close run."},
             )
             self._repository.create_activity_event(
                 entity_id=entity_id,
@@ -623,13 +641,24 @@ class CloseRunService:
                 phase_states=build_reopened_phase_states(),
             )
             self._repository.create_review_action(
+                entity_id=entity_id,
                 close_run_id=close_run_id,
+                target_type="close_run",
+                target_id=close_run_id,
                 actor_user_id=actor_user.id,
                 autonomy_mode=access_record.entity.autonomy_mode,
+                source_surface=source_surface,
                 action="reopen",
                 reason=reason,
                 before_payload=_build_close_run_payload(access_record.close_run),
                 after_payload=_build_close_run_payload(reopened_close_run),
+                trace_id=trace_id,
+                audit_payload={
+                    "summary": (
+                        f"{actor_user.full_name} reopened the close run as version {version_no}."
+                    ),
+                    "reopened_close_run_id": serialize_uuid(reopened_close_run.id),
+                },
             )
             self._repository.create_activity_event(
                 entity_id=entity_id,

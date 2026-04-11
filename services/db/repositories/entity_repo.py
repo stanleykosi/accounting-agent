@@ -15,6 +15,7 @@ from datetime import datetime
 from typing import cast
 from uuid import UUID
 
+from services.audit.service import AuditService
 from services.common.enums import AutonomyMode
 from services.common.types import JsonObject
 from services.db.models.audit import AuditEvent, AuditSourceSurface
@@ -337,18 +338,17 @@ class EntityRepository:
     ) -> EntityActivityEventRecord:
         """Persist one root entity-scoped activity event used by the workspace timeline."""
 
-        event = AuditEvent(
+        receipt = AuditService(db_session=self._db_session).emit_audit_event(
             entity_id=entity_id,
             close_run_id=None,
             event_type=event_type,
             actor_user_id=actor_user_id,
-            source_surface=source_surface.value,
+            source_surface=source_surface,
             payload=dict(payload),
             trace_id=trace_id,
         )
-        self._db_session.add(event)
-        self._db_session.flush()
 
+        event = self._load_audit_event(audit_event_id=receipt.audit_event_id)
         actor = self._load_user(user_id=actor_user_id) if actor_user_id is not None else None
         return _map_activity_event(event, actor)
 
@@ -447,6 +447,16 @@ class EntityRepository:
             raise LookupError(f"Entity membership {membership_id} does not exist.")
 
         return membership
+
+    def _load_audit_event(self, *, audit_event_id: UUID) -> AuditEvent:
+        """Load one just-created audit event or fail fast if persistence drifted."""
+
+        statement = select(AuditEvent).where(AuditEvent.id == audit_event_id)
+        event = self._db_session.execute(statement).scalar_one_or_none()
+        if event is None:
+            raise LookupError(f"Audit event {audit_event_id} does not exist.")
+
+        return event
 
 
 def _map_user(user: User) -> EntityUserRecord:
