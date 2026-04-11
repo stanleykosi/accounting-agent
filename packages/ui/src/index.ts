@@ -8,6 +8,11 @@ export { SurfaceCard } from "./components/SurfaceCard";
 export type { SurfaceCardProps, SurfaceTone } from "./components/SurfaceCard";
 export { AuthGate } from "./components/auth/AuthGate";
 export type { AuthGateProps, AuthGateTone } from "./components/auth/AuthGate";
+export { EvidenceDrawer } from "./components/evidence/EvidenceDrawer";
+export type {
+  EvidenceDrawerProps,
+  EvidenceDrawerReference,
+} from "./components/evidence/EvidenceDrawer";
 export { OwnershipBadge } from "./components/ownership/OwnershipBadge";
 export type {
   OwnershipBadgeOperator,
