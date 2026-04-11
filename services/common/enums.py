@@ -275,6 +275,151 @@ class OwnershipTargetType(CanonicalDomainEnum):
     )
 
 
+class DocumentSourceChannel(CanonicalDomainEnum):
+    """Enumerate the canonical ways source documents can enter a close run."""
+
+    UPLOAD = (
+        "upload",
+        "Upload",
+        "Primary file-ingestion path for accountant-provided source documents.",
+    )
+    API_IMPORT = (
+        "api_import",
+        "API import",
+        "Secondary ingestion path for bank or integration-provided source documents.",
+    )
+    MANUAL_ENTRY = (
+        "manual_entry",
+        "Manual entry",
+        "Operator-created source record without an uploaded binary payload.",
+    )
+
+
+class DocumentStatus(CanonicalDomainEnum):
+    """Enumerate the lifecycle states of a document attached to a close run."""
+
+    UPLOADED = (
+        "uploaded",
+        "Uploaded",
+        "The source file was stored and is waiting for parsing or quality checks.",
+    )
+    PROCESSING = (
+        "processing",
+        "Processing",
+        "The document is being parsed, normalized, OCR processed, or extracted.",
+    )
+    PARSED = (
+        "parsed",
+        "Parsed",
+        "The document was parsed successfully and can feed downstream extraction.",
+    )
+    NEEDS_REVIEW = (
+        "needs_review",
+        "Needs review",
+        "The document has low-confidence or exception signals requiring review.",
+    )
+    APPROVED = (
+        "approved",
+        "Approved",
+        "A reviewer accepted the document's current extracted state.",
+    )
+    REJECTED = (
+        "rejected",
+        "Rejected",
+        "A reviewer rejected the document for this close run.",
+    )
+    FAILED = (
+        "failed",
+        "Failed",
+        "Processing failed with an explicit recovery reason.",
+    )
+    DUPLICATE = (
+        "duplicate",
+        "Duplicate",
+        "The document appears to duplicate another source and needs disposition.",
+    )
+    BLOCKED = (
+        "blocked",
+        "Blocked",
+        "The document cannot proceed until an explicit input issue is resolved.",
+    )
+
+
+class DocumentType(CanonicalDomainEnum):
+    """Enumerate document classifications supported by the intake pipeline."""
+
+    UNKNOWN = (
+        "unknown",
+        "Unknown",
+        "Document type has not yet been classified by deterministic or review logic.",
+    )
+    INVOICE = (
+        "invoice",
+        "Invoice",
+        "Vendor or customer invoice requiring extraction and accounting treatment.",
+    )
+    BANK_STATEMENT = (
+        "bank_statement",
+        "Bank statement",
+        "Bank or card statement used for reconciliation and support.",
+    )
+    PAYSLIP = (
+        "payslip",
+        "Payslip",
+        "Payroll support document used for payroll control and review.",
+    )
+    RECEIPT = (
+        "receipt",
+        "Receipt",
+        "Payment receipt or expense support document.",
+    )
+    CONTRACT = (
+        "contract",
+        "Contract",
+        "Contract or agreement used for accounting evidence and recognition checks.",
+    )
+
+
+class DocumentIssueSeverity(CanonicalDomainEnum):
+    """Enumerate review severity levels for document issues."""
+
+    INFO = (
+        "info",
+        "Info",
+        "Informational issue that does not block workflow progression.",
+    )
+    WARNING = (
+        "warning",
+        "Warning",
+        "Review issue that should be dispositioned but is not necessarily blocking.",
+    )
+    BLOCKING = (
+        "blocking",
+        "Blocking",
+        "Issue that prevents workflow progression until resolved or dismissed.",
+    )
+
+
+class DocumentIssueStatus(CanonicalDomainEnum):
+    """Enumerate the lifecycle states of a document issue."""
+
+    OPEN = (
+        "open",
+        "Open",
+        "The issue is active and awaiting system or reviewer disposition.",
+    )
+    RESOLVED = (
+        "resolved",
+        "Resolved",
+        "The issue was remediated and no longer blocks its target.",
+    )
+    DISMISSED = (
+        "dismissed",
+        "Dismissed",
+        "A reviewer dismissed the issue with tracked context.",
+    )
+
+
 CANONICAL_WORKFLOW_PHASES: tuple[WorkflowPhase, ...] = tuple(WorkflowPhase)
 
 __all__ = [
@@ -284,6 +429,11 @@ __all__ = [
     "CanonicalDomainEnum",
     "CloseRunPhaseStatus",
     "CloseRunStatus",
+    "DocumentIssueSeverity",
+    "DocumentIssueStatus",
+    "DocumentSourceChannel",
+    "DocumentStatus",
+    "DocumentType",
     "JobStatus",
     "OwnershipTargetType",
     "ReviewStatus",
