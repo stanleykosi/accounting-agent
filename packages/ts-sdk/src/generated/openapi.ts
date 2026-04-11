@@ -242,6 +242,130 @@ export interface paths {
     patch: operations["update_entity"];
     trace?: never;
   };
+  "/api/entities/{entity_id}/close-runs": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * List close runs for one entity workspace
+     * @description Return the authenticated caller's close runs for one accessible workspace.
+     */
+    get: operations["list_close_runs"];
+    put?: never;
+    /**
+     * Create one close run
+     * @description Create a period close run and seed the five canonical workflow phase states.
+     */
+    post: operations["create_close_run"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/entities/{entity_id}/close-runs/{close_run_id}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Read one close run
+     * @description Return one close run with calculated phase-gate state.
+     */
+    get: operations["read_close_run"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/entities/{entity_id}/close-runs/{close_run_id}/approve": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Approve and sign off one close run
+     * @description Approve a close run after all phase gates have reached Review / Sign-off readiness.
+     */
+    post: operations["approve_close_run"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/entities/{entity_id}/close-runs/{close_run_id}/archive": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Archive one approved or exported close run
+     * @description Archive a signed-off or exported close run while preserving history.
+     */
+    post: operations["archive_close_run"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/entities/{entity_id}/close-runs/{close_run_id}/reopen": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Reopen one approved, exported, or archived close run
+     * @description Create a new reopened working version from a signed-off or released close run.
+     */
+    post: operations["reopen_close_run"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/entities/{entity_id}/close-runs/{close_run_id}/transition": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Advance one close run into the next workflow phase
+     * @description Complete the active ready phase and open the requested immediate successor.
+     */
+    post: operations["transition_close_run"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/entities/{entity_id}/memberships": {
     parameters: {
       query?: never;
@@ -280,6 +404,86 @@ export interface paths {
      * @description Update one workspace membership and return the refreshed workspace detail.
      */
     patch: operations["update_entity_membership"];
+    trace?: never;
+  };
+  "/api/entities/{entity_id}/ownership/locks/acquire": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Acquire an in-progress lock for one target
+     * @description Assign ownership and lock a target for the current review operator.
+     */
+    post: operations["acquire_ownership_lock"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/entities/{entity_id}/ownership/locks/release": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Release the caller's in-progress lock for one target
+     * @description Release a lock only when the current operator holds it.
+     */
+    post: operations["release_ownership_lock"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/entities/{entity_id}/ownership/targets/{target_type}/{target_id}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Read ownership metadata for one target
+     * @description Return owner, current lock, and last-touch metadata for one accessible target.
+     */
+    get: operations["read_ownership_state"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/entities/{entity_id}/ownership/touch": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Record the current user as last touch for one target
+     * @description Record last-touch metadata without taking an in-progress lock.
+     */
+    post: operations["touch_ownership_target"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
     trace?: never;
   };
   "/api/health": {
@@ -326,6 +530,35 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
   schemas: {
+    /**
+     * AcquireOwnershipLockRequest
+     * @description Capture a request to assign ownership and hold an in-progress lock.
+     */
+    AcquireOwnershipLockRequest: {
+      /**
+       * Close Run Id
+       * @description Owning close-run UUID for close-run-scoped targets.
+       */
+      close_run_id?: string | null;
+      /**
+       * Note
+       * @description Optional operator note describing why the lock was acquired.
+       */
+      note?: string | null;
+      /**
+       * Owner User Id
+       * @description Optional entity member to assign as owner. Defaults to the caller.
+       */
+      owner_user_id?: string | null;
+      /**
+       * Target Id
+       * Format: uuid
+       * @description Stable UUID of the target object.
+       */
+      target_id: string;
+      /** @description Canonical type of the ownership target. */
+      target_type: components["schemas"]["OwnershipTargetType"];
+    };
     /**
      * ApiContractMetadata
      * @description Describe contract-level API metadata needed by local tooling and generated clients.
@@ -638,6 +871,220 @@ export interface components {
      * @enum {string}
      */
     AutonomyMode: "human_review" | "reduced_interruption";
+    /**
+     * CloseRunDecisionRequest
+     * @description Capture an approval, archive, or reopen decision note.
+     */
+    CloseRunDecisionRequest: {
+      /**
+       * Reason
+       * @description Optional operator-facing reason persisted to the close-run timeline.
+       */
+      reason?: string | null;
+    };
+    /**
+     * CloseRunListResponse
+     * @description Return close runs for one entity in deterministic period/version order.
+     */
+    CloseRunListResponse: {
+      /**
+       * Close Runs
+       * @description Close runs the authenticated operator can access for the entity.
+       * @default []
+       */
+      close_runs: components["schemas"]["CloseRunSummary"][];
+    };
+    /**
+     * CloseRunPhaseState
+     * @description Capture the current state of one workflow phase for a specific close run.
+     */
+    CloseRunPhaseState: {
+      /**
+       * Blocking Reason
+       * @description Recovery-oriented reason shown when the phase is explicitly blocked.
+       */
+      blocking_reason?: string | null;
+      /**
+       * Completed At
+       * @description UTC timestamp marking when the phase became complete, if applicable.
+       */
+      completed_at?: string | null;
+      /** @description Workflow phase that this state row belongs to. */
+      phase: components["schemas"]["WorkflowPhase"];
+      /** @description Lifecycle state of the phase gate for the current close run. */
+      status: components["schemas"]["CloseRunPhaseStatus"];
+    };
+    /**
+     * CloseRunPhaseStatus
+     * @description Enumerate per-phase progress states tracked within a close run.
+     * @enum {string}
+     */
+    CloseRunPhaseStatus: "not_started" | "in_progress" | "blocked" | "ready" | "completed";
+    /**
+     * CloseRunReopenResponse
+     * @description Return the new working close-run version created by reopening a released run.
+     */
+    CloseRunReopenResponse: {
+      /** @description New reopened close-run working version. */
+      close_run: components["schemas"]["CloseRunSummary"];
+      /**
+       * Source Close Run Id
+       * @description Close-run UUID that was reopened.
+       */
+      source_close_run_id: string;
+      /**
+       * Status
+       * @description Stable reopened response status.
+       * @constant
+       */
+      status: "reopened";
+    };
+    /**
+     * CloseRunStatus
+     * @description Enumerate the lifecycle states of a close run.
+     * @enum {string}
+     */
+    CloseRunStatus: "draft" | "in_review" | "approved" | "exported" | "archived" | "reopened";
+    /**
+     * CloseRunSummary
+     * @description Describe one close run with lifecycle metadata and calculated phase state.
+     */
+    CloseRunSummary: {
+      /**
+       * Approved At
+       * @description UTC timestamp when the run was approved, if signed off.
+       */
+      approved_at?: string | null;
+      /**
+       * Approved By User Id
+       * @description UUID of the user who approved this run, if signed off.
+       */
+      approved_by_user_id?: string | null;
+      /**
+       * Archived At
+       * @description UTC timestamp when the run was archived, if archived.
+       */
+      archived_at?: string | null;
+      /**
+       * Created At
+       * Format: date-time
+       * @description UTC timestamp when the close run was created.
+       */
+      created_at: string;
+      /**
+       * Current Version No
+       * @description Version number for the entity-period close-run working state.
+       */
+      current_version_no: number;
+      /**
+       * Entity Id
+       * @description Stable UUID for the owning entity workspace.
+       */
+      entity_id: string;
+      /**
+       * Id
+       * @description Stable UUID for the close run.
+       */
+      id: string;
+      /**
+       * Opened By User Id
+       * @description UUID of the user who opened this run.
+       */
+      opened_by_user_id: string;
+      /**
+       * Period End
+       * Format: date
+       * @description Last calendar day covered by the close run.
+       */
+      period_end: string;
+      /**
+       * Period Start
+       * Format: date
+       * @description First calendar day covered by the close run.
+       */
+      period_start: string;
+      /**
+       * Reopened From Close Run Id
+       * @description Source close-run UUID when this row is a reopened working version.
+       */
+      reopened_from_close_run_id?: string | null;
+      /**
+       * Reporting Currency
+       * @description Reporting currency used for this close run.
+       */
+      reporting_currency: string;
+      /** @description Current lifecycle status of this close run. */
+      status: components["schemas"]["CloseRunStatus"];
+      /**
+       * Updated At
+       * Format: date-time
+       * @description UTC timestamp when the close run was last updated.
+       */
+      updated_at: string;
+      /** @description Calculated lifecycle and phase-gate state in canonical phase order. */
+      workflow_state: components["schemas"]["CloseRunWorkflowState"];
+    };
+    /**
+     * CloseRunTransitionResponse
+     * @description Return the refreshed close run and the transition that just occurred.
+     */
+    CloseRunTransitionResponse: {
+      /** @description Phase that is now active. */
+      active_phase: components["schemas"]["WorkflowPhase"];
+      /** @description Refreshed close-run detail. */
+      close_run: components["schemas"]["CloseRunSummary"];
+      /** @description Phase that was completed. */
+      completed_phase: components["schemas"]["WorkflowPhase"];
+    };
+    /**
+     * CloseRunWorkflowState
+     * @description Capture a close run's lifecycle status together with all five phase states.
+     */
+    CloseRunWorkflowState: {
+      /** @description Current working phase when the close run is actively progressing. */
+      active_phase?: components["schemas"]["WorkflowPhase"] | null;
+      /**
+       * Phase States
+       * @description All five workflow phase states in canonical order.
+       */
+      phase_states: components["schemas"]["CloseRunPhaseState"][];
+      /** @description Lifecycle status of the enclosing close run. */
+      status: components["schemas"]["CloseRunStatus"];
+    };
+    /**
+     * CreateCloseRunRequest
+     * @description Capture the inputs required to create one entity-period close run.
+     */
+    CreateCloseRunRequest: {
+      /**
+       * Allow Duplicate Period
+       * @description Explicitly allow another open close run for the same entity and period when a user supplies a recovery reason.
+       * @default false
+       */
+      allow_duplicate_period: boolean;
+      /**
+       * Duplicate Period Reason
+       * @description Required operator reason when allow_duplicate_period is true.
+       */
+      duplicate_period_reason?: string | null;
+      /**
+       * Period End
+       * Format: date
+       * @description Last calendar day covered by the close run.
+       */
+      period_end: string;
+      /**
+       * Period Start
+       * Format: date
+       * @description First calendar day covered by the close run.
+       */
+      period_start: string;
+      /**
+       * Reporting Currency
+       * @description Reporting currency for the period. Defaults to the entity base currency.
+       */
+      reporting_currency?: string | null;
+    };
     /**
      * CreateEntityMembershipRequest
      * @description Capture the inputs required to add an existing local operator to an entity workspace.
@@ -1084,6 +1531,56 @@ export interface components {
       status: string;
     };
     /**
+     * OwnershipState
+     * @description Describe current ownership, lock, and last-touch metadata for a target.
+     */
+    OwnershipState: {
+      /**
+       * Close Run Id
+       * @description Owning close-run UUID when the target is close-run scoped.
+       */
+      close_run_id?: string | null;
+      /**
+       * Entity Id
+       * @description Stable UUID of the owning entity workspace.
+       */
+      entity_id: string;
+      /**
+       * Last Touched At
+       * @description UTC timestamp of the latest touch.
+       */
+      last_touched_at?: string | null;
+      /** @description Operator who most recently touched this target. */
+      last_touched_by?: components["schemas"]["EntityOperatorSummary"] | null;
+      /**
+       * Lock Note
+       * @description Optional current lock note supplied by the locking operator.
+       */
+      lock_note?: string | null;
+      /**
+       * Locked At
+       * @description UTC timestamp when the in-progress lock was acquired.
+       */
+      locked_at?: string | null;
+      /** @description Operator currently holding the in-progress lock, if any. */
+      locked_by?: components["schemas"]["EntityOperatorSummary"] | null;
+      /** @description Operator assigned to own this item, if any. */
+      owner?: components["schemas"]["EntityOperatorSummary"] | null;
+      /**
+       * Target Id
+       * @description Stable UUID of the target object.
+       */
+      target_id: string;
+      /** @description Canonical target type. */
+      target_type: components["schemas"]["OwnershipTargetType"];
+    };
+    /**
+     * OwnershipTargetType
+     * @description Enumerate the business objects that can carry ownership and in-progress locks.
+     * @enum {string}
+     */
+    OwnershipTargetType: "entity" | "close_run" | "document" | "recommendation" | "review_target";
+    /**
      * RegistrationRequest
      * @description Capture the fields required to create a new locally authenticated user account.
      */
@@ -1103,6 +1600,25 @@ export interface components {
        * @description Plaintext password that will be hashed before persistence.
        */
       password: string;
+    };
+    /**
+     * ReleaseOwnershipLockRequest
+     * @description Capture a request to release the caller's in-progress lock.
+     */
+    ReleaseOwnershipLockRequest: {
+      /**
+       * Close Run Id
+       * @description Owning close-run UUID for close-run-scoped targets.
+       */
+      close_run_id?: string | null;
+      /**
+       * Target Id
+       * Format: uuid
+       * @description Stable UUID of the target object.
+       */
+      target_id: string;
+      /** @description Canonical type of the ownership target. */
+      target_type: components["schemas"]["OwnershipTargetType"];
     };
     /**
      * SessionDetails
@@ -1131,6 +1647,38 @@ export interface components {
        * @description Indicates whether the session token was rotated during the current request.
        */
       rotated: boolean;
+    };
+    /**
+     * TouchOwnershipTargetRequest
+     * @description Capture a request to update last-touch metadata without taking a lock.
+     */
+    TouchOwnershipTargetRequest: {
+      /**
+       * Close Run Id
+       * @description Owning close-run UUID for close-run-scoped targets.
+       */
+      close_run_id?: string | null;
+      /**
+       * Target Id
+       * Format: uuid
+       * @description Stable UUID of the target object.
+       */
+      target_id: string;
+      /** @description Canonical type of the ownership target. */
+      target_type: components["schemas"]["OwnershipTargetType"];
+    };
+    /**
+     * TransitionCloseRunRequest
+     * @description Capture an explicit request to move into the next canonical workflow phase.
+     */
+    TransitionCloseRunRequest: {
+      /**
+       * Reason
+       * @description Optional operator note for audit and timeline context.
+       */
+      reason?: string | null;
+      /** @description Immediate next workflow phase to open after the active phase is ready. */
+      target_phase: components["schemas"]["WorkflowPhase"];
     };
     /**
      * UpdateEntityMembershipRequest
@@ -1174,6 +1722,12 @@ export interface components {
       /** Error Type */
       type: string;
     };
+    /**
+     * WorkflowPhase
+     * @description Enumerate the non-negotiable five-phase accounting workflow backbone.
+     * @enum {string}
+     */
+    WorkflowPhase: "collection" | "processing" | "reconciliation" | "reporting" | "review_signoff";
   };
   responses: never;
   parameters: never;
@@ -1565,6 +2119,248 @@ export interface operations {
       };
     };
   };
+  list_close_runs: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        entity_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["CloseRunListResponse"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  create_close_run: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        entity_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["CreateCloseRunRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["CloseRunSummary"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  read_close_run: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        entity_id: string;
+        close_run_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["CloseRunSummary"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  approve_close_run: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        entity_id: string;
+        close_run_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["CloseRunDecisionRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["CloseRunSummary"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  archive_close_run: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        entity_id: string;
+        close_run_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["CloseRunDecisionRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["CloseRunSummary"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  reopen_close_run: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        entity_id: string;
+        close_run_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["CloseRunDecisionRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["CloseRunReopenResponse"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  transition_close_run: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        entity_id: string;
+        close_run_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["TransitionCloseRunRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["CloseRunTransitionResponse"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
   create_entity_membership: {
     parameters: {
       query?: never;
@@ -1623,6 +2419,146 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["EntityWorkspace"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  acquire_ownership_lock: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        entity_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["AcquireOwnershipLockRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OwnershipState"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  release_ownership_lock: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        entity_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["ReleaseOwnershipLockRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OwnershipState"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  read_ownership_state: {
+    parameters: {
+      query?: {
+        close_run_id?: string | null;
+      };
+      header?: never;
+      path: {
+        entity_id: string;
+        target_type: components["schemas"]["OwnershipTargetType"];
+        target_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OwnershipState"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  touch_ownership_target: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        entity_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["TouchOwnershipTargetRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["OwnershipState"];
         };
       };
       /** @description Validation Error */

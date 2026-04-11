@@ -8,6 +8,11 @@ export { SurfaceCard } from "./components/SurfaceCard";
 export type { SurfaceCardProps, SurfaceTone } from "./components/SurfaceCard";
 export { AuthGate } from "./components/auth/AuthGate";
 export type { AuthGateProps, AuthGateTone } from "./components/auth/AuthGate";
+export { OwnershipBadge } from "./components/ownership/OwnershipBadge";
+export type {
+  OwnershipBadgeOperator,
+  OwnershipBadgeProps,
+} from "./components/ownership/OwnershipBadge";
 export { WorkflowPhaseStrip } from "./components/WorkflowPhaseStrip";
 export type { WorkflowPhaseItem, WorkflowPhaseStripProps } from "./components/WorkflowPhaseStrip";
 export {

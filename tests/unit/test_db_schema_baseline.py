@@ -22,6 +22,7 @@ def test_baseline_metadata_registers_expected_tables() -> None:
         "entities",
         "entity_memberships",
         "integration_connections",
+        "ownership_targets",
         "review_actions",
         "sessions",
         "users",
@@ -72,3 +73,25 @@ def test_integration_connections_enforce_unique_provider_per_entity() -> None:
     }
 
     assert ("entity_id", "provider") in unique_constraints
+
+
+def test_ownership_targets_enforce_unique_target_and_lock_integrity() -> None:
+    """Ensure ownership metadata has one row per target and consistent lock timestamps."""
+
+    table = Base.metadata.tables["ownership_targets"]
+    unique_constraints = {
+        tuple(column.name for column in constraint.columns)
+        for constraint in table.constraints
+        if isinstance(constraint, UniqueConstraint)
+    }
+    constraint_sql = {
+        str(constraint.sqltext)
+        for constraint in table.constraints
+        if isinstance(constraint, CheckConstraint)
+    }
+
+    assert ("target_type", "target_id") in unique_constraints
+    assert (
+        "(locked_by_user_id IS NULL AND locked_at IS NULL) "
+        "OR (locked_by_user_id IS NOT NULL AND locked_at IS NOT NULL)"
+    ) in constraint_sql

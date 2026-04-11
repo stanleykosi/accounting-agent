@@ -245,6 +245,36 @@ class ArtifactType(CanonicalDomainEnum):
     )
 
 
+class OwnershipTargetType(CanonicalDomainEnum):
+    """Enumerate the business objects that can carry ownership and in-progress locks."""
+
+    ENTITY = (
+        "entity",
+        "Entity",
+        "Entity workspace touched by an operator.",
+    )
+    CLOSE_RUN = (
+        "close_run",
+        "Close run",
+        "Period close run touched or locked during workflow review.",
+    )
+    DOCUMENT = (
+        "document",
+        "Document",
+        "Source document under collection, extraction, or review.",
+    )
+    RECOMMENDATION = (
+        "recommendation",
+        "Recommendation",
+        "Accounting recommendation or journal proposal under review.",
+    )
+    REVIEW_TARGET = (
+        "review_target",
+        "Review target",
+        "Generic reviewable item awaiting an accountant disposition.",
+    )
+
+
 CANONICAL_WORKFLOW_PHASES: tuple[WorkflowPhase, ...] = tuple(WorkflowPhase)
 
 __all__ = [
@@ -255,6 +285,7 @@ __all__ = [
     "CloseRunPhaseStatus",
     "CloseRunStatus",
     "JobStatus",
+    "OwnershipTargetType",
     "ReviewStatus",
     "WorkflowPhase",
 ]
