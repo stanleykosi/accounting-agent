@@ -100,3 +100,6 @@ minversion = "8.0"
 addopts = "-ra"
 testpaths = ["tests"]
 asyncio_mode = "auto"
+markers = [
+  "integration: tests that exercise cross-service persistence or pipeline behavior",
+]

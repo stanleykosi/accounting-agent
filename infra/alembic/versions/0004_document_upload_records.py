@@ -80,12 +80,18 @@ def upgrade() -> None:
             _in_check("source_channel", DOCUMENT_SOURCE_CHANNELS),
             name="ck_documents_source_channel_valid",
         ),
-        sa.CheckConstraint(_in_check("status", DOCUMENT_STATUSES), name="ck_documents_status_valid"),
+        sa.CheckConstraint(
+            _in_check("status", DOCUMENT_STATUSES),
+            name="ck_documents_status_valid",
+        ),
         sa.CheckConstraint(
             "file_size_bytes >= 0",
             name="ck_documents_file_size_bytes_non_negative",
         ),
-        sa.CheckConstraint("length(sha256_hash) = 64", name="ck_documents_sha256_hash_length_valid"),
+        sa.CheckConstraint(
+            "length(sha256_hash) = 64",
+            name="ck_documents_sha256_hash_length_valid",
+        ),
         sa.CheckConstraint(
             "period_start IS NULL OR period_end IS NULL OR period_end >= period_start",
             name="ck_documents_period_range_valid",

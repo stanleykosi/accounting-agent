@@ -27,6 +27,7 @@ class TaskName(StrEnum):
 
     SYSTEM_TRACE_PROBE = "system.trace_probe"
     DOCUMENT_PARSE_AND_EXTRACT = "documents.parse_and_extract"
+    DOCUMENT_EXTRACT = "documents.extract_document"
     DOCUMENT_REPROCESS = "documents.reprocess_document"
     ACCOUNTING_RECOMMEND_CLOSE_RUN = "accounting.recommend_close_run"
     RECONCILIATION_EXECUTE_CLOSE_RUN = "reconciliation.execute_close_run"
@@ -52,6 +53,11 @@ TASK_ROUTE_DEFINITIONS: dict[TaskName, TaskRouteDefinition] = {
     TaskName.DOCUMENT_PARSE_AND_EXTRACT: TaskRouteDefinition(
         queue=TaskQueue.DOCUMENTS,
         routing_key="documents.parse_and_extract",
+        max_retries=5,
+    ),
+    TaskName.DOCUMENT_EXTRACT: TaskRouteDefinition(
+        queue=TaskQueue.DOCUMENTS,
+        routing_key="documents.extract_document",
         max_retries=5,
     ),
     TaskName.DOCUMENT_REPROCESS: TaskRouteDefinition(

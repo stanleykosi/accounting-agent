@@ -15,6 +15,7 @@ from services.db.models.entity import (
     EntityStatus,
     build_default_confidence_thresholds,
 )
+from services.db.models.extractions import DocumentExtraction, DocumentLineItem, ExtractedField
 from services.db.models.integration import (
     IntegrationConnection,
     IntegrationConnectionStatus,
@@ -30,11 +31,14 @@ __all__ = [
     "CloseRun",
     "CloseRunPhaseState",
     "Document",
+    "DocumentExtraction",
     "DocumentIssue",
+    "DocumentLineItem",
     "DocumentVersion",
     "Entity",
     "EntityMembership",
     "EntityStatus",
+    "ExtractedField",
     "IntegrationConnection",
     "IntegrationConnectionStatus",
     "IntegrationProvider",
