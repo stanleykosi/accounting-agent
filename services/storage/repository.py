@@ -258,6 +258,17 @@ class StorageRepository:
             object_key=reference.object_key,
         )
 
+    def download_source_document(self, *, storage_key: str) -> bytes:
+        """Read one original source document from the canonical document bucket."""
+
+        if not storage_key.strip():
+            raise ValueError("storage_key must be a non-empty object key.")
+
+        return self._client.download_bytes(
+            bucket_kind=StorageBucketKind.DOCUMENTS,
+            object_key=storage_key,
+        )
+
     def download_text(
         self,
         *,

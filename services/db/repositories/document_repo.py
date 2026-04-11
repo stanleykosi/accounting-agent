@@ -21,9 +21,9 @@ from services.common.enums import (
 from services.common.types import JsonObject
 from services.db.models.audit import AuditSourceSurface
 from services.db.models.close_run import CloseRun
-from services.db.models.documents import Document
+from services.db.models.documents import Document, DocumentVersion
 from services.db.models.entity import Entity, EntityMembership, EntityStatus
-from sqlalchemy import asc, select
+from sqlalchemy import asc, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -77,6 +77,33 @@ class DocumentRecord:
     status: DocumentStatus
     owner_user_id: UUID | None
     last_touched_by_user_id: UUID | None
+    created_at: datetime
+    updated_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class ParseDocumentRecord:
+    """Describe one document and its close-run context for parser worker execution."""
+
+    document: DocumentRecord
+    close_run: DocumentCloseRunRecord
+    entity: DocumentEntityRecord
+
+
+@dataclass(frozen=True, slots=True)
+class DocumentVersionRecord:
+    """Describe one persisted parser output version."""
+
+    id: UUID
+    document_id: UUID
+    version_no: int
+    normalized_storage_key: str | None
+    ocr_text_storage_key: str | None
+    parser_name: str
+    parser_version: str
+    raw_parse_payload: JsonObject
+    page_count: int | None
+    checksum: str
     created_at: datetime
     updated_at: datetime
 
@@ -180,6 +207,104 @@ class DocumentRepository:
         )
         return tuple(_map_document(document) for document in self._db_session.scalars(statement))
 
+    def get_document_for_parse(
+        self,
+        *,
+        entity_id: UUID,
+        close_run_id: UUID,
+        document_id: UUID,
+    ) -> ParseDocumentRecord | None:
+        """Return one parser-ready document when it belongs to the supplied close run."""
+
+        statement = (
+            select(Document, CloseRun, Entity)
+            .join(CloseRun, CloseRun.id == Document.close_run_id)
+            .join(Entity, Entity.id == CloseRun.entity_id)
+            .where(
+                Document.id == document_id,
+                CloseRun.id == close_run_id,
+                CloseRun.entity_id == entity_id,
+            )
+        )
+        row = self._db_session.execute(statement).one_or_none()
+        if row is None:
+            return None
+
+        document, close_run, entity = row
+        return ParseDocumentRecord(
+            document=_map_document(document),
+            close_run=DocumentCloseRunRecord(
+                id=close_run.id,
+                entity_id=close_run.entity_id,
+                period_start=close_run.period_start,
+                period_end=close_run.period_end,
+                current_version_no=close_run.current_version_no,
+            ),
+            entity=DocumentEntityRecord(
+                id=entity.id,
+                autonomy_mode=_resolve_autonomy_mode(entity.autonomy_mode),
+                status=EntityStatus(entity.status),
+            ),
+        )
+
+    def next_document_version_no(self, *, document_id: UUID) -> int:
+        """Return the next parser output version number for one document."""
+
+        statement = select(func.max(DocumentVersion.version_no)).where(
+            DocumentVersion.document_id == document_id
+        )
+        current_max = self._db_session.execute(statement).scalar_one()
+        if current_max is None:
+            return 1
+
+        return int(current_max) + 1
+
+    def update_document_status(
+        self,
+        *,
+        document_id: UUID,
+        status: DocumentStatus,
+        ocr_required: bool | None = None,
+    ) -> DocumentRecord:
+        """Update one document's parser lifecycle state and return the refreshed row."""
+
+        document = self._load_document(document_id=document_id)
+        document.status = status.value
+        if ocr_required is not None:
+            document.ocr_required = ocr_required
+        self._db_session.flush()
+        return _map_document(document)
+
+    def create_document_version(
+        self,
+        *,
+        document_id: UUID,
+        version_no: int,
+        normalized_storage_key: str | None,
+        ocr_text_storage_key: str | None,
+        parser_name: str,
+        parser_version: str,
+        raw_parse_payload: JsonObject,
+        page_count: int | None,
+        checksum: str,
+    ) -> DocumentVersionRecord:
+        """Persist parser metadata and derivative keys for one document version."""
+
+        document_version = DocumentVersion(
+            document_id=document_id,
+            version_no=version_no,
+            normalized_storage_key=normalized_storage_key,
+            ocr_text_storage_key=ocr_text_storage_key,
+            parser_name=parser_name,
+            parser_version=parser_version,
+            raw_parse_payload=dict(raw_parse_payload),
+            page_count=page_count,
+            checksum=checksum,
+        )
+        self._db_session.add(document_version)
+        self._db_session.flush()
+        return _map_document_version(document_version)
+
     def create_activity_event(
         self,
         *,
@@ -261,6 +386,25 @@ def _map_document(document: Document) -> DocumentRecord:
     )
 
 
+def _map_document_version(document_version: DocumentVersion) -> DocumentVersionRecord:
+    """Convert an ORM document-version row into an immutable repository record."""
+
+    return DocumentVersionRecord(
+        id=document_version.id,
+        document_id=document_version.document_id,
+        version_no=document_version.version_no,
+        normalized_storage_key=document_version.normalized_storage_key,
+        ocr_text_storage_key=document_version.ocr_text_storage_key,
+        parser_name=document_version.parser_name,
+        parser_version=document_version.parser_version,
+        raw_parse_payload=dict(document_version.raw_parse_payload),
+        page_count=document_version.page_count,
+        checksum=document_version.checksum,
+        created_at=document_version.created_at,
+        updated_at=document_version.updated_at,
+    )
+
+
 def _resolve_autonomy_mode(value: str) -> AutonomyMode:
     """Resolve a stored autonomy-mode value or fail fast on schema drift."""
 
@@ -307,4 +451,6 @@ __all__ = [
     "DocumentEntityRecord",
     "DocumentRecord",
     "DocumentRepository",
+    "DocumentVersionRecord",
+    "ParseDocumentRecord",
 ]

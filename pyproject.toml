@@ -20,6 +20,7 @@ dependencies = [
   "httpx>=0.28,<0.29",
   "langgraph>=1.1,<1.2",
   "minio>=7.2,<8.0",
+  "openpyxl>=3.1,<4.0",
   "opentelemetry-api>=1.38,<2.0",
   "opentelemetry-exporter-otlp>=1.38,<2.0",
   "opentelemetry-instrumentation-fastapi>=0.59b0,<1.0",
@@ -29,6 +30,7 @@ dependencies = [
   "pydantic-ai>=1.78,<2.0",
   "pydantic-settings>=2.11,<3.0",
   "psycopg[binary]>=3.2,<4.0",
+  "pypdf>=6.4,<7.0",
   "python-multipart>=0.0.24,<0.1",
   "redis>=6.4,<7.0",
   "sqlalchemy>=2.0,<3.0",
@@ -90,7 +92,7 @@ warn_return_any = true
 strict = true
 
 [[tool.mypy.overrides]]
-module = ["celery", "celery.*", "kombu"]
+module = ["celery", "kombu"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

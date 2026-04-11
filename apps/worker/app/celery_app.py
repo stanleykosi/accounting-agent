@@ -190,5 +190,6 @@ run_trace_probe = celery_app.task(
     max_retries=resolve_task_route(TaskName.SYSTEM_TRACE_PROBE).max_retries,
 )(_run_trace_probe)
 
+from apps.worker.app.tasks import parse_documents as _parse_documents  # noqa: E402,F401
 
 __all__ = ["ObservedTask", "celery_app", "run_trace_probe"]
