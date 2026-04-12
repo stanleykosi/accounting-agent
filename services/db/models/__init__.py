@@ -23,6 +23,7 @@ from services.db.models.integration import (
     IntegrationProvider,
 )
 from services.db.models.ownership import OwnershipTarget
+from services.db.models.recommendations import Recommendation
 
 __all__ = [
     "DEFAULT_ENTITY_CONFIDENCE_THRESHOLDS",
@@ -48,6 +49,7 @@ __all__ = [
     "IntegrationConnectionStatus",
     "IntegrationProvider",
     "OwnershipTarget",
+    "Recommendation",
     "ReviewAction",
     "Session",
     "User",
