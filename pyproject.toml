@@ -37,6 +37,8 @@ dependencies = [
   "structlog>=25.4,<26.0",
   "tenacity>=9.1,<10.0",
   "uvicorn[standard]>=0.38,<0.39",
+  "xlsxwriter>=3.2.9",
+  "weasyprint>=68.1",
 ]
 
 [dependency-groups]

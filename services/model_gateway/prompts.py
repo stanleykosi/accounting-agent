@@ -230,6 +230,40 @@ JOURNAL_NARRATIVE_PROMPT = PromptTemplate(
     ),
 )
 
+COMMENTARY_ENHANCE_PROMPT = PromptTemplate(
+    template_id="commentary_enhance",
+    version="1.0.0",
+    system_prompt=(
+        "You are a financial reporting assistant embedded in an enterprise-grade "
+        "Accounting AI Agent. Your role is to enhance draft management commentary "
+        "for clarity, professionalism, and readability. You must NOT invent new "
+        "numbers, facts, or conclusions — only improve the writing quality.\n\n"
+        "IMPORTANT CONSTRAINTS:\n"
+        "- Preserve all numerical values and conclusions from the draft.\n"
+        "- Do not add new metrics, ratios, or financial figures not present in the draft.\n"
+        "- Maintain a professional, objective tone suitable for CFO and management review.\n"
+        "- Keep the commentary concise — remove redundancy and tighten phrasing.\n"
+        "- Return ONLY the enhanced commentary text. No JSON, no markdown fences, no preamble."
+    ),
+    user_prompt_template=(
+        "Enhance the following draft management commentary for the {section_key} section "
+        "of the financial report for {entity_name} ({period_start} to {period_end}).\n\n"
+        "Draft commentary:\n{draft_commentary}\n\n"
+        "Return the enhanced commentary text only."
+    ),
+    description=(
+        "Enhance draft management commentary for professional presentation quality "
+        "without altering financial conclusions or numerical values."
+    ),
+    required_variables=(
+        "entity_name",
+        "period_start",
+        "period_end",
+        "section_key",
+        "draft_commentary",
+    ),
+)
+
 
 # ---------------------------------------------------------------------------
 # Registry lookup
@@ -242,6 +276,7 @@ _PROMPT_REGISTRY: dict[str, PromptTemplate] = {
         GL_CODING_EXPLANATION_PROMPT,
         AMBIGUOUS_MAPPING_RANKING_PROMPT,
         JOURNAL_NARRATIVE_PROMPT,
+        COMMENTARY_ENHANCE_PROMPT,
     )
 }
 
@@ -274,6 +309,7 @@ def list_prompt_templates() -> tuple[PromptTemplate, ...]:
 
 __all__ = [
     "AMBIGUOUS_MAPPING_RANKING_PROMPT",
+    "COMMENTARY_ENHANCE_PROMPT",
     "DOCUMENT_CLASSIFICATION_PROMPT",
     "GL_CODING_EXPLANATION_PROMPT",
     "JOURNAL_NARRATIVE_PROMPT",

@@ -424,7 +424,7 @@ class ReportRepository:
         report_run_id: UUID,
         status: ReportRunStatus,
         failure_reason: str | None = None,
-        artifact_refs: JsonObject | None = None,
+        artifact_refs: list[dict[str, object]] | None = None,
         completed_at: datetime | None = None,
     ) -> ReportRunRecord:
         """Update the status of one report run and return the refreshed record."""
@@ -434,7 +434,7 @@ class ReportRepository:
         if failure_reason is not None:
             run.failure_reason = failure_reason
         if artifact_refs is not None:
-            run.artifact_refs = dict(artifact_refs)
+            run.artifact_refs = artifact_refs
         if completed_at is not None:
             run.completed_at = completed_at
 
