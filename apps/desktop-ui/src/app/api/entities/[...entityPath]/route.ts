@@ -1,6 +1,6 @@
 /*
 Purpose: Proxy same-origin entity detail, update, and membership requests to the FastAPI backend.
-Scope: GET, POST, and PATCH forwarding for all `/api/entities/**` routes after the base collection path.
+Scope: GET, POST, PATCH, PUT, and DELETE forwarding for all `/api/entities/**` routes.
 Dependencies: The shared entity proxy helper and Next.js route handlers.
 */
 
@@ -41,6 +41,28 @@ export async function POST(request: Request, context: EntityProxyRouteContext): 
  * Behavior: Keeps patch semantics and rotated session cookies intact for browser-originated updates.
  */
 export async function PATCH(request: Request, context: EntityProxyRouteContext): Promise<Response> {
+  const { entityPath } = await context.params;
+  return proxyEntityRequest(request, entityPath);
+}
+
+/**
+ * Purpose: Proxy nested entity PUT requests such as report commentary replacements to the backend.
+ * Inputs: The incoming request and resolved entity-path segments.
+ * Outputs: The backend response with status, JSON, and cookies preserved.
+ * Behavior: Ensures PUT-only commentary endpoints reach the FastAPI backend through the same proxy.
+ */
+export async function PUT(request: Request, context: EntityProxyRouteContext): Promise<Response> {
+  const { entityPath } = await context.params;
+  return proxyEntityRequest(request, entityPath);
+}
+
+/**
+ * Purpose: Proxy nested entity DELETE requests such as resource removals to the backend.
+ * Inputs: The incoming request and resolved entity-path segments.
+ * Outputs: The backend response with status, JSON, and cookies preserved.
+ * Behavior: Keeps deletion semantics and rotated session cookies intact for browser-originated deletes.
+ */
+export async function DELETE(request: Request, context: EntityProxyRouteContext): Promise<Response> {
   const { entityPath } = await context.params;
   return proxyEntityRequest(request, entityPath);
 }

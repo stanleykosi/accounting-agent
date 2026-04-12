@@ -655,6 +655,41 @@ class AnomalyType(CanonicalDomainEnum):
     )
 
 
+class ReportSectionKey(CanonicalDomainEnum):
+    """Enumerate mandatory report section identifiers enforced by template guardrails.
+
+    These sections correspond to the required reporting outputs defined in the
+    5-phase accounting workflow backbone and must never be removed by custom
+    templates or entity-level overrides.
+    """
+
+    PROFIT_AND_LOSS = (
+        "profit_and_loss",
+        "Profit and Loss",
+        "Income statement showing revenue, costs, and net profit for the period.",
+    )
+    BALANCE_SHEET = (
+        "balance_sheet",
+        "Balance Sheet",
+        "Statement of assets, liabilities, and equity at period end.",
+    )
+    CASH_FLOW = (
+        "cash_flow",
+        "Cash Flow",
+        "Cash movement summary showing operating, investing, and financing flows.",
+    )
+    BUDGET_VARIANCE = (
+        "budget_variance",
+        "Budget Variance Analysis",
+        "Comparison of budgeted amounts to actual results with variance commentary.",
+    )
+    KPI_DASHBOARD = (
+        "kpi_dashboard",
+        "KPI Dashboard",
+        "Key performance indicators and financial metrics for management review.",
+    )
+
+
 class ReconciliationSourceType(CanonicalDomainEnum):
     """Enumerate the sources that feed into reconciliation items."""
 
@@ -708,6 +743,7 @@ __all__ = [
     "ReconciliationSourceType",
     "ReconciliationStatus",
     "ReconciliationType",
+    "ReportSectionKey",
     "ReviewStatus",
     "RiskLevel",
     "WorkflowPhase",

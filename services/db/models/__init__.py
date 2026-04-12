@@ -31,6 +31,15 @@ from services.db.models.reconciliation import (
     ReconciliationItem,
     TrialBalanceSnapshot,
 )
+from services.db.models.reporting import (
+    CommentaryStatus,
+    ReportCommentary,
+    ReportRun,
+    ReportRunStatus,
+    ReportTemplate,
+    ReportTemplateSection,
+    ReportTemplateSource,
+)
 
 __all__ = [
     "DEFAULT_ENTITY_CONFIDENCE_THRESHOLDS",
@@ -62,6 +71,12 @@ __all__ = [
     "ReconciliationAnomaly",
     "ReconciliationItem",
     "Recommendation",
+    "ReportCommentary",
+    "ReportRun",
+    "ReportRunStatus",
+    "ReportTemplate",
+    "ReportTemplateSection",
+    "ReportTemplateSource",
     "ReviewAction",
     "Session",
     "TrialBalanceSnapshot",

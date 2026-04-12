@@ -1,8 +1,23 @@
 """
 Purpose: Mark the reporting package boundary for accountant-facing output generation.
-Scope: Future Excel, PDF, commentary, evidence-pack, and artifact packaging workflows.
-Dependencies: Shared service infrastructure, storage repositories, and
-close-run/report contracts added in later implementation steps.
+Scope: Report templates, guardrails, commentary, Excel/PDF rendering,
+evidence-pack generation, and artifact packaging workflows.
+Dependencies: Shared service infrastructure, storage repositories,
+close-run/report contracts, and canonical workflow enums.
 """
 
-__all__: list[str] = []
+from services.reporting.guardrails import (
+    CANONICAL_REQUIRED_SECTIONS,
+    DEFAULT_GUARDRAIL_CONFIG,
+    GuardrailConfig,
+    build_guardrail_config_from_template,
+    validate_template_guardrails,
+)
+
+__all__ = [
+    "CANONICAL_REQUIRED_SECTIONS",
+    "DEFAULT_GUARDRAIL_CONFIG",
+    "GuardrailConfig",
+    "build_guardrail_config_from_template",
+    "validate_template_guardrails",
+]
