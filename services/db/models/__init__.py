@@ -17,6 +17,7 @@ from services.db.models.entity import (
     build_default_confidence_thresholds,
 )
 from services.db.models.extractions import DocumentExtraction, DocumentLineItem, ExtractedField
+from services.db.models.exports import Artifact, ExportRun, ExportStatus
 from services.db.models.integration import (
     IntegrationConnection,
     IntegrationConnectionStatus,
@@ -44,6 +45,7 @@ from services.db.models.reporting import (
 __all__ = [
     "DEFAULT_ENTITY_CONFIDENCE_THRESHOLDS",
     "ApiToken",
+    "Artifact",
     "AuditEvent",
     "AuditSourceSurface",
     "CloseRun",
@@ -60,6 +62,8 @@ __all__ = [
     "Entity",
     "EntityMembership",
     "EntityStatus",
+    "ExportRun",
+    "ExportStatus",
     "ExtractedField",
     "IntegrationConnection",
     "IntegrationConnectionStatus",

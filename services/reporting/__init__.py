@@ -16,6 +16,17 @@ from services.reporting.excel_builder import (
     ExcelReportResult,
     build_excel_report_pack,
 )
+from services.reporting.evidence_pack import (
+    EvidencePackInput,
+    EvidencePackResult,
+    build_evidence_pack,
+    upload_evidence_pack,
+)
+from services.reporting.exports import (
+    ExportManifestBuilder,
+    ExportManifestResult,
+    build_export_manifest,
+)
 from services.reporting.guardrails import (
     CANONICAL_REQUIRED_SECTIONS,
     DEFAULT_GUARDRAIL_CONFIG,
@@ -34,14 +45,21 @@ __all__ = [
     "CommentaryGenerationInput",
     "CommentaryGenerationResult",
     "DEFAULT_GUARDRAIL_CONFIG",
+    "EvidencePackInput",
+    "EvidencePackResult",
     "ExcelReportInput",
     "ExcelReportResult",
+    "ExportManifestBuilder",
+    "ExportManifestResult",
     "GuardrailConfig",
     "PdfReportInput",
     "PdfReportResult",
+    "build_evidence_pack",
     "build_excel_report_pack",
+    "build_export_manifest",
     "build_guardrail_config_from_template",
     "build_pdf_report_pack",
     "generate_commentary",
+    "upload_evidence_pack",
     "validate_template_guardrails",
 ]
