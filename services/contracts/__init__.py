@@ -20,6 +20,14 @@ from services.contracts.close_run_models import (
     CreateCloseRunRequest,
     TransitionCloseRunRequest,
 )
+from services.contracts.coa_models import (
+    CoaAccountCreateRequest,
+    CoaAccountSummary,
+    CoaAccountUpdateRequest,
+    CoaSetActivationRequest,
+    CoaSetSummary,
+    CoaWorkspaceResponse,
+)
 from services.contracts.domain_models import (
     DEFAULT_DOMAIN_LANGUAGE_CATALOG,
     CloseRunPhaseState,
@@ -41,6 +49,12 @@ __all__ = [
     "CloseRunReopenResponse",
     "CloseRunSummary",
     "CloseRunTransitionResponse",
+    "CoaAccountCreateRequest",
+    "CoaAccountSummary",
+    "CoaAccountUpdateRequest",
+    "CoaSetActivationRequest",
+    "CoaSetSummary",
+    "CoaWorkspaceResponse",
     "CloseRunWorkflowState",
     "CreateCloseRunRequest",
     "DomainLanguageCatalog",

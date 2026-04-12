@@ -946,6 +946,113 @@ a {
   font-weight: 700;
 }
 
+.coa-page {
+  display: grid;
+  gap: 24px;
+}
+
+.coa-hero-grid {
+  grid-template-columns: minmax(0, 1.28fr) minmax(320px, 0.95fr);
+}
+
+.coa-hero-actions {
+  margin-top: 18px;
+  display: flex;
+  gap: 12px;
+}
+
+.coa-summary-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.coa-precedence-label {
+  margin-top: 12px;
+  text-transform: lowercase;
+}
+
+.coa-grid {
+  display: grid;
+  gap: 24px;
+  grid-template-columns: minmax(320px, 0.9fr) minmax(0, 1.1fr);
+  align-items: start;
+}
+
+.coa-grid-wide {
+  grid-template-columns: minmax(320px, 0.78fr) minmax(0, 1.22fr);
+}
+
+.coa-toggle-row {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.coa-set-list {
+  display: grid;
+  gap: 12px;
+}
+
+.coa-set-card {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  align-items: center;
+  padding: 14px;
+  border: 1px solid rgba(52, 72, 63, 0.12);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.58);
+}
+
+.coa-set-card h3 {
+  margin: 0;
+  font-size: 1.02rem;
+}
+
+.coa-set-eyebrow {
+  margin-bottom: 4px;
+  font-size: 0.72rem;
+}
+
+.coa-set-actions {
+  display: grid;
+  gap: 8px;
+  justify-items: end;
+}
+
+.coa-table-container {
+  overflow: auto;
+  border: 1px solid rgba(52, 72, 63, 0.14);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.46);
+}
+
+.coa-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  min-width: 860px;
+}
+
+.coa-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  text-align: left;
+  background: rgba(247, 240, 231, 0.96);
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  padding: 12px 14px;
+  border-bottom: 1px solid rgba(52, 72, 63, 0.12);
+}
+
+.coa-table tbody td {
+  padding: 12px 14px;
+  vertical-align: middle;
+  border-bottom: 1px solid rgba(52, 72, 63, 0.08);
+}
+
 @media (max-width: 980px) {
   .auth-shell,
   .workspace-shell {
@@ -965,10 +1072,14 @@ a {
   .entity-workspace-grid,
   .document-review-grid,
   .document-review-hero-grid,
+  .coa-hero-grid,
   .entity-form-row,
   .entity-meta-grid,
   .document-metric-row,
   .extraction-field-row,
+  .coa-grid,
+  .coa-grid-wide,
+  .coa-toggle-row,
   .workspace-snapshot-grid {
     grid-template-columns: 1fr;
   }
@@ -1000,7 +1111,8 @@ a {
 
   .entity-card-footer,
   .membership-card-actions,
-  .activity-card-header {
+  .activity-card-header,
+  .coa-set-card {
     flex-direction: column;
     align-items: flex-start;
   }

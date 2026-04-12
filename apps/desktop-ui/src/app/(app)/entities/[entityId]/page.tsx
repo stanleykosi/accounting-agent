@@ -7,6 +7,7 @@ Dependencies: React hooks, Next.js route params, the entity API helpers, and sha
 "use client";
 
 import { SurfaceCard } from "@accounting-ai-agent/ui";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   use,
@@ -213,6 +214,11 @@ export default function EntityWorkspacePage({
             Keep workspace defaults, operator ownership, and the entity activity stream visible in
             one place before close runs start accumulating documents and approvals.
           </p>
+          <div className="coa-hero-actions">
+            <Link className="secondary-button" href={`/entities/${entity.id}/coa`}>
+              Open chart of accounts
+            </Link>
+          </div>
         </div>
 
         <SurfaceCard title="Workspace Snapshot" subtitle="Current defaults" tone="accent">

@@ -7,6 +7,7 @@ Dependencies: Individual model modules under services/db/models/.
 from services.db.models.audit import AuditEvent, AuditSourceSurface, ReviewAction
 from services.db.models.auth import ApiToken, Session, User, UserStatus
 from services.db.models.close_run import CloseRun, CloseRunPhaseState
+from services.db.models.coa import CoaAccount, CoaMappingRule, CoaSet, CoaSetSource
 from services.db.models.documents import Document, DocumentIssue, DocumentVersion
 from services.db.models.entity import (
     DEFAULT_ENTITY_CONFIDENCE_THRESHOLDS,
@@ -30,6 +31,10 @@ __all__ = [
     "AuditSourceSurface",
     "CloseRun",
     "CloseRunPhaseState",
+    "CoaAccount",
+    "CoaMappingRule",
+    "CoaSet",
+    "CoaSetSource",
     "Document",
     "DocumentExtraction",
     "DocumentIssue",

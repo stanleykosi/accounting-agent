@@ -17,6 +17,10 @@ export async function proxyEntityRequest(
   pathSegments: readonly string[] = [],
 ): Promise<Response> {
   const requestUrl = new URL(request.url);
+  const requestBody =
+    request.method === "GET" || request.method === "HEAD"
+      ? undefined
+      : await request.arrayBuffer();
   const backendResponse = await fetch(
     buildBackendEntitiesUrl(`/${pathSegments.join("/")}`, requestUrl.search),
     {
@@ -24,7 +28,7 @@ export async function proxyEntityRequest(
       headers: buildProxyHeaders(request),
       method: request.method,
       redirect: "manual",
-      ...(request.method === "GET" ? {} : { body: await request.text() }),
+      ...(requestBody === undefined ? {} : { body: requestBody }),
     },
   );
 
