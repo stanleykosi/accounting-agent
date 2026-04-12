@@ -22,6 +22,7 @@ from services.db.models.integration import (
     IntegrationConnectionStatus,
     IntegrationProvider,
 )
+from services.db.models.journals import JournalEntry, JournalLine
 from services.db.models.ownership import OwnershipTarget
 from services.db.models.recommendations import Recommendation
 
@@ -48,6 +49,8 @@ __all__ = [
     "IntegrationConnection",
     "IntegrationConnectionStatus",
     "IntegrationProvider",
+    "JournalEntry",
+    "JournalLine",
     "OwnershipTarget",
     "Recommendation",
     "ReviewAction",

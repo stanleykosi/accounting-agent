@@ -110,6 +110,11 @@ class Recommendation(Base, UUIDPrimaryKeyMixin, TimestampedModel):
         default=True,
         comment="Whether the recommendation was system-generated or manually created.",
     )
+    autonomy_mode: Mapped[str | None] = mapped_column(
+        String(30),
+        nullable=True,
+        comment="Autonomy mode active when the recommendation was created.",
+    )
     superseded_by_id: Mapped[UUID | None] = mapped_column(
         PG_UUID(as_uuid=True),
         ForeignKey("recommendations.id", ondelete="SET NULL"),
