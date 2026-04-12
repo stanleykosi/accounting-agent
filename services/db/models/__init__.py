@@ -25,6 +25,12 @@ from services.db.models.integration import (
 from services.db.models.journals import JournalEntry, JournalLine
 from services.db.models.ownership import OwnershipTarget
 from services.db.models.recommendations import Recommendation
+from services.db.models.reconciliation import (
+    Reconciliation,
+    ReconciliationAnomaly,
+    ReconciliationItem,
+    TrialBalanceSnapshot,
+)
 
 __all__ = [
     "DEFAULT_ENTITY_CONFIDENCE_THRESHOLDS",
@@ -52,9 +58,13 @@ __all__ = [
     "JournalEntry",
     "JournalLine",
     "OwnershipTarget",
+    "Reconciliation",
+    "ReconciliationAnomaly",
+    "ReconciliationItem",
     "Recommendation",
     "ReviewAction",
     "Session",
+    "TrialBalanceSnapshot",
     "User",
     "UserStatus",
     "build_default_confidence_thresholds",

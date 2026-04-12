@@ -4,4 +4,12 @@ Scope: Importable task package namespace used by worker bootstrap and tests.
 Dependencies: Individual task modules under apps/worker/app/tasks/.
 """
 
-__all__: list[str] = []
+from apps.worker.app.tasks.run_reconciliation import (
+    ReconciliationReceipt,
+    run_reconciliation,
+)
+
+__all__ = [
+    "ReconciliationReceipt",
+    "run_reconciliation",
+]

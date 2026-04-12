@@ -485,23 +485,229 @@ class DocumentIssueStatus(CanonicalDomainEnum):
     )
 
 
+class ReconciliationType(CanonicalDomainEnum):
+    """Enumerate the canonical reconciliation categories within a close run."""
+
+    BANK_RECONCILIATION = (
+        "bank_reconciliation",
+        "Bank reconciliation",
+        "Match bank statement lines to ledger transactions and resolve differences.",
+    )
+    AR_AGEING = (
+        "ar_ageing",
+        "AR ageing",
+        "Accounts receivable ageing analysis and collectability review.",
+    )
+    AP_AGEING = (
+        "ap_ageing",
+        "AP ageing",
+        "Accounts payable ageing analysis and obligation review.",
+    )
+    INTERCOMPANY = (
+        "intercompany",
+        "Intercompany",
+        "Intercompany balance matching and elimination across related entities.",
+    )
+    PAYROLL_CONTROL = (
+        "payroll_control",
+        "Payroll control",
+        "Payroll totals, deductions, and statutory contribution reconciliation.",
+    )
+    FIXED_ASSETS = (
+        "fixed_assets",
+        "Fixed assets",
+        "Fixed asset register verification, depreciation, and disposals review.",
+    )
+    LOAN_AMORTISATION = (
+        "loan_amortisation",
+        "Loan amortisation",
+        "Loan balance, interest accrual, and scheduled payment reconciliation.",
+    )
+    ACCRUAL_TRACKER = (
+        "accrual_tracker",
+        "Accrual tracker",
+        "Accrued income and expense tracking against expected obligations.",
+    )
+    BUDGET_VS_ACTUAL = (
+        "budget_vs_actual",
+        "Budget vs actual",
+        "Comparison of budgeted amounts to actual ledger postings with variance analysis.",
+    )
+    TRIAL_BALANCE = (
+        "trial_balance",
+        "Trial balance",
+        "Debit-equals-credit verification and anomaly detection across all accounts.",
+    )
+
+
+class MatchStatus(CanonicalDomainEnum):
+    """Enumerate the matching outcomes for reconciliation items."""
+
+    MATCHED = (
+        "matched",
+        "Matched",
+        "The item was matched exactly to its counterpart with no unresolved differences.",
+    )
+    PARTIALLY_MATCHED = (
+        "partially_matched",
+        "Partially matched",
+        "The item was matched with minor differences that may need reviewer explanation.",
+    )
+    UNMATCHED = (
+        "unmatched",
+        "Unmatched",
+        "No counterpart was found and the item remains open for investigation.",
+    )
+    EXCEPTION = (
+        "exception",
+        "Exception",
+        "A counterpart was found but significant differences require explicit resolution.",
+    )
+
+
+class DispositionAction(CanonicalDomainEnum):
+    """Enumerate the reviewer disposition choices for unresolved reconciliation items."""
+
+    RESOLVED = (
+        "resolved",
+        "Resolved",
+        "The reviewer confirmed the item is correct or no longer requires action.",
+    )
+    ADJUSTED = (
+        "adjusted",
+        "Adjusted",
+        "The reviewer made or requested an adjusting entry to correct the item.",
+    )
+    ACCEPTED_AS_IS = (
+        "accepted_as_is",
+        "Accepted as-is",
+        "The reviewer accepted the unmatched or exception state with documented reasoning.",
+    )
+    ESCALATED = (
+        "escalated",
+        "Escalated",
+        "The item was escalated to a senior reviewer or external party for resolution.",
+    )
+    PENDING_INFO = (
+        "pending_info",
+        "Pending info",
+        "The item is waiting on additional information before a final disposition.",
+    )
+
+
+class ReconciliationStatus(CanonicalDomainEnum):
+    """Enumerate the lifecycle states of a reconciliation object."""
+
+    DRAFT = (
+        "draft",
+        "Draft",
+        "The reconciliation is being assembled and matching has not completed.",
+    )
+    IN_REVIEW = (
+        "in_review",
+        "In review",
+        "Matching is complete and the reconciliation awaits reviewer disposition of exceptions.",
+    )
+    APPROVED = (
+        "approved",
+        "Approved",
+        "All required dispositions were recorded and the reconciliation is accepted.",
+    )
+    BLOCKED = (
+        "blocked",
+        "Blocked",
+        "The reconciliation cannot proceed due to unresolved blocking exceptions.",
+    )
+
+
+class AnomalyType(CanonicalDomainEnum):
+    """Enumerate trial-balance and reconciliation anomaly categories."""
+
+    DEBIT_CREDIT_IMBALANCE = (
+        "debit_credit_imbalance",
+        "Debit/credit imbalance",
+        "Total debits do not equal total credits for the close run.",
+    )
+    UNUSUAL_ACCOUNT_BALANCE = (
+        "unusual_account_balance",
+        "Unusual account balance",
+        "An account shows a balance direction unexpected for its account type.",
+    )
+    UNEXPLAINED_VARIANCE = (
+        "unexplained_variance",
+        "Unexplained variance",
+        "Month-over-month variance exceeds the configured threshold without explanation.",
+    )
+    ZERO_BALANCE_ACTIVE = (
+        "zero_balance_active",
+        "Zero balance on active account",
+        "A normally active account shows zero balance and may need investigation.",
+    )
+    ROUNDING_DIFFERENCE = (
+        "rounding_difference",
+        "Rounding difference",
+        "A small imbalance likely caused by decimal rounding in currency conversion.",
+    )
+    MISSING_ACCOUNT = (
+        "missing_account",
+        "Missing account",
+        "An expected account from the chart of accounts has no balance in the trial balance.",
+    )
+
+
+class ReconciliationSourceType(CanonicalDomainEnum):
+    """Enumerate the sources that feed into reconciliation items."""
+
+    BANK_STATEMENT_LINE = (
+        "bank_statement_line",
+        "Bank statement line",
+        "A transaction line extracted from an uploaded or imported bank statement.",
+    )
+    LEDGER_TRANSACTION = (
+        "ledger_transaction",
+        "Ledger transaction",
+        "A posted journal line or transaction from the close run ledger.",
+    )
+    RECOMMENDATION = (
+        "recommendation",
+        "Recommendation",
+        "An accounting recommendation that contributes to reconciliation balances.",
+    )
+    EXTERNAL_BALANCE = (
+        "external_balance",
+        "External balance",
+        "A balance imported from an external source such as a counter-entity or bank feed.",
+    )
+    MANUAL_ADJUSTMENT = (
+        "manual_adjustment",
+        "Manual adjustment",
+        "A reviewer-created adjustment to reconcile differences.",
+    )
+
+
+# Keep existing exports plus new reconciliation enums
 CANONICAL_WORKFLOW_PHASES: tuple[WorkflowPhase, ...] = tuple(WorkflowPhase)
 
 __all__ = [
-    "CANONICAL_WORKFLOW_PHASES",
     "AccountType",
+    "AnomalyType",
     "ArtifactType",
     "AutonomyMode",
     "CanonicalDomainEnum",
     "CloseRunPhaseStatus",
     "CloseRunStatus",
+    "DispositionAction",
     "DocumentIssueSeverity",
     "DocumentIssueStatus",
     "DocumentSourceChannel",
     "DocumentStatus",
     "DocumentType",
     "JobStatus",
+    "MatchStatus",
     "OwnershipTargetType",
+    "ReconciliationSourceType",
+    "ReconciliationStatus",
+    "ReconciliationType",
     "ReviewStatus",
     "RiskLevel",
     "WorkflowPhase",
