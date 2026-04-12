@@ -23,6 +23,7 @@ from typing import Any
 from uuid import UUID
 
 from services.common.enums import (
+    DispositionAction,
     MatchStatus,
     ReconciliationStatus,
     ReconciliationType,
@@ -307,7 +308,9 @@ class ReconciliationService:
             account_balances=account_balances,
             generated_by_user_id=generated_by_user_id,
             metadata_payload={
-                "expected_account_count": len(expected_account_codes) if expected_account_codes else 0,
+                "expected_account_count": (
+                    len(expected_account_codes) if expected_account_codes else 0
+                ),
                 "variance_threshold_pct": variance_threshold_pct,
                 "prior_balances_provided": prior_balances is not None,
             },
@@ -336,7 +339,8 @@ class ReconciliationService:
     def disposition_item(
         self,
         item_id: UUID,
-        disposition: str,  # DispositionAction value
+        close_run_id: UUID,
+        disposition: DispositionAction,
         reason: str,
         user_id: UUID,
     ) -> ReconciliationItemRecord | None:
@@ -344,13 +348,20 @@ class ReconciliationService:
 
         Args:
             item_id: The reconciliation item UUID.
-            disposition: The disposition action value.
+            close_run_id: The owning close run UUID for access scoping.
+            disposition: The disposition action enum.
             reason: Reviewer reasoning.
             user_id: User recording the disposition.
 
         Returns:
-            Updated ReconciliationItemRecord or None if not found.
+            Updated ReconciliationItemRecord or None if not found or close_run mismatch.
         """
+        item = self._repo.get_item_for_close_run(
+            item_id=item_id,
+            close_run_id=close_run_id,
+        )
+        if item is None:
+            return None
         return self._repo.disposition_item(
             item_id=item_id,
             disposition=disposition,
@@ -361,7 +372,8 @@ class ReconciliationService:
     def bulk_disposition_items(
         self,
         item_ids: list[UUID],
-        disposition: str,  # DispositionAction value
+        close_run_id: UUID,
+        disposition: DispositionAction,
         reason: str,
         user_id: UUID,
     ) -> ReconciliationDispositionOutput:
@@ -369,7 +381,8 @@ class ReconciliationService:
 
         Args:
             item_ids: List of item UUIDs to disposition.
-            disposition: The disposition action value.
+            close_run_id: The owning close run UUID for access scoping.
+            disposition: The disposition action enum.
             reason: Reviewer reasoning.
             user_id: User recording the dispositions.
 
@@ -380,6 +393,14 @@ class ReconciliationService:
         failed: list[UUID] = []
 
         for item_id in item_ids:
+            # Verify item belongs to the claimed close run
+            item = self._repo.get_item_for_close_run(
+                item_id=item_id,
+                close_run_id=close_run_id,
+            )
+            if item is None:
+                failed.append(item_id)
+                continue
             result = self._repo.disposition_item(
                 item_id=item_id,
                 disposition=disposition,
@@ -399,6 +420,7 @@ class ReconciliationService:
     def approve_reconciliation(
         self,
         reconciliation_id: UUID,
+        close_run_id: UUID,
         reason: str,
         user_id: UUID,
     ) -> ReconciliationRecord | None:
@@ -406,13 +428,17 @@ class ReconciliationService:
 
         Args:
             reconciliation_id: The reconciliation UUID.
+            close_run_id: The owning close run UUID for access scoping.
             reason: Approver reasoning.
             user_id: User approving the reconciliation.
 
         Returns:
-            Updated ReconciliationRecord or None if not found.
+            Updated ReconciliationRecord or None if not found or close_run mismatch.
         """
-        rec = self._repo.get_reconciliation(reconciliation_id)
+        rec = self._repo.get_reconciliation_for_close_run(
+            reconciliation_id=reconciliation_id,
+            close_run_id=close_run_id,
+        )
         if rec is None:
             return None
 
@@ -443,6 +469,7 @@ class ReconciliationService:
     def resolve_anomaly(
         self,
         anomaly_id: UUID,
+        close_run_id: UUID,
         resolution_note: str,
         user_id: UUID,
     ) -> ReconciliationAnomalyRecord | None:
@@ -450,12 +477,19 @@ class ReconciliationService:
 
         Args:
             anomaly_id: The anomaly UUID.
+            close_run_id: The owning close run UUID for access scoping.
             resolution_note: Reviewer reasoning.
             user_id: User resolving the anomaly.
 
         Returns:
-            Updated ReconciliationAnomalyRecord or None if not found.
+            Updated ReconciliationAnomalyRecord or None if not found or close_run mismatch.
         """
+        anomaly = self._repo.get_anomaly_for_close_run(
+            anomaly_id=anomaly_id,
+            close_run_id=close_run_id,
+        )
+        if anomaly is None:
+            return None
         return self._repo.resolve_anomaly(
             anomaly_id=anomaly_id,
             resolution_note=resolution_note,

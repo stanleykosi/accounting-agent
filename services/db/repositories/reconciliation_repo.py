@@ -178,6 +178,32 @@ class ReconciliationRepository:
             return None
         return self._to_reconciliation_record(rec)
 
+    def get_reconciliation_for_close_run(
+        self,
+        reconciliation_id: UUID,
+        close_run_id: UUID,
+    ) -> ReconciliationRecord | None:
+        """Fetch one reconciliation run scoped to a specific close run.
+
+        This prevents cross-close-run resource access when a caller supplies
+        a reconciliation_id from a different close run.
+
+        Args:
+            reconciliation_id: The reconciliation UUID.
+            close_run_id: The owning close run UUID that must match.
+
+        Returns:
+            ReconciliationRecord or None if not found or close_run mismatch.
+        """
+        stmt = select(Reconciliation).where(
+            Reconciliation.id == reconciliation_id,
+            Reconciliation.close_run_id == close_run_id,
+        )
+        rec = self._session.scalar(stmt)
+        if rec is None:
+            return None
+        return self._to_reconciliation_record(rec)
+
     def list_reconciliations(
         self,
         close_run_id: UUID,
@@ -338,6 +364,36 @@ class ReconciliationRepository:
         item.disposition_reason = reason
         item.disposition_by_user_id = user_id
         self._session.flush()
+        return self._to_item_record(item)
+
+    def get_item_for_close_run(
+        self,
+        item_id: UUID,
+        close_run_id: UUID,
+    ) -> ReconciliationItemRecord | None:
+        """Fetch one reconciliation item scoped to a specific close run.
+
+        This prevents cross-close-run resource access when a caller supplies
+        an item_id from a reconciliation belonging to a different close run.
+
+        Args:
+            item_id: The item UUID.
+            close_run_id: The owning close run UUID that must match.
+
+        Returns:
+            ReconciliationItemRecord or None if not found or close_run mismatch.
+        """
+        stmt = (
+            select(ReconciliationItem)
+            .join(Reconciliation, ReconciliationItem.reconciliation_id == Reconciliation.id)
+            .where(
+                ReconciliationItem.id == item_id,
+                Reconciliation.close_run_id == close_run_id,
+            )
+        )
+        item = self._session.scalar(stmt)
+        if item is None:
+            return None
         return self._to_item_record(item)
 
     def compute_summary_stats(
@@ -544,6 +600,32 @@ class ReconciliationRepository:
         anomaly.resolution_note = resolution_note
         anomaly.resolved_by_user_id = user_id
         self._session.flush()
+        return self._to_anomaly_record(anomaly)
+
+    def get_anomaly_for_close_run(
+        self,
+        anomaly_id: UUID,
+        close_run_id: UUID,
+    ) -> ReconciliationAnomalyRecord | None:
+        """Fetch one reconciliation anomaly scoped to a specific close run.
+
+        This prevents cross-close-run resource access when a caller supplies
+        an anomaly_id from a different close run.
+
+        Args:
+            anomaly_id: The anomaly UUID.
+            close_run_id: The owning close run UUID that must match.
+
+        Returns:
+            ReconciliationAnomalyRecord or None if not found or close_run mismatch.
+        """
+        stmt = select(ReconciliationAnomaly).where(
+            ReconciliationAnomaly.id == anomaly_id,
+            ReconciliationAnomaly.close_run_id == close_run_id,
+        )
+        anomaly = self._session.scalar(stmt)
+        if anomaly is None:
+            return None
         return self._to_anomaly_record(anomaly)
 
     # ------------------------------------------------------------------

@@ -21,6 +21,7 @@ from apps.api.app.routes.entities import router as entities_router
 from apps.api.app.routes.ownership import router as ownership_router
 from apps.api.app.routes.quickbooks import router as quickbooks_router
 from apps.api.app.routes.recommendations import router as recommendations_router
+from apps.api.app.routes.reconciliation import router as reconciliation_router
 from fastapi import APIRouter, FastAPI, Request
 from fastapi.routing import APIRoute
 from services.common.logging import configure_logging, get_logger
@@ -160,6 +161,7 @@ def create_app(*, settings: AppSettings | None = None) -> FastAPI:
     api_router.include_router(ownership_router)
     api_router.include_router(quickbooks_router)
     api_router.include_router(recommendations_router)
+    api_router.include_router(reconciliation_router)
     app.include_router(api_router)
     return app
 
