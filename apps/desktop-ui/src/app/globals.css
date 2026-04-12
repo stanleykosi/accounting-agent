@@ -951,7 +951,16 @@ a {
   gap: 24px;
 }
 
+.integrations-page {
+  display: grid;
+  gap: 24px;
+}
+
 .coa-hero-grid {
+  grid-template-columns: minmax(0, 1.28fr) minmax(320px, 0.95fr);
+}
+
+.integrations-hero-grid {
   grid-template-columns: minmax(0, 1.28fr) minmax(320px, 0.95fr);
 }
 
@@ -1053,6 +1062,11 @@ a {
   border-bottom: 1px solid rgba(52, 72, 63, 0.08);
 }
 
+.integration-action-stack {
+  display: grid;
+  gap: 14px;
+}
+
 @media (max-width: 980px) {
   .auth-shell,
   .workspace-shell {
@@ -1073,6 +1087,7 @@ a {
   .document-review-grid,
   .document-review-hero-grid,
   .coa-hero-grid,
+  .integrations-hero-grid,
   .entity-form-row,
   .entity-meta-grid,
   .document-metric-row,

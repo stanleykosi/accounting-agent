@@ -64,6 +64,68 @@ class IntegrationRepository:
 
         return _map_connection(connection)
 
+    def get_integration_credentials(
+        self,
+        *,
+        entity_id: UUID,
+        provider: IntegrationProvider,
+    ) -> JsonObject | None:
+        """Retrieve encrypted credentials for an entity/provider connection."""
+        connection = self.get_connection(entity_id=entity_id, provider=provider)
+        if connection is None:
+            return None
+        return connection.encrypted_credentials
+
+    def save_integration_credentials(
+        self,
+        *,
+        entity_id: UUID,
+        provider: IntegrationProvider,
+        credentials: JsonObject,
+        external_realm_id: str,
+    ) -> IntegrationConnectionRecord:
+        """Save or update encrypted credentials for an entity/provider connection."""
+        return self.upsert_connection(
+            entity_id=entity_id,
+            provider=provider,
+            status=IntegrationConnectionStatus.CONNECTED,
+            encrypted_credentials=credentials,
+            external_realm_id=external_realm_id,
+        )
+
+    def update_connection_status(
+        self,
+        *,
+        entity_id: UUID,
+        provider: IntegrationProvider,
+        status: IntegrationConnectionStatus,
+    ) -> IntegrationConnectionRecord:
+        """Update the connection status for an entity/provider connection."""
+        connection = self._load_connection(entity_id=entity_id, provider=provider)
+        if connection is None:
+            raise LookupError(
+                f"No connection found for entity {entity_id} and provider {provider.value}"
+            )
+
+        connection.status = status.value
+        self._db_session.flush()
+        return _map_connection(connection)
+
+    def delete_integration_credentials(
+        self,
+        *,
+        entity_id: UUID,
+        provider: IntegrationProvider,
+    ) -> bool:
+        """Delete integration credentials for an entity/provider connection."""
+        connection = self._load_connection(entity_id=entity_id, provider=provider)
+        if connection is None:
+            return False
+
+        self._db_session.delete(connection)
+        self._db_session.flush()
+        return True
+
     def upsert_connection(
         self,
         *,

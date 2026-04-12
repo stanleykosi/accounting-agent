@@ -19,6 +19,7 @@ from apps.api.app.routes.coa import router as coa_router
 from apps.api.app.routes.documents import router as documents_router
 from apps.api.app.routes.entities import router as entities_router
 from apps.api.app.routes.ownership import router as ownership_router
+from apps.api.app.routes.quickbooks import router as quickbooks_router
 from fastapi import APIRouter, FastAPI, Request
 from fastapi.routing import APIRoute
 from services.common.logging import configure_logging, get_logger
@@ -156,6 +157,7 @@ def create_app(*, settings: AppSettings | None = None) -> FastAPI:
     api_router.include_router(coa_router)
     api_router.include_router(documents_router)
     api_router.include_router(ownership_router)
+    api_router.include_router(quickbooks_router)
     app.include_router(api_router)
     return app
 
