@@ -1,361 +1,245 @@
 """
-Purpose: Implement risky-action restrictions and policy checks for accounting operations.
-Scope: Policy evaluation for preventing risky actions based on amounts, accounts, and contexts.
-Dependencies: Preprocessing module, shared enums, settings.
+Purpose: Enforce deterministic policy gates for risky accounting actions.
+Scope: Amount thresholds, restricted accounts, dual-approval checks, accrual/prepayment/
+depreciation limits, and auto-application eligibility.
+Dependencies: Python dataclasses, Decimal, canonical account/risk enums, and period helpers.
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
+from datetime import date, timedelta
 from decimal import Decimal
-from typing import Any
+from enum import StrEnum
 
-from services.accounting.preprocess import AccountingPreprocessor, get_preprocessor
-from services.common.enums import RiskLevel, AccountType
-from services.common.settings import AppSettings, get_settings
+from services.common.enums import AccountType, RiskLevel
 
 
-class PolicyError(Exception):
-    """Raised when policy validation fails."""
+class PolicyError(ValueError):
+    """Represent an invalid policy input or configuration."""
+
+
+class ApprovalLevel(StrEnum):
+    """Enumerate deterministic approval levels returned by policy checks."""
+
+    STANDARD = "standard"
+    SUPERVISOR = "supervisor"
+    SENIOR_MANAGEMENT = "senior_management"
+
+
+@dataclass(frozen=True, slots=True)
+class RiskPolicySettings:
+    """Describe policy thresholds and restricted account settings."""
+
+    low_threshold: Decimal = Decimal("1000.00")
+    medium_threshold: Decimal = Decimal("10000.00")
+    high_threshold: Decimal = Decimal("100000.00")
+    max_auto_amount: Decimal = Decimal("50000.00")
+    restricted_account_codes: frozenset[str] = frozenset({"1000", "1010", "CASH", "BANK"})
+    dual_approval_account_types: frozenset[AccountType] = frozenset(
+        {AccountType.EQUITY, AccountType.LIABILITY}
+    )
+    risky_document_types: frozenset[str] = frozenset({"contract", "journal", "loan"})
+    max_accrual_future_days: int = 60
+    max_accrual_past_days: int = 365
+    depreciation_life_bounds_by_asset_type: dict[str, tuple[int, int]] = field(
+        default_factory=lambda: {
+            "building": (240, 600),
+            "computer": (12, 60),
+            "furniture": (60, 240),
+            "office_equipment": (36, 120),
+            "vehicle": (24, 84),
+        }
+    )
+
+    def __post_init__(self) -> None:
+        """Validate threshold ordering and period guard values."""
+
+        if not (self.low_threshold <= self.medium_threshold <= self.high_threshold):
+            raise PolicyError("Risk thresholds must be ordered low <= medium <= high.")
+        if self.max_auto_amount < 0:
+            raise PolicyError("Maximum automatic amount cannot be negative.")
+        if self.max_accrual_future_days < 0 or self.max_accrual_past_days < 0:
+            raise PolicyError("Accrual day limits cannot be negative.")
+
+
+@dataclass(frozen=True, slots=True)
+class PolicyDecision:
+    """Describe a deterministic policy decision for one accounting action."""
+
+    risk_level: RiskLevel
+    approval_level: ApprovalLevel
+    requires_manual_review: bool
+    can_apply_automatically: bool
+    reasons: tuple[str, ...]
 
 
 class AccountingPolicyEngine:
-    """Evaluate accounting policies to restrict risky actions."""
+    """Evaluate risky-action restrictions before recommendations can update working state."""
 
-    def __init__(self, settings: AppSettings | None = None):
-        self.settings = settings or get_settings()
-        self.preprocessor = get_preprocessor()
+    def __init__(self, *, settings: RiskPolicySettings | None = None) -> None:
+        """Capture immutable policy settings for deterministic evaluation."""
 
-        # Load policy settings from configuration
-        self._risk_thresholds = {
-            RiskLevel.LOW: Decimal(str(self.settings.get("policy_low_risk_threshold", "1000"))),
-            RiskLevel.MEDIUM: Decimal(
-                str(self.settings.get("policy_medium_risk_threshold", "10000"))
-            ),
-            RiskLevel.HIGH: Decimal(str(self.settings.get("policy_high_risk_threshold", "100000"))),
-        }
+        self._settings = settings or RiskPolicySettings()
 
-        # Restricted accounts that require additional approval
-        self._restricted_accounts = set(
-            acc.strip().upper()
-            for acc in self.settings.get(
-                "policy_restricted_accounts", "CASH,BANK,CAPITAL,DRAWINGS"
-            ).split(",")
-            if acc.strip()
-        )
-
-        # Require dual approval for these account types
-        self._dual_approval_account_types = set(
-            acc_type.strip().upper()
-            for acc_type in self.settings.get(
-                "policy_dual_approval_account_types", "EQUITY,LIABILITY"
-            ).split(",")
-            if acc_type.strip()
-        )
-
-        # Maximum transaction amounts by risk level (above these require manual review)
-        self._max_amounts = {
-            RiskLevel.LOW: Decimal(str(self.settings.get("policy_max_low_risk_amount", "50000"))),
-            RiskLevel.MEDIUM: Decimal(
-                str(self.settings.get("policy_max_medium_risk_amount", "200000"))
-            ),
-            RiskLevel.HIGH: Decimal(
-                str(self.settings.get("policy_max_high_risk_amount", "1000000"))
-            ),
-        }
-
-    def check_transaction_risk(
+    def evaluate_action(
         self,
+        *,
         amount: Decimal,
-        account: str,
-        account_type: AccountType | None = None,
-        document_type: str | None = None,
-    ) -> dict[str, Any]:
-        """
-        Check if a transaction violates any policies and determine required actions.
+        account_code: str,
+        account_type: AccountType,
+        document_type: str | None,
+        requested_auto_apply: bool,
+    ) -> PolicyDecision:
+        """Evaluate one proposed accounting action against risk and auto-apply policy gates."""
 
-        Args:
-            amount: Transaction amount
-            account: GL account code
-            account_type: Type of account (optional)
-            document_type: Type of document (optional)
+        normalized_account = account_code.strip().upper()
+        if not normalized_account:
+            raise PolicyError("Account code is required for policy evaluation.")
+        if amount < 0:
+            raise PolicyError("Policy evaluation amount cannot be negative.")
 
-        Returns:
-            Dictionary with policy evaluation results
-        """
-        # Normalize inputs
-        normalized_account = account.upper().strip() if account else ""
+        reasons: list[str] = []
+        risk_level = self.assess_risk_level(
+            amount=amount,
+            account_code=normalized_account,
+            account_type=account_type,
+            document_type=document_type,
+        )
+        if normalized_account in self._settings.restricted_account_codes:
+            reasons.append(f"Account {normalized_account} is restricted.")
+        if account_type in self._settings.dual_approval_account_types:
+            reasons.append(f"{account_type.label} accounts require dual approval.")
+        if amount > self._settings.max_auto_amount:
+            reasons.append(f"Amount {amount} exceeds the automatic-apply limit.")
+        if risk_level is RiskLevel.HIGH:
+            reasons.append("High-risk accounting actions require manual review.")
 
-        # Determine risk level based on amount and account
-        risk_level = self._assess_risk_level(
-            amount, normalized_account, account_type, document_type
+        requires_manual_review = bool(reasons) or risk_level is not RiskLevel.LOW
+        can_apply_automatically = requested_auto_apply and not requires_manual_review
+        return PolicyDecision(
+            risk_level=risk_level,
+            approval_level=_approval_level_for(
+                risk_level=risk_level,
+                requires_manual_review=requires_manual_review,
+            ),
+            requires_manual_review=requires_manual_review,
+            can_apply_automatically=can_apply_automatically,
+            reasons=tuple(reasons) or ("No policy restrictions were triggered.",),
         )
 
-        # Check if account is restricted
-        is_restricted = normalized_account in self._restricted_accounts
-
-        # Check if dual approval is required
-        requires_dual_approval = self._requires_dual_approval(account_type, normalized_account)
-
-        # Check amount limits
-        max_allowed = self._max_amounts.get(risk_level, Decimal("0"))
-        exceeds_limit = amount > max_allowed if max_allowed > 0 else False
-
-        # Determine if manual review is required
-        requires_manual_review = (
-            is_restricted or requires_dual_approval or exceeds_limit or risk_level == RiskLevel.HIGH
-        )
-
-        # Determine required approval level
-        approval_level = self._determine_approval_level(
-            risk_level, is_restricted, requires_dual_approval, exceeds_limit
-        )
-
-        # Generate policy explanation
-        explanation = self._generate_policy_explanation(
-            amount,
-            normalized_account,
-            risk_level,
-            is_restricted,
-            requires_dual_approval,
-            exceeds_limit,
-        )
-
-        return {
-            "amount": amount,
-            "account": normalized_account,
-            "risk_level": risk_level.value,
-            "is_restricted": is_restricted,
-            "requires_dual_approval": requires_dual_approval,
-            "exceeds_limit": exceeds_limit,
-            "max_allowed": max_allowed,
-            "requires_manual_review": requires_manual_review,
-            "approval_level": approval_level,
-            "explanation": explanation,
-            "can_proceed_automatically": not requires_manual_review
-            and risk_level != RiskLevel.HIGH,
-        }
-
-    def _assess_risk_level(
+    def assess_risk_level(
         self,
+        *,
         amount: Decimal,
-        account: str,
-        account_type: AccountType | None = None,
-        document_type: str | None = None,
+        account_code: str,
+        account_type: AccountType,
+        document_type: str | None,
     ) -> RiskLevel:
-        """Assess risk level based on amount, account, and context."""
-        # Start with amount-based risk
-        if amount >= self._risk_thresholds[RiskLevel.HIGH]:
+        """Assess deterministic risk from amount, account family, and document context."""
+
+        if amount >= self._settings.high_threshold:
             risk_level = RiskLevel.HIGH
-        elif amount >= self._risk_thresholds[RiskLevel.MEDIUM]:
+        elif amount >= self._settings.medium_threshold:
             risk_level = RiskLevel.MEDIUM
         else:
             risk_level = RiskLevel.LOW
 
-        # Increase risk for certain account types
-        high_risk_account_types = {AccountType.ASSET, AccountType.LIABILITY}
-        if (
-            account_type in high_risk_account_types
-            and amount >= self._risk_thresholds[RiskLevel.MEDIUM]
-        ):
-            risk_level = RiskLevel.HIGH
-        elif (
-            account_type in high_risk_account_types
-            and amount >= self._risk_thresholds[RiskLevel.LOW]
-        ):
-            if risk_level == RiskLevel.LOW:
-                risk_level = RiskLevel.MEDIUM
+        if account_type in {AccountType.ASSET, AccountType.LIABILITY, AccountType.EQUITY}:
+            risk_level = _raise_at_least(risk_level=risk_level, floor=RiskLevel.MEDIUM)
 
-        # Increase risk for transaction types that are inherently risky
-        high_risk_doc_types = {"JOURNAL_ENTRY", "CONTRACT", "LOAN"}
-        if document_type and document_type.upper() in high_risk_doc_types:
-            if amount >= self._risk_thresholds[RiskLevel.LOW]:
-                if risk_level == RiskLevel.LOW:
-                    risk_level = RiskLevel.MEDIUM
-                elif risk_level == RiskLevel.MEDIUM:
-                    risk_level = RiskLevel.HIGH
+        if document_type is not None and document_type.strip().lower() in (
+            self._settings.risky_document_types
+        ):
+            risk_level = _raise_at_least(risk_level=risk_level, floor=RiskLevel.MEDIUM)
+
+        if account_code.strip().upper() in self._settings.restricted_account_codes:
+            risk_level = _raise_at_least(risk_level=risk_level, floor=RiskLevel.MEDIUM)
 
         return risk_level
 
-    def _requires_dual_approval(
-        self,
-        account_type: AccountType | None = None,
-        account: str = "",
-    ) -> bool:
-        """Check if transaction requires dual approval based on account."""
-        # Check by account type
-        if account_type:
-            if account_type.value.upper() in self._dual_approval_account_types:
-                return True
-
-        # Check by specific account patterns
-        dual_approval_patterns = self.settings.get("policy_dual_approval_patterns", "").split(",")
-        for pattern in dual_approval_patterns:
-            pattern = pattern.strip().upper()
-            if pattern and pattern in account:
-                return True
-
-        return False
-
-    def _determine_approval_level(
-        self,
-        risk_level: RiskLevel,
-        is_restricted: bool,
-        requires_dual_approval: bool,
-        exceeds_limit: bool,
-    ) -> str:
-        """Determine the required approval level for a transaction."""
-        if is_restricted or exceeds_limit or risk_level == RiskLevel.HIGH:
-            return "senior_management"
-        elif requires_dual_approval or risk_level == RiskLevel.MEDIUM:
-            return "supervisor"
-        else:
-            return "standard"
-
-    def _generate_policy_explanation(
-        self,
-        amount: Decimal,
-        account: str,
-        risk_level: RiskLevel,
-        is_restricted: bool,
-        requires_dual_approval: bool,
-        exceeds_limit: bool,
-    ) -> str:
-        """Generate human-readable explanation of policy evaluation."""
-        parts = []
-
-        parts.append(f"Amount: {amount}")
-        parts.append(f"Account: {account}")
-        parts.append(f"Risk level: {risk_level.value}")
-
-        if is_restricted:
-            parts.append("Account is restricted (requires special approval)")
-
-        if requires_dual_approval:
-            parts.append("Transaction requires dual approval")
-
-        if exceeds_limit:
-            max_allowed = self._max_amounts.get(risk_level, Decimal("0"))
-            parts.append(f"Amount exceeds {risk_level.value} risk limit of {max_allowed}")
-
-        if risk_level == RiskLevel.HIGH:
-            parts.append("High risk transaction - requires manual review")
-        elif risk_level == RiskLevel.MEDIUM and not requires_dual_approval and not is_restricted:
-            parts.append("Medium risk transaction - standard approval required")
-        else:
-            parts.append("Low risk transaction - can proceed with standard approval")
-
-        return "; ".join(parts)
-
     def validate_accrual_period(
         self,
-        start_date: date,
-        end_date: date,
+        *,
+        service_start: date,
+        service_end: date,
         accounting_period_start: date,
         accounting_period_end: date,
     ) -> tuple[bool, str]:
-        """
-        Validate that an accrual period is reasonable and within policy.
+        """Validate whether an accrual service period fits policy limits."""
 
-        Args:
-            start_date: Accrual start date
-            end_date: Accrual end date
-            accounting_period_start: Accounting period start
-            accounting_period_end: Accounting period end
-
-        Returns:
-            Tuple of (is_valid, explanation)
-        """
-        # Check that dates are in order
-        if start_date > end_date:
-            return False, "Accrual start date cannot be after end date"
-
-        # Check that accrual doesn't extend too far beyond accounting period
-        # Allow accruals to span at most one future period
-        from datetime import timedelta
-
-        max_future_extension = timedelta(days=60)  # Approximately 2 months
-
-        if end_date > accounting_period_end + max_future_extension:
-            return (
-                False,
-                f"Accrual extends too far beyond accounting period (max {max_future_extension.days} days allowed)",
-            )
-
-        # Check that accrual doesn't start too far in the past
-        max_past_extension = timedelta(days=365)  # 1 year
-        if start_date < accounting_period_start - max_past_extension:
-            return (
-                False,
-                f"Accrual starts too far before accounting period (max {max_past_extension.days} days allowed)",
-            )
-
-        return True, "Accrual period is within policy limits"
+        if service_end < service_start:
+            return False, "Accrual service end cannot be before service start."
+        max_future_date = accounting_period_end + timedelta(
+            days=self._settings.max_accrual_future_days
+        )
+        if service_end > max_future_date:
+            return False, "Accrual service period extends too far beyond the accounting period."
+        min_past_date = accounting_period_start - timedelta(
+            days=self._settings.max_accrual_past_days
+        )
+        if service_start < min_past_date:
+            return False, "Accrual service period starts too far before the accounting period."
+        return True, "Accrual service period is within policy limits."
 
     def validate_depreciation_life(
         self,
-        asset_life_months: int,
+        *,
+        useful_life_months: int,
         asset_type: str | None = None,
     ) -> tuple[bool, str]:
-        """
-        Validate that depreciation life is reasonable according to policy.
+        """Validate useful life assumptions for depreciation workflows."""
 
-        Args:
-            asset_life_months: Asset useful life in months
-            asset_type: Type of asset (optional)
-
-        Returns:
-            Tuple of (is_valid, explanation)
-        """
-        # Reasonable bounds for asset life
-        min_life_months = 6  # 6 months minimum
-        max_life_months = 600  # 50 years maximum
-
-        if asset_life_months < min_life_months:
-            return (
-                False,
-                f"Asset life too short: {asset_life_months} months (minimum {min_life_months})",
-            )
-
-        if asset_life_months > max_life_months:
-            return (
-                False,
-                f"Asset life too long: {asset_life_months} months (maximum {max_life_months})",
-            )
-
-        # Check for common asset types
-        if asset_type:
-            asset_limits = {
-                "COMPUTER": (12, 60),  # 1-5 years
-                "VEHICLE": (24, 84),  # 2-7 years
-                "OFFICE_EQUIPMENT": (36, 120),  # 3-10 years
-                "FURNITURE": (60, 240),  # 5-20 years
-                "BUILDING": (240, 600),  # 20-50 years
-            }
-
-            asset_type_upper = asset_type.upper()
-            if asset_type_upper in asset_limits:
-                min_life, max_life = asset_limits[asset_type_upper]
-                if asset_life_months < min_life:
-                    return (
-                        False,
-                        f"{asset_type} life too short: {asset_life_months} months (minimum {min_life} for this asset type)",
-                    )
-                if asset_life_months > max_life:
-                    return (
-                        False,
-                        f"{asset_type} life too long: {asset_life_months} months (maximum {max_life} for this asset type)",
-                    )
-
-        return True, f"Asset life of {asset_life_months} months is within policy limits"
+        if useful_life_months <= 0:
+            return False, "Useful life must be a positive number of months."
+        normalized_asset_type = (asset_type or "").strip().lower().replace(" ", "_")
+        minimum, maximum = self._settings.depreciation_life_bounds_by_asset_type.get(
+            normalized_asset_type,
+            (6, 600),
+        )
+        if useful_life_months < minimum:
+            return False, f"Useful life is below the {minimum}-month policy minimum."
+        if useful_life_months > maximum:
+            return False, f"Useful life is above the {maximum}-month policy maximum."
+        return True, "Useful life is within depreciation policy limits."
 
 
 def get_policy_engine() -> AccountingPolicyEngine:
-    """Factory function to create an AccountingPolicyEngine instance."""
+    """Create the deterministic accounting policy engine."""
+
     return AccountingPolicyEngine()
 
 
+def _approval_level_for(
+    *,
+    risk_level: RiskLevel,
+    requires_manual_review: bool,
+) -> ApprovalLevel:
+    """Resolve the required approval level from risk and review requirements."""
+
+    if risk_level is RiskLevel.HIGH:
+        return ApprovalLevel.SENIOR_MANAGEMENT
+    if requires_manual_review or risk_level is RiskLevel.MEDIUM:
+        return ApprovalLevel.SUPERVISOR
+    return ApprovalLevel.STANDARD
+
+
+def _raise_at_least(*, risk_level: RiskLevel, floor: RiskLevel) -> RiskLevel:
+    """Raise a risk level to a minimum floor without lowering already-higher risk."""
+
+    order = {
+        RiskLevel.LOW: 1,
+        RiskLevel.MEDIUM: 2,
+        RiskLevel.HIGH: 3,
+    }
+    return floor if order[risk_level] < order[floor] else risk_level
+
+
 __all__ = [
-    "PolicyError",
     "AccountingPolicyEngine",
+    "ApprovalLevel",
+    "PolicyDecision",
+    "PolicyError",
+    "RiskPolicySettings",
     "get_policy_engine",
 ]

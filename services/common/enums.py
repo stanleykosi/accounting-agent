@@ -245,6 +245,71 @@ class ArtifactType(CanonicalDomainEnum):
     )
 
 
+class AccountType(CanonicalDomainEnum):
+    """Enumerate canonical GL account families used by deterministic accounting rules."""
+
+    ASSET = (
+        "asset",
+        "Asset",
+        "Resource controlled by the entity, including bank, receivable, inventory, and PPE.",
+    )
+    LIABILITY = (
+        "liability",
+        "Liability",
+        "Present obligation such as payable, accrual, loan, tax, or payroll control accounts.",
+    )
+    EQUITY = (
+        "equity",
+        "Equity",
+        "Owner residual interest, share capital, retained earnings, and reserves.",
+    )
+    REVENUE = (
+        "revenue",
+        "Revenue",
+        "Income from ordinary trading or service activities.",
+    )
+    COST_OF_SALES = (
+        "cost_of_sales",
+        "Cost of sales",
+        "Direct costs matched to revenue generation.",
+    )
+    EXPENSE = (
+        "expense",
+        "Expense",
+        "Operating or administrative expense accounts.",
+    )
+    OTHER_INCOME = (
+        "other_income",
+        "Other income",
+        "Income outside ordinary trading or service activities.",
+    )
+    OTHER_EXPENSE = (
+        "other_expense",
+        "Other expense",
+        "Expense outside ordinary operating activities.",
+    )
+
+
+class RiskLevel(CanonicalDomainEnum):
+    """Enumerate deterministic risk bands used by policy gates and review routing."""
+
+    LOW = (
+        "low",
+        "Low",
+        "The accounting action is low-risk and may follow standard approval routing.",
+    )
+    MEDIUM = (
+        "medium",
+        "Medium",
+        "The accounting action needs reviewer attention before export or direct application.",
+    )
+    HIGH = (
+        "high",
+        "High",
+        "The accounting action must be blocked from automatic application and explicitly reviewed.",
+    )
+
+
 class OwnershipTargetType(CanonicalDomainEnum):
     """Enumerate the business objects that can carry ownership and in-progress locks."""
 
@@ -424,6 +489,7 @@ CANONICAL_WORKFLOW_PHASES: tuple[WorkflowPhase, ...] = tuple(WorkflowPhase)
 
 __all__ = [
     "CANONICAL_WORKFLOW_PHASES",
+    "AccountType",
     "ArtifactType",
     "AutonomyMode",
     "CanonicalDomainEnum",
@@ -437,5 +503,6 @@ __all__ = [
     "JobStatus",
     "OwnershipTargetType",
     "ReviewStatus",
+    "RiskLevel",
     "WorkflowPhase",
 ]
