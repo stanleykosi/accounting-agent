@@ -35,6 +35,7 @@ from services.auth.service import (
 )
 from services.common.enums import (
     MatchStatus,
+    ReconciliationSourceType,
     ReconciliationStatus,
 )
 from services.common.settings import AppSettings, get_settings
@@ -58,7 +59,12 @@ from services.contracts.reconciliation_models import (
 )
 from services.db.repositories.close_run_repo import CloseRunRepository
 from services.db.repositories.entity_repo import EntityUserRecord
-from services.db.repositories.reconciliation_repo import ReconciliationRepository
+from services.db.repositories.reconciliation_repo import (
+    ReconciliationAnomalyRecord,
+    ReconciliationItemRecord,
+    ReconciliationRecord,
+    ReconciliationRepository,
+)
 from services.reconciliation.service import ReconciliationService
 
 RECONCILIATION_TAG = "reconciliation"
@@ -447,7 +453,7 @@ def bulk_disposition_items(
     auth_service: AuthServiceDependency,
     reconciliation_service: ReconciliationServiceDependency,
     db_session: DbSessionDep,
-) -> dict:
+) -> dict[str, object]:
     """Record bulk dispositions for multiple reconciliation items."""
     session_result = _require_authenticated_browser_session(
         request=request,
@@ -546,7 +552,7 @@ def approve_reconciliation(
 # ---------------------------------------------------------------------------
 
 
-def _build_reconciliation_summary(record) -> ReconciliationSummary:
+def _build_reconciliation_summary(record: ReconciliationRecord) -> ReconciliationSummary:
     """Build an API-ready reconciliation summary from a service record."""
     return ReconciliationSummary(
         id=str(record.id),
@@ -561,22 +567,26 @@ def _build_reconciliation_summary(record) -> ReconciliationSummary:
         created_by_user_id=(
             str(record.created_by_user_id) if record.created_by_user_id else None
         ),
-        item_count=record.summary.get("total_items", 0),
-        matched_count=record.summary.get("matched_count", 0),
-        exception_count=record.summary.get("exception_count", 0),
+        item_count=_summary_int(record.summary.get("total_items")),
+        matched_count=_summary_int(record.summary.get("matched_count")),
+        exception_count=_summary_int(record.summary.get("exception_count")),
         created_at=record.created_at.isoformat(),
         updated_at=record.updated_at.isoformat(),
     )
 
 
-def _build_item_summary(record) -> ReconciliationItemSummary:
+def _build_item_summary(record: ReconciliationItemRecord) -> ReconciliationItemSummary:
     """Build an API-ready item summary from a service record."""
     matched_to = [
         ReconciliationItemMatch(
-            source_type=cp.get("source_type", "ledger_transaction"),
-            source_ref=cp.get("source_ref", ""),
-            amount=cp.get("amount"),
-            confidence=cp.get("confidence"),
+            source_type=_source_type(cp.get("source_type")),
+            source_ref=str(cp.get("source_ref", "")),
+            amount=str(cp["amount"]) if cp.get("amount") is not None else None,
+            confidence=(
+                float(cp["confidence"])
+                if isinstance(cp.get("confidence"), (int, float, str))
+                else None
+            ),
         )
         for cp in (record.matched_to or [])
     ]
@@ -603,7 +613,7 @@ def _build_item_summary(record) -> ReconciliationItemSummary:
     )
 
 
-def _build_anomaly_summary(record) -> ReconciliationAnomalySummary:
+def _build_anomaly_summary(record: ReconciliationAnomalyRecord) -> ReconciliationAnomalySummary:
     """Build an API-ready anomaly summary from a service record."""
     return ReconciliationAnomalySummary(
         id=str(record.id),
@@ -619,3 +629,28 @@ def _build_anomaly_summary(record) -> ReconciliationAnomalySummary:
         ),
         created_at=record.created_at.isoformat(),
     )
+
+
+def _summary_int(value: object) -> int:
+    """Coerce optional JSON summary counts into integers for API contracts."""
+
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    if isinstance(value, str):
+        return int(value)
+    return 0
+
+
+def _source_type(value: object) -> ReconciliationSourceType:
+    """Resolve a reconciliation match source type from JSON metadata."""
+
+    if isinstance(value, ReconciliationSourceType):
+        return value
+    if isinstance(value, str):
+        try:
+            return ReconciliationSourceType(value)
+        except ValueError:
+            return ReconciliationSourceType.LEDGER_TRANSACTION
+    return ReconciliationSourceType.LEDGER_TRANSACTION

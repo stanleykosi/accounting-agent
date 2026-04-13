@@ -22,13 +22,10 @@ from services.db.session import get_db_session
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
-    # At type-check time, routes see the real SQLAlchemy Session type.
-    _SessionType: type[Session] = Session  # noqa: WPS428
+    type DatabaseSessionDependency = Annotated[Session, Depends(get_db_session)]
 else:
     # At runtime, FastAPI sees ``object`` and skips schema generation for the
     # dependency, avoiding unresolved forward-reference errors from SQLAlchemy.
-    _SessionType = object
-
-DatabaseSessionDependency = Annotated[_SessionType, Depends(get_db_session)]
+    DatabaseSessionDependency = Annotated[object, Depends(get_db_session)]
 
 __all__ = ["DatabaseSessionDependency"]

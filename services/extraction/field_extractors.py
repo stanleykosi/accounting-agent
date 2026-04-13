@@ -11,7 +11,7 @@ from __future__ import annotations
 from datetime import date as date_type
 from datetime import datetime
 from decimal import Decimal
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from services.extraction.evidence_refs import normalize_parser_output_to_evidence_ref
 from services.extraction.schemas import (
@@ -20,10 +20,12 @@ from services.extraction.schemas import (
     ExtractedField,
 )
 
+type FieldType = Literal["string", "integer", "decimal", "date", "boolean"]
+
 
 def parse_field_value(
     raw_value: Any,
-    field_type: Literal["string", "integer", "decimal", "date", "boolean"],
+    field_type: FieldType,
 ) -> Any:
     """Cast a raw parser value to its target type with safe fallbacks.
 
@@ -150,7 +152,7 @@ def extract_invoice_fields(
         ("notes", "string"),
     ):
         raw_value = raw_fields.get(field_name)
-        field_type = field_config if isinstance(field_config, str) else field_config[0]
+        field_type = cast(FieldType, field_config)
         parser_confidence = raw_fields.get(f"{field_name}_confidence")
 
         parsed_value = parse_field_value(raw_value, field_type)
@@ -202,6 +204,7 @@ def extract_bank_statement_fields(
         ("total_debits", "decimal"),
         ("currency", "string"),
     ):
+        field_type = cast(FieldType, field_type)
         raw_value = raw_fields.get(field_name)
         parser_confidence = raw_fields.get(f"{field_name}_confidence")
 
@@ -258,6 +261,7 @@ def extract_payslip_fields(
         ("paye_tax", "decimal"),
         ("pension_contribution", "decimal"),
     ):
+        field_type = cast(FieldType, field_type)
         raw_value = raw_fields.get(field_name)
         parser_confidence = raw_fields.get(f"{field_name}_confidence")
 
@@ -310,6 +314,7 @@ def extract_receipt_fields(
         ("total", "decimal"),
         ("payment_method", "string"),
     ):
+        field_type = cast(FieldType, field_type)
         raw_value = raw_fields.get(field_name)
         parser_confidence = raw_fields.get(f"{field_name}_confidence")
 
@@ -364,6 +369,7 @@ def extract_contract_fields(
         ("renewal_terms", "string"),
         ("termination_terms", "string"),
     ):
+        field_type = cast(FieldType, field_type)
         raw_value = raw_fields.get(field_name)
         parser_confidence = raw_fields.get(f"{field_name}_confidence")
 
@@ -414,7 +420,7 @@ def extract_fields_by_document_type(
     if extractor is None:
         return []
 
-    return extractor(parser_output)
+    return list(extractor(parser_output))
 
 
 def compute_confidence_summary(

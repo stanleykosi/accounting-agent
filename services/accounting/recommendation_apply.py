@@ -19,7 +19,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 from uuid import UUID
 
 from services.accounting.journal_drafts import (
@@ -271,8 +271,8 @@ class RecommendationApplyService:
             risk_level=risk_level,
         )
 
-        before_payload = {"status": initial_status.value}
-        after_payload = {
+        before_payload: JsonObject = {"status": initial_status.value}
+        after_payload: JsonObject = {
             "status": routing.target_status.value,
             "autonomy_mode": autonomy_mode.value,
         }
@@ -945,7 +945,7 @@ class RecommendationApplyService:
 def build_before_payload(obj: Any) -> JsonObject:
     """Build a JSON-safe before/after payload from an ORM record or Pydantic model."""
     if hasattr(obj, "model_dump"):
-        return obj.model_dump(mode="json")
+        return cast(JsonObject, obj.model_dump(mode="json"))
     payload: dict[str, Any] = {}
     for attr in ("id", "status", "journal_number", "description", "total_debits", "total_credits"):
         if hasattr(obj, attr):

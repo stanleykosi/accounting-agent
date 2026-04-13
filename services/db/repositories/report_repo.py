@@ -9,10 +9,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Any, cast
 from uuid import UUID
 
 from services.common.enums import ReportSectionKey
 from services.common.types import JsonObject
+from services.db.models.audit import AuditSourceSurface
 from services.db.models.entity import Entity, EntityMembership, EntityStatus
 from services.db.models.reporting import (
     CommentaryStatus,
@@ -75,7 +77,7 @@ class ReportRunRecord:
     status: ReportRunStatus
     failure_reason: str | None
     generation_config: JsonObject
-    artifact_refs: JsonObject
+    artifact_refs: list[dict[str, object]]
     generated_by_user_id: UUID | None
     completed_at: datetime | None
     created_at: datetime
@@ -295,11 +297,11 @@ class ReportRepository:
         rows = [
             ReportTemplateSection(
                 template_id=template_id,
-                section_key=section["section_key"],
-                label=section["label"],
-                display_order=section["display_order"],
-                is_required=section.get("is_required", True),
-                section_config=dict(section.get("section_config", {})),
+                section_key=cast(str, section["section_key"]),
+                label=cast(str, section["label"]),
+                display_order=cast(int, section["display_order"]),
+                is_required=cast(bool, section.get("is_required", True)),
+                section_config=cast(JsonObject, section.get("section_config", {})),
             )
             for section in sections
         ]
@@ -434,7 +436,7 @@ class ReportRepository:
         if failure_reason is not None:
             run.failure_reason = failure_reason
         if artifact_refs is not None:
-            run.artifact_refs = artifact_refs
+            run.artifact_refs = cast(Any, artifact_refs)
         if completed_at is not None:
             run.completed_at = completed_at
 
@@ -551,6 +553,31 @@ class ReportRepository:
 
         return isinstance(error, IntegrityError)
 
+    def create_activity_event(
+        self,
+        *,
+        entity_id: UUID,
+        close_run_id: UUID | None,
+        actor_user_id: UUID | None,
+        event_type: str,
+        source_surface: AuditSourceSurface,
+        payload: JsonObject,
+        trace_id: str | None,
+    ) -> None:
+        """Persist one audit event for report workflow timeline activity."""
+
+        from services.audit.service import AuditService
+
+        AuditService(db_session=self._db_session).emit_audit_event(
+            entity_id=entity_id,
+            close_run_id=close_run_id,
+            event_type=event_type,
+            actor_user_id=actor_user_id,
+            source_surface=source_surface,
+            payload=payload,
+            trace_id=trace_id,
+        )
+
     # ---- Internal helpers ---------------------------------------------------
 
     def _load_template(self, *, template_id: UUID) -> ReportTemplate:
@@ -591,14 +618,25 @@ class ReportRepository:
 def _map_template(template: ReportTemplate) -> ReportTemplateRecord:
     """Convert an ORM template row into the immutable repository record."""
 
-    raw_sections = template.sections
+    raw_sections = cast(Any, template.sections)
     if isinstance(raw_sections, dict):
         # Legacy format: {"sections": [...]}. Extract the array.
-        sections_list = raw_sections.get("sections", [])
+        sections_raw = raw_sections.get("sections", [])
     elif isinstance(raw_sections, list):
-        sections_list = raw_sections
+        sections_raw = raw_sections
     else:
-        sections_list = []
+        sections_raw = []
+
+    sections_list = [
+        cast(dict[str, object], section)
+        for section in sections_raw
+        if isinstance(section, dict)
+    ]
+    guardrail_config = (
+        template.guardrail_config
+        if isinstance(template.guardrail_config, dict)
+        else {}
+    )
 
     return ReportTemplateRecord(
         id=template.id,
@@ -608,8 +646,8 @@ def _map_template(template: ReportTemplate) -> ReportTemplateRecord:
         name=template.name,
         description=template.description,
         is_active=template.is_active,
-        sections=list(sections_list),
-        guardrail_config=dict(template.guardrail_config),
+        sections=sections_list,
+        guardrail_config=guardrail_config,
         created_by_user_id=template.created_by_user_id,
         created_at=template.created_at,
         updated_at=template.updated_at,
@@ -635,6 +673,13 @@ def _map_section(section: ReportTemplateSection) -> ReportTemplateSectionRecord:
 def _map_report_run(run: ReportRun) -> ReportRunRecord:
     """Convert an ORM report run row into the immutable repository record."""
 
+    raw_artifact_refs = cast(Any, run.artifact_refs)
+    artifact_refs = [
+        cast(dict[str, object], artifact_ref)
+        for artifact_ref in raw_artifact_refs
+        if isinstance(artifact_ref, dict)
+    ] if isinstance(raw_artifact_refs, list) else []
+
     return ReportRunRecord(
         id=run.id,
         close_run_id=run.close_run_id,
@@ -642,8 +687,8 @@ def _map_report_run(run: ReportRun) -> ReportRunRecord:
         version_no=run.version_no,
         status=_resolve_report_run_status(run.status),
         failure_reason=run.failure_reason,
-        generation_config=dict(run.generation_config),
-        artifact_refs=dict(run.artifact_refs),
+        generation_config=run.generation_config,
+        artifact_refs=artifact_refs,
         generated_by_user_id=run.generated_by_user_id,
         completed_at=run.completed_at,
         created_at=run.created_at,

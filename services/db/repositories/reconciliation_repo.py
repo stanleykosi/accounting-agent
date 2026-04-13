@@ -11,7 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
-from typing import Any
+from typing import Any, cast
 from uuid import UUID
 
 from services.common.enums import (
@@ -702,7 +702,11 @@ class ReconciliationRepository:
             total_debits=row.total_debits,
             total_credits=row.total_credits,
             is_balanced=row.is_balanced,
-            account_balances=row.account_balances,
+            account_balances=(
+                cast(list[dict[str, Any]], row.account_balances)
+                if isinstance(row.account_balances, list)
+                else []
+            ),
             generated_by_user_id=row.generated_by_user_id,
             metadata_payload=row.metadata_payload,
             created_at=row.created_at,

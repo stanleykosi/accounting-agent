@@ -187,12 +187,16 @@ def _generate_pl_commentary(input_data: CommentaryGenerationInput) -> str:
     gross_profit = _safe_decimal(p_and_l.get('gross_profit'))
     net_profit = _safe_decimal(p_and_l.get('net_profit'))
 
-    total_revenue = sum(
-        _safe_decimal(v) for v in revenue.values()
-    ) if revenue else Decimal('0')
-    total_cogs = sum(
-        _safe_decimal(v) for v in cost_of_sales.values()
-    ) if cost_of_sales else Decimal('0')
+    total_revenue = (
+        sum((_safe_decimal(value) for value in revenue.values()), Decimal("0"))
+        if revenue
+        else Decimal("0")
+    )
+    total_cogs = (
+        sum((_safe_decimal(value) for value in cost_of_sales.values()), Decimal("0"))
+        if cost_of_sales
+        else Decimal("0")
+    )
     gross_margin = (
         (gross_profit / total_revenue * 100)
         if total_revenue > 0 else Decimal('0')

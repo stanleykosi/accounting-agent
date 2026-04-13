@@ -74,7 +74,12 @@ def build_guardrail_config_from_template(
     required_keys = CANONICAL_REQUIRED_SECTIONS | user_required
 
     allow_custom = bool(guardrail_config.get("allow_custom_sections", True))
-    minimum_count = int(guardrail_config.get("minimum_section_count", 5))
+    minimum_count_raw = guardrail_config.get("minimum_section_count", 5)
+    minimum_count = (
+        int(minimum_count_raw)
+        if isinstance(minimum_count_raw, (int, str, float))
+        else 5
+    )
 
     return GuardrailConfig(
         required_section_keys=required_keys,

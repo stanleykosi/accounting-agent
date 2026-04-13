@@ -9,7 +9,8 @@ Celery task dispatch, and the shared DB dependency.
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Annotated
+from importlib import import_module
+from typing import Annotated, Any, cast
 from uuid import UUID
 
 from apps.api.app.dependencies.db import DatabaseSessionDependency
@@ -125,10 +126,13 @@ def trigger_report_generation(
     repo.commit()
 
     # Dispatch Celery task with the persisted report-run ID.
-    from apps.worker.app.tasks.generate_reports import generate_reports
     from services.jobs.task_names import TaskName, resolve_task_route
 
     task_route = resolve_task_route(TaskName.REPORTING_GENERATE_CLOSE_RUN_PACK)
+    generate_reports = cast(
+        Any,
+        import_module("apps.worker.app.tasks.generate_reports"),
+    ).generate_reports
     generate_reports.apply_async(
         kwargs={
             "close_run_id": str(close_run_id),

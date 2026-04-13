@@ -23,13 +23,14 @@ from typing import Any
 from uuid import UUID
 
 from services.common.enums import ArtifactType
-from services.common.types import JsonObject, utc_now
+from services.common.types import utc_now
 from services.contracts.export_models import (
+    EvidencePackBundle,
     ExportArtifactEntry,
-    ExportManifest,
+)
+from services.contracts.export_models import (
     ExportManifest as ExportManifestContract,
 )
-from services.contracts.export_models import EvidencePackBundle
 from services.contracts.storage_models import CloseRunStorageScope
 from services.db.models.audit import AuditSourceSurface
 from services.idempotency.service import (
@@ -40,7 +41,6 @@ from services.idempotency.service import (
 )
 from services.reporting.evidence_pack import (
     EvidencePackInput,
-    EvidencePackResult,
     build_evidence_pack,
     upload_evidence_pack,
 )
@@ -121,7 +121,8 @@ def build_export_manifest(
     # Collect artifact entries from the released artifact records.
     artifact_entries: list[ExportArtifactEntry] = []
     for record in input_data.artifact_records:
-        if input_data.include_audit_trail or record.get("artifact_type") != ArtifactType.AUDIT_TRAIL.value:
+        is_audit_trail = record.get("artifact_type") == ArtifactType.AUDIT_TRAIL.value
+        if input_data.include_audit_trail or not is_audit_trail:
             artifact_entries.append(ExportArtifactEntry(
                 artifact_type=record["artifact_type"],
                 filename=record.get("filename", f"{record['artifact_type']}.dat"),
@@ -195,7 +196,7 @@ class ExportManifestBuilder:
 
     def with_artifacts(
         self, records: list[dict[str, Any]]
-    ) -> "ExportManifestBuilder":
+    ) -> ExportManifestBuilder:
         """Add released artifact metadata records to the manifest.
 
         Args:
@@ -208,7 +209,7 @@ class ExportManifestBuilder:
         self._artifact_records.extend(records)
         return self
 
-    def include_evidence_pack(self, flag: bool = True) -> "ExportManifestBuilder":
+    def include_evidence_pack(self, flag: bool = True) -> ExportManifestBuilder:
         """Set whether to assemble an evidence pack bundle.
 
         Args:
@@ -221,7 +222,7 @@ class ExportManifestBuilder:
         self._include_evidence_pack = flag
         return self
 
-    def include_audit_trail(self, flag: bool = True) -> "ExportManifestBuilder":
+    def include_audit_trail(self, flag: bool = True) -> ExportManifestBuilder:
         """Set whether to include audit trail artifacts in the manifest.
 
         Args:
@@ -236,7 +237,7 @@ class ExportManifestBuilder:
 
     def with_evidence_pack_input(
         self, evidence_input: EvidencePackInput | None
-    ) -> "ExportManifestBuilder":
+    ) -> ExportManifestBuilder:
         """Provide the evidence pack assembly input data.
 
         Args:
@@ -250,7 +251,7 @@ class ExportManifestBuilder:
         self._evidence_pack_input = evidence_input
         return self
 
-    def generated_at(self, timestamp: datetime) -> "ExportManifestBuilder":
+    def generated_at(self, timestamp: datetime) -> ExportManifestBuilder:
         """Set the generation timestamp for the manifest.
 
         Args:
@@ -378,6 +379,8 @@ def assemble_and_release_evidence_pack(
         scope=scope,
         idempotency_key=idempotency_key,
     )
+    if bundle.storage_key is None or bundle.checksum is None or bundle.size_bytes is None:
+        raise RuntimeError("Evidence-pack upload did not return complete artifact metadata.")
 
     # Register the release with idempotency protection.
     idempotency_service.record_release(

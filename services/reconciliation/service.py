@@ -223,9 +223,9 @@ class ReconciliationService:
                 )
 
             # Refresh the record after updates
-            rec_record = self._repo.get_reconciliation(rec_record.id)
-            if rec_record is not None:
-                all_reconciliations.append(rec_record)
+            refreshed_record = self._repo.get_reconciliation(rec_record.id)
+            if refreshed_record is not None:
+                all_reconciliations.append(refreshed_record)
 
             total_matched += stats.matched_count + stats.partially_matched_count
             total_exceptions += stats.exception_count

@@ -8,7 +8,7 @@ and the shared DB dependency.
 
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, cast
 from uuid import UUID
 
 from apps.api.app.dependencies.db import DatabaseSessionDependency
@@ -29,6 +29,7 @@ from services.auth.service import (
     AuthServiceError,
 )
 from services.common.settings import AppSettings, get_settings
+from services.common.types import JsonObject
 from services.contracts.report_models import (
     ActivateReportTemplateRequest,
     ApproveCommentaryRequest,
@@ -157,7 +158,7 @@ def create_report_template(
             name=payload.name,
             description=payload.description,
             sections=payload.sections,
-            guardrail_config=dict(payload.guardrail_config),
+            guardrail_config=cast(JsonObject, payload.guardrail_config),
             activate_immediately=payload.activate_immediately,
             source_surface=AuditSourceSurface.DESKTOP,
             trace_id=_resolve_trace_id(request),

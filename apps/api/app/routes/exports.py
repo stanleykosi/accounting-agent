@@ -8,7 +8,7 @@ services, idempotency service, storage repository, and shared DB dependency.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, time
 from typing import Annotated
 from uuid import UUID
 
@@ -293,8 +293,8 @@ def assemble_evidence_pack(
         close_run_id=close_run_id,
         entity_id=entity_id,
         entity_name=entity_name,
-        period_start=close_run_record.period_start,
-        period_end=close_run_record.period_end,
+        period_start=datetime.combine(close_run_record.period_start, time.min, tzinfo=UTC),
+        period_end=datetime.combine(close_run_record.period_end, time.min, tzinfo=UTC),
         close_run_version_no=version_no,
         source_references=[],
         extracted_values=[],

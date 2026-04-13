@@ -19,8 +19,16 @@ class CanonicalDomainEnum(StrEnum):
     label: str
     description: str
 
-    def __new__(cls, value: str, label: str, description: str) -> Self:
+    def __new__(
+        cls,
+        value: str,
+        label: str = "",
+        description: str = "",
+    ) -> Self:
         """Create a string enum member with stable render metadata."""
+
+        if not label or not description:
+            raise TypeError("Canonical domain enum members require label and description.")
 
         enum_member = str.__new__(cls, value)
         enum_member._value_ = value

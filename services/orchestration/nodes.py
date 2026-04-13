@@ -311,7 +311,7 @@ def apply_autonomy_routing(state: dict[str, Any]) -> dict[str, Any]:
         return {**state, "errors": errors}
 
     autonomy_mode_raw = context_data.get("autonomy_mode", "human_review")
-    autonomy_mode = AutonomyMode(autonomy_mode_raw)  # type: ignore[call-arg]
+    autonomy_mode = AutonomyMode(autonomy_mode_raw)
     confidence_threshold = context_data.get("confidence_threshold", 0.7)
     recommendation_confidence = final_rec.get("confidence", 0.0)
 
@@ -426,7 +426,7 @@ def _build_transaction_context(context_data: dict[str, Any]) -> TransactionConte
     doc_type = context_data.get("document_type", DocumentType.UNKNOWN)
     if isinstance(doc_type, str):
         try:
-            doc_type = DocumentType(doc_type)  # type: ignore[call-arg]
+            doc_type = DocumentType(doc_type)
         except ValueError:
             doc_type = DocumentType.UNKNOWN
 

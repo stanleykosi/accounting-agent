@@ -145,7 +145,7 @@ def list_recommendations(
     auth_service: AuthServiceDependency,
     db_session: DbSessionDep,
     auth_context: RequestAuthDependency,
-) -> dict:
+) -> dict[str, object]:
     """Return recommendations for an authenticated user's close run."""
     session_result = auth_context
     _require_close_run_access(
@@ -194,7 +194,7 @@ def approve_recommendation(
     recommendation_service: RecommendationServiceDependency,
     db_session: DbSessionDep,
     auth_context: RequestAuthDependency,
-) -> dict:
+) -> dict[str, object]:
     """Approve a pending recommendation and generate its journal draft."""
     session_result = auth_context
     _require_close_run_access(
@@ -257,7 +257,7 @@ def reject_recommendation(
     recommendation_service: RecommendationServiceDependency,
     db_session: DbSessionDep,
     auth_context: RequestAuthDependency,
-) -> dict:
+) -> dict[str, object]:
     """Reject a pending recommendation so it does not affect working state."""
     session_result = auth_context
     _require_close_run_access(
@@ -692,16 +692,16 @@ def _resolve_trace_id(request: Request) -> str | None:
 
 def _build_recommendation_http_exception(error: RecommendationApplyError) -> HTTPException:
     """Convert a recommendation apply error into a structured HTTP response."""
-    status_codes = {
-        RecommendationApplyErrorCode.RECOMMENDATION_NOT_FOUND: status.HTTP_404_NOT_FOUND,
-        RecommendationApplyErrorCode.JOURNAL_NOT_FOUND: status.HTTP_404_NOT_FOUND,
-        RecommendationApplyErrorCode.INVALID_TRANSITION: status.HTTP_409_CONFLICT,
-        RecommendationApplyErrorCode.JOURNAL_NOT_BALANCED: status.HTTP_400_BAD_REQUEST,
-        RecommendationApplyErrorCode.APPROVAL_NOT_ALLOWED: status.HTTP_409_CONFLICT,
-        RecommendationApplyErrorCode.REJECTION_NOT_ALLOWED: status.HTTP_409_CONFLICT,
-        RecommendationApplyErrorCode.APPLY_NOT_ALLOWED: status.HTTP_409_CONFLICT,
-        RecommendationApplyErrorCode.EDIT_NOT_ALLOWED: status.HTTP_409_CONFLICT,
-        RecommendationApplyErrorCode.SUPERSEDED: status.HTTP_409_CONFLICT,
+    status_codes: dict[str, int] = {
+        RecommendationApplyErrorCode.RECOMMENDATION_NOT_FOUND.value: status.HTTP_404_NOT_FOUND,
+        RecommendationApplyErrorCode.JOURNAL_NOT_FOUND.value: status.HTTP_404_NOT_FOUND,
+        RecommendationApplyErrorCode.INVALID_TRANSITION.value: status.HTTP_409_CONFLICT,
+        RecommendationApplyErrorCode.JOURNAL_NOT_BALANCED.value: status.HTTP_400_BAD_REQUEST,
+        RecommendationApplyErrorCode.APPROVAL_NOT_ALLOWED.value: status.HTTP_409_CONFLICT,
+        RecommendationApplyErrorCode.REJECTION_NOT_ALLOWED.value: status.HTTP_409_CONFLICT,
+        RecommendationApplyErrorCode.APPLY_NOT_ALLOWED.value: status.HTTP_409_CONFLICT,
+        RecommendationApplyErrorCode.EDIT_NOT_ALLOWED.value: status.HTTP_409_CONFLICT,
+        RecommendationApplyErrorCode.SUPERSEDED.value: status.HTTP_409_CONFLICT,
     }
     return HTTPException(
         status_code=status_codes.get(error.code, status.HTTP_400_BAD_REQUEST),
