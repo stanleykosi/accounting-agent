@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from apps.worker.app.telemetry import observe_worker_task_execution
 from celery import Task, signals
 from opentelemetry.trace import SpanKind, Status, StatusCode
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -96,7 +97,13 @@ class ObservedTask(Task):  # type: ignore[misc]
                 source_surface="worker",
             )
             try:
-                return self.run(*args, **kwargs)
+                return observe_worker_task_execution(
+                    task_name=self.name or "unknown",
+                    task_id=self.request.id,
+                    retries=self.request.retries,
+                    routing_key=str(delivery_info.get("routing_key", "")),
+                    runner=lambda: self.run(*args, **kwargs),
+                )
             except Exception as error:
                 span.record_exception(error)
                 span.set_status(Status(StatusCode.ERROR, str(error)))

@@ -12,6 +12,7 @@ from collections.abc import AsyncIterator, Iterable
 from contextlib import asynccontextmanager
 from typing import Any
 
+from apps.api.app.middleware.telemetry import install_request_telemetry_middleware
 from apps.api.app.routes.api_tokens import router as api_tokens_router
 from apps.api.app.routes.auth import router as auth_router
 from apps.api.app.routes.chat import router as chat_router
@@ -36,12 +37,6 @@ from services.contracts.api_models import (
     ApiContractMetadata,
     ApiHealthStatus,
     ApiRouteDescriptor,
-)
-from services.observability.context import (
-    REQUEST_ID_HEADER,
-    activate_incoming_context,
-    bind_runtime_log_context,
-    release_context,
 )
 from services.observability.otel import configure_observability
 
@@ -91,35 +86,7 @@ def create_app(*, settings: AppSettings | None = None) -> FastAPI:
         lifespan=lifespan,
         generate_unique_id_function=_build_operation_id,
     )
-
-    @app.middleware("http")
-    async def bind_request_context(request: Request, call_next: Any) -> Any:
-        """Attach request IDs and inbound trace context to logs and downstream task dispatch."""
-
-        activation = activate_incoming_context(
-            headers=dict(request.headers),
-            bind_values={
-                "http_method": request.method,
-                "http_path": request.url.path,
-                "source_surface": "api",
-            },
-        )
-        request.state.request_id = activation.request_id
-        bind_runtime_log_context(
-            request_id=activation.request_id,
-            http_method=request.method,
-            http_path=request.url.path,
-            source_surface="api",
-        )
-
-        response: Any | None = None
-        try:
-            response = await call_next(request)
-            return response
-        finally:
-            if response is not None:
-                response.headers[REQUEST_ID_HEADER] = activation.request_id
-            release_context(activation)
+    install_request_telemetry_middleware(app)
 
     @api_router.get(
         "/health",

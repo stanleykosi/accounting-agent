@@ -1,8 +1,8 @@
 """
 Purpose: Group shared observability helpers for traces, metrics, and context propagation.
-Scope: OpenTelemetry bootstrap, trace-context propagation, and runtime log-context helpers.
-Dependencies: services/observability/otel.py, services/observability/context.py,
-and backend runtime settings.
+Scope: Package marker only. Concrete helpers must be imported from their leaf modules so
+stdlib-safe utilities such as redaction do not trigger heavier observability imports.
+Dependencies: None at import time by design to avoid circular imports during logging bootstrap.
 """
 
-__all__ = []
+__all__: list[str] = []

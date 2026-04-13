@@ -1,9 +1,10 @@
 """
 Purpose: Bootstrap canonical structured logging for the backend services.
 Scope: Standard-library logging setup, structlog integration, context
-binding, and sensitive-field redaction.
-Dependencies: services/common/settings.py for runtime configuration and
-services/common/types.py for log format selection.
+binding, and audit-safe payload redaction.
+Dependencies: services/common/settings.py for runtime configuration,
+services/common/types.py for log format selection, and services/observability/redaction.py
+for the canonical sanitization boundary.
 """
 
 from __future__ import annotations
@@ -11,12 +12,12 @@ from __future__ import annotations
 import logging
 import logging.config
 import sys
-from collections.abc import Mapping, MutableMapping
 from typing import Any, cast
 
 import structlog
 from services.common.settings import AppSettings
 from services.common.types import StructuredLogFormat
+from services.observability.redaction import redact_log_payload
 from structlog.typing import EventDict, Processor
 
 
@@ -122,42 +123,13 @@ def _inject_service_name(service_name: str) -> Processor:
 def _redact_sensitive_fields(redact_fields: tuple[str, ...]) -> Processor:
     """Create a processor that redacts sensitive values from nested log payloads."""
 
-    lowered_keys = {field_name.casefold() for field_name in redact_fields}
-
     def processor(_: Any, __: str, event_dict: EventDict) -> EventDict:
-        redacted = _redact_mapping(dict(event_dict), lowered_keys)
-        return redacted
+        return cast(
+            EventDict,
+            redact_log_payload(
+                dict(event_dict),
+                sensitive_field_names=redact_fields,
+            ),
+        )
 
     return processor
-
-
-def _redact_mapping(
-    values: MutableMapping[str, Any],
-    sensitive_keys: set[str],
-) -> MutableMapping[str, Any]:
-    """Recursively redact sensitive keys from nested mappings and lists."""
-
-    for key, value in list(values.items()):
-        normalized_key = key.casefold()
-        if normalized_key in sensitive_keys:
-            values[key] = "***REDACTED***"
-            continue
-
-        values[key] = _redact_value(value, sensitive_keys)
-
-    return values
-
-
-def _redact_value(value: Any, sensitive_keys: set[str]) -> Any:
-    """Recursively redact nested values without mutating non-container objects."""
-
-    if isinstance(value, Mapping):
-        return _redact_mapping(dict(value), sensitive_keys)
-
-    if isinstance(value, list):
-        return [_redact_value(item, sensitive_keys) for item in value]
-
-    if isinstance(value, tuple):
-        return tuple(_redact_value(item, sensitive_keys) for item in value)
-
-    return value
