@@ -28,6 +28,7 @@ def test_baseline_metadata_registers_expected_tables() -> None:
         "entity_memberships",
         "extracted_fields",
         "integration_connections",
+        "jobs",
         "ownership_targets",
         "review_actions",
         "sessions",
@@ -100,4 +101,21 @@ def test_ownership_targets_enforce_unique_target_and_lock_integrity() -> None:
     assert (
         "(locked_by_user_id IS NULL AND locked_at IS NULL) "
         "OR (locked_by_user_id IS NOT NULL AND locked_at IS NOT NULL)"
+    ) in constraint_sql
+
+
+def test_jobs_metadata_exposes_checkpoint_and_dead_letter_integrity() -> None:
+    """Ensure job rows retain checkpoints and only dead-letter failed executions."""
+
+    table = Base.metadata.tables["jobs"]
+    constraint_sql = {
+        str(constraint.sqltext)
+        for constraint in table.constraints
+        if isinstance(constraint, CheckConstraint)
+    }
+
+    assert "dead_lettered_at IS NULL OR status = 'failed'" in constraint_sql
+    assert (
+        "(status = 'blocked' AND blocking_reason IS NOT NULL) "
+        "OR (status <> 'blocked' AND blocking_reason IS NULL)"
     ) in constraint_sql

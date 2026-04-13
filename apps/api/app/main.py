@@ -19,13 +19,14 @@ from apps.api.app.routes.close_runs import router as close_runs_router
 from apps.api.app.routes.coa import router as coa_router
 from apps.api.app.routes.documents import router as documents_router
 from apps.api.app.routes.entities import router as entities_router
+from apps.api.app.routes.exports import router as exports_router
+from apps.api.app.routes.jobs import router as jobs_router
 from apps.api.app.routes.ownership import router as ownership_router
 from apps.api.app.routes.quickbooks import router as quickbooks_router
 from apps.api.app.routes.recommendations import router as recommendations_router
 from apps.api.app.routes.reconciliation import router as reconciliation_router
 from apps.api.app.routes.report_templates import router as report_templates_router
 from apps.api.app.routes.reports import router as reports_router
-from apps.api.app.routes.exports import router as exports_router
 from fastapi import APIRouter, FastAPI, Request
 from fastapi.routing import APIRoute
 from services.common.logging import configure_logging, get_logger
@@ -160,6 +161,7 @@ def create_app(*, settings: AppSettings | None = None) -> FastAPI:
     api_router.include_router(api_tokens_router)
     api_router.include_router(chat_router)
     api_router.include_router(entities_router)
+    api_router.include_router(jobs_router)
     api_router.include_router(close_runs_router)
     api_router.include_router(coa_router)
     api_router.include_router(documents_router)

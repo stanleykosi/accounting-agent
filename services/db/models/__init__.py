@@ -18,13 +18,14 @@ from services.db.models.entity import (
     EntityStatus,
     build_default_confidence_thresholds,
 )
-from services.db.models.extractions import DocumentExtraction, DocumentLineItem, ExtractedField
 from services.db.models.exports import Artifact, ExportRun, ExportStatus
+from services.db.models.extractions import DocumentExtraction, DocumentLineItem, ExtractedField
 from services.db.models.integration import (
     IntegrationConnection,
     IntegrationConnectionStatus,
     IntegrationProvider,
 )
+from services.db.models.jobs import Job
 from services.db.models.journals import JournalEntry, JournalLine
 from services.db.models.ownership import OwnershipTarget
 from services.db.models.recommendations import Recommendation
@@ -59,6 +60,7 @@ __all__ = [
     "CoaMappingRule",
     "CoaSet",
     "CoaSetSource",
+    "CommentaryStatus",
     "Document",
     "DocumentExtraction",
     "DocumentIssue",
@@ -73,13 +75,14 @@ __all__ = [
     "IntegrationConnection",
     "IntegrationConnectionStatus",
     "IntegrationProvider",
+    "Job",
     "JournalEntry",
     "JournalLine",
     "OwnershipTarget",
+    "Recommendation",
     "Reconciliation",
     "ReconciliationAnomaly",
     "ReconciliationItem",
-    "Recommendation",
     "ReportCommentary",
     "ReportRun",
     "ReportRunStatus",

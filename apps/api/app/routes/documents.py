@@ -31,6 +31,7 @@ from services.documents.upload_service import (
     DocumentUploadServiceError,
     UploadFilePayload,
 )
+from services.jobs.service import JobService
 from services.storage.repository import StorageRepository
 
 router = APIRouter(
@@ -51,6 +52,7 @@ def get_document_upload_service(
     return DocumentUploadService(
         repository=DocumentRepository(db_session=db_session),
         storage_repository=StorageRepository(),
+        job_service=JobService(db_session=db_session),
         task_dispatcher=task_dispatcher,
     )
 

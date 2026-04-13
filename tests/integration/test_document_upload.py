@@ -16,6 +16,7 @@ from services.common.enums import (
     DocumentSourceChannel,
     DocumentStatus,
     DocumentType,
+    JobStatus,
 )
 from services.common.types import JsonObject
 from services.contracts.storage_models import (
@@ -40,6 +41,7 @@ from services.documents.upload_service import (
     UploadDispatchReceipt,
     UploadFilePayload,
 )
+from services.jobs.service import JobRecord
 from services.jobs.task_names import TaskName
 from services.storage.checksums import compute_sha256_bytes
 
@@ -53,6 +55,7 @@ def test_document_upload_persists_records_stores_originals_and_dispatches_parse_
     service = DocumentUploadService(
         repository=repository,
         storage_repository=storage,
+        job_service=InMemoryJobService(),
         task_dispatcher=dispatcher,
     )
 
@@ -114,6 +117,7 @@ def test_document_upload_rejects_unsupported_content_without_partial_commit() ->
     service = DocumentUploadService(
         repository=repository,
         storage_repository=InMemoryStorageRepository(),
+        job_service=InMemoryJobService(),
         task_dispatcher=InMemoryTaskDispatcher(),
     )
 
@@ -345,4 +349,64 @@ class InMemoryTaskDispatcher:
             queue_name="documents",
             routing_key="documents.parse_and_extract",
             trace_id="trace-upload",
+        )
+
+
+class InMemoryJobService:
+    """Persist synthetic job rows around dispatches for upload-service tests."""
+
+    def dispatch_job(
+        self,
+        *,
+        dispatcher: InMemoryTaskDispatcher,
+        task_name: TaskName | str,
+        payload: JsonObject,
+        entity_id: UUID | None,
+        close_run_id: UUID | None,
+        document_id: UUID | None,
+        actor_user_id: UUID | None,
+        trace_id: str | None,
+        checkpoint_payload: JsonObject | None = None,
+        resumed_from_job_id: UUID | None = None,
+        countdown: int | None = None,
+    ) -> JobRecord:
+        """Create a deterministic queued job record and forward the dispatch."""
+
+        del checkpoint_payload, countdown
+        task_id = str(uuid4())
+        receipt = dispatcher.dispatch_task(
+            task_name=task_name,
+            kwargs=payload,
+            task_id=task_id,
+        )
+        now = datetime.now(tz=UTC)
+        return JobRecord(
+            id=UUID(task_id),
+            entity_id=entity_id,
+            close_run_id=close_run_id,
+            document_id=document_id,
+            actor_user_id=actor_user_id,
+            canceled_by_user_id=None,
+            resumed_from_job_id=resumed_from_job_id,
+            task_name=receipt.task_name,
+            queue_name=receipt.queue_name,
+            routing_key=receipt.routing_key,
+            status=JobStatus.QUEUED,
+            payload=payload,
+            checkpoint_payload={},
+            result_payload=None,
+            failure_reason=None,
+            failure_details=None,
+            blocking_reason=None,
+            trace_id=trace_id,
+            attempt_count=0,
+            retry_count=0,
+            max_retries=5,
+            started_at=None,
+            completed_at=None,
+            cancellation_requested_at=None,
+            canceled_at=None,
+            dead_lettered_at=None,
+            created_at=now,
+            updated_at=now,
         )

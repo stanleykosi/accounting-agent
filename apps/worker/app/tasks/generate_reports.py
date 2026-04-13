@@ -24,7 +24,8 @@ from datetime import date
 from typing import Any
 from uuid import UUID
 
-from apps.worker.app.celery_app import ObservedTask, celery_app
+from apps.worker.app.celery_app import celery_app
+from apps.worker.app.tasks.base import JobRuntimeContext, TrackedJobTask
 from services.common.enums import (
     ArtifactType,
     ReportSectionKey,
@@ -41,6 +42,7 @@ from services.db.models.reporting import (
 )
 from services.db.repositories.report_repo import ReportRepository
 from services.db.session import get_session_factory
+from services.jobs.retry_policy import JobCancellationRequestedError
 from services.jobs.task_names import TaskName, resolve_task_route
 from services.reporting.commentary import (
     CommentaryGenerationInput,
@@ -95,6 +97,7 @@ def _run_report_generation_task(
     sections: list[str] | None = None,
     generate_commentary_flag: bool = True,
     use_llm_commentary: bool = False,
+    job_context: JobRuntimeContext,
 ) -> dict[str, Any]:
     """Execute the full report generation workflow for a close run.
 
@@ -124,17 +127,23 @@ def _run_report_generation_task(
 
     with get_session_factory()() as db:
         repo = ReportRepository(db_session=db)
+        run_record: Any | None = None
 
         # Phase 1: Load close run and entity context
         context = _load_report_context(
             db=db,
             close_run_id=parsed_close_run_id,
         )
+        job_context.checkpoint(
+            step="load_report_context",
+            state={"close_run_id": close_run_id, "report_run_id": report_run_id or ""},
+        )
+        job_context.ensure_not_canceled()
         if context is None:
             error_msg = f"Close run {close_run_id} or associated data not found."
             logger.error("report_context_load_failed", close_run_id=close_run_id)
             errors.append(error_msg)
-            return ReportGenerationReceipt(
+            receipt = ReportGenerationReceipt(
                 report_run_id="",
                 close_run_id=close_run_id,
                 version_no=0,
@@ -143,47 +152,62 @@ def _run_report_generation_task(
                 commentary_generated=False,
                 artifact_refs=[],
                 errors=errors,
-            ).__dict__
+            )
+            return _report_generation_receipt_to_payload(receipt)
 
         # Phase 2: Resolve or create report run record.
         # When the API creates the run before dispatch, use that existing record.
         # Otherwise, create a new one (e.g., manual retry or direct invocation).
-        if parsed_report_run_id is not None:
-            run_record = repo.get_report_run(
-                report_run_id=parsed_report_run_id,
+        if job_context.step_completed("resolve_report_run"):
+            run_record, version_no = _restore_report_run_resolution(
+                repo=repo,
                 close_run_id=parsed_close_run_id,
-            )
-            if run_record is None:
-                error_msg = (
-                    f"Pre-created report run {report_run_id} not found. "
-                    "Falling back to new report run creation."
-                )
-                logger.warning("report_run_not_found_using_fallback", error=error_msg)
-                errors.append(error_msg)
-                run_record = None
-
-        if run_record is None:
-            version_no = repo.next_version_no_for_close_run(
-                close_run_id=parsed_close_run_id,
-            )
-            run_record = repo.create_report_run(
-                close_run_id=parsed_close_run_id,
-                template_id=context.template_id,
-                version_no=version_no,
-                status=ReportRunStatus.GENERATING,
-                generation_config={
-                    "sections": sections or [],
-                    "generate_commentary": generate_commentary_flag,
-                    "use_llm_commentary": use_llm_commentary,
-                },
-                generated_by_user_id=parsed_actor_user_id,
+                job_context=job_context,
             )
         else:
-            version_no = run_record.version_no
-            # Transition existing record to generating state.
-            repo.update_report_run_status(
-                report_run_id=run_record.id,
-                status=ReportRunStatus.GENERATING,
+            if parsed_report_run_id is not None:
+                run_record = repo.get_report_run(
+                    report_run_id=parsed_report_run_id,
+                    close_run_id=parsed_close_run_id,
+                )
+                if run_record is None:
+                    error_msg = (
+                        f"Pre-created report run {report_run_id} not found. "
+                        "Falling back to new report run creation."
+                    )
+                    logger.warning("report_run_not_found_using_fallback", error=error_msg)
+                    errors.append(error_msg)
+                    run_record = None
+
+            if run_record is None:
+                version_no = repo.next_version_no_for_close_run(
+                    close_run_id=parsed_close_run_id,
+                )
+                run_record = repo.create_report_run(
+                    close_run_id=parsed_close_run_id,
+                    template_id=context.template_id,
+                    version_no=version_no,
+                    status=ReportRunStatus.GENERATING,
+                    generation_config={
+                        "sections": sections or [],
+                        "generate_commentary": generate_commentary_flag,
+                        "use_llm_commentary": use_llm_commentary,
+                    },
+                    generated_by_user_id=parsed_actor_user_id,
+                )
+            else:
+                version_no = run_record.version_no
+                # Transition existing record to generating state.
+                repo.update_report_run_status(
+                    report_run_id=run_record.id,
+                    status=ReportRunStatus.GENERATING,
+                )
+            job_context.checkpoint(
+                step="resolve_report_run",
+                state={
+                    "report_run_id": str(run_record.id),
+                    "version_no": version_no,
+                },
             )
 
         artifact_refs: list[dict[str, Any]] = []
@@ -198,36 +222,42 @@ def _run_report_generation_task(
                 close_run_id=parsed_close_run_id,
                 sections=sections,
             )
+            job_context.checkpoint(
+                step="gather_report_sections",
+                state={"section_count": len(section_data)},
+            )
+            job_context.ensure_not_canceled()
 
             # Phase 4: Generate commentary if requested
             commentary: dict[str, str] = {}
             if generate_commentary_flag:
-                commentary_result = _generate_commentary_phase(
-                    context=context,
-                    section_data=section_data,
-                    use_llm=use_llm_commentary,
-                )
-                commentary = commentary_result.commentary
-                commentary_generated = commentary_result.sections_generated > 0
-                errors.extend(commentary_result.errors)
+                if job_context.step_completed("generate_commentary"):
+                    commentary = _restore_commentary_checkpoint(job_context=job_context)
+                    commentary_generated = len(commentary) > 0
+                else:
+                    commentary_result = _generate_commentary_phase(
+                        context=context,
+                        section_data=section_data,
+                        use_llm=use_llm_commentary,
+                    )
+                    commentary = commentary_result.commentary
+                    commentary_generated = commentary_result.sections_generated > 0
+                    errors.extend(commentary_result.errors)
 
-                # Persist commentary drafts to the database
-                _persist_commentary_drafts(
-                    repo=repo,
-                    report_run_id=run_record.id,
-                    commentary=commentary,
-                    actor_user_id=parsed_actor_user_id,
-                )
+                    # Persist commentary drafts to the database
+                    _persist_commentary_drafts(
+                        repo=repo,
+                        report_run_id=run_record.id,
+                        commentary=commentary,
+                        actor_user_id=parsed_actor_user_id,
+                    )
+                    job_context.checkpoint(
+                        step="generate_commentary",
+                        state={"commentary": commentary},
+                    )
+                    job_context.ensure_not_canceled()
 
             # Phase 5: Build Excel report pack
-            excel_result = _build_excel_report(
-                context=context,
-                section_data=section_data,
-                commentary=commentary,
-            )
-            excel_generated = True
-
-            # Phase 6: Upload Excel artifact to MinIO
             scope = CloseRunStorageScope(
                 entity_id=context.entity_id,
                 close_run_id=parsed_close_run_id,
@@ -236,59 +266,116 @@ def _run_report_generation_task(
                 close_run_version_no=version_no,
             )
             storage_repo = StorageRepository()
-            excel_artifact = storage_repo.store_artifact(
-                scope=scope,
-                artifact_type=ArtifactType.REPORT_EXCEL,
-                idempotency_key=f"{close_run_id}:excel:v{version_no}",
-                filename=excel_result.filename,
-                payload=excel_result.payload,
-                content_type=excel_result.content_type,
-            )
-            artifact_refs.append({
-                "type": "report_excel",
-                "filename": excel_result.filename,
-                "storage_key": excel_artifact.reference.object_key,
-                "bucket_kind": excel_artifact.reference.bucket_kind.value,
-                "sha256": excel_artifact.sha256_checksum,
-                "size_bytes": excel_artifact.size_bytes,
-            })
+            if job_context.step_completed("build_excel_pack"):
+                artifact_refs.append(
+                    _restore_artifact_checkpoint(
+                        job_context=job_context,
+                        step="build_excel_pack",
+                    )
+                )
+                excel_generated = True
+            else:
+                excel_result = _build_excel_report(
+                    context=context,
+                    section_data=section_data,
+                    commentary=commentary,
+                )
+                excel_generated = True
+
+                # Phase 6: Upload Excel artifact to MinIO
+                excel_artifact = storage_repo.store_artifact(
+                    scope=scope,
+                    artifact_type=ArtifactType.REPORT_EXCEL,
+                    idempotency_key=f"{close_run_id}:excel:v{version_no}",
+                    filename=excel_result.filename,
+                    payload=excel_result.payload,
+                    content_type=excel_result.content_type,
+                )
+                excel_artifact_ref = {
+                    "type": "report_excel",
+                    "filename": excel_result.filename,
+                    "storage_key": excel_artifact.reference.object_key,
+                    "bucket_kind": excel_artifact.reference.bucket_kind.value,
+                    "sha256": excel_artifact.sha256_checksum,
+                    "size_bytes": excel_artifact.size_bytes,
+                }
+                artifact_refs.append(excel_artifact_ref)
+                job_context.checkpoint(
+                    step="build_excel_pack",
+                    state={"artifact_ref": excel_artifact_ref},
+                )
+                job_context.ensure_not_canceled()
 
             # Phase 7: Build PDF report pack
-            pdf_result = _build_pdf_report(
-                context=context,
-                section_data=section_data,
-                commentary=commentary,
-            )
-            pdf_generated = True
+            if job_context.step_completed("build_pdf_pack"):
+                artifact_refs.append(
+                    _restore_artifact_checkpoint(
+                        job_context=job_context,
+                        step="build_pdf_pack",
+                    )
+                )
+                pdf_generated = True
+            else:
+                pdf_result = _build_pdf_report(
+                    context=context,
+                    section_data=section_data,
+                    commentary=commentary,
+                )
+                pdf_generated = True
 
-            # Phase 8: Upload PDF artifact to MinIO
-            pdf_artifact = storage_repo.store_artifact(
-                scope=scope,
-                artifact_type=ArtifactType.REPORT_PDF,
-                idempotency_key=f"{close_run_id}:pdf:v{version_no}",
-                filename=pdf_result.filename,
-                payload=pdf_result.payload,
-                content_type=pdf_result.content_type,
-            )
-            artifact_refs.append({
-                "type": "report_pdf",
-                "filename": pdf_result.filename,
-                "storage_key": pdf_artifact.reference.object_key,
-                "bucket_kind": pdf_artifact.reference.bucket_kind.value,
-                "sha256": pdf_artifact.sha256_checksum,
-                "size_bytes": pdf_artifact.size_bytes,
-            })
+                # Phase 8: Upload PDF artifact to MinIO
+                pdf_artifact = storage_repo.store_artifact(
+                    scope=scope,
+                    artifact_type=ArtifactType.REPORT_PDF,
+                    idempotency_key=f"{close_run_id}:pdf:v{version_no}",
+                    filename=pdf_result.filename,
+                    payload=pdf_result.payload,
+                    content_type=pdf_result.content_type,
+                )
+                pdf_artifact_ref = {
+                    "type": "report_pdf",
+                    "filename": pdf_result.filename,
+                    "storage_key": pdf_artifact.reference.object_key,
+                    "bucket_kind": pdf_artifact.reference.bucket_kind.value,
+                    "sha256": pdf_artifact.sha256_checksum,
+                    "size_bytes": pdf_artifact.size_bytes,
+                }
+                artifact_refs.append(pdf_artifact_ref)
+                job_context.checkpoint(
+                    step="build_pdf_pack",
+                    state={"artifact_ref": pdf_artifact_ref},
+                )
+                job_context.ensure_not_canceled()
 
             # Phase 9: Update report run status to completed.
             # artifact_refs is a JSON array — persist it as-is via JSONB.
-            repo.update_report_run_status(
-                report_run_id=run_record.id,
-                status=ReportRunStatus.COMPLETED,
-                artifact_refs=artifact_refs,
-                completed_at=utc_now(),
-            )
-            repo.commit()
+            if not job_context.step_completed("finalize_report_run"):
+                repo.update_report_run_status(
+                    report_run_id=run_record.id,
+                    status=ReportRunStatus.COMPLETED,
+                    artifact_refs=artifact_refs,
+                    completed_at=utc_now(),
+                )
+                repo.commit()
+                job_context.checkpoint(
+                    step="finalize_report_run",
+                    state={"artifact_count": len(artifact_refs)},
+                )
 
+        except JobCancellationRequestedError:
+            repo.rollback()
+            try:
+                repo.update_report_run_status(
+                    report_run_id=run_record.id,
+                    status=ReportRunStatus.FAILED,
+                    failure_reason="Report generation was canceled by an operator.",
+                    artifact_refs=artifact_refs if artifact_refs else None,
+                    completed_at=utc_now(),
+                )
+                repo.commit()
+            except Exception:
+                repo.rollback()
+            raise
         except Exception as exc:
             error_msg = f"Report generation failed: {exc}"
             logger.exception("report_generation_failed", close_run_id=close_run_id)
@@ -307,7 +394,7 @@ def _run_report_generation_task(
             except Exception:
                 repo.rollback()
 
-    return ReportGenerationReceipt(
+    receipt = ReportGenerationReceipt(
         report_run_id=str(run_record.id),
         close_run_id=close_run_id,
         version_no=version_no,
@@ -316,7 +403,76 @@ def _run_report_generation_task(
         commentary_generated=commentary_generated,
         artifact_refs=artifact_refs,
         errors=errors,
-    ).__dict__
+    )
+    return _report_generation_receipt_to_payload(receipt)
+
+
+def _restore_report_run_resolution(
+    *,
+    repo: ReportRepository,
+    close_run_id: UUID,
+    job_context: JobRuntimeContext,
+) -> tuple[Any, int]:
+    """Restore the already-created report run from checkpoint state during resume."""
+
+    checkpoint_state = job_context.step_state("resolve_report_run")
+    checkpoint_report_run_id = checkpoint_state.get("report_run_id")
+    if not isinstance(checkpoint_report_run_id, str):
+        raise RuntimeError("Report resume requires a persisted report_run_id checkpoint value.")
+
+    run_record = repo.get_report_run(
+        report_run_id=UUID(checkpoint_report_run_id),
+        close_run_id=close_run_id,
+    )
+    if run_record is None:
+        raise RuntimeError(
+            "Report resume could not load the previously created report run from checkpoint state."
+        )
+
+    return run_record, int(checkpoint_state["version_no"])
+
+
+def _restore_commentary_checkpoint(*, job_context: JobRuntimeContext) -> dict[str, str]:
+    """Restore commentary drafts from checkpoint state during resume."""
+
+    checkpoint_state = job_context.step_state("generate_commentary")
+    raw_commentary = checkpoint_state.get("commentary", {})
+    if not isinstance(raw_commentary, dict):
+        return {}
+
+    return {str(key): str(value) for key, value in raw_commentary.items()}
+
+
+def _restore_artifact_checkpoint(
+    *,
+    job_context: JobRuntimeContext,
+    step: str,
+) -> dict[str, Any]:
+    """Restore one uploaded artifact reference from checkpoint state during resume."""
+
+    checkpoint_state = job_context.step_state(step)
+    raw_artifact_ref = checkpoint_state.get("artifact_ref")
+    if not isinstance(raw_artifact_ref, dict):
+        raise RuntimeError(
+            f"Report resume requires artifact_ref state for completed step '{step}'."
+        )
+
+    return dict(raw_artifact_ref)
+
+
+def _report_generation_receipt_to_payload(receipt: ReportGenerationReceipt) -> dict[str, Any]:
+    """Convert the slotted receipt dataclass into the JSON-safe task payload shape."""
+
+    return {
+        "report_run_id": receipt.report_run_id,
+        "close_run_id": receipt.close_run_id,
+        "version_no": receipt.version_no,
+        "excel_generated": receipt.excel_generated,
+        "pdf_generated": receipt.pdf_generated,
+        "commentary_generated": receipt.commentary_generated,
+        "artifact_refs": receipt.artifact_refs,
+        "errors": receipt.errors,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -702,16 +858,38 @@ def _build_pdf_report(
 # Celery task registration
 # ---------------------------------------------------------------------------
 
-generate_reports = celery_app.task(
+@celery_app.task(
     bind=True,
-    base=ObservedTask,
+    base=TrackedJobTask,
     name=TaskName.REPORTING_GENERATE_CLOSE_RUN_PACK.value,
-    autoretry_for=(RuntimeError,),
-    retry_backoff=True,
-    retry_backoff_max=120,
-    retry_jitter=True,
+    autoretry_for=(),
+    retry_backoff=False,
+    retry_jitter=False,
     max_retries=resolve_task_route(TaskName.REPORTING_GENERATE_CLOSE_RUN_PACK).max_retries,
-)(_run_report_generation_task)
+)
+def generate_reports(
+    self: TrackedJobTask,
+    *,
+    close_run_id: str,
+    report_run_id: str | None = None,
+    actor_user_id: str | None = None,
+    sections: list[str] | None = None,
+    generate_commentary_flag: bool = True,
+    use_llm_commentary: bool = False,
+) -> dict[str, Any]:
+    """Execute report generation under the canonical checkpointed job wrapper."""
+
+    return self.run_tracked_job(
+        runner=lambda job_context: _run_report_generation_task(
+            close_run_id=close_run_id,
+            report_run_id=report_run_id,
+            actor_user_id=actor_user_id,
+            sections=sections,
+            generate_commentary_flag=generate_commentary_flag,
+            use_llm_commentary=use_llm_commentary,
+            job_context=job_context,
+        )
+    )
 
 
 __all__ = [

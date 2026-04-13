@@ -14,13 +14,15 @@ from dataclasses import dataclass
 from typing import Protocol
 from uuid import UUID
 
-from apps.worker.app.celery_app import ObservedTask, celery_app
+from apps.worker.app.celery_app import celery_app
+from apps.worker.app.tasks.base import JobRuntimeContext, TrackedJobTask
 from services.common.enums import DocumentStatus
 from services.common.types import JsonObject
 from services.contracts.storage_models import CloseRunStorageScope, DerivativeKind
 from services.db.models.audit import AuditSourceSurface
 from services.db.repositories.document_repo import DocumentRepository, ParseDocumentRecord
 from services.db.session import get_session_factory
+from services.jobs.retry_policy import BlockedJobError
 from services.jobs.task_names import TaskName, resolve_task_route
 from services.observability.context import current_trace_metadata
 from services.parser.models import ParserPipelineError, ParserResult, ParserSourceDocument
@@ -80,6 +82,7 @@ def _run_parse_document_task(
     close_run_id: str,
     document_id: str,
     actor_user_id: str,
+    job_context: JobRuntimeContext,
 ) -> dict[str, object]:
     """Run parser work from a Celery invocation using JSON-serializable identifiers."""
 
@@ -108,16 +111,31 @@ def _run_parse_document_task(
                 status=DocumentStatus.PROCESSING,
             )
             repository.commit()
+            job_context.checkpoint(
+                step="load_document_context",
+                state={
+                    "document_id": str(parse_record.document.id),
+                    "original_filename": parse_record.document.original_filename,
+                },
+            )
         except Exception:
             repository.rollback()
             raise
 
     storage_repository = StorageRepository()
     try:
-        result = parse_and_store_document(
-            parse_record=parse_record,
-            storage_repository=storage_repository,
-        )
+        job_context.ensure_not_canceled()
+        if job_context.step_completed("parse_and_store_document"):
+            result = _restore_parse_pipeline_receipt(job_context=job_context)
+        else:
+            result = parse_and_store_document(
+                parse_record=parse_record,
+                storage_repository=storage_repository,
+            )
+            job_context.checkpoint(
+                step="parse_and_store_document",
+                state=_serialize_parse_pipeline_receipt(result),
+            )
     except ParserPipelineError as error:
         failure_status = (
             DocumentStatus.BLOCKED
@@ -131,6 +149,11 @@ def _run_parse_document_task(
             error_payload={"code": error.code.value, "message": error.message},
             trace_id=trace_id,
         )
+        if failure_status is DocumentStatus.BLOCKED:
+            raise BlockedJobError(
+                error.message,
+                details={"document_id": str(parse_record.document.id), "code": error.code.value},
+            ) from error
         raise
     except Exception as error:
         _record_parse_failure(
@@ -145,6 +168,7 @@ def _run_parse_document_task(
     with get_session_factory()() as db_session:
         repository = DocumentRepository(db_session=db_session)
         try:
+            job_context.ensure_not_canceled()
             repository.update_document_status(
                 document_id=parse_record.document.id,
                 status=DocumentStatus.PARSED,
@@ -169,6 +193,15 @@ def _run_parse_document_task(
                 trace_id=trace_id,
             )
             repository.commit()
+            if not job_context.step_completed("persist_parse_results"):
+                job_context.checkpoint(
+                    step="persist_parse_results",
+                    state={
+                        "document_version_no": result.document_version_no,
+                        "parser_name": result.parser_name,
+                        "page_count": result.page_count,
+                    },
+                )
         except Exception:
             repository.rollback()
             raise
@@ -455,16 +488,97 @@ def _raw_payload_requires_ocr(raw_parse_payload: JsonObject) -> bool:
     return metadata.get("requires_ocr") is True
 
 
-parse_document = celery_app.task(
+def _serialize_parse_pipeline_receipt(receipt: ParsePipelineReceipt) -> JsonObject:
+    """Convert a persisted parse receipt into checkpoint-safe JSON state."""
+
+    return {
+        "document_version_no": receipt.document_version_no,
+        "parser_name": receipt.parser_name,
+        "parser_version": receipt.parser_version,
+        "page_count": receipt.page_count,
+        "table_count": receipt.table_count,
+        "split_candidate_count": receipt.split_candidate_count,
+        "checksum": receipt.checksum,
+        "raw_parse_payload": receipt.raw_parse_payload,
+        "derivatives": {
+            "normalized_storage_key": receipt.derivatives.normalized_storage_key,
+            "ocr_text_storage_key": receipt.derivatives.ocr_text_storage_key,
+            "extracted_tables_storage_key": receipt.derivatives.extracted_tables_storage_key,
+        },
+    }
+
+
+def _restore_parse_pipeline_receipt(*, job_context: JobRuntimeContext) -> ParsePipelineReceipt:
+    """Rebuild the prior parse receipt from checkpoint state during resume execution."""
+
+    checkpoint_state = job_context.step_state("parse_and_store_document")
+    raw_parse_payload = checkpoint_state.get("raw_parse_payload")
+    raw_derivatives = checkpoint_state.get("derivatives")
+    if not isinstance(raw_parse_payload, dict) or not isinstance(raw_derivatives, dict):
+        raise RuntimeError(
+            "Parse job resume requires a completed parse_and_store_document checkpoint payload."
+        )
+
+    return ParsePipelineReceipt(
+        document_version_no=int(checkpoint_state["document_version_no"]),
+        parser_name=str(checkpoint_state["parser_name"]),
+        parser_version=str(checkpoint_state["parser_version"]),
+        page_count=(
+            int(checkpoint_state["page_count"])
+            if checkpoint_state.get("page_count") is not None
+            else None
+        ),
+        table_count=int(checkpoint_state["table_count"]),
+        split_candidate_count=int(checkpoint_state["split_candidate_count"]),
+        checksum=str(checkpoint_state["checksum"]),
+        raw_parse_payload=dict(raw_parse_payload),
+        derivatives=StoredParseDerivatives(
+            normalized_storage_key=_optional_string(raw_derivatives.get("normalized_storage_key")),
+            ocr_text_storage_key=_optional_string(raw_derivatives.get("ocr_text_storage_key")),
+            extracted_tables_storage_key=_optional_string(
+                raw_derivatives.get("extracted_tables_storage_key")
+            ),
+        ),
+    )
+
+
+def _optional_string(value: object) -> str | None:
+    """Normalize an optional checkpoint field into a string or None."""
+
+    if value is None:
+        return None
+
+    return str(value)
+
+
+@celery_app.task(
     bind=True,
-    base=ObservedTask,
+    base=TrackedJobTask,
     name=TaskName.DOCUMENT_PARSE_AND_EXTRACT.value,
-    autoretry_for=(RuntimeError,),
-    retry_backoff=True,
-    retry_backoff_max=120,
-    retry_jitter=True,
+    autoretry_for=(),
+    retry_backoff=False,
+    retry_jitter=False,
     max_retries=resolve_task_route(TaskName.DOCUMENT_PARSE_AND_EXTRACT).max_retries,
-)(_run_parse_document_task)
+)
+def parse_document(
+    self: TrackedJobTask,
+    *,
+    entity_id: str,
+    close_run_id: str,
+    document_id: str,
+    actor_user_id: str,
+) -> dict[str, object]:
+    """Execute the parse pipeline under the canonical checkpointed job wrapper."""
+
+    return self.run_tracked_job(
+        runner=lambda job_context: _run_parse_document_task(
+            entity_id=entity_id,
+            close_run_id=close_run_id,
+            document_id=document_id,
+            actor_user_id=actor_user_id,
+            job_context=job_context,
+        )
+    )
 
 
 __all__ = [

@@ -9,11 +9,11 @@ Celery task dispatch, and the shared DB dependency.
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from importlib import import_module
-from typing import Annotated, Any, cast
+from typing import Annotated
 from uuid import UUID
 
 from apps.api.app.dependencies.db import DatabaseSessionDependency
+from apps.api.app.dependencies.tasks import TaskDispatcherDependency
 from apps.api.app.routes.auth import (
     _build_http_exception,
     _clear_session_cookie,
@@ -41,6 +41,8 @@ from services.contracts.report_models import (
 from services.db.models.reporting import ReportRunStatus
 from services.db.repositories.entity_repo import EntityUserRecord
 from services.db.repositories.report_repo import ReportRepository
+from services.jobs.service import JobService, JobServiceError
+from services.jobs.task_names import TaskName
 from services.reporting.service import ReportService, ReportServiceError
 
 router = APIRouter(prefix="/entities/{entity_id}/reports", tags=["reports"])
@@ -80,6 +82,7 @@ def trigger_report_generation(
     auth_service: AuthServiceDependency,
     report_service: ReportServiceDependency,
     db_session: DatabaseSessionDependency,
+    task_dispatcher: TaskDispatcherDependency,
     auth_context: RequestAuthDependency,
     template_id: TemplateIdQuery = None,
     generate_commentary: GenerateCommentaryQuery = True,
@@ -125,25 +128,33 @@ def trigger_report_generation(
     )
     repo.commit()
 
-    # Dispatch Celery task with the persisted report-run ID.
-    from services.jobs.task_names import TaskName, resolve_task_route
-
-    task_route = resolve_task_route(TaskName.REPORTING_GENERATE_CLOSE_RUN_PACK)
-    generate_reports = cast(
-        Any,
-        import_module("apps.worker.app.tasks.generate_reports"),
-    ).generate_reports
-    generate_reports.apply_async(
-        kwargs={
-            "close_run_id": str(close_run_id),
-            "report_run_id": str(run_record.id),
-            "actor_user_id": str(session_result.user.id),
-            "generate_commentary_flag": generate_commentary,
-            "use_llm_commentary": use_llm_commentary,
-        },
-        queue=task_route.queue.value,
-        routing_key=task_route.routing_key,
-    )
+    # Dispatch Celery task through the canonical durable job service.
+    job_service = JobService(db_session=db_session)
+    try:
+        job_service.dispatch_job(
+            dispatcher=task_dispatcher,
+            task_name=TaskName.REPORTING_GENERATE_CLOSE_RUN_PACK,
+            payload={
+                "close_run_id": str(close_run_id),
+                "report_run_id": str(run_record.id),
+                "actor_user_id": str(session_result.user.id),
+                "generate_commentary_flag": generate_commentary,
+                "use_llm_commentary": use_llm_commentary,
+            },
+            entity_id=entity_id,
+            close_run_id=close_run_id,
+            document_id=None,
+            actor_user_id=session_result.user.id,
+            trace_id=str(request.state.request_id),
+        )
+    except JobServiceError as error:
+        raise HTTPException(
+            status_code=error.status_code,
+            detail={
+                "code": str(error.code),
+                "message": error.message,
+            },
+        ) from error
 
     now = datetime.now(tz=UTC)
     return ReportRunSummary(

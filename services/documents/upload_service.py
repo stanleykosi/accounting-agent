@@ -31,6 +31,7 @@ from services.db.repositories.document_repo import (
 )
 from services.db.repositories.entity_repo import EntityUserRecord
 from services.documents.mime import UnsupportedDocumentMimeError, sniff_document_mime
+from services.jobs.service import JobRecord
 from services.jobs.task_names import TaskName
 from services.storage.checksums import compute_sha256_bytes
 from services.storage.repository import StorageRepository
@@ -186,6 +187,27 @@ class TaskDispatcherProtocol(Protocol):
         """Dispatch a JSON-serializable background job."""
 
 
+class JobServiceProtocol(Protocol):
+    """Describe the durable job-creation operation required by upload workflows."""
+
+    def dispatch_job(
+        self,
+        *,
+        dispatcher: TaskDispatcherProtocol,
+        task_name: TaskName | str,
+        payload: JsonObject,
+        entity_id: UUID | None,
+        close_run_id: UUID | None,
+        document_id: UUID | None,
+        actor_user_id: UUID | None,
+        trace_id: str | None,
+        checkpoint_payload: JsonObject | None = None,
+        resumed_from_job_id: UUID | None = None,
+        countdown: int | None = None,
+    ) -> JobRecord:
+        """Persist and dispatch one background job."""
+
+
 class TaskReceiptProtocol(Protocol):
     """Describe task-dispatch receipt fields consumed by upload responses."""
 
@@ -220,12 +242,14 @@ class DocumentUploadService:
         *,
         repository: DocumentRepositoryProtocol,
         storage_repository: StorageRepository | StorageRepositoryProtocol,
+        job_service: JobServiceProtocol,
         task_dispatcher: TaskDispatcherProtocol,
     ) -> None:
         """Capture persistence, storage, and background-task boundaries."""
 
         self._repository = repository
         self._storage_repository = storage_repository
+        self._job_service = job_service
         self._task_dispatcher = task_dispatcher
 
     def list_documents(
@@ -364,6 +388,7 @@ class DocumentUploadService:
             entity_id=access_record.close_run.entity_id,
             close_run_id=access_record.close_run.id,
             actor_user_id=actor_user.id,
+            trace_id=trace_id,
         )
         self._repository.create_activity_event(
             entity_id=access_record.close_run.entity_id,
@@ -402,24 +427,31 @@ class DocumentUploadService:
         entity_id: UUID,
         close_run_id: UUID,
         actor_user_id: UUID,
+        trace_id: str | None,
     ) -> UploadDispatchReceipt:
         """Dispatch the downstream parser task with only JSON-serializable identifiers."""
 
-        receipt = self._task_dispatcher.dispatch_task(
+        job = self._job_service.dispatch_job(
+            dispatcher=self._task_dispatcher,
             task_name=TaskName.DOCUMENT_PARSE_AND_EXTRACT,
-            kwargs={
+            payload={
                 "entity_id": serialize_uuid(entity_id),
                 "close_run_id": serialize_uuid(close_run_id),
                 "document_id": serialize_uuid(document.id),
                 "actor_user_id": serialize_uuid(actor_user_id),
             },
+            entity_id=entity_id,
+            close_run_id=close_run_id,
+            document_id=document.id,
+            actor_user_id=actor_user_id,
+            trace_id=trace_id,
         )
         return UploadDispatchReceipt(
-            task_id=str(receipt.task_id),
-            task_name=str(receipt.task_name),
-            queue_name=str(receipt.queue_name),
-            routing_key=str(receipt.routing_key),
-            trace_id=str(receipt.trace_id) if receipt.trace_id is not None else None,
+            task_id=serialize_uuid(job.id),
+            task_name=job.task_name,
+            queue_name=job.queue_name,
+            routing_key=job.routing_key,
+            trace_id=job.trace_id,
         )
 
     def _require_close_run_access(

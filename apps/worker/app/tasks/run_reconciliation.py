@@ -24,7 +24,8 @@ from decimal import Decimal
 from typing import Any
 from uuid import UUID
 
-from apps.worker.app.celery_app import ObservedTask, celery_app
+from apps.worker.app.celery_app import celery_app
+from apps.worker.app.tasks.base import JobRuntimeContext, TrackedJobTask
 from services.common.enums import ReconciliationType
 from services.common.logging import get_logger
 from services.db.models.close_run import CloseRun
@@ -34,6 +35,7 @@ from services.db.models.extractions import DocumentExtraction
 from services.db.models.journals import JournalEntry, JournalLine
 from services.db.repositories.reconciliation_repo import ReconciliationRepository
 from services.db.session import get_session_factory
+from services.jobs.task_names import TaskName, resolve_task_route
 from services.reconciliation.matchers import DEFAULT_MATCHING_CONFIG, MatchingConfig
 from services.reconciliation.service import ReconciliationService
 
@@ -326,23 +328,13 @@ def _build_reconciliation_source_data(
     return source_data
 
 
-@celery_app.task(
-    bind=True,
-    base=ObservedTask,
-    name="reconciliation.run_reconciliation",
-    autoretry_for=(Exception,),
-    retry_backoff=True,
-    retry_backoff_max=600,
-    retry_jitter=True,
-    max_retries=3,
-)
-def run_reconciliation(
-    self,
+def _run_reconciliation_task(
     *,
     close_run_id: str,
     reconciliation_types: list[str],
     actor_user_id: str | None = None,
     matching_config: dict[str, Any] | None = None,
+    job_context: JobRuntimeContext,
 ) -> dict[str, Any]:
     """Execute reconciliation matching for a close run.
 
@@ -381,22 +373,32 @@ def run_reconciliation(
             source_data = _build_reconciliation_source_data(
                 session, parsed_close_run_id, parsed_types
             )
+            job_context.checkpoint(
+                step="load_reconciliation_sources",
+                state={
+                    "close_run_id": close_run_id,
+                    "reconciliation_types": reconciliation_types,
+                },
+            )
+            job_context.ensure_not_canceled()
         except Exception as exc:
             msg = f"Failed to load reconciliation source data: {exc}"
             logger.exception(msg)
             errors.append(msg)
             session.rollback()
-            return ReconciliationReceipt(
-                close_run_id=close_run_id,
-                reconciliation_types=reconciliation_types,
-                total_items=0,
-                matched_items=0,
-                exception_items=0,
-                unmatched_items=0,
-                trial_balance_computed=False,
-                trial_balance_balanced=False,
-                errors=errors,
-            ).__dict__
+            return _reconciliation_receipt_to_payload(
+                ReconciliationReceipt(
+                    close_run_id=close_run_id,
+                    reconciliation_types=reconciliation_types,
+                    total_items=0,
+                    matched_items=0,
+                    exception_items=0,
+                    unmatched_items=0,
+                    trial_balance_computed=False,
+                    trial_balance_balanced=False,
+                    errors=errors,
+                )
+            )
 
         # Run reconciliation matching
         try:
@@ -407,22 +409,34 @@ def run_reconciliation(
                 created_by_user_id=parsed_actor_user_id,
                 matching_config=config,
             )
+            job_context.checkpoint(
+                step="run_reconciliation_matching",
+                state={
+                    "total_items": output.total_items,
+                    "matched_items": output.matched_items,
+                    "exception_items": output.exception_items,
+                    "unmatched_items": output.unmatched_items,
+                },
+            )
+            job_context.ensure_not_canceled()
         except Exception as exc:
             msg = f"Reconciliation matching failed: {exc}"
             logger.exception(msg)
             errors.append(msg)
             session.rollback()
-            return ReconciliationReceipt(
-                close_run_id=close_run_id,
-                reconciliation_types=reconciliation_types,
-                total_items=0,
-                matched_items=0,
-                exception_items=0,
-                unmatched_items=0,
-                trial_balance_computed=False,
-                trial_balance_balanced=False,
-                errors=errors,
-            ).__dict__
+            return _reconciliation_receipt_to_payload(
+                ReconciliationReceipt(
+                    close_run_id=close_run_id,
+                    reconciliation_types=reconciliation_types,
+                    total_items=0,
+                    matched_items=0,
+                    exception_items=0,
+                    unmatched_items=0,
+                    trial_balance_computed=False,
+                    trial_balance_balanced=False,
+                    errors=errors,
+                )
+            )
 
         # Compute trial balance if requested
         trial_balance_computed = False
@@ -442,6 +456,14 @@ def run_reconciliation(
 
                 trial_balance_computed = True
                 trial_balance_balanced = snapshot.is_balanced
+                job_context.checkpoint(
+                    step="compute_trial_balance",
+                    state={
+                        "trial_balance_computed": True,
+                        "trial_balance_balanced": trial_balance_balanced,
+                    },
+                )
+                job_context.ensure_not_canceled()
 
                 logger.info(
                     "Trial balance computed for close run %s: balanced=%s, debits=%s, credits=%s",
@@ -459,6 +481,13 @@ def run_reconciliation(
         if not errors or output.total_items > 0:
             try:
                 session.commit()
+                job_context.checkpoint(
+                    step="persist_reconciliation_results",
+                    state={
+                        "total_items": output.total_items,
+                        "matched_items": output.matched_items,
+                    },
+                )
             except Exception as exc:
                 msg = f"Failed to commit reconciliation results: {exc}"
                 logger.exception(msg)
@@ -478,7 +507,10 @@ def run_reconciliation(
     )
 
     logger.info(
-        "Reconciliation complete for close run %s: total=%d, matched=%d, exceptions=%d, unmatched=%d",
+        (
+            "Reconciliation complete for close run %s: total=%d, matched=%d, "
+            "exceptions=%d, unmatched=%d"
+        ),
         close_run_id,
         receipt.total_items,
         receipt.matched_items,
@@ -486,7 +518,53 @@ def run_reconciliation(
         receipt.unmatched_items,
     )
 
-    return receipt.__dict__
+    return _reconciliation_receipt_to_payload(receipt)
+
+
+def _reconciliation_receipt_to_payload(receipt: ReconciliationReceipt) -> dict[str, Any]:
+    """Convert the slotted receipt dataclass into the JSON-safe task payload shape."""
+
+    return {
+        "close_run_id": receipt.close_run_id,
+        "reconciliation_types": receipt.reconciliation_types,
+        "total_items": receipt.total_items,
+        "matched_items": receipt.matched_items,
+        "exception_items": receipt.exception_items,
+        "unmatched_items": receipt.unmatched_items,
+        "trial_balance_computed": receipt.trial_balance_computed,
+        "trial_balance_balanced": receipt.trial_balance_balanced,
+        "errors": receipt.errors,
+    }
+
+
+@celery_app.task(
+    bind=True,
+    base=TrackedJobTask,
+    name=TaskName.RECONCILIATION_EXECUTE_CLOSE_RUN.value,
+    autoretry_for=(),
+    retry_backoff=False,
+    retry_jitter=False,
+    max_retries=resolve_task_route(TaskName.RECONCILIATION_EXECUTE_CLOSE_RUN).max_retries,
+)
+def run_reconciliation(
+    self: TrackedJobTask,
+    *,
+    close_run_id: str,
+    reconciliation_types: list[str],
+    actor_user_id: str | None = None,
+    matching_config: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Execute reconciliation under the canonical checkpointed job wrapper."""
+
+    return self.run_tracked_job(
+        runner=lambda job_context: _run_reconciliation_task(
+            close_run_id=close_run_id,
+            reconciliation_types=reconciliation_types,
+            actor_user_id=actor_user_id,
+            matching_config=matching_config,
+            job_context=job_context,
+        )
+    )
 
 
 __all__ = [

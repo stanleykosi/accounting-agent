@@ -21,7 +21,8 @@ from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
 
-from apps.worker.app.celery_app import ObservedTask, celery_app
+from apps.worker.app.celery_app import celery_app
+from apps.worker.app.tasks.base import JobRuntimeContext, TrackedJobTask
 from services.common.enums import (
     AccountType,
     AutonomyMode,
@@ -65,6 +66,7 @@ def _run_recommendation_task(
     close_run_id: str,
     document_id: str,
     actor_user_id: str,
+    job_context: JobRuntimeContext,
 ) -> dict[str, Any]:
     """Run the recommendation workflow from a Celery invocation.
 
@@ -89,9 +91,25 @@ def _run_recommendation_task(
         close_run_id=parsed_close_run_id,
         document_id=parsed_document_id,
     )
+    job_context.checkpoint(
+        step="load_recommendation_context",
+        state={
+            "document_id": document_id,
+            "close_run_id": close_run_id,
+        },
+    )
+    job_context.ensure_not_canceled()
 
     # 2. Execute the LangGraph workflow
     graph_state = _execute_graph(context=context)
+    job_context.checkpoint(
+        step="execute_recommendation_graph",
+        state={
+            "document_id": document_id,
+            "error_count": len(graph_state.get("errors", [])),
+        },
+    )
+    job_context.ensure_not_canceled()
 
     # 3. Extract results and errors
     errors: list[str] = list(graph_state.get("errors", []))
@@ -114,6 +132,13 @@ def _run_recommendation_task(
         context=context,
         actor_user_id=parsed_actor_user_id,
         trace_id=trace_id,
+    )
+    job_context.checkpoint(
+        step="persist_recommendation",
+        state={
+            "recommendation_id": receipt.recommendation_id,
+            "status": receipt.status,
+        },
     )
 
     logger.info(
@@ -418,17 +443,34 @@ def _persist_recommendation(
     )
 
 
-# Register the Celery task
-recommend_close_run = celery_app.task(
+@celery_app.task(
     bind=True,
-    base=ObservedTask,
+    base=TrackedJobTask,
     name=TaskName.ACCOUNTING_RECOMMEND_CLOSE_RUN.value,
-    autoretry_for=(RuntimeError, RecommendationGraphError),
-    retry_backoff=True,
-    retry_backoff_max=120,
-    retry_jitter=True,
+    autoretry_for=(),
+    retry_backoff=False,
+    retry_jitter=False,
     max_retries=resolve_task_route(TaskName.ACCOUNTING_RECOMMEND_CLOSE_RUN).max_retries,
-)(_run_recommendation_task)
+)
+def recommend_close_run(
+    self: TrackedJobTask,
+    *,
+    entity_id: str,
+    close_run_id: str,
+    document_id: str,
+    actor_user_id: str,
+) -> dict[str, Any]:
+    """Execute recommendation generation under the canonical checkpointed job wrapper."""
+
+    return self.run_tracked_job(
+        runner=lambda job_context: _run_recommendation_task(
+            entity_id=entity_id,
+            close_run_id=close_run_id,
+            document_id=document_id,
+            actor_user_id=actor_user_id,
+            job_context=job_context,
+        )
+    )
 
 
 __all__ = [
