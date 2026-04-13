@@ -21,6 +21,7 @@ from apps.api.app.routes.auth import (
     _set_session_cookie,
     get_auth_service,
 )
+from apps.api.app.routes.request_auth import AuthenticatedUserContext, RequestAuthDependency
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from services.auth.service import (
     AuthenticatedSessionResult,
@@ -67,15 +68,11 @@ def list_entities(
     settings: SettingsDependency,
     auth_service: AuthServiceDependency,
     entity_service: EntityServiceDependency,
+    auth_context: RequestAuthDependency,
 ) -> EntityListResponse:
     """Return the authenticated caller's accessible workspaces."""
 
-    session_result = _require_authenticated_browser_session(
-        request=request,
-        response=response,
-        settings=settings,
-        auth_service=auth_service,
-    )
+    session_result = auth_context
     return entity_service.list_entities_for_user(user_id=session_result.user.id)
 
 
@@ -302,7 +299,7 @@ def _require_authenticated_browser_session(
     return session_result
 
 
-def _to_entity_user(session_result: AuthenticatedSessionResult) -> EntityUserRecord:
+def _to_entity_user(session_result: AuthenticatedUserContext) -> EntityUserRecord:
     """Project the authenticated session user into the simpler entity-user record."""
 
     return EntityUserRecord(

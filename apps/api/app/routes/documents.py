@@ -19,6 +19,7 @@ from apps.api.app.routes.close_runs import (
     _resolve_trace_id,
     _to_entity_user,
 )
+from apps.api.app.routes.request_auth import RequestAuthDependency
 from fastapi import APIRouter, Depends, File, HTTPException, Request, Response, UploadFile, status
 from services.auth.service import AuthService
 from services.common.settings import AppSettings, get_settings
@@ -73,15 +74,11 @@ def list_documents(
     settings: SettingsDependency,
     auth_service: AuthServiceDependency,
     document_upload_service: DocumentUploadServiceDependency,
+    auth_context: RequestAuthDependency,
 ) -> DocumentListResponse:
     """Return source documents attached to an accessible close run."""
 
-    session_result = _require_authenticated_browser_session(
-        request=request,
-        response=response,
-        settings=settings,
-        auth_service=auth_service,
-    )
+    session_result = auth_context
     try:
         return document_upload_service.list_documents(
             actor_user=_to_entity_user(session_result),

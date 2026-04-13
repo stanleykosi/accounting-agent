@@ -21,6 +21,7 @@ from apps.api.app.routes.auth import (
     _set_session_cookie,
     get_auth_service,
 )
+from apps.api.app.routes.request_auth import AuthenticatedUserContext, RequestAuthDependency
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from services.auth.service import (
     AuthenticatedSessionResult,
@@ -78,6 +79,7 @@ def trigger_report_generation(
     auth_service: AuthServiceDependency,
     report_service: ReportServiceDependency,
     db_session: DatabaseSessionDependency,
+    auth_context: RequestAuthDependency,
     template_id: TemplateIdQuery = None,
     generate_commentary: GenerateCommentaryQuery = True,
     use_llm_commentary: UseLlmCommentaryQuery = False,
@@ -89,12 +91,7 @@ def trigger_report_generation(
     summary so callers can poll the detail endpoint for status.
     """
 
-    session_result = _require_authenticated_browser_session(
-        request=request,
-        response=response,
-        settings=settings,
-        auth_service=auth_service,
-    )
+    session_result = auth_context
 
     # Verify close run access
     try:
@@ -206,15 +203,11 @@ def list_report_runs_for_close_run(
     settings: SettingsDependency,
     auth_service: AuthServiceDependency,
     report_service: ReportServiceDependency,
+    auth_context: RequestAuthDependency,
 ) -> ReportRunListResponse:
     """Return all report generation runs for one close run."""
 
-    session_result = _require_authenticated_browser_session(
-        request=request,
-        response=response,
-        settings=settings,
-        auth_service=auth_service,
-    )
+    session_result = auth_context
     try:
         return report_service.list_report_runs(
             actor_user=_to_entity_user(session_result),
@@ -368,7 +361,7 @@ def _require_authenticated_browser_session(
     return session_result
 
 
-def _to_entity_user(session_result: AuthenticatedSessionResult) -> EntityUserRecord:
+def _to_entity_user(session_result: AuthenticatedUserContext) -> EntityUserRecord:
     """Project the authenticated session user into the entity actor record."""
 
     return EntityUserRecord(

@@ -28,6 +28,7 @@ from apps.api.app.routes.auth import (
 from apps.api.app.routes.recommendations import (
     _require_authenticated_browser_session,
 )
+from apps.api.app.routes.request_auth import RequestAuthDependency
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from services.auth.service import (
     AuthService,
@@ -138,14 +139,10 @@ def list_reconciliations(
     auth_service: AuthServiceDependency,
     reconciliation_service: ReconciliationServiceDependency,
     db_session: DbSessionDep,
+    auth_context: RequestAuthDependency,
 ) -> ReconciliationListResponse:
     """Return reconciliation runs for an authenticated user's close run."""
-    session_result = _require_authenticated_browser_session(
-        request=request,
-        response=response,
-        settings=settings,
-        auth_service=auth_service,
-    )
+    session_result = auth_context
     _require_close_run_access(
         entity_id=entity_id,
         close_run_id=close_run_id,
@@ -233,14 +230,10 @@ def get_trial_balance(
     auth_service: AuthServiceDependency,
     reconciliation_service: ReconciliationServiceDependency,
     db_session: DbSessionDep,
+    auth_context: RequestAuthDependency,
 ) -> TrialBalanceDetailResponse:
     """Return the most recent trial balance snapshot for the close run."""
-    session_result = _require_authenticated_browser_session(
-        request=request,
-        response=response,
-        settings=settings,
-        auth_service=auth_service,
-    )
+    session_result = auth_context
     _require_close_run_access(
         entity_id=entity_id,
         close_run_id=close_run_id,
@@ -313,16 +306,12 @@ def list_anomalies(
     auth_service: AuthServiceDependency,
     reconciliation_service: ReconciliationServiceDependency,
     db_session: DbSessionDep,
+    auth_context: RequestAuthDependency,
     severity: str | None = None,
     resolved: bool | None = None,
 ) -> ReconciliationAnomalyListResponse:
     """Return anomalies for the close run."""
-    session_result = _require_authenticated_browser_session(
-        request=request,
-        response=response,
-        settings=settings,
-        auth_service=auth_service,
-    )
+    session_result = auth_context
     _require_close_run_access(
         entity_id=entity_id,
         close_run_id=close_run_id,

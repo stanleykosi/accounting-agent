@@ -15,12 +15,9 @@ from uuid import UUID
 from apps.api.app.dependencies.db import DatabaseSessionDependency
 from apps.api.app.routes.auth import (
     _build_http_exception,
-    _clear_session_cookie,
-    _read_session_cookie,
-    _resolve_ip_address,
-    _set_session_cookie,
     get_auth_service,
 )
+from apps.api.app.routes.request_auth import AuthenticatedUserContext, RequestAuthDependency
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from services.auth.service import (
     AuthenticatedSessionResult,
@@ -32,32 +29,18 @@ from services.common.enums import ArtifactType
 from services.common.settings import AppSettings, get_settings
 from services.contracts.export_models import (
     CreateExportRequest,
-    DuplicateExportResponse,
+    EvidencePackBundle,
     ExportDetail,
     ExportListResponse,
-    ExportManifest,
     ExportSummary,
-    EvidencePackBundle,
     IdempotencyKeyResponse,
 )
-from services.db.models.audit import AuditSourceSurface
 from services.db.repositories.entity_repo import EntityUserRecord
 from services.idempotency.service import (
     IdempotencyGuardError,
-    IdempotencyGuardErrorCode,
     build_idempotency_key,
 )
-from services.reporting.evidence_pack import (
-    EvidencePackInput,
-    build_evidence_pack,
-    upload_evidence_pack,
-)
-from services.reporting.exports import (
-    ExportManifestBuilder,
-    assemble_and_release_evidence_pack,
-    build_export_manifest,
-)
-from services.storage.repository import StorageRepository
+from services.reporting.exports import ExportManifestInput, build_export_manifest
 
 router = APIRouter(
     prefix="/entities/{entity_id}/close-runs/{close_run_id}/exports",
@@ -87,6 +70,7 @@ def trigger_export(
     auth_service: AuthServiceDependency,
     db_session: DatabaseSessionDependency,
     body: CreateExportRequest,
+    auth_context: RequestAuthDependency,
 ) -> ExportDetail:
     """Trigger an export for one close run with idempotency protection.
 
@@ -94,12 +78,7 @@ def trigger_export(
     returned instead of creating a duplicate.
     """
 
-    session_result = _require_authenticated_browser_session(
-        request=request,
-        response=response,
-        settings=settings,
-        auth_service=auth_service,
-    )
+    session_result = auth_context
     user_record = _to_entity_user(session_result)
 
     # Verify close run access.
@@ -124,8 +103,9 @@ def trigger_export(
     )
 
     now = datetime.now(tz=UTC)
+    placeholder_export_id = "00000000-0000-0000-0000-000000000000"
     export_summary = ExportSummary(
-        id="00000000-0000-0000-0000-000000000000",  # Placeholder until export-run DB model is wired.
+        id=placeholder_export_id,
         close_run_id=str(close_run_id),
         version_no=1,
         idempotency_key=idempotency_key,
@@ -155,15 +135,12 @@ def list_exports(
     response: Response,
     settings: SettingsDependency,
     auth_service: AuthServiceDependency,
+    db_session: DatabaseSessionDependency,
+    auth_context: RequestAuthDependency,
 ) -> ExportListResponse:
     """Return all export records for one close run in newest-first order."""
 
-    session_result = _require_authenticated_browser_session(
-        request=request,
-        response=response,
-        settings=settings,
-        auth_service=auth_service,
-    )
+    session_result = auth_context
     _verify_close_run_access(
         db_session=db_session,
         entity_id=entity_id,
@@ -191,15 +168,12 @@ def read_export_detail(
     response: Response,
     settings: SettingsDependency,
     auth_service: AuthServiceDependency,
+    db_session: DatabaseSessionDependency,
+    auth_context: RequestAuthDependency,
 ) -> ExportDetail:
     """Return one export record with full manifest and evidence-pack details."""
 
-    session_result = _require_authenticated_browser_session(
-        request=request,
-        response=response,
-        settings=settings,
-        auth_service=auth_service,
-    )
+    session_result = auth_context
     _verify_close_run_access(
         db_session=db_session,
         entity_id=entity_id,
@@ -234,6 +208,7 @@ def assemble_evidence_pack(
     settings: SettingsDependency,
     auth_service: AuthServiceDependency,
     db_session: DatabaseSessionDependency,
+    auth_context: RequestAuthDependency,
 ) -> EvidencePackBundle:
     """Assemble a downloadable evidence-pack bundle for one close run.
 
@@ -244,12 +219,8 @@ def assemble_evidence_pack(
 
     from services.contracts.storage_models import CloseRunStorageScope
     from services.db.models.close_run import CloseRun
-    from services.db.models.exports import Artifact
     from services.db.models.entity import Entity
-    from services.idempotency.service import (
-        IdempotencyGuardError,
-        IdempotencyService,
-    )
+    from services.db.models.exports import Artifact
     from services.reporting.evidence_pack import (
         EvidencePackInput,
         build_evidence_pack,
@@ -257,12 +228,7 @@ def assemble_evidence_pack(
     )
     from services.storage.repository import StorageRepository
 
-    session_result = _require_authenticated_browser_session(
-        request=request,
-        response=response,
-        settings=settings,
-        auth_service=auth_service,
-    )
+    session_result = auth_context
     user_record = _to_entity_user(session_result)
 
     # P1: Verify close-run membership before any artifact work.
@@ -317,7 +283,7 @@ def assemble_evidence_pack(
             items=(),
             storage_key=existing_artifact.storage_key,
             checksum=existing_artifact.checksum,
-            size_bytes=_to_int(existing_artifact.artifact_metadata.get("size_bytes")),  # type: ignore[arg-type]
+            size_bytes=_to_int(existing_artifact.artifact_metadata.get("size_bytes")),
             idempotency_key=existing_artifact.idempotency_key,
         )
 
@@ -360,7 +326,7 @@ def assemble_evidence_pack(
             report_run_id=None,
             artifact_type=ArtifactType.EVIDENCE_PACK.value,
             storage_key=bundle.storage_key,
-            mime_type=bundle.content_type if bundle.content_type else "application/zip",
+            mime_type="application/zip",
             checksum=bundle.checksum,
             idempotency_key=bundle.idempotency_key,
             version_no=bundle.version_no,
@@ -402,6 +368,7 @@ def preview_evidence_pack_idempotency_key(
     settings: SettingsDependency,
     auth_service: AuthServiceDependency,
     db_session: DatabaseSessionDependency,
+    auth_context: RequestAuthDependency,
     version: Annotated[int, Query(ge=1, description="Close-run version number.")] = 1,
 ) -> IdempotencyKeyResponse:
     """Return the deterministic idempotency key that would be used for an evidence-pack action.
@@ -410,12 +377,7 @@ def preview_evidence_pack_idempotency_key(
     assembly so they can check for existing packs or build idempotent retries.
     """
 
-    session_result = _require_authenticated_browser_session(
-        request=request,
-        response=response,
-        settings=settings,
-        auth_service=auth_service,
-    )
+    session_result = auth_context
     _verify_close_run_access(
         db_session=db_session,
         entity_id=entity_id,
@@ -486,7 +448,7 @@ def _require_authenticated_browser_session(
     return session_result
 
 
-def _to_entity_user(session_result: AuthenticatedSessionResult) -> EntityUserRecord:
+def _to_entity_user(session_result: AuthenticatedUserContext) -> EntityUserRecord:
     """Project the authenticated session user into the entity actor record."""
 
     return EntityUserRecord(
@@ -545,7 +507,7 @@ def __build_export_manifest_input(
     entity_id: UUID,
     close_run_version_no: int,
     action_qualifier: str | None,
-) -> "services.reporting.exports.ExportManifestInput":
+) -> ExportManifestInput:
     """Build a minimal export-manifest input for the current implementation scope.
 
     Args:
@@ -558,15 +520,12 @@ def __build_export_manifest_input(
         ExportManifestInput with placeholder values.
     """
 
-    import services.reporting.exports as exports
-    from datetime import date
-
-    return exports.ExportManifestInput(
+    return ExportManifestInput(
         close_run_id=close_run_id,
         entity_id=entity_id,
         entity_name="Demo Entity",
-        period_start=date(2026, 1, 1),
-        period_end=date(2026, 1, 31),
+        period_start=datetime(2026, 1, 1, tzinfo=UTC),
+        period_end=datetime(2026, 1, 31, tzinfo=UTC),
         close_run_version_no=close_run_version_no,
         artifact_records=[],
         include_evidence_pack=True,

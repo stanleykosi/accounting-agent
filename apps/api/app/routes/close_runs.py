@@ -20,6 +20,7 @@ from apps.api.app.routes.auth import (
     _set_session_cookie,
     get_auth_service,
 )
+from apps.api.app.routes.request_auth import AuthenticatedUserContext, RequestAuthDependency
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from services.auth.service import (
     AuthenticatedSessionResult,
@@ -69,15 +70,11 @@ def list_close_runs(
     settings: SettingsDependency,
     auth_service: AuthServiceDependency,
     close_run_service: CloseRunServiceDependency,
+    auth_context: RequestAuthDependency,
 ) -> CloseRunListResponse:
     """Return the authenticated caller's close runs for one accessible workspace."""
 
-    session_result = _require_authenticated_browser_session(
-        request=request,
-        response=response,
-        settings=settings,
-        auth_service=auth_service,
-    )
+    session_result = auth_context
     try:
         return close_run_service.list_close_runs_for_entity(
             actor_user=_to_entity_user(session_result),
@@ -139,15 +136,11 @@ def read_close_run(
     settings: SettingsDependency,
     auth_service: AuthServiceDependency,
     close_run_service: CloseRunServiceDependency,
+    auth_context: RequestAuthDependency,
 ) -> CloseRunSummary:
     """Return one close run with calculated phase-gate state."""
 
-    session_result = _require_authenticated_browser_session(
-        request=request,
-        response=response,
-        settings=settings,
-        auth_service=auth_service,
-    )
+    session_result = auth_context
     try:
         return close_run_service.get_close_run(
             actor_user=_to_entity_user(session_result),
@@ -343,7 +336,7 @@ def _require_authenticated_browser_session(
     return session_result
 
 
-def _to_entity_user(session_result: AuthenticatedSessionResult) -> EntityUserRecord:
+def _to_entity_user(session_result: AuthenticatedUserContext) -> EntityUserRecord:
     """Project the authenticated session user into the close-run actor record."""
 
     return EntityUserRecord(

@@ -28,6 +28,7 @@ from apps.api.app.routes.auth import (
     _set_session_cookie,
     get_auth_service,
 )
+from apps.api.app.routes.request_auth import RequestAuthDependency
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from services.accounting.recommendation_apply import (
     ActorContext,
@@ -143,14 +144,10 @@ def list_recommendations(
     settings: SettingsDependency,
     auth_service: AuthServiceDependency,
     db_session: DbSessionDep,
+    auth_context: RequestAuthDependency,
 ) -> dict:
     """Return recommendations for an authenticated user's close run."""
-    session_result = _require_authenticated_browser_session(
-        request=request,
-        response=response,
-        settings=settings,
-        auth_service=auth_service,
-    )
+    session_result = auth_context
     _require_close_run_access(
         entity_id=entity_id,
         close_run_id=close_run_id,
@@ -196,14 +193,10 @@ def approve_recommendation(
     auth_service: AuthServiceDependency,
     recommendation_service: RecommendationServiceDependency,
     db_session: DbSessionDep,
+    auth_context: RequestAuthDependency,
 ) -> dict:
     """Approve a pending recommendation and generate its journal draft."""
-    session_result = _require_authenticated_browser_session(
-        request=request,
-        response=response,
-        settings=settings,
-        auth_service=auth_service,
-    )
+    session_result = auth_context
     _require_close_run_access(
         entity_id=entity_id,
         close_run_id=close_run_id,
@@ -263,14 +256,10 @@ def reject_recommendation(
     auth_service: AuthServiceDependency,
     recommendation_service: RecommendationServiceDependency,
     db_session: DbSessionDep,
+    auth_context: RequestAuthDependency,
 ) -> dict:
     """Reject a pending recommendation so it does not affect working state."""
-    session_result = _require_authenticated_browser_session(
-        request=request,
-        response=response,
-        settings=settings,
-        auth_service=auth_service,
-    )
+    session_result = auth_context
     _require_close_run_access(
         entity_id=entity_id,
         close_run_id=close_run_id,
@@ -316,14 +305,10 @@ def list_journals(
     settings: SettingsDependency,
     auth_service: AuthServiceDependency,
     db_session: DbSessionDep,
+    auth_context: RequestAuthDependency,
 ) -> JournalListResponse:
     """Return journal entries for an authenticated user's close run."""
-    session_result = _require_authenticated_browser_session(
-        request=request,
-        response=response,
-        settings=settings,
-        auth_service=auth_service,
-    )
+    session_result = auth_context
     _require_close_run_access(
         entity_id=entity_id,
         close_run_id=close_run_id,
@@ -457,14 +442,10 @@ def approve_journal(
     auth_service: AuthServiceDependency,
     recommendation_service: RecommendationServiceDependency,
     db_session: DbSessionDep,
+    auth_context: RequestAuthDependency,
 ) -> JournalActionResponse:
     """Approve a draft or pending journal entry."""
-    session_result = _require_authenticated_browser_session(
-        request=request,
-        response=response,
-        settings=settings,
-        auth_service=auth_service,
-    )
+    session_result = auth_context
     _require_close_run_access(
         entity_id=entity_id,
         close_run_id=close_run_id,
@@ -515,14 +496,10 @@ def apply_journal(
     auth_service: AuthServiceDependency,
     recommendation_service: RecommendationServiceDependency,
     db_session: DbSessionDep,
+    auth_context: RequestAuthDependency,
 ) -> JournalActionResponse:
     """Apply an approved journal entry to working accounting state."""
-    session_result = _require_authenticated_browser_session(
-        request=request,
-        response=response,
-        settings=settings,
-        auth_service=auth_service,
-    )
+    session_result = auth_context
     _require_close_run_access(
         entity_id=entity_id,
         close_run_id=close_run_id,
@@ -573,14 +550,10 @@ def reject_journal(
     auth_service: AuthServiceDependency,
     recommendation_service: RecommendationServiceDependency,
     db_session: DbSessionDep,
+    auth_context: RequestAuthDependency,
 ) -> JournalActionResponse:
     """Reject a draft or pending journal entry."""
-    session_result = _require_authenticated_browser_session(
-        request=request,
-        response=response,
-        settings=settings,
-        auth_service=auth_service,
-    )
+    session_result = auth_context
     _require_close_run_access(
         entity_id=entity_id,
         close_run_id=close_run_id,

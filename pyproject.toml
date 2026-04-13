@@ -39,6 +39,8 @@ dependencies = [
   "uvicorn[standard]>=0.38,<0.39",
   "xlsxwriter>=3.2.9",
   "weasyprint>=68.1",
+  "textual>=6.0,<7.0",
+  "rich>=14.0,<15.0",
 ]
 
 [dependency-groups]
