@@ -1,10 +1,12 @@
 """
 Purpose: Expose grounded chat thread and message routes for the finance
-copilot experience.
-Scope: Thread creation, listing, detail reads, and the send-message flow
-that returns read-only analysis responses backed by workflow evidence.
+copilot experience, including action routing for proposed edits, approvals,
+and workflow assistance.
+Scope: Thread creation, listing, detail reads, send-message with read-only
+analysis responses, action intent classification, proposed edit approval/rejection,
+and pending action plan listing.
 Dependencies: FastAPI, auth session validation, chat contracts and services,
-and the shared DB/settings dependencies.
+action router, proposed changes service, and the shared DB/settings dependencies.
 """
 
 from __future__ import annotations
@@ -18,7 +20,7 @@ from apps.api.app.routes.auth import (
     _read_session_cookie,
     get_auth_service,
 )
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request, status
 from services.auth.service import (
     AuthenticatedSessionResult,
     AuthErrorCode,
@@ -27,6 +29,8 @@ from services.auth.service import (
 )
 from services.chat.grounding import ChatGroundingService
 from services.chat.service import ChatService, ChatServiceError
+from services.chat.action_router import ChatActionRouter, ChatActionRouterError
+from services.chat.proposed_changes import ProposedChangesError, ProposedChangesService
 from services.common.settings import AppSettings, get_settings
 from services.contracts.chat_models import (
     ChatMessageResponse,
@@ -35,8 +39,16 @@ from services.contracts.chat_models import (
     CreateChatThreadRequest,
     SendChatMessageRequest,
 )
+from services.chat.action_models import (
+    ApproveChatActionRequest,
+    ChatActionResponse,
+    ChatActionSummary,
+    RejectChatActionRequest,
+    SendChatActionRequest,
+)
 from services.db.models.audit import AuditSourceSurface
 from services.db.repositories.chat_repo import ChatRepository
+from services.db.repositories.chat_action_repo import ChatActionRepository
 from services.db.repositories.close_run_repo import CloseRunRepository
 from services.db.repositories.entity_repo import EntityRepository
 from services.model_gateway.client import ModelGateway
@@ -75,6 +87,46 @@ def get_chat_service(
 
 
 ChatServiceDependency = Annotated[ChatService, Depends(get_chat_service)]
+
+
+def get_chat_action_router(
+    db_session: DatabaseSessionDependency,
+    settings: SettingsDependency,
+) -> ChatActionRouter:
+    """Construct the chat action router from request-scoped persistence and settings."""
+
+    entity_repo = EntityRepository(db_session=db_session)
+    close_run_repo = CloseRunRepository(db_session=db_session)
+    grounding_service = ChatGroundingService(
+        entity_repo=entity_repo,
+        close_run_repo=close_run_repo,
+    )
+    model_gateway = ModelGateway()
+    chat_repo = ChatRepository(db_session=db_session)
+    action_repo = ChatActionRepository(db_session=db_session)
+
+    return ChatActionRouter(
+        action_repository=action_repo,
+        chat_repository=chat_repo,
+        model_gateway=model_gateway,
+        grounding_service=grounding_service,
+        entity_repo=entity_repo,
+    )
+
+
+ChatActionRouterDependency = Annotated[ChatActionRouter, Depends(get_chat_action_router)]
+
+
+def get_proposed_changes_service(
+    db_session: DatabaseSessionDependency,
+) -> ProposedChangesService:
+    """Construct the proposed changes service from request-scoped persistence."""
+
+    action_repo = ChatActionRepository(db_session=db_session)
+    return ProposedChangesService(action_repository=action_repo)
+
+
+ProposedChangesServiceDependency = Annotated[ProposedChangesService, Depends(get_proposed_changes_service)]
 
 
 def _require_authenticated_browser_session(
@@ -253,6 +305,306 @@ def send_chat_message(
             status_code=error.status_code,
             detail=_error_payload(code=error.code.value, message=error.message),
         ) from error
+
+
+# ---------------------------------------------------------------------------
+# Action routing endpoints (Step 35)
+# ---------------------------------------------------------------------------
+
+
+@router.post(
+    "/threads/{thread_id}/actions",
+    response_model=ChatActionResponse,
+    summary="Send a message with action intent detection",
+)
+def send_chat_action(
+    thread_id: UUID,
+    payload: SendChatActionRequest,
+    entity_id: EntityIdQuery,
+    request: Request = None,  # type: ignore[assignment]
+    settings: SettingsDependency = None,  # type: ignore[assignment]
+    auth_service: AuthServiceDependency = None,  # type: ignore[assignment]
+    chat_service: ChatServiceDependency = None,  # type: ignore[assignment]
+    action_router: ChatActionRouterDependency = None,  # type: ignore[assignment]
+) -> ChatActionResponse:
+    """Send a user message that may contain action intents.
+
+    When an action intent is detected (proposed edit, approval request, etc.),
+    the system classifies the intent, creates an action execution plan,
+    persists it for review, and returns it alongside the assistant response.
+    When no action intent is detected, falls back to read-only analysis.
+    """
+
+    session_result = _require_authenticated_browser_session(
+        request=request,
+        auth_service=auth_service,
+        settings=settings,
+    )
+    user_id = session_result.user.id
+    trace_id = getattr(request.state, "request_id", None)
+
+    # First, send through the standard chat service for message persistence
+    try:
+        chat_response = chat_service.send_message(
+            thread_id=thread_id,
+            entity_id=entity_id,
+            user_id=str(user_id),
+            content=payload.content,
+            source_surface=AuditSourceSurface.DESKTOP,
+            trace_id=trace_id,
+        )
+    except ChatServiceError as error:
+        raise HTTPException(
+            status_code=error.status_code,
+            detail=_error_payload(code=error.code.value, message=error.message),
+        ) from error
+
+    # Classify action intent using the action router
+    try:
+        grounding_result = action_router._grounding.resolve_context(
+            entity_id=entity_id,
+            close_run_id=None,
+            user_id=user_id,
+        )
+    except Exception:
+        # If grounding fails, return read-only response
+        return ChatActionResponse(
+            message_id=str(chat_response.message.id),
+            content=chat_response.message.content,
+            action_plan=None,
+            is_read_only=True,
+        )
+
+    try:
+        intent = action_router.classify_action_intent(
+            thread_id=thread_id,
+            entity_id=entity_id,
+            user_id=user_id,
+            content=payload.content,
+            grounding=grounding_result,
+        )
+    except ChatActionRouterError as error:
+        # Classification failed -- return read-only response
+        return ChatActionResponse(
+            message_id=str(chat_response.message.id),
+            content=chat_response.message.content,
+            action_plan=None,
+            is_read_only=True,
+        )
+
+    if intent is None:
+        # No action intent detected -- pure analysis
+        return ChatActionResponse(
+            message_id=str(chat_response.message.id),
+            content=chat_response.message.content,
+            action_plan=None,
+            is_read_only=True,
+        )
+
+    # Build and persist the action execution plan
+    plan = action_router.build_execution_plan(
+        thread_id=thread_id,
+        message_id=UUID(chat_response.message.id),
+        entity_id=entity_id,
+        close_run_id=grounding_result.close_run.id if grounding_result.close_run else None,
+        actor_user_id=user_id,
+        intent=intent,
+        grounding=grounding_result,
+        reasoning=f"Detected {intent.intent} intent from user message.",
+    )
+
+    try:
+        record = action_router.persist_action_plan(
+            plan=plan,
+            entity_id=entity_id,
+            actor_user_id=user_id,
+            source_surface=AuditSourceSurface.DESKTOP,
+            trace_id=trace_id,
+        )
+    except Exception:
+        # Persistence failed -- return read-only response
+        return ChatActionResponse(
+            message_id=str(chat_response.message.id),
+            content=chat_response.message.content,
+            action_plan=None,
+            is_read_only=True,
+        )
+
+    # Build the response with the action plan
+    action_plan = ChatActionSummary(
+        id=str(record.id),
+        thread_id=str(record.thread_id),
+        intent=record.intent,
+        target_type=record.target_type,
+        target_id=str(record.target_id) if record.target_id else None,
+        status=record.status,
+        requires_human_approval=record.requires_human_approval,
+        created_at=str(record.created_at),
+    )
+
+    return ChatActionResponse(
+        message_id=str(chat_response.message.id),
+        content=chat_response.message.content,
+        action_plan=action_plan,
+        is_read_only=False,
+    )
+
+
+@router.get(
+    "/threads/{thread_id}/actions",
+    response_model=list[ChatActionSummary],
+    summary="List pending action plans for a thread",
+)
+def list_thread_actions(
+    thread_id: UUID,
+    entity_id: EntityIdQuery,
+    limit: ThreadLimitQuery = 50,
+    request: Request = None,  # type: ignore[assignment]
+    settings: SettingsDependency = None,  # type: ignore[assignment]
+    auth_service: AuthServiceDependency = None,  # type: ignore[assignment]
+    action_router: ChatActionRouterDependency = None,  # type: ignore[assignment]
+) -> list[ChatActionSummary]:
+    """Return pending action plans for a chat thread for review-queue rendering."""
+
+    session_result = _require_authenticated_browser_session(
+        request=request,
+        auth_service=auth_service,
+        settings=settings,
+    )
+
+    plans = action_router.list_pending_actions(
+        thread_id=thread_id,
+        entity_id=entity_id,
+        user_id=session_result.user.id,
+        limit=limit,
+    )
+
+    return [
+        ChatActionSummary(
+            id=str(p.id),
+            thread_id=str(p.thread_id),
+            intent=p.intent,
+            target_type=p.target_type,
+            target_id=str(p.target_id) if p.target_id else None,
+            status=p.status,
+            requires_human_approval=p.requires_human_approval,
+            created_at=str(p.created_at),
+        )
+        for p in plans
+    ]
+
+
+@router.post(
+    "/actions/{action_plan_id}/approve",
+    response_model=ChatActionSummary,
+    summary="Approve a pending chat action plan",
+)
+def approve_chat_action(
+    action_plan_id: UUID = Path(description="Action plan UUID to approve."),
+    thread_id: UUID = Query(description="Thread UUID for access verification."),
+    entity_id: EntityIdQuery = None,  # type: ignore[assignment]
+    payload: ApproveChatActionRequest = None,  # type: ignore[assignment]
+    request: Request = None,  # type: ignore[assignment]
+    settings: SettingsDependency = None,  # type: ignore[assignment]
+    auth_service: AuthServiceDependency = None,  # type: ignore[assignment]
+    action_router: ChatActionRouterDependency = None,  # type: ignore[assignment]
+) -> ChatActionSummary:
+    """Approve a pending chat-originated action plan."""
+
+    session_result = _require_authenticated_browser_session(
+        request=request,
+        auth_service=auth_service,
+        settings=settings,
+    )
+    trace_id = getattr(request.state, "request_id", None)
+
+    try:
+        record = action_router.approve_action_plan(
+            action_plan_id=action_plan_id,
+            thread_id=thread_id,
+            entity_id=entity_id,
+            actor_user_id=session_result.user.id,
+            reason=payload.reason if payload else None,
+            source_surface=AuditSourceSurface.DESKTOP,
+            trace_id=trace_id,
+        )
+    except ChatActionRouterError as error:
+        raise HTTPException(
+            status_code=error.status_code,
+            detail=_error_payload(code=error.code.value, message=error.message),
+        ) from error
+
+    return ChatActionSummary(
+        id=str(record.id),
+        thread_id=str(record.thread_id),
+        intent=record.intent,
+        target_type=record.target_type,
+        target_id=str(record.target_id) if record.target_id else None,
+        status=record.status,
+        requires_human_approval=record.requires_human_approval,
+        created_at=str(record.created_at),
+    )
+
+
+@router.post(
+    "/actions/{action_plan_id}/reject",
+    response_model=ChatActionSummary,
+    summary="Reject a pending chat action plan",
+)
+def reject_chat_action(
+    action_plan_id: UUID = Path(description="Action plan UUID to reject."),
+    thread_id: UUID = Query(description="Thread UUID for access verification."),
+    entity_id: EntityIdQuery = None,  # type: ignore[assignment]
+    payload: RejectChatActionRequest = None,  # type: ignore[assignment]
+    request: Request = None,  # type: ignore[assignment]
+    settings: SettingsDependency = None,  # type: ignore[assignment]
+    auth_service: AuthServiceDependency = None,  # type: ignore[assignment]
+    action_router: ChatActionRouterDependency = None,  # type: ignore[assignment]
+) -> ChatActionSummary:
+    """Reject a pending chat-originated action plan with a required reason."""
+
+    session_result = _require_authenticated_browser_session(
+        request=request,
+        auth_service=auth_service,
+        settings=settings,
+    )
+    trace_id = getattr(request.state, "request_id", None)
+
+    if payload is None or not payload.reason:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=_error_payload(
+                code="validation_failed",
+                message="A reason is required when rejecting a chat action.",
+            ),
+        )
+
+    try:
+        record = action_router.reject_action_plan(
+            action_plan_id=action_plan_id,
+            thread_id=thread_id,
+            entity_id=entity_id,
+            actor_user_id=session_result.user.id,
+            reason=payload.reason,
+            source_surface=AuditSourceSurface.DESKTOP,
+            trace_id=trace_id,
+        )
+    except ChatActionRouterError as error:
+        raise HTTPException(
+            status_code=error.status_code,
+            detail=_error_payload(code=error.code.value, message=error.message),
+        ) from error
+
+    return ChatActionSummary(
+        id=str(record.id),
+        thread_id=str(record.thread_id),
+        intent=record.intent,
+        target_type=record.target_type,
+        target_id=str(record.target_id) if record.target_id else None,
+        status=record.status,
+        requires_human_approval=record.requires_human_approval,
+        created_at=str(record.created_at),
+    )
 
 
 __all__ = ["router"]

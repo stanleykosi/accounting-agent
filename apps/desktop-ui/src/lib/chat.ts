@@ -206,3 +206,127 @@ export async function sendChatMessage(
     },
   );
 }
+
+// ---------------------------------------------------------------------------
+// Chat action routing types and helpers (Step 35)
+// ---------------------------------------------------------------------------
+
+export type ChatActionIntent =
+  | "proposed_edit"
+  | "approval_request"
+  | "document_request"
+  | "explanation"
+  | "workflow_action"
+  | "reconciliation_query"
+  | "report_action";
+
+export type ChatActionSummary = {
+  created_at: string;
+  id: string;
+  intent: ChatActionIntent;
+  requires_human_approval: boolean;
+  status: "pending" | "approved" | "rejected" | "superseded" | "applied";
+  target_id: string | null;
+  target_type: string | null;
+  thread_id: string;
+};
+
+export type SendChatActionRequest = {
+  content: string;
+  force_action_mode?: boolean;
+};
+
+export type ChatActionResponse = {
+  action_plan: ChatActionSummary | null;
+  content: string;
+  is_read_only: boolean;
+  message_id: string;
+};
+
+export type ApproveChatActionRequest = {
+  reason?: string;
+};
+
+export type RejectChatActionRequest = {
+  reason: string;
+};
+
+/**
+ * Purpose: Send a message with action intent detection and routing.
+ * Inputs: Thread ID, entity ID, and message content.
+ * Outputs: Assistant response with optional action execution plan.
+ * Behavior: Posts to the action endpoint; returns read-only when no action detected.
+ */
+export async function sendChatAction(
+  threadId: string,
+  entityId: string,
+  content: string,
+): Promise<ChatActionResponse> {
+  return fetchJson<ChatActionResponse>(
+    `${API_BASE}/threads/${threadId}/actions?entity_id=${encodeURIComponent(entityId)}`,
+    {
+      body: JSON.stringify({ content } satisfies SendChatActionRequest),
+      method: "POST",
+    },
+  );
+}
+
+/**
+ * Purpose: List pending action plans for a chat thread.
+ * Inputs: Thread ID, entity ID, and optional limit.
+ * Outputs: Array of pending action summaries for review rendering.
+ */
+export async function listThreadActions(
+  threadId: string,
+  entityId: string,
+  limit = 50,
+): Promise<ChatActionSummary[]> {
+  const params = new URLSearchParams();
+  params.set("entity_id", entityId);
+  params.set("limit", String(limit));
+
+  return fetchJson<ChatActionSummary[]>(
+    `${API_BASE}/threads/${threadId}/actions?${params.toString()}`,
+  );
+}
+
+/**
+ * Purpose: Approve a pending chat-originated action plan.
+ * Inputs: Action plan ID, thread ID, entity ID, and optional reason.
+ * Outputs: Updated action summary with approved status.
+ */
+export async function approveChatAction(
+  actionPlanId: string,
+  threadId: string,
+  entityId: string,
+  reason?: string,
+): Promise<ChatActionSummary> {
+  const body: ApproveChatActionRequest = reason !== undefined ? { reason } : {};
+  return fetchJson<ChatActionSummary>(
+    `${API_BASE}/actions/${encodeURIComponent(actionPlanId)}/approve?thread_id=${encodeURIComponent(threadId)}&entity_id=${encodeURIComponent(entityId)}`,
+    {
+      body: JSON.stringify(body),
+      method: "POST",
+    },
+  );
+}
+
+/**
+ * Purpose: Reject a pending chat-originated action plan with a required reason.
+ * Inputs: Action plan ID, thread ID, entity ID, and rejection reason.
+ * Outputs: Updated action summary with rejected status.
+ */
+export async function rejectChatAction(
+  actionPlanId: string,
+  threadId: string,
+  entityId: string,
+  reason: string,
+): Promise<ChatActionSummary> {
+  return fetchJson<ChatActionSummary>(
+    `${API_BASE}/actions/${encodeURIComponent(actionPlanId)}/reject?thread_id=${encodeURIComponent(threadId)}&entity_id=${encodeURIComponent(entityId)}`,
+    {
+      body: JSON.stringify({ reason } satisfies RejectChatActionRequest),
+      method: "POST",
+    },
+  );
+}
