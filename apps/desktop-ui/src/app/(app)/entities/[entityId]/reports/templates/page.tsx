@@ -8,7 +8,6 @@ Dependencies: React hooks, route params, shared SurfaceCard, and the reports API
 "use client";
 
 import { SurfaceCard } from "@accounting-ai-agent/ui";
-import Link from "next/link";
 import {
   use,
   useCallback,
@@ -24,12 +23,11 @@ import {
   createReportTemplate,
   listReportTemplates,
   validateReportTemplateGuardrails,
-  type ReportTemplateDetail,
-  type ReportTemplateSummary,
   type CreateReportTemplateRequest,
   type GuardrailValidationResponse,
   type GuardrailViolation,
   type ReportSectionDefinition,
+  type ReportTemplateSummary,
 } from "../../../../../../lib/reports";
 
 type ReportTemplatesPageProps = {
@@ -78,9 +76,7 @@ const defaultCreateTemplateFormState: CreateTemplateFormState = {
 /* Page component                                                      */
 /* ------------------------------------------------------------------ */
 
-export default function ReportTemplatesPage({
-  params,
-}: ReportTemplatesPageProps): ReactElement {
+export default function ReportTemplatesPage({ params }: ReportTemplatesPageProps): ReactElement {
   const resolvedParams = use(params);
   const { entityId } = resolvedParams;
 
@@ -96,8 +92,7 @@ export default function ReportTemplatesPage({
   );
   const [createError, setCreateError] = useState<string | null>(null);
 
-  const [guardrailResult, setGuardrailResult] =
-    useState<GuardrailValidationResponse | null>(null);
+  const [guardrailResult, setGuardrailResult] = useState<GuardrailValidationResponse | null>(null);
   const [guardrailLoading, setGuardrailLoading] = useState(false);
 
   const loadTemplates = useCallback(async () => {
@@ -108,11 +103,7 @@ export default function ReportTemplatesPage({
       setTemplates(response.templates);
       setActiveTemplateId(response.active_template_id ?? null);
     } catch (err: unknown) {
-      setError(
-        err instanceof ReportApiError
-          ? err.message
-          : "Failed to load report templates.",
-      );
+      setError(err instanceof ReportApiError ? err.message : "Failed to load report templates.");
     } finally {
       setLoading(false);
     }
@@ -122,7 +113,7 @@ export default function ReportTemplatesPage({
     void loadTemplates();
   }, [loadTemplates]);
 
-  const handleCreateTemplate = async (event: FormEvent) => {
+  const handleCreateTemplate = (event: FormEvent) => {
     event.preventDefault();
     setCreateError(null);
 
@@ -134,34 +125,30 @@ export default function ReportTemplatesPage({
       activate_immediately: createForm.activateImmediately,
     };
 
-    startTransition(async () => {
-      try {
-        await createReportTemplate(entityId, payload);
-        setShowCreateForm(false);
-        setCreateForm(defaultCreateTemplateFormState);
-        await loadTemplates();
-      } catch (err: unknown) {
-        setCreateError(
-          err instanceof ReportApiError
-            ? err.message
-            : "Failed to create report template.",
-        );
-      }
+    startTransition(() => {
+      void createReportTemplate(entityId, payload)
+        .then(async () => {
+          setShowCreateForm(false);
+          setCreateForm(defaultCreateTemplateFormState);
+          await loadTemplates();
+        })
+        .catch((err: unknown) => {
+          setCreateError(
+            err instanceof ReportApiError ? err.message : "Failed to create report template.",
+          );
+        });
     });
   };
 
-  const handleActivateTemplate = async (templateId: string) => {
-    startTransition(async () => {
-      try {
-        await activateReportTemplate(entityId, templateId);
-        await loadTemplates();
-      } catch (err: unknown) {
-        setError(
-          err instanceof ReportApiError
-            ? err.message
-            : "Failed to activate template.",
-        );
-      }
+  const handleActivateTemplate = (templateId: string) => {
+    startTransition(() => {
+      void activateReportTemplate(entityId, templateId)
+        .then(async () => {
+          await loadTemplates();
+        })
+        .catch((err: unknown) => {
+          setError(err instanceof ReportApiError ? err.message : "Failed to activate template.");
+        });
     });
   };
 
@@ -171,7 +158,7 @@ export default function ReportTemplatesPage({
     try {
       const result = await validateReportTemplateGuardrails(entityId, templateId);
       setGuardrailResult(result);
-    } catch (_err: unknown) {
+    } catch {
       setGuardrailResult(null);
     } finally {
       setGuardrailLoading(false);
@@ -183,12 +170,10 @@ export default function ReportTemplatesPage({
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-semibold text-gray-900">
-            Report Templates
-          </h1>
+          <h1 className="text-2xl font-semibold text-gray-900">Report Templates</h1>
           <p className="mt-1 text-sm text-gray-500">
-            Manage report templates with mandatory section guardrails. Templates
-            must include all five required workflow sections.
+            Manage report templates with mandatory section guardrails. Templates must include all
+            five required workflow sections.
           </p>
         </div>
         <button
@@ -205,31 +190,26 @@ export default function ReportTemplatesPage({
         <div className="mb-4">
           <SurfaceCard title="Guardrail Validation">
             <div
-            className={`rounded-md p-4 ${
-              guardrailResult.is_valid
-                ? "bg-green-50 text-green-800"
-                : "bg-red-50 text-red-800"
-            }`}
-          >
-            <p className="font-medium">
-              {guardrailResult.is_valid
-                ? "Template passes all guardrail checks."
-                : "Template has guardrail violations:"}
-            </p>
-            {guardrailResult.violations.length > 0 && (
-              <ul className="mt-2 list-disc space-y-1 pl-5 text-sm">
-                {guardrailResult.violations.map(
-                  (v: GuardrailViolation, i: number) => (
-                  <li key={i}>
-                    {v.section_key && (
-                      <span className="font-mono text-xs">{v.section_key}</span>
-                    )}{" "}
-                    {v.message}
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
+              className={`rounded-md p-4 ${
+                guardrailResult.is_valid ? "bg-green-50 text-green-800" : "bg-red-50 text-red-800"
+              }`}
+            >
+              <p className="font-medium">
+                {guardrailResult.is_valid
+                  ? "Template passes all guardrail checks."
+                  : "Template has guardrail violations:"}
+              </p>
+              {guardrailResult.violations.length > 0 && (
+                <ul className="mt-2 list-disc space-y-1 pl-5 text-sm">
+                  {guardrailResult.violations.map((v: GuardrailViolation, i: number) => (
+                    <li key={i}>
+                      {v.section_key && <span className="font-mono text-xs">{v.section_key}</span>}{" "}
+                      {v.message}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
           </SurfaceCard>
         </div>
       )}
@@ -237,12 +217,14 @@ export default function ReportTemplatesPage({
       {/* Create template form */}
       {showCreateForm && (
         <SurfaceCard title="Create Report Template">
-          <form onSubmit={handleCreateTemplate} className="space-y-4">
+          <form
+            onSubmit={(event) => {
+              handleCreateTemplate(event);
+            }}
+            className="space-y-4"
+          >
             <div>
-              <label
-                htmlFor="template-name"
-                className="block text-sm font-medium text-gray-700"
-              >
+              <label htmlFor="template-name" className="block text-sm font-medium text-gray-700">
                 Template name
               </label>
               <input
@@ -250,19 +232,14 @@ export default function ReportTemplatesPage({
                 type="text"
                 required
                 value={createForm.name}
-                onChange={(e) =>
-                  setCreateForm((prev) => ({ ...prev, name: e.target.value }))
-                }
+                onChange={(e) => setCreateForm((prev) => ({ ...prev, name: e.target.value }))}
                 className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
                 placeholder="e.g. Monthly Management Pack"
               />
             </div>
 
             <div>
-              <label
-                htmlFor="template-desc"
-                className="block text-sm font-medium text-gray-700"
-              >
+              <label htmlFor="template-desc" className="block text-sm font-medium text-gray-700">
                 Description (optional)
               </label>
               <textarea
@@ -282,9 +259,7 @@ export default function ReportTemplatesPage({
 
             {/* Sections */}
             <div>
-              <label className="block text-sm font-medium text-gray-700">
-                Report sections
-              </label>
+              <label className="block text-sm font-medium text-gray-700">Report sections</label>
               <p className="mt-1 text-xs text-gray-500">
                 All five mandatory sections are included and cannot be removed.
               </p>
@@ -295,12 +270,8 @@ export default function ReportTemplatesPage({
                     className="flex items-center justify-between px-3 py-2"
                   >
                     <div className="flex items-center gap-3">
-                      <span className="text-sm font-medium text-gray-900">
-                        {index + 1}.
-                      </span>
-                      <span className="text-sm text-gray-700">
-                        {section.label}
-                      </span>
+                      <span className="text-sm font-medium text-gray-900">{index + 1}.</span>
+                      <span className="text-sm text-gray-700">{section.label}</span>
                       <code className="rounded bg-gray-100 px-1.5 py-0.5 text-xs text-gray-500">
                         {section.section_key}
                       </code>
@@ -326,18 +297,13 @@ export default function ReportTemplatesPage({
                 }
                 className="rounded border-gray-300"
               />
-              <label
-                htmlFor="activate-immediately"
-                className="text-sm text-gray-700"
-              >
+              <label htmlFor="activate-immediately" className="text-sm text-gray-700">
                 Activate this template immediately
               </label>
             </div>
 
             {createError && (
-              <div className="rounded-md bg-red-50 p-3 text-sm text-red-800">
-                {createError}
-              </div>
+              <div className="rounded-md bg-red-50 p-3 text-sm text-red-800">{createError}</div>
             )}
 
             <div className="flex justify-end">
@@ -356,13 +322,9 @@ export default function ReportTemplatesPage({
       {/* Template list */}
       <SurfaceCard title="Templates">
         {loading ? (
-          <p className="py-8 text-center text-sm text-gray-500">
-            Loading templates...
-          </p>
+          <p className="py-8 text-center text-sm text-gray-500">Loading templates...</p>
         ) : error ? (
-          <div className="rounded-md bg-red-50 p-4 text-sm text-red-800">
-            {error}
-          </div>
+          <div className="rounded-md bg-red-50 p-4 text-sm text-red-800">{error}</div>
         ) : templates.length === 0 ? (
           <div className="py-8 text-center">
             <p className="text-sm text-gray-500">
@@ -376,8 +338,12 @@ export default function ReportTemplatesPage({
                 key={template.id}
                 template={template}
                 isActive={template.id === activeTemplateId}
-                onActivate={() => handleActivateTemplate(template.id)}
-                onValidate={() => handleValidateGuardrails(template.id)}
+                onActivate={() => {
+                  handleActivateTemplate(template.id);
+                }}
+                onValidate={() => {
+                  void handleValidateGuardrails(template.id);
+                }}
                 guardrailLoading={guardrailLoading}
               />
             ))}
@@ -411,9 +377,7 @@ function TemplateRow({
     <div className="flex items-center justify-between px-4 py-3">
       <div className="flex-1">
         <div className="flex items-center gap-2">
-          <span className="text-sm font-medium text-gray-900">
-            {template.name}
-          </span>
+          <span className="text-sm font-medium text-gray-900">{template.name}</span>
           {isActive && (
             <span className="rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-800">
               Active

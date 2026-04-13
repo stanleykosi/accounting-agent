@@ -67,7 +67,6 @@ export type SendChatMessageRequest = {
 };
 
 const API_BASE = "/api/chat";
-const BACKEND_CHAT_BASE = buildBackendChatUrl("");
 
 /**
  * Purpose: Build the canonical backend chat URL targeted by server-side proxy routes.
@@ -76,8 +75,9 @@ const BACKEND_CHAT_BASE = buildBackendChatUrl("");
  * Behavior: Uses one canonical backend base URL and strips duplicate slashes.
  */
 export function buildBackendChatUrl(path: string): string {
-  const normalizedBaseUrl = (process.env.ACCOUNTING_AGENT_API_URL ?? "http://127.0.0.1:8000/api")
-    .replace(/\/+$/u, "");
+  const normalizedBaseUrl = (
+    process.env.ACCOUNTING_AGENT_API_URL ?? "http://127.0.0.1:8000/api"
+  ).replace(/\/+$/u, "");
   const normalizedPath = path.startsWith("/") ? path : `/${path}`;
   return `${normalizedBaseUrl}/chat${normalizedPath}`;
 }
@@ -88,10 +88,7 @@ export function buildBackendChatUrl(path: string): string {
  * Outputs: Parsed JSON response body.
  * Behavior: Throws `ChatApiError` on non-2xx responses so callers can surface recovery steps.
  */
-async function fetchJson<T>(
-  path: string,
-  init?: RequestInit,
-): Promise<T> {
+async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, {
     credentials: "include",
     headers: {
@@ -101,15 +98,16 @@ async function fetchJson<T>(
   });
 
   if (!response.ok) {
-    const body = await response.json().catch(() => null);
+    const body = await parseJsonResponse(response);
+    const bodyRecord = isRecord(body) ? body : null;
     throw new ChatApiError(
       response.status,
-      (body as Record<string, unknown>)?.message as string | undefined,
-      (body as Record<string, unknown>)?.code as string | undefined,
+      typeof bodyRecord?.message === "string" ? bodyRecord.message : undefined,
+      typeof bodyRecord?.code === "string" ? bodyRecord.code : undefined,
     );
   }
 
-  return (await response.json()) as T;
+  return (await parseJsonResponse(response)) as T;
 }
 
 /**
@@ -182,9 +180,7 @@ export async function getChatThread(
     params.set("message_limit", String(messageLimit));
   }
 
-  return fetchJson<ChatThreadWithMessages>(
-    `${API_BASE}/threads/${threadId}?${params.toString()}`,
-  );
+  return fetchJson<ChatThreadWithMessages>(`${API_BASE}/threads/${threadId}?${params.toString()}`);
 }
 
 /**
@@ -329,4 +325,21 @@ export async function rejectChatAction(
       method: "POST",
     },
   );
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+async function parseJsonResponse(response: Response): Promise<unknown> {
+  const text = await response.text();
+  if (text.length === 0) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    return null;
+  }
 }

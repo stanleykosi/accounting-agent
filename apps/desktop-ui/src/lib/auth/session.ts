@@ -14,7 +14,7 @@ import {
 export const AUTH_COOKIE_NAME =
   process.env.ACCOUNTING_AGENT_SESSION_COOKIE_NAME ?? "accounting_agent_session";
 export const AUTH_SESSION_HEADER_NAME = "x-accounting-auth-session";
-export const DEFAULT_WORKSPACE_PATH = "/workspace";
+export const DEFAULT_WORKSPACE_PATH = "/";
 
 export type SessionRedirectReason = "auth-required" | "session-expired" | "user-disabled";
 
@@ -165,8 +165,9 @@ export function resolvePostLoginPath(nextPath: string | null | undefined): strin
  * Behavior: Uses one canonical backend base URL and strips duplicate slashes.
  */
 export function buildBackendAuthUrl(path: string): string {
-  const normalizedBaseUrl = (process.env.ACCOUNTING_AGENT_API_URL ?? "http://127.0.0.1:8000/api")
-    .replace(/\/+$/u, "");
+  const normalizedBaseUrl = (
+    process.env.ACCOUNTING_AGENT_API_URL ?? "http://127.0.0.1:8000/api"
+  ).replace(/\/+$/u, "");
   const normalizedPath = path.startsWith("/") ? path : `/${path}`;
   return `${normalizedBaseUrl}/auth${normalizedPath}`;
 }

@@ -4,7 +4,7 @@ Scope: Session-aware chrome, operator identity display, long-session recovery, a
 Dependencies: Next.js request headers, middleware-forwarded auth session data, and auth client components.
 */
 
-import Link from "next/link";
+import { AppShell, CommandPalette } from "@accounting-ai-agent/ui";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import type { ReactElement, ReactNode } from "react";
@@ -21,6 +21,25 @@ import {
 type ProtectedAppLayoutProps = {
   children: ReactNode;
 };
+
+const commandPaletteItems = [
+  {
+    description:
+      "Open the global dashboard for review pressure, close-run status, and recent activity.",
+    href: "/",
+    id: "dashboard",
+    keywords: ["home", "overview", "status"],
+    label: "Global dashboard",
+  },
+  {
+    description:
+      "Open the entity directory to manage workspaces, memberships, and period close runs.",
+    href: "/entities",
+    id: "entities",
+    keywords: ["workspace", "directory", "companies"],
+    label: "Entity workspaces",
+  },
+] as const;
 
 /**
  * Purpose: Wrap protected pages in the canonical authenticated desktop shell.
@@ -45,29 +64,18 @@ export default async function ProtectedAppLayout({
   const operatorInitials = getOperatorInitials(session);
 
   return (
-    <div className="workspace-shell">
+    <>
       <SessionHeartbeat />
-
-      <header className="workspace-topbar">
-        <div className="workspace-brand">
-          <p className="eyebrow">Authenticated Workspace</p>
-          <h1>Accounting AI Agent</h1>
-          <p className="workspace-subtitle">
-            Signed in as {session.user.full_name} for close-run review, approvals, and evidence
-            tracing.
-          </p>
-        </div>
-
-        <div className="workspace-actions">
-          <nav aria-label="Primary workspace navigation" className="workspace-nav">
-            <Link className="workspace-link" href={DEFAULT_WORKSPACE_PATH}>
-              Workspace
-            </Link>
-            <Link className="workspace-link" href="/entities">
-              Entities
-            </Link>
-          </nav>
-
+      <AppShell
+        brandEyebrow="Authenticated Workspace"
+        brandSubtitle={`Signed in as ${session.user.full_name} for close-run review, approvals, and evidence tracing.`}
+        brandTitle="Accounting AI Agent"
+        commandPalette={<CommandPalette items={commandPaletteItems} />}
+        navigationItems={[
+          { href: DEFAULT_WORKSPACE_PATH, label: "Dashboard" },
+          { href: "/entities", label: "Entities" },
+        ]}
+        userPanel={
           <div className="workspace-user-pill">
             <span className="workspace-user-initials">{operatorInitials}</span>
             <div>
@@ -75,12 +83,11 @@ export default async function ProtectedAppLayout({
               <span>{session.user.email}</span>
             </div>
           </div>
-
-          <LogoutButton />
-        </div>
-      </header>
-
-      <main className="workspace-main">{children}</main>
-    </div>
+        }
+        utilityPanel={<LogoutButton />}
+      >
+        {children}
+      </AppShell>
+    </>
   );
 }

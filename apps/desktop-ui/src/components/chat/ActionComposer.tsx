@@ -14,7 +14,7 @@ Behavior:
 
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type FormEvent, type KeyboardEvent } from "react";
 import {
   approveChatAction,
   type ChatActionResponse,
@@ -88,7 +88,7 @@ export function ActionComposer({
       setPendingActions(actions);
     } catch (err) {
       // Silently fail -- pending actions are a convenience, not required
-      if (err instanceof ChatApiError && (err as ChatApiError).status !== 404) {
+      if (err instanceof ChatApiError && err.status !== 404) {
         console.warn("Failed to load pending chat actions:", err);
       }
     }
@@ -99,7 +99,7 @@ export function ActionComposer({
   }, [loadPendingActions]);
 
   const handleSubmit = useCallback(
-    async (e: React.FormEvent) => {
+    async (e: FormEvent) => {
       e.preventDefault();
       const trimmed = inputValue.trim();
       if (!trimmed || isLoading || disabled) return;
@@ -127,9 +127,7 @@ export function ActionComposer({
         onMessageSent(actionResponse);
       } catch (err) {
         const message =
-          err instanceof ChatApiError
-            ? (err as ChatApiError).message
-            : "Failed to send message. Please try again.";
+          err instanceof ChatApiError ? err.message : "Failed to send message. Please try again.";
         setError(message);
       } finally {
         setIsLoading(false);
@@ -149,9 +147,7 @@ export function ActionComposer({
         onActionStateChange?.(updated);
       } catch (err) {
         const message =
-          err instanceof ChatApiError
-            ? (err as ChatApiError).message
-            : "Failed to approve action. Please try again.";
+          err instanceof ChatApiError ? err.message : "Failed to approve action. Please try again.";
         setError(message);
       } finally {
         setLoadingActions((prev) => {
@@ -180,9 +176,7 @@ export function ActionComposer({
         onActionStateChange?.(updated);
       } catch (err) {
         const message =
-          err instanceof ChatApiError
-            ? (err as ChatApiError).message
-            : "Failed to reject action. Please try again.";
+          err instanceof ChatApiError ? err.message : "Failed to reject action. Please try again.";
         setError(message);
       } finally {
         setLoadingActions((prev) => {
@@ -243,8 +237,7 @@ export function ActionComposer({
                     width: 6,
                     height: 6,
                     borderRadius: "50%",
-                    background:
-                      ACTION_INTENT_COLORS[action.intent] ?? "#B7C3D6",
+                    background: ACTION_INTENT_COLORS[action.intent] ?? "#B7C3D6",
                     display: "inline-block",
                   }}
                 />
@@ -293,9 +286,7 @@ export function ActionComposer({
                     border: "1px solid #1FA971",
                     background: "rgba(31, 169, 113, 0.12)",
                     color: "#1FA971",
-                    cursor: loadingActions.has(action.id)
-                      ? "not-allowed"
-                      : "pointer",
+                    cursor: loadingActions.has(action.id) ? "not-allowed" : "pointer",
                     opacity: loadingActions.has(action.id) ? 0.6 : 1,
                   }}
                 >
@@ -314,9 +305,7 @@ export function ActionComposer({
                     border: "1px solid #D9534F",
                     background: "rgba(217, 83, 79, 0.12)",
                     color: "#D9534F",
-                    cursor: loadingActions.has(action.id)
-                      ? "not-allowed"
-                      : "pointer",
+                    cursor: loadingActions.has(action.id) ? "not-allowed" : "pointer",
                     opacity: loadingActions.has(action.id) ? 0.6 : 1,
                   }}
                 >
@@ -365,9 +354,7 @@ export function ActionComposer({
             fontSize: 11,
             fontWeight: 500,
             color: actionMode ? "#4C8BF5" : "#B7C3D6",
-            background: actionMode
-              ? "rgba(76, 139, 245, 0.1)"
-              : "transparent",
+            background: actionMode ? "rgba(76, 139, 245, 0.1)" : "transparent",
             border: "none",
             borderRadius: 6,
             padding: "3px 8px",
@@ -387,12 +374,7 @@ export function ActionComposer({
             }}
           >
             {actionMode && (
-              <svg
-                width="8"
-                height="8"
-                viewBox="0 0 8 8"
-                fill="none"
-              >
+              <svg width="8" height="8" viewBox="0 0 8 8" fill="none">
                 <path
                   d="M1 4L3 6L7 2"
                   stroke="white"
@@ -421,7 +403,11 @@ export function ActionComposer({
       </div>
 
       {/* Input form */}
-      <form onSubmit={(e) => void handleSubmit(e)}>
+      <form
+        onSubmit={(event) => {
+          void handleSubmit(event);
+        }}
+      >
         <div
           style={{
             display: "flex",
@@ -432,11 +418,11 @@ export function ActionComposer({
           <textarea
             value={inputValue}
             onChange={(e) => setInputValue(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey && !e.metaKey) {
-                e.preventDefault();
+            onKeyDown={(event: KeyboardEvent<HTMLTextAreaElement>) => {
+              if (event.key === "Enter" && !event.shiftKey && !event.metaKey) {
+                event.preventDefault();
                 if (hasInput && !isSubmitting) {
-                  void handleSubmit(e);
+                  void handleSubmit(event);
                 }
               }
             }}
@@ -470,8 +456,7 @@ export function ActionComposer({
               height: 32,
               borderRadius: 8,
               border: "none",
-              background:
-                hasInput && !isSubmitting ? "#4C8BF5" : "#24324A",
+              background: hasInput && !isSubmitting ? "#4C8BF5" : "#24324A",
               color: hasInput && !isSubmitting ? "#fff" : "#B7C3D6",
               cursor: hasInput && !isSubmitting ? "pointer" : "not-allowed",
               display: "flex",
@@ -480,16 +465,8 @@ export function ActionComposer({
               transition: "background 150ms ease",
             }}
           >
-            <svg
-              width="16"
-              height="16"
-              viewBox="0 0 16 16"
-              fill="none"
-            >
-              <path
-                d="M2 8L14 2L10 8L14 14L2 8Z"
-                fill="currentColor"
-              />
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+              <path d="M2 8L14 2L10 8L14 14L2 8Z" fill="currentColor" />
             </svg>
           </button>
         </div>

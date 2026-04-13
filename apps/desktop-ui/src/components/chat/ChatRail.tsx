@@ -8,7 +8,14 @@ Dependencies: React, desktop UI chat API helpers, and shared design tokens.
 
 "use client";
 
-import { useCallback, useEffect, useRef, useState, type CSSProperties, type FormEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type FormEvent,
+} from "react";
 import {
   type ChatMessageRecord,
   type ChatThreadSummary,
@@ -42,16 +49,6 @@ export function ChatRail({ closeRunId, entityId }: Readonly<ChatRailProps>) {
   const [isExpanded, setIsExpanded] = useState(true);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    loadThreads().catch((err: unknown) => {
-      console.error("Failed to load chat threads:", err);
-    });
-  }, [entityId, closeRunId]);
-
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
-
   const loadThreads = useCallback(async () => {
     try {
       const options: { closeRunId?: string; limit?: number } = {
@@ -69,18 +66,31 @@ export function ChatRail({ closeRunId, entityId }: Readonly<ChatRailProps>) {
     }
   }, [entityId, closeRunId]);
 
-  const handleSelectThread = useCallback(async (thread: ChatThreadSummary) => {
-    setSelectedThread(thread);
-    setError(null);
-    try {
-      const response = await getChatThread(thread.id, entityId);
-      setMessages(response.messages);
-    } catch (err: unknown) {
-      if (err instanceof ChatApiError && err.status !== 401) {
-        setError("Failed to load thread messages.");
+  useEffect(() => {
+    void loadThreads().catch((err: unknown) => {
+      console.error("Failed to load chat threads:", err);
+    });
+  }, [loadThreads]);
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages]);
+
+  const handleSelectThread = useCallback(
+    async (thread: ChatThreadSummary) => {
+      setSelectedThread(thread);
+      setError(null);
+      try {
+        const response = await getChatThread(thread.id, entityId);
+        setMessages(response.messages);
+      } catch (err: unknown) {
+        if (err instanceof ChatApiError && err.status !== 401) {
+          setError("Failed to load thread messages.");
+        }
       }
-    }
-  }, [entityId]);
+    },
+    [entityId],
+  );
 
   const handleCreateThread = useCallback(async () => {
     try {
@@ -132,11 +142,7 @@ export function ChatRail({ closeRunId, entityId }: Readonly<ChatRailProps>) {
       setInputValue("");
 
       try {
-        const response = await sendChatMessage(
-          selectedThread.id,
-          entityId,
-          content,
-        );
+        const response = await sendChatMessage(selectedThread.id, entityId, content);
         setMessages((prev) => {
           const filtered = prev.filter((msg) => !msg.id.startsWith("optimistic-"));
           const newUserMessage = response.user_message ?? optimisticUserMessage;
@@ -192,10 +198,7 @@ export function ChatRail({ closeRunId, entityId }: Readonly<ChatRailProps>) {
 
       {selectedThread ? (
         <>
-          <MessageList
-            isLoading={isLoading}
-            messages={messages}
-          />
+          <MessageList isLoading={isLoading} messages={messages} />
           <MessageComposer
             error={error}
             isLoading={isLoading}
@@ -208,8 +211,12 @@ export function ChatRail({ closeRunId, entityId }: Readonly<ChatRailProps>) {
       ) : (
         <ThreadList
           threads={threads}
-          onCreateThread={handleCreateThread}
-          onSelectThread={handleSelectThread}
+          onCreateThread={() => {
+            void handleCreateThread();
+          }}
+          onSelectThread={(thread) => {
+            void handleSelectThread(thread);
+          }}
         />
       )}
       <div ref={messagesEndRef} />
@@ -265,11 +272,7 @@ type ThreadListProps = {
 function ThreadList({ threads, onCreateThread, onSelectThread }: Readonly<ThreadListProps>) {
   return (
     <div style={threadListStyle}>
-      <button
-        onClick={onCreateThread}
-        style={newThreadButtonStyle}
-        type="button"
-      >
+      <button onClick={onCreateThread} style={newThreadButtonStyle} type="button">
         + New Thread
       </button>
 
@@ -281,14 +284,8 @@ function ThreadList({ threads, onCreateThread, onSelectThread }: Readonly<Thread
         <ul style={threadItemsStyle}>
           {threads.map((thread) => (
             <li key={thread.id}>
-              <button
-                onClick={() => onSelectThread(thread)}
-                style={threadItemStyle}
-                type="button"
-              >
-                <span style={threadTitleStyle}>
-                  {thread.title ?? "Untitled Thread"}
-                </span>
+              <button onClick={() => onSelectThread(thread)} style={threadItemStyle} type="button">
+                <span style={threadTitleStyle}>{thread.title ?? "Untitled Thread"}</span>
                 <span style={threadMetaStyle}>
                   {thread.message_count} {thread.message_count === 1 ? "message" : "messages"}
                 </span>
@@ -317,9 +314,7 @@ function MessageList({ isLoading, messages }: Readonly<MessageListProps>) {
         messages.map((message) => (
           <div
             key={message.id}
-            style={
-              message.role === "user" ? userMessageStyle : assistantMessageStyle
-            }
+            style={message.role === "user" ? userMessageStyle : assistantMessageStyle}
           >
             <div style={messageHeaderStyle}>
               <span style={messageRoleStyle}>
@@ -375,11 +370,7 @@ function MessageComposer({
           value={value}
           style={inputStyle}
         />
-        <button
-          disabled={isLoading || !value.trim()}
-          style={sendButtonStyle}
-          type="submit"
-        >
+        <button disabled={isLoading || !value.trim()} style={sendButtonStyle} type="submit">
           {isLoading ? "..." : "Send"}
         </button>
       </div>

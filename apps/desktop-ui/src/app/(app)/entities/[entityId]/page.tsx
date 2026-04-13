@@ -6,18 +6,27 @@ Dependencies: React hooks, Next.js route params, the entity API helpers, and sha
 
 "use client";
 
-import { SurfaceCard } from "@accounting-ai-agent/ui";
+import { SurfaceCard, Timeline, type TimelineItem } from "@accounting-ai-agent/ui";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   use,
   useEffect,
+  useMemo,
   useState,
   useTransition,
   type ChangeEvent,
   type FormEvent,
   type ReactElement,
 } from "react";
+import {
+  CloseRunApiError,
+  deriveCloseRunAttention,
+  formatCloseRunPeriod,
+  getCloseRunStatusLabel,
+  listCloseRuns,
+  type CloseRunSummary,
+} from "../../../../lib/close-runs";
 import {
   EntityApiError,
   createEntityMembership,
@@ -68,6 +77,8 @@ export default function EntityWorkspacePage({
   const router = useRouter();
   const [entity, setEntity] = useState<EntityWorkspace | null>(null);
   const [entityErrorMessage, setEntityErrorMessage] = useState<string | null>(null);
+  const [closeRunErrorMessage, setCloseRunErrorMessage] = useState<string | null>(null);
+  const [closeRuns, setCloseRuns] = useState<readonly CloseRunSummary[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isPending, startTransition] = useTransition();
   const [membershipFormState, setMembershipFormState] = useState<AddMembershipFormState>(
@@ -76,8 +87,10 @@ export default function EntityWorkspacePage({
   const [settingsFormState, setSettingsFormState] = useState<EntitySettingsFormState | null>(null);
 
   useEffect(() => {
-    void loadWorkspace({
+    void loadWorkspaceView({
       entityId,
+      onCloseRunsLoaded: setCloseRuns,
+      onCloseRunError: setCloseRunErrorMessage,
       onError: setEntityErrorMessage,
       onLoaded: (workspace) => {
         setEntity(workspace);
@@ -86,6 +99,21 @@ export default function EntityWorkspacePage({
       onLoadingChange: setIsLoading,
     });
   }, [entityId]);
+
+  const activityTimelineItems = useMemo<readonly TimelineItem[]>(
+    () =>
+      entity?.activity_events.map((activityEvent) => ({
+        badge: activityEvent.actor?.full_name ?? "System",
+        detail: `${activityEvent.summary} via ${activityEvent.source_surface}${
+          activityEvent.trace_id ? ` • trace ${activityEvent.trace_id}` : ""
+        }`,
+        id: activityEvent.id,
+        timestamp: formatDateTime(activityEvent.created_at),
+        title: activityEvent.summary,
+        tone: "default",
+      })) ?? [],
+    [entity],
+  );
 
   const handleSettingsFieldChange =
     (fieldName: keyof EntitySettingsFormState) =>
@@ -437,34 +465,89 @@ export default function EntityWorkspacePage({
             ))}
           </div>
         </SurfaceCard>
+
+        <SurfaceCard title="Close Runs" subtitle="Period workflows">
+          {closeRunErrorMessage ? (
+            <div className="status-banner warning" role="status">
+              {closeRunErrorMessage}
+            </div>
+          ) : null}
+
+          {closeRunErrorMessage === null && closeRuns.length === 0 ? (
+            <p className="form-helper">
+              No close runs exist yet for this workspace. Create the first period run from the
+              dashboard flow when you are ready to start the accounting cycle.
+            </p>
+          ) : (
+            <div className="dashboard-row-list">
+              {closeRuns.map((closeRun) => (
+                <article className="dashboard-row" key={closeRun.id}>
+                  <div className="close-run-row-header">
+                    <div>
+                      <strong className="close-run-row-title">
+                        {formatCloseRunPeriod(closeRun)}
+                      </strong>
+                      <p className="close-run-row-meta">
+                        {getCloseRunStatusLabel(closeRun.status)} • v{closeRun.currentVersionNo} •{" "}
+                        {closeRun.reportingCurrency}
+                      </p>
+                    </div>
+                    <span className="entity-status-chip">
+                      {deriveCloseRunAttention(closeRun).label}
+                    </span>
+                  </div>
+
+                  <p className="form-helper">{deriveCloseRunAttention(closeRun).detail}</p>
+
+                  <div className="close-run-link-row">
+                    <Link
+                      className="workspace-link-inline"
+                      href={`/entities/${entity.id}/close-runs/${closeRun.id}`}
+                    >
+                      Overview
+                    </Link>
+                    <Link
+                      className="workspace-link-inline"
+                      href={`/entities/${entity.id}/close-runs/${closeRun.id}/documents`}
+                    >
+                      Documents
+                    </Link>
+                    <Link
+                      className="workspace-link-inline"
+                      href={`/entities/${entity.id}/close-runs/${closeRun.id}/reconciliation`}
+                    >
+                      Reconciliation
+                    </Link>
+                    <Link
+                      className="workspace-link-inline"
+                      href={`/entities/${entity.id}/close-runs/${closeRun.id}/chat`}
+                    >
+                      Copilot
+                    </Link>
+                  </div>
+                </article>
+              ))}
+            </div>
+          )}
+        </SurfaceCard>
       </section>
 
       <section className="entity-activity-section">
         <SurfaceCard title="Activity Timeline" subtitle="Root event stream">
-          <div className="activity-list">
-            {entity.activity_events.map(
-              (activityEvent: EntityWorkspace["activity_events"][number]) => (
-                <article className="activity-card" key={activityEvent.id}>
-                  <div className="activity-card-header">
-                    <strong>{activityEvent.summary}</strong>
-                    <span>{formatDateTime(activityEvent.created_at)}</span>
-                  </div>
-                  <p>
-                    {activityEvent.actor?.full_name ?? "System"} via {activityEvent.source_surface}
-                    {activityEvent.trace_id ? ` - trace ${activityEvent.trace_id}` : ""}
-                  </p>
-                </article>
-              ),
-            )}
-          </div>
+          <Timeline
+            emptyMessage="Activity appears here when the workspace records uploads, approvals, and ownership changes."
+            items={activityTimelineItems}
+          />
         </SurfaceCard>
       </section>
     </div>
   );
 }
 
-async function loadWorkspace(options: {
+async function loadWorkspaceView(options: {
   entityId: string;
+  onCloseRunError: (message: string | null) => void;
+  onCloseRunsLoaded: (closeRuns: readonly CloseRunSummary[]) => void;
   onError: (message: string | null) => void;
   onLoaded: (workspace: EntityWorkspace) => void;
   onLoadingChange: (value: boolean) => void;
@@ -474,8 +557,19 @@ async function loadWorkspace(options: {
     const workspace = await readEntityWorkspace(options.entityId);
     options.onLoaded(workspace);
     options.onError(null);
+
+    try {
+      const closeRuns = await listCloseRuns(options.entityId);
+      options.onCloseRunsLoaded(closeRuns);
+      options.onCloseRunError(null);
+    } catch (error: unknown) {
+      options.onCloseRunsLoaded([]);
+      options.onCloseRunError(resolveWorkspaceViewErrorMessage(error));
+    }
   } catch (error: unknown) {
-    options.onError(resolveEntityErrorMessage(error));
+    options.onCloseRunsLoaded([]);
+    options.onCloseRunError(null);
+    options.onError(resolveWorkspaceViewErrorMessage(error));
   } finally {
     options.onLoadingChange(false);
   }
@@ -500,6 +594,14 @@ function deriveSettingsFormState(entity: Readonly<EntityWorkspace>): EntitySetti
 
 function resolveEntityErrorMessage(error: unknown): string {
   if (error instanceof EntityApiError) {
+    return error.message;
+  }
+
+  return "The entity workspace request failed. Reload the page and try again.";
+}
+
+function resolveWorkspaceViewErrorMessage(error: unknown): string {
+  if (error instanceof EntityApiError || error instanceof CloseRunApiError) {
     return error.message;
   }
 

@@ -55,10 +55,7 @@ const INTENT_LABELS: Record<string, string> = {
 };
 
 /** Map status to display labels and colors. */
-const STATUS_CONFIG: Record<
-  string,
-  { label: string; color: string; bg: string }
-> = {
+const STATUS_CONFIG: Record<string, { label: string; color: string; bg: string }> = {
   pending: {
     label: "Pending",
     color: "#E7A93B",
@@ -129,11 +126,7 @@ export function ChatActionCard({
       );
       onStateChange?.(updated);
     } catch (err) {
-      setError(
-        err instanceof ChatApiError
-          ? (err as ChatApiError).message
-          : "Failed to approve action.",
-      );
+      setError(err instanceof ChatApiError ? err.message : "Failed to approve action.");
     } finally {
       setIsLoading(false);
     }
@@ -153,11 +146,7 @@ export function ChatActionCard({
       );
       onStateChange?.(updated);
     } catch (err) {
-      setError(
-        err instanceof ChatApiError
-          ? (err as ChatApiError).message
-          : "Failed to reject action.",
-      );
+      setError(err instanceof ChatApiError ? err.message : "Failed to reject action.");
     } finally {
       setIsLoading(false);
     }
@@ -188,13 +177,9 @@ export function ChatActionCard({
             background: statusConfig?.color ?? "#B7C3D6",
           }}
         />
-        <span style={{ fontWeight: 500 }}>
-          {INTENT_LABELS[action.intent] ?? action.intent}
-        </span>
+        <span style={{ fontWeight: 500 }}>{INTENT_LABELS[action.intent] ?? action.intent}</span>
         {action.target_type && (
-          <span style={{ color: "#B7C3D6" }}>
-            on {action.target_type.slice(0, 20)}
-          </span>
+          <span style={{ color: "#B7C3D6" }}>on {action.target_type.slice(0, 20)}</span>
         )}
         <span
           style={{
@@ -313,10 +298,7 @@ export function ChatActionCard({
             lineHeight: "16px",
           }}
         >
-          Target:{" "}
-          <span style={{ color: "#F4F7FB", fontWeight: 500 }}>
-            {action.target_type}
-          </span>
+          Target: <span style={{ color: "#F4F7FB", fontWeight: 500 }}>{action.target_type}</span>
           {action.target_id && (
             <code
               style={{
@@ -395,9 +377,7 @@ export function ChatActionCard({
               padding: "6px 0",
               borderRadius: 8,
               border: "1px solid #1FA971",
-              background: isLoading
-                ? "rgba(31, 169, 113, 0.06)"
-                : "rgba(31, 169, 113, 0.12)",
+              background: isLoading ? "rgba(31, 169, 113, 0.06)" : "rgba(31, 169, 113, 0.12)",
               color: "#1FA971",
               cursor: isLoading ? "not-allowed" : "pointer",
               opacity: isLoading ? 0.6 : 1,
@@ -417,9 +397,7 @@ export function ChatActionCard({
               padding: "6px 0",
               borderRadius: 8,
               border: "1px solid #D9534F",
-              background: isLoading
-                ? "rgba(217, 83, 79, 0.06)"
-                : "rgba(217, 83, 79, 0.12)",
+              background: isLoading ? "rgba(217, 83, 79, 0.06)" : "rgba(217, 83, 79, 0.12)",
               color: "#D9534F",
               cursor: isLoading ? "not-allowed" : "pointer",
               opacity: isLoading ? 0.6 : 1,

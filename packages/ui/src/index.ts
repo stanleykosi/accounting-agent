@@ -8,11 +8,19 @@ export { SurfaceCard } from "./components/SurfaceCard";
 export type { SurfaceCardProps, SurfaceTone } from "./components/SurfaceCard";
 export { AuthGate } from "./components/auth/AuthGate";
 export type { AuthGateProps, AuthGateTone } from "./components/auth/AuthGate";
+export { Timeline } from "./components/activity/Timeline";
+export type { TimelineItem, TimelineItemTone, TimelineProps } from "./components/activity/Timeline";
+export { PhaseProgress } from "./components/close-runs/PhaseProgress";
+export type { PhaseProgressItem, PhaseProgressProps } from "./components/close-runs/PhaseProgress";
 export { EvidenceDrawer } from "./components/evidence/EvidenceDrawer";
 export type {
   EvidenceDrawerProps,
   EvidenceDrawerReference,
 } from "./components/evidence/EvidenceDrawer";
+export { AppShell } from "./components/layout/AppShell";
+export type { AppShellNavigationItem, AppShellProps } from "./components/layout/AppShell";
+export { CommandPalette } from "./components/layout/CommandPalette";
+export type { CommandPaletteItem, CommandPaletteProps } from "./components/layout/CommandPalette";
 export { OwnershipBadge } from "./components/ownership/OwnershipBadge";
 export type {
   OwnershipBadgeOperator,
