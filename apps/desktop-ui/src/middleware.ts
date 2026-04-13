@@ -16,6 +16,7 @@ import {
 } from "./lib/auth/session";
 
 const PUBLIC_FILE_PATTERN = /\.[^/]+$/u;
+const SETUP_PATH = "/setup";
 
 /**
  * Purpose: Guard protected workspace routes and bounce authenticated operators away from the login screen.
@@ -29,8 +30,20 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
     return NextResponse.next();
   }
 
+  const isSetupPath = pathname === SETUP_PATH;
   const hasSessionCookie = request.cookies.has(AUTH_COOKIE_NAME);
   const isLoginPath = pathname === "/login";
+  if (!isLoginPath && !isSetupPath) {
+    const runtimeReady = await isLocalRuntimeReady(request);
+    if (!runtimeReady) {
+      return redirectToSetup(request);
+    }
+  }
+
+  if (isSetupPath) {
+    return NextResponse.next();
+  }
+
   if (!hasSessionCookie) {
     if (isLoginPath) {
       return NextResponse.next();
@@ -58,10 +71,7 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
   }
 
   const forwardedHeaders = new Headers(request.headers);
-  forwardedHeaders.set(
-    AUTH_SESSION_HEADER_NAME,
-    serializeSessionHeader(validationResult.session),
-  );
+  forwardedHeaders.set(AUTH_SESSION_HEADER_NAME, serializeSessionHeader(validationResult.session));
   const response = NextResponse.next({
     request: {
       headers: forwardedHeaders,
@@ -94,7 +104,11 @@ function redirectToLogin(
 }
 
 function shouldBypassPath(pathname: string): boolean {
-  return pathname.startsWith("/_next") || pathname === "/favicon.ico" || PUBLIC_FILE_PATTERN.test(pathname);
+  return (
+    pathname.startsWith("/_next") ||
+    pathname === "/favicon.ico" ||
+    PUBLIC_FILE_PATTERN.test(pathname)
+  );
 }
 
 function applyRotatedCookie(response: NextResponse, setCookieHeader: string | null): void {
@@ -103,4 +117,34 @@ function applyRotatedCookie(response: NextResponse, setCookieHeader: string | nu
   }
 
   response.headers.append("set-cookie", setCookieHeader);
+}
+
+async function isLocalRuntimeReady(request: NextRequest): Promise<boolean> {
+  try {
+    const response = await fetch(new URL("/api/setup/health", request.url), {
+      cache: "no-store",
+      headers: {
+        Accept: "application/json",
+      },
+      signal: AbortSignal.timeout(2_500),
+    });
+    if (!response.ok) {
+      return false;
+    }
+
+    const payload = (await response.json()) as { ready?: boolean };
+    return payload.ready === true;
+  } catch {
+    return false;
+  }
+}
+
+function redirectToSetup(request: NextRequest): NextResponse {
+  const nextPath = `${request.nextUrl.pathname}${request.nextUrl.search}`;
+  const setupUrl = new URL(SETUP_PATH, request.url);
+  if (nextPath !== SETUP_PATH) {
+    setupUrl.searchParams.set("next", nextPath);
+  }
+
+  return NextResponse.redirect(setupUrl);
 }

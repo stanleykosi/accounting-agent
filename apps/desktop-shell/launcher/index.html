@@ -1,0 +1,117 @@
+<!--
+Purpose: Provide the bundled fallback launcher surface shown while the Tauri shell starts the Next.js standalone sidecar.
+Scope: Minimal desktop loading chrome that remains available before the external sidecar URL is ready.
+Dependencies: apps/desktop-shell/src-tauri/tauri.conf.json and the Rust sidecar bootstrap in src-tauri/src/main.rs.
+-->
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta content="width=device-width, initial-scale=1" name="viewport" />
+    <title>Accounting AI Agent</title>
+    <style>
+      :root {
+        color-scheme: light;
+        font-family: "Sora", "Segoe UI", sans-serif;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        align-items: center;
+        background:
+          radial-gradient(circle at top left, rgba(201, 221, 211, 0.9), transparent 45%),
+          radial-gradient(circle at top right, rgba(255, 215, 176, 0.55), transparent 32%),
+          linear-gradient(180deg, #f5f1e8 0%, #f8f6f2 100%);
+        color: #162019;
+        display: grid;
+        margin: 0;
+        min-height: 100vh;
+        padding: 32px;
+      }
+
+      main {
+        background: rgba(255, 251, 245, 0.92);
+        border: 1px solid rgba(52, 72, 63, 0.14);
+        border-radius: 32px;
+        box-shadow: 0 28px 80px rgba(22, 32, 25, 0.12);
+        display: grid;
+        gap: 14px;
+        margin: 0 auto;
+        max-width: 720px;
+        padding: 40px;
+        width: min(100%, 720px);
+      }
+
+      p {
+        color: #4d5b52;
+        margin: 0;
+      }
+
+      h1 {
+        font-family: "Iowan Old Style", "Palatino Linotype", serif;
+        font-size: clamp(2rem, 4vw, 3rem);
+        letter-spacing: -0.05em;
+        line-height: 1;
+        margin: 0;
+      }
+
+      .eyebrow {
+        font-size: 0.8rem;
+        font-weight: 700;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+      }
+
+      .pulse {
+        align-items: center;
+        display: inline-flex;
+        gap: 10px;
+      }
+
+      .pulse-dot {
+        animation: pulse 1.5s ease-in-out infinite;
+        background: linear-gradient(135deg, #0f766e 0%, #155e56 100%);
+        border-radius: 999px;
+        height: 14px;
+        width: 14px;
+      }
+
+      code {
+        background: rgba(15, 118, 110, 0.08);
+        border-radius: 10px;
+        font-family: "IBM Plex Mono", monospace;
+        padding: 2px 6px;
+      }
+
+      @keyframes pulse {
+        0%,
+        100% {
+          opacity: 0.45;
+          transform: scale(0.92);
+        }
+
+        50% {
+          opacity: 1;
+          transform: scale(1);
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <p class="eyebrow">Desktop Shell</p>
+      <h1>Starting the local accounting workspace.</h1>
+      <p>
+        The Tauri shell is launching the bundled Next.js sidecar and will hand off to the first-run
+        setup experience as soon as the local server is ready.
+      </p>
+      <p class="pulse">
+        <span aria-hidden="true" class="pulse-dot"></span>
+        Waiting for <code>http://127.0.0.1:3210/setup</code>
+      </p>
+    </main>
+  </body>
+</html>

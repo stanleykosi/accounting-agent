@@ -1,0 +1,20 @@
+[package]
+name = "accounting-ai-agent-desktop-shell"
+version = "0.1.0"
+description = "Tauri desktop shell that launches the Accounting AI Agent Next.js standalone sidecar."
+edition = "2021"
+rust-version = "1.80"
+build = "build.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
+tauri = { version = "2", features = [] }
+
+[profile.release]
+codegen-units = 1
+lto = true
+panic = "abort"
+strip = true

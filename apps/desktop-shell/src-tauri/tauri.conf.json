@@ -1,0 +1,33 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Accounting AI Agent",
+  "version": "0.1.0",
+  "identifier": "com.accountingaiagent.desktop",
+  "build": {
+    "beforeBuildCommand": "",
+    "beforeDevCommand": "",
+    "frontendDist": "../launcher"
+  },
+  "app": {
+    "security": {
+      "csp": null
+    },
+    "windows": [
+      {
+        "label": "main",
+        "title": "Accounting AI Agent",
+        "width": 1480,
+        "height": 960,
+        "minWidth": 1200,
+        "minHeight": 780,
+        "resizable": true,
+        "fullscreen": false
+      }
+    ]
+  },
+  "bundle": {
+    "active": true,
+    "resources": ["../resources/**/*"],
+    "targets": "all"
+  }
+}

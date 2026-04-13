@@ -3,6 +3,7 @@
 # Dependencies: Git pathspec matching from the repository root.
 
 *.md
+!docs/setup/desktop-packaging.md
 *.pdf
 *.log
 *.tmp
@@ -64,6 +65,11 @@ out/
 dist/
 build/
 coverage/
+
+apps/desktop-shell/resources/desktop-ui/**
+!apps/desktop-shell/resources/desktop-ui/.gitkeep
+apps/desktop-shell/resources/runtime/**
+!apps/desktop-shell/resources/runtime/.gitkeep
 
 target/
 src-tauri/target/

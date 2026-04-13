@@ -1,0 +1,11 @@
+{
+  "name": "@accounting-ai-agent/desktop-shell",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Tauri desktop shell that supervises the bundled Next.js standalone sidecar for the Accounting AI Agent.",
+  "scripts": {
+    "build:ui": "pnpm --filter @accounting-ai-agent/desktop-ui build",
+    "tauri:build": "pnpm exec tauri build --config src-tauri/tauri.conf.json",
+    "tauri:dev": "pnpm exec tauri dev --config src-tauri/tauri.conf.json"
+  }
+}

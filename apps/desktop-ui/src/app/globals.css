@@ -216,9 +216,150 @@ a {
   color: #8d4a02;
 }
 
+.status-banner.success {
+  border: 1px solid rgba(15, 118, 110, 0.16);
+  background: rgba(15, 118, 110, 0.09);
+  color: #0f5e57;
+}
+
 .workspace-shell {
   min-height: 100vh;
   padding: 24px 24px 56px;
+}
+
+.setup-shell {
+  width: min(1240px, calc(100vw - 48px));
+  margin: 0 auto;
+  padding: 40px 0 72px;
+}
+
+.setup-hero-grid {
+  display: grid;
+  gap: 24px;
+  grid-template-columns: minmax(0, 1.2fr) minmax(320px, 0.8fr);
+  margin-bottom: 28px;
+}
+
+.setup-hero-copy {
+  display: grid;
+  align-content: center;
+  gap: 14px;
+  padding: 20px 6px 20px 0;
+}
+
+.setup-hero-copy h1 {
+  margin: 0;
+  font-size: clamp(2.5rem, 5vw, 4.25rem);
+  letter-spacing: -0.06em;
+  line-height: 0.98;
+}
+
+.setup-checklist {
+  display: grid;
+  gap: 18px;
+  padding: 28px;
+  border: 1px solid rgba(52, 72, 63, 0.12);
+  border-radius: 30px;
+  background: linear-gradient(180deg, rgba(255, 251, 245, 0.94) 0%, rgba(247, 242, 234, 0.92) 100%);
+  box-shadow: var(--shadow-card);
+}
+
+.setup-checklist-header {
+  display: flex;
+  gap: 16px;
+  justify-content: space-between;
+  align-items: flex-start;
+}
+
+.setup-checklist-header h2,
+.setup-service-card h3,
+.setup-command-panel h3 {
+  margin: 0;
+  letter-spacing: -0.04em;
+}
+
+.setup-checklist-actions {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
+.disabled-link {
+  pointer-events: none;
+  opacity: 0.72;
+}
+
+.setup-service-grid {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.setup-service-card {
+  display: grid;
+  gap: 12px;
+  padding: 18px;
+  border: 1px solid rgba(52, 72, 63, 0.14);
+  border-radius: 22px;
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.setup-service-header {
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  align-items: flex-start;
+}
+
+.setup-service-header p,
+.setup-service-latency {
+  margin: 0;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 0.92rem;
+}
+
+.setup-service-badge {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  font-size: 0.82rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  padding: 8px 12px;
+  text-transform: uppercase;
+}
+
+.setup-service-badge.healthy {
+  background: rgba(15, 118, 110, 0.12);
+  color: #0f5e57;
+}
+
+.setup-service-badge.unhealthy {
+  background: rgba(185, 28, 28, 0.1);
+  color: #8f1d1d;
+}
+
+.setup-command-panel {
+  display: grid;
+  gap: 12px;
+  padding: 18px;
+  border: 1px dashed rgba(52, 72, 63, 0.24);
+  border-radius: 24px;
+  background: rgba(255, 251, 245, 0.66);
+}
+
+.setup-command-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.setup-command-list code {
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: rgba(15, 118, 110, 0.08);
+  font-family: var(--font-mono);
 }
 
 .workspace-topbar {
@@ -256,6 +397,20 @@ a {
   display: flex;
   align-items: center;
   gap: 14px;
+}
+
+@media (max-width: 960px) {
+  .setup-hero-grid,
+  .setup-service-grid,
+  .setup-checklist-header {
+    grid-template-columns: 1fr;
+  }
+
+  .setup-checklist-header,
+  .setup-checklist-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
 }
 
 .workspace-nav {
@@ -1204,7 +1359,9 @@ a {
 
 .review-data-row {
   cursor: pointer;
-  transition: background-color 160ms ease, box-shadow 160ms ease;
+  transition:
+    background-color 160ms ease,
+    box-shadow 160ms ease;
 }
 
 .review-data-row:hover {

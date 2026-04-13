@@ -12,6 +12,7 @@
     "build": "pnpm --filter @accounting-ai-agent/ui build && pnpm --filter @accounting-ai-agent/ts-sdk build && pnpm --filter @accounting-ai-agent/desktop-ui build",
     "contracts:check": "pnpm run contracts:generate && git diff --exit-code -- packages/ts-sdk/src/generated/openapi.ts",
     "contracts:generate": "./infra/scripts/generate-ts-sdk.sh",
+    "desktop:package": "./infra/scripts/package-desktop.sh",
     "dev": "pnpm --filter @accounting-ai-agent/desktop-ui dev",
     "format": "prettier --write . --ignore-unknown",
     "format:check": "prettier --check . --ignore-unknown",
@@ -22,6 +23,7 @@
   "devDependencies": {
     "@eslint/js": "9.39.4",
     "@next/eslint-plugin-next": "16.2.3",
+    "@tauri-apps/cli": "^2.10.1",
     "@types/node": "25.5.2",
     "@types/react": "19.2.14",
     "@types/react-dom": "19.2.3",
