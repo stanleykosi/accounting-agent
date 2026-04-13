@@ -14,6 +14,7 @@ from typing import Any
 
 from apps.api.app.routes.api_tokens import router as api_tokens_router
 from apps.api.app.routes.auth import router as auth_router
+from apps.api.app.routes.chat import router as chat_router
 from apps.api.app.routes.close_runs import router as close_runs_router
 from apps.api.app.routes.coa import router as coa_router
 from apps.api.app.routes.documents import router as documents_router
@@ -157,6 +158,7 @@ def create_app(*, settings: AppSettings | None = None) -> FastAPI:
 
     api_router.include_router(auth_router)
     api_router.include_router(api_tokens_router)
+    api_router.include_router(chat_router)
     api_router.include_router(entities_router)
     api_router.include_router(close_runs_router)
     api_router.include_router(coa_router)
