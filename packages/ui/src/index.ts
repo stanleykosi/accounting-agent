@@ -26,6 +26,12 @@ export type {
   OwnershipBadgeOperator,
   OwnershipBadgeProps,
 } from "./components/ownership/OwnershipBadge";
+export { ConfidenceBadge, deriveConfidenceTone, formatConfidenceBadgeLabel } from "./components/review/ConfidenceBadge";
+export type { ConfidenceBadgeProps, ConfidenceBadgeSize } from "./components/review/ConfidenceBadge";
+export { DiffViewer } from "./components/review/DiffViewer";
+export type { DiffViewerProps } from "./components/review/DiffViewer";
+export { ReviewLayout } from "./components/review/ReviewLayout";
+export type { ReviewLayoutProps } from "./components/review/ReviewLayout";
 export { WorkflowPhaseStrip } from "./components/WorkflowPhaseStrip";
 export type { WorkflowPhaseItem, WorkflowPhaseStripProps } from "./components/WorkflowPhaseStrip";
 export {
@@ -56,4 +62,12 @@ export type {
   WorkflowPhase,
   WorkflowPhaseDefinition,
 } from "./lib/domain";
-export { confidencePalette, workflowPhases } from "./tokens";
+export {
+  confidencePalette,
+  exceptionPalette,
+  reviewSpacing,
+  reviewSurfacePalette,
+  reviewTypography,
+  workflowPhases,
+} from "./styles/tokens";
+export type { ConfidenceTone } from "./styles/tokens";

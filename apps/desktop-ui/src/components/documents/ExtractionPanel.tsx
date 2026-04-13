@@ -1,14 +1,14 @@
 /*
 Purpose: Render extracted-field context for the selected document review queue item.
 Scope: Field summaries, confidence cues, issue context, and reviewer action controls beside the queue table.
-Dependencies: Document review types plus the page-provided action and evidence callbacks.
+Dependencies: Shared review UI primitives plus document review types and page-provided callbacks.
 */
 
 "use client";
 
+import { ConfidenceBadge, DiffViewer } from "@accounting-ai-agent/ui";
 import { type ReactElement } from "react";
 import {
-  formatConfidenceLabel,
   type DocumentReviewQueueItem,
   type EvidenceReference,
   type ReviewDraftDecision,
@@ -53,16 +53,22 @@ export function ExtractionPanel({
           <p className="eyebrow">Selected Document</p>
           <h3>{selectedDocument.originalFilename}</h3>
           <p>
-            {formatLabel(selectedDocument.documentType)} • {formatLabel(selectedDocument.status)} •
-            Confidence {formatConfidenceLabel(selectedDocument.classificationConfidence)}
+            {formatLabel(selectedDocument.documentType)} • {formatLabel(selectedDocument.status)} •{" "}
+            {selectedDocument.mimeType}
           </p>
         </div>
-        {draftDecision ? (
-          <span className="review-draft-chip">Draft decision: {formatLabel(draftDecision)}</span>
-        ) : null}
+        <div className="review-pane-badge-row">
+          <ConfidenceBadge
+            score={selectedDocument.classificationConfidence}
+            tone={selectedDocument.confidenceBand}
+          />
+          {draftDecision ? (
+            <span className="review-draft-chip">Draft decision: {formatLabel(draftDecision)}</span>
+          ) : null}
+        </div>
       </header>
 
-      <div className="panel-action-row">
+      <div className="panel-action-row review-linked-actions">
         <button
           className="secondary-button compact-action"
           onClick={() =>
@@ -101,6 +107,16 @@ export function ExtractionPanel({
         </button>
       </div>
 
+      {draftDecision !== null ? (
+        <DiffViewer
+          afterLabel="Draft routing"
+          afterValue={buildDraftDecisionSummary(draftDecision)}
+          beforeLabel="Current review state"
+          beforeValue={buildCurrentReviewSummary(selectedDocument)}
+          title="Decision impact"
+        />
+      ) : null}
+
       <div className="exception-summary-row">
         {selectedDocument.issueTypes.length === 0 ? (
           <span className="queue-chip positive">No active exception</span>
@@ -116,32 +132,42 @@ export function ExtractionPanel({
         )}
       </div>
 
-      <ul className="extraction-field-list">
-        {selectedDocument.extractedFields.map((field) => (
-          <li className="extraction-field-row" key={field.id}>
-            <div>
-              <h4>{field.label}</h4>
-              <p>{field.value}</p>
-            </div>
-            <div className="field-row-actions">
-              <span className="field-confidence">{formatConfidenceLabel(field.confidence)}</span>
-              <button
-                className="secondary-button compact-action"
-                onClick={() =>
-                  onOpenEvidence({
-                    references: field.evidenceRefs,
-                    sourceLabel: selectedDocument.originalFilename,
-                    title: `${field.label} evidence`,
-                  })
-                }
-                type="button"
-              >
-                View evidence
-              </button>
-            </div>
-          </li>
-        ))}
-      </ul>
+      {selectedDocument.extractedFields.length === 0 ? (
+        <div className="status-banner warning" role="status">
+          No structured fields were extracted for this document yet. Review source evidence before
+          approving the queue item.
+        </div>
+      ) : (
+        <ul className="extraction-field-list">
+          {selectedDocument.extractedFields.map((field) => (
+            <li
+              className={`extraction-field-row ${field.confidence !== null && field.confidence < 0.75 ? "is-low-confidence" : ""}`}
+              key={field.id}
+            >
+              <div>
+                <h4>{field.label}</h4>
+                <p>{field.value}</p>
+              </div>
+              <div className="field-row-actions">
+                <ConfidenceBadge score={field.confidence} size="compact" />
+                <button
+                  className="secondary-button compact-action"
+                  onClick={() =>
+                    onOpenEvidence({
+                      references: field.evidenceRefs,
+                      sourceLabel: selectedDocument.originalFilename,
+                      title: `${field.label} evidence`,
+                    })
+                  }
+                  type="button"
+                >
+                  View evidence
+                </button>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
     </section>
   );
 }
@@ -157,4 +183,38 @@ function formatLabel(value: string): string {
     .split("_")
     .map((part) => part.slice(0, 1).toUpperCase() + part.slice(1))
     .join(" ");
+}
+
+function buildCurrentReviewSummary(selectedDocument: DocumentReviewQueueItem): string {
+  const issues =
+    selectedDocument.issueTypes.length === 0
+      ? "No active exceptions"
+      : selectedDocument.issueTypes.map(formatLabel).join(", ");
+
+  return [
+    `Status: ${formatLabel(selectedDocument.status)}`,
+    `Period state: ${
+      selectedDocument.periodState === "in_period"
+        ? "In period"
+        : selectedDocument.periodState === "out_of_period"
+          ? "Outside period"
+          : "Not detected"
+    }`,
+    `Exceptions: ${issues}`,
+    `OCR required: ${selectedDocument.ocrRequired ? "Yes" : "No"}`,
+  ].join("\n");
+}
+
+function buildDraftDecisionSummary(draftDecision: ReviewDraftDecision): string {
+  const outcomeMap: Readonly<Record<ReviewDraftDecision, string>> = {
+    approved: "Move the document toward phase-gate clearance after review logging.",
+    needs_info: "Keep the document in review and request more supporting evidence.",
+    rejected: "Preserve the block and record explicit reviewer rejection context.",
+  };
+
+  return [
+    `Draft action: ${formatLabel(draftDecision)}`,
+    `Routing: ${outcomeMap[draftDecision]}`,
+    "Audit trail: Evidence links and source metadata remain attached.",
+  ].join("\n");
 }

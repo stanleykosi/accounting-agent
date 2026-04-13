@@ -3,7 +3,7 @@ Purpose: Render the reconciliation match-review queue table.
 Scope: Filter tabs, item rows with match status, amounts, confidence, exceptions, and
        reviewer action buttons. Mirrors the document review table pattern adapted for
        reconciliation items.
-Dependencies: Shared UI primitives (SurfaceCard, EvidenceDrawer), reconciliation domain types.
+Dependencies: Reconciliation domain types plus shared review button and density styling.
 */
 
 "use client";
@@ -152,23 +152,25 @@ export function MatchReviewTable({
                   </td>
                   <td className="action-cell">
                     <button
-                      className="action-btn action-btn-evidence"
+                      className="secondary-button compact-action action-btn action-btn-evidence"
                       onClick={(e) => {
                         e.stopPropagation();
                         onOpenEvidence(item.id);
                       }}
                       title="View evidence"
+                      type="button"
                     >
                       Evidence
                     </button>
                     {item.requiresDisposition && item.disposition === null && (
                       <button
-                        className="action-btn action-btn-resolve"
+                        className="secondary-button compact-action action-btn action-btn-resolve"
                         onClick={(e) => {
                           e.stopPropagation();
                           onReviewAction(item.id, "resolved");
                         }}
                         title="Mark as resolved"
+                        type="button"
                       >
                         Resolve
                       </button>

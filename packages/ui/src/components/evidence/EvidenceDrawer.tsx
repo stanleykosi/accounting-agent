@@ -1,10 +1,11 @@
 /*
 Purpose: Provide a shared evidence drawer surface for source-linked review context.
 Scope: Drawer chrome, evidence reference listing, confidence labels, and empty-state rendering.
-Dependencies: React rendering primitives only so both app and shared package consumers can reuse it.
+Dependencies: React rendering primitives plus the shared confidence badge for consistent review styling.
 */
 
 import type { CSSProperties, ReactElement } from "react";
+import { ConfidenceBadge } from "../review/ConfidenceBadge";
 
 export type EvidenceDrawerReference = {
   confidence?: number | null;
@@ -126,22 +127,7 @@ export function EvidenceDrawer({
                   </span>
                 ) : null}
                 {typeof reference.confidence === "number" ? (
-                  <span
-                    style={{
-                      background:
-                        reference.confidence >= 0.9
-                          ? "rgba(31, 169, 113, 0.18)"
-                          : reference.confidence >= 0.75
-                            ? "rgba(231, 169, 59, 0.18)"
-                            : "rgba(217, 83, 79, 0.18)",
-                      borderRadius: "999px",
-                      fontSize: "0.74rem",
-                      fontWeight: 700,
-                      padding: "3px 8px",
-                    }}
-                  >
-                    {Math.round(reference.confidence * 100)}%
-                  </span>
+                  <ConfidenceBadge score={reference.confidence} size="compact" />
                 ) : null}
               </div>
               <p style={{ color: "#4d5b52", margin: 0 }}>

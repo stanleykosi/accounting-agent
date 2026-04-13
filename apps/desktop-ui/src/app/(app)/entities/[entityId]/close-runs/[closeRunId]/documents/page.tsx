@@ -6,7 +6,7 @@ Dependencies: Document review API helpers, queue/detail components, and shared U
 
 "use client";
 
-import { EvidenceDrawer, SurfaceCard } from "@accounting-ai-agent/ui";
+import { EvidenceDrawer, ReviewLayout, SurfaceCard } from "@accounting-ai-agent/ui";
 import { use, useEffect, useMemo, useState, type ReactElement } from "react";
 import { DocumentReviewTable } from "../../../../../../../components/documents/DocumentReviewTable";
 import { ExtractionPanel } from "../../../../../../../components/documents/ExtractionPanel";
@@ -225,49 +225,53 @@ export default function CloseRunDocumentsPage({
         </div>
       ) : null}
 
-      <section className="document-review-grid">
-        <SurfaceCard title="Exception Queue" subtitle="Review table">
-          <DocumentReviewTable
-            activeFilter={activeFilter}
-            items={visibleItems}
-            onFilterChange={handleFilterChange}
-            onOpenEvidence={handleOpenEvidenceForDocument}
-            onReviewAction={handleReviewAction}
-            onSelectDocument={setSelectedDocumentId}
-            queueCounts={workspaceData.queueCounts}
-            reviewDecisions={reviewDecisions}
-            selectedDocumentId={selectedDocumentId}
-          />
-        </SurfaceCard>
-
-        <div className="document-review-side-column">
-          <SurfaceCard title="Extraction Context" subtitle="Selected document">
-            <ExtractionPanel
-              draftDecision={selectedDraftDecision}
-              onOpenEvidence={handleOpenEvidence}
+      <ReviewLayout
+        className="document-review-grid"
+        main={
+          <SurfaceCard title="Exception Queue" subtitle="Review table">
+            <DocumentReviewTable
+              activeFilter={activeFilter}
+              items={visibleItems}
+              onFilterChange={handleFilterChange}
+              onOpenEvidence={handleOpenEvidenceForDocument}
               onReviewAction={handleReviewAction}
-              selectedDocument={selectedDocument}
+              onSelectDocument={setSelectedDocumentId}
+              queueCounts={workspaceData.queueCounts}
+              reviewDecisions={reviewDecisions}
+              selectedDocumentId={selectedDocumentId}
             />
           </SurfaceCard>
+        }
+        side={
+          <div className="document-review-side-column">
+            <SurfaceCard title="Extraction Context" subtitle="Selected document">
+              <ExtractionPanel
+                draftDecision={selectedDraftDecision}
+                onOpenEvidence={handleOpenEvidence}
+                onReviewAction={handleReviewAction}
+                selectedDocument={selectedDocument}
+              />
+            </SurfaceCard>
 
-          <SurfaceCard title="Evidence Drawer" subtitle="Source-backed references">
-            <EvidenceDrawer
-              emptyMessage="Select a field or queue row to open source-backed evidence references."
-              isOpen={evidenceDrawer.isOpen}
-              onClose={() => setEvidenceDrawer(defaultEvidenceDrawerState)}
-              references={evidenceDrawer.references}
-              sourceLabel={evidenceDrawer.sourceLabel}
-              title={evidenceDrawer.title}
-            />
-            {!evidenceDrawer.isOpen ? (
-              <p className="form-helper">
-                Open evidence from the queue or extraction panel to inspect source metadata and
-                confidence traces.
-              </p>
-            ) : null}
-          </SurfaceCard>
-        </div>
-      </section>
+            <SurfaceCard title="Evidence Drawer" subtitle="Source-backed references">
+              <EvidenceDrawer
+                emptyMessage="Select a field or queue row to open source-backed evidence references."
+                isOpen={evidenceDrawer.isOpen}
+                onClose={() => setEvidenceDrawer(defaultEvidenceDrawerState)}
+                references={evidenceDrawer.references}
+                sourceLabel={evidenceDrawer.sourceLabel}
+                title={evidenceDrawer.title}
+              />
+              {!evidenceDrawer.isOpen ? (
+                <p className="form-helper">
+                  Open evidence from the queue or extraction panel to inspect source metadata and
+                  confidence traces.
+                </p>
+              ) : null}
+            </SurfaceCard>
+          </div>
+        }
+      />
     </div>
   );
 }

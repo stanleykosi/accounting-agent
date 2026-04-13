@@ -1,14 +1,14 @@
 /*
 Purpose: Render the document exception queue table with filters and reviewer decisions.
 Scope: Exception-focused filtering, row selection, confidence indicators, and inline review actions.
-Dependencies: Document review domain helpers and React event handlers provided by the close-run documents page.
+Dependencies: Shared review UI primitives plus document review domain helpers and page-provided callbacks.
 */
 
 "use client";
 
+import { ConfidenceBadge } from "@accounting-ai-agent/ui";
 import { type ReactElement } from "react";
 import {
-  formatConfidenceLabel,
   type DocumentReviewFilter,
   type DocumentReviewQueueCounts,
   type DocumentReviewQueueItem,
@@ -103,7 +103,13 @@ export function DocumentReviewTable({
                 return (
                   <tr
                     aria-selected={selected}
-                    className={selected ? "selected" : ""}
+                    className={[
+                      selected ? "selected" : "",
+                      item.issueSeverity === "blocking" ? "is-blocking" : "",
+                      item.issueSeverity === "warning" ? "is-warning" : "",
+                    ]
+                      .filter(Boolean)
+                      .join(" ")}
                     key={item.id}
                     onClick={() => onSelectDocument(item.id)}
                   >
@@ -125,9 +131,11 @@ export function DocumentReviewTable({
                       </div>
                     </td>
                     <td>
-                      <span className={`confidence-pill ${item.confidenceBand}`}>
-                        {formatConfidenceLabel(item.classificationConfidence)}
-                      </span>
+                      <ConfidenceBadge
+                        score={item.classificationConfidence}
+                        size="compact"
+                        tone={item.confidenceBand}
+                      />
                     </td>
                     <td>
                       <div className="queue-chip-list">

@@ -7,7 +7,7 @@ Dependencies: Reconciliation API helpers, review components, and shared UI surfa
 
 "use client";
 
-import { EvidenceDrawer, SurfaceCard } from "@accounting-ai-agent/ui";
+import { EvidenceDrawer, ReviewLayout, SurfaceCard } from "@accounting-ai-agent/ui";
 import type { EvidenceDrawerReference } from "@accounting-ai-agent/ui";
 import { use, useCallback, useEffect, useMemo, useState, type ReactElement } from "react";
 import { DispositionPanel } from "../../../../../../../components/reconciliation/DispositionPanel";
@@ -290,49 +290,50 @@ export default function CloseRunReconciliationPage({
         </SurfaceCard>
       )}
 
-      {/* Main review area */}
-      <section className="reconciliation-review-grid">
-        {/* Match review table */}
-        <SurfaceCard title="Match Review Queue" subtitle={`${visibleItems.length} items`}>
-          <MatchReviewTable
-            activeFilter={activeFilter}
-            items={visibleItems}
-            queueCounts={workspaceData.queueCounts}
-            onFilterChange={handleFilterChange}
-            onSelectItem={handleSelectItem}
-            onOpenEvidence={handleOpenEvidence}
-            onReviewAction={() => {}}
-            selectedItemId={selectedItemId}
-          />
-        </SurfaceCard>
-
-        {/* Side column: disposition panel + evidence */}
-        <div className="reconciliation-review-side-column">
-          <SurfaceCard title="Disposition Panel" subtitle="Selected item">
-            <DispositionPanel
-              selectedItem={selectedItem}
-              onDisposition={handleDisposition}
+      <ReviewLayout
+        className="reconciliation-review-grid"
+        main={
+          <SurfaceCard title="Match Review Queue" subtitle={`${visibleItems.length} items`}>
+            <MatchReviewTable
+              activeFilter={activeFilter}
+              items={visibleItems}
+              queueCounts={workspaceData.queueCounts}
+              onFilterChange={handleFilterChange}
+              onSelectItem={handleSelectItem}
               onOpenEvidence={handleOpenEvidence}
+              onReviewAction={() => {}}
+              selectedItemId={selectedItemId}
             />
           </SurfaceCard>
+        }
+        side={
+          <div className="reconciliation-review-side-column">
+            <SurfaceCard title="Disposition Panel" subtitle="Selected item">
+              <DispositionPanel
+                selectedItem={selectedItem}
+                onDisposition={handleDisposition}
+                onOpenEvidence={handleOpenEvidence}
+              />
+            </SurfaceCard>
 
-          <SurfaceCard title="Evidence Drawer" subtitle="Source-backed references">
-            <EvidenceDrawer
-              emptyMessage="Select a queue row to open source-backed evidence references."
-              isOpen={evidenceDrawer.isOpen}
-              onClose={() => setEvidenceDrawer(defaultEvidenceDrawerState)}
-              references={evidenceDrawer.references}
-              sourceLabel={evidenceDrawer.sourceLabel}
-              title={evidenceDrawer.title}
-            />
-            {!evidenceDrawer.isOpen ? (
-              <p className="form-helper">
-                Open evidence from the queue to inspect source metadata and confidence traces.
-              </p>
-            ) : null}
-          </SurfaceCard>
-        </div>
-      </section>
+            <SurfaceCard title="Evidence Drawer" subtitle="Source-backed references">
+              <EvidenceDrawer
+                emptyMessage="Select a queue row to open source-backed evidence references."
+                isOpen={evidenceDrawer.isOpen}
+                onClose={() => setEvidenceDrawer(defaultEvidenceDrawerState)}
+                references={evidenceDrawer.references}
+                sourceLabel={evidenceDrawer.sourceLabel}
+                title={evidenceDrawer.title}
+              />
+              {!evidenceDrawer.isOpen ? (
+                <p className="form-helper">
+                  Open evidence from the queue to inspect source metadata and confidence traces.
+                </p>
+              ) : null}
+            </SurfaceCard>
+          </div>
+        }
+      />
     </div>
   );
 }
@@ -371,16 +372,17 @@ function AnomalyRow({
       <div className="anomaly-resolve-row">
         <input
           type="text"
-          className="form-input anomaly-resolve-input"
+          className="text-input anomaly-resolve-input"
           placeholder="Resolution note..."
           value={resolutionNote}
           onChange={(e) => onNoteChange(e.target.value)}
           maxLength={500}
         />
         <button
-          className="btn btn-sm btn-primary"
+          className="primary-button compact-action"
           onClick={onResolve}
           disabled={resolutionNote.trim().length === 0}
+          type="button"
         >
           Resolve
         </button>

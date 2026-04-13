@@ -2,11 +2,12 @@
 Purpose: Render the reviewer disposition panel for one selected reconciliation item.
 Scope: Item detail header, matched counterpart list, explanation text, disposition action
        selector with reasoning input, and submit/reject buttons.
-Dependencies: Shared UI primitives, reconciliation domain types and API helpers.
+Dependencies: Shared review UI primitives, reconciliation domain types, and API helpers.
 */
 
 "use client";
 
+import { ConfidenceBadge, DiffViewer } from "@accounting-ai-agent/ui";
 import { useCallback, useState, type ReactElement } from "react";
 import {
   type DispositionActionValue,
@@ -107,12 +108,14 @@ export function DispositionPanel({
     );
   }
 
+  const canRecordDisposition = selectedItem.requiresDisposition && selectedItem.disposition === null;
+
   return (
     <div className="disposition-panel">
       {/* Header */}
       <div className="disposition-panel-header">
         <h3 className="disposition-panel-title">Item Detail</h3>
-        <button className="link-button" onClick={handleOpenEvidence}>
+        <button className="secondary-button compact-action" onClick={handleOpenEvidence} type="button">
           View Evidence
         </button>
       </div>
@@ -151,6 +154,16 @@ export function DispositionPanel({
         )}
       </dl>
 
+      {canRecordDisposition ? (
+        <DiffViewer
+          afterLabel="Draft disposition"
+          afterValue={buildDraftDispositionSummary(selectedDisposition, reason)}
+          beforeLabel="Current review state"
+          beforeValue={buildCurrentDispositionSummary(selectedItem)}
+          title="Disposition diff"
+        />
+      ) : null}
+
       {/* Matched counterparts */}
       {selectedItem.matchedTo.length > 0 && (
         <div className="matched-counterparts">
@@ -163,6 +176,9 @@ export function DispositionPanel({
                 {cp.amount !== null && (
                   <span className="counterpart-amount">{formatAmount(cp.amount)}</span>
                 )}
+                {cp.confidence !== null ? (
+                  <ConfidenceBadge score={cp.confidence} size="compact" />
+                ) : null}
               </li>
             ))}
           </ul>
@@ -170,7 +186,7 @@ export function DispositionPanel({
       )}
 
       {/* Disposition form */}
-      {selectedItem.requiresDisposition && selectedItem.disposition === null && (
+      {canRecordDisposition ? (
         <div className="disposition-form">
           <h4 className="disposition-form-title">Record Disposition</h4>
 
@@ -203,7 +219,7 @@ export function DispositionPanel({
             </label>
             <textarea
               id="disposition-reason"
-              className="form-textarea"
+              className="text-input form-textarea"
               rows={3}
               value={reason}
               onChange={(e) => setReason(e.target.value)}
@@ -222,16 +238,17 @@ export function DispositionPanel({
 
           {/* Submit button */}
           <button
-            className="btn btn-primary disposition-submit-btn"
+            className="primary-button disposition-submit-btn"
             onClick={() => {
               void handleSubmitDisposition();
             }}
             disabled={isSubmitting || reason.trim().length === 0}
+            type="button"
           >
             {isSubmitting ? "Submitting..." : `Submit: ${DISPOSITION_OPTIONS.find((o) => o.value === selectedDisposition)?.label}`}
           </button>
         </div>
-      )}
+      ) : null}
 
       {/* Already dispositioned */}
       {selectedItem.disposition !== null && (
@@ -315,4 +332,26 @@ function isNonZeroDifference(value: string | null): boolean {
 function truncate(value: string, maxLength: number): string {
   if (value.length <= maxLength) return value;
   return `${value.slice(0, maxLength - 3)}...`;
+}
+
+function buildCurrentDispositionSummary(selectedItem: ReconciliationItemSummary): string {
+  return [
+    `Match status: ${formatMatchStatusLabel(selectedItem.matchStatus)}`,
+    `Difference: ${formatAmount(selectedItem.differenceAmount)}`,
+    `Current disposition: ${
+      selectedItem.disposition === null ? "Pending reviewer action" : formatDispositionLabel(selectedItem.disposition)
+    }`,
+    `Requires disposition: ${selectedItem.requiresDisposition ? "Yes" : "No"}`,
+  ].join("\n");
+}
+
+function buildDraftDispositionSummary(
+  selectedDisposition: DispositionActionValue,
+  reason: string,
+): string {
+  return [
+    `Selected action: ${formatDispositionLabel(selectedDisposition)}`,
+    `Reason draft: ${reason.trim().length > 0 ? reason.trim() : "No reasoning entered yet."}`,
+    "Submit behavior: Record immutable review action and refresh the queue.",
+  ].join("\n");
 }
