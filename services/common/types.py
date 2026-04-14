@@ -40,6 +40,14 @@ class StructuredLogFormat(StrEnum):
     CONSOLE = "console"
 
 
+class OtlpExportProtocol(StrEnum):
+    """Enumerate the supported OTLP transport protocols for telemetry export."""
+
+    AUTO = "auto"
+    GRPC = "grpc"
+    HTTP_PROTOBUF = "http/protobuf"
+
+
 def utc_now() -> datetime:
     """Return the current aware timestamp in UTC for traceable event creation."""
 

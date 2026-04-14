@@ -173,6 +173,22 @@ def test_app_settings_treats_blank_observability_otlp_endpoint_as_unset(
     assert settings.observability.otlp_endpoint is None
 
 
+def test_app_settings_infers_http_protobuf_for_grafana_otlp_gateway(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Ensure Grafana OTLP gateway URLs resolve to the HTTP/protobuf transport."""
+
+    monkeypatch.setenv(
+        "observability_otlp_endpoint",
+        "https://otlp-gateway-prod-eu-west-2.grafana.net/otlp",
+    )
+    monkeypatch.setitem(AppSettings.model_config, "env_file", None)
+
+    settings = AppSettings()
+
+    assert settings.observability.resolve_otlp_protocol().value == "http/protobuf"
+
+
 def test_app_settings_accepts_observability_otlp_headers_json(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -27,6 +27,7 @@ from pydantic_settings import (
 )
 from services.common.types import (
     DeploymentEnvironment,
+    OtlpExportProtocol,
     PortNumber,
     PositiveInteger,
     Ratio,
@@ -321,6 +322,7 @@ class ObservabilitySettings(BaseModel):
 
     service_namespace: str = Field(default="accounting-agent", min_length=1)
     otlp_endpoint: str | None = Field(default=None)
+    otlp_protocol: OtlpExportProtocol = Field(default=OtlpExportProtocol.AUTO)
     otlp_headers: dict[str, str] = Field(default_factory=dict)
     sample_ratio: Ratio = Field(default=1.0)
 
@@ -375,6 +377,25 @@ class ObservabilitySettings(BaseModel):
             return normalized_headers
 
         return value
+
+    def resolve_otlp_protocol(self) -> OtlpExportProtocol | None:
+        """Resolve the effective OTLP transport protocol for the configured endpoint."""
+
+        if self.otlp_endpoint is None:
+            return None
+
+        if self.otlp_protocol is not OtlpExportProtocol.AUTO:
+            return self.otlp_protocol
+
+        parsed_endpoint = urlsplit(self.otlp_endpoint)
+        if parsed_endpoint.path and parsed_endpoint.path != "/":
+            return OtlpExportProtocol.HTTP_PROTOBUF
+
+        hostname = parsed_endpoint.hostname or ""
+        if hostname.endswith("grafana.net"):
+            return OtlpExportProtocol.HTTP_PROTOBUF
+
+        return OtlpExportProtocol.GRPC
 
 
 class SecuritySettings(BaseModel):
