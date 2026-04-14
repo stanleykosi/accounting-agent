@@ -20,7 +20,7 @@ RUN apt-get update \
 RUN python -m ensurepip --upgrade \
     && python -m pip install --no-cache-dir --upgrade pip uv
 
-COPY pyproject.toml uv.lock README.md ./
+COPY pyproject.toml uv.lock ./
 RUN uv sync --no-dev --no-install-project
 
 COPY apps/api ./apps/api
