@@ -9,8 +9,10 @@ Dependencies: pydantic-settings, services/common/types.py, and the
 from __future__ import annotations
 
 import json
+import socket
 from collections.abc import Mapping
 from functools import lru_cache
+from ipaddress import ip_address
 from typing import Any
 from urllib.parse import SplitResult, urlsplit, urlunsplit
 
@@ -131,6 +133,19 @@ class DatabaseSettings(BaseModel):
     password: SecretStr = Field(default=SecretStr("accounting_agent"), repr=False)
     schema_name: str = Field(default="public", min_length=1)
     echo_sql: bool = Field(default=False)
+
+    def resolve_connection_host(self) -> str | None:
+        """Return the configured PostgreSQL hostname when one is available."""
+
+        if self.url is not None and self.url.strip():
+            return _extract_url_hostname(self.url)
+
+        return self.host
+
+    def resolve_preferred_hostaddr(self) -> str | None:
+        """Return an IPv4 hostaddr override when DNS would otherwise prefer an unreachable IPv6 path."""
+
+        return _resolve_ipv4_hostaddr(self.resolve_connection_host())
 
     @computed_field(return_type=str)  # type: ignore[prop-decorator]
     @property
@@ -485,6 +500,48 @@ def _normalize_postgres_url(url: str, *, for_sqlalchemy: bool) -> str:
     target_scheme = "postgresql+psycopg" if for_sqlalchemy else "postgresql"
     normalized = parsed_url._replace(scheme=target_scheme)
     return urlunsplit(normalized)
+
+
+def _extract_url_hostname(url: str) -> str | None:
+    """Extract the hostname component from a URL-style database connection string."""
+
+    parsed_url = urlsplit(url.strip())
+    return parsed_url.hostname
+
+
+@lru_cache(maxsize=128)
+def _resolve_ipv4_hostaddr(host: str | None) -> str | None:
+    """Resolve the first IPv4 address for a hostname so libpq can avoid broken IPv6 routing."""
+
+    if host is None:
+        return None
+
+    stripped_host = host.strip()
+    if not stripped_host:
+        return None
+
+    try:
+        ip_address(stripped_host)
+    except ValueError:
+        pass
+    else:
+        return None
+
+    try:
+        address_info = socket.getaddrinfo(
+            stripped_host,
+            None,
+            family=socket.AF_INET,
+            type=socket.SOCK_STREAM,
+        )
+    except socket.gaierror:
+        return None
+
+    for _, _, _, _, sockaddr in address_info:
+        if isinstance(sockaddr, tuple) and sockaddr:
+            return str(sockaddr[0])
+
+    return None
 
 
 def _with_redis_database(url: str, *, database_index: int) -> str:

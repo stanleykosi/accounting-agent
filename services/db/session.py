@@ -16,23 +16,26 @@ from sqlalchemy.orm import Session, sessionmaker
 
 
 @lru_cache(maxsize=4)
-def _build_engine(database_url: str, echo_sql: bool) -> Engine:
+def _build_engine(database_url: str, echo_sql: bool, preferred_hostaddr: str | None) -> Engine:
     """Create and cache one SQLAlchemy engine per canonical database configuration."""
 
+    connect_args = {"hostaddr": preferred_hostaddr} if preferred_hostaddr is not None else {}
     return create_engine(
         database_url,
+        connect_args=connect_args,
         echo=echo_sql,
         pool_pre_ping=True,
     )
-
 
 def get_session_factory(*, settings: AppSettings | None = None) -> sessionmaker[Session]:
     """Return the shared SQLAlchemy session factory for the active process settings."""
 
     resolved_settings = settings or get_settings()
+    preferred_hostaddr = resolved_settings.database.resolve_preferred_hostaddr()
     engine = _build_engine(
         resolved_settings.database.sqlalchemy_url,
         resolved_settings.database.echo_sql,
+        preferred_hostaddr,
     )
     return sessionmaker(
         bind=engine,
