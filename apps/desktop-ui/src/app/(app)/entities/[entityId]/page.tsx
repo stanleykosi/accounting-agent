@@ -58,6 +58,8 @@ type AddMembershipFormState = {
   userEmail: string;
 };
 
+type EntityActivityEvent = EntityWorkspace["activity_events"][number];
+
 const defaultMembershipFormState: AddMembershipFormState = {
   isDefaultActor: false,
   role: "member",
@@ -102,7 +104,7 @@ export default function EntityWorkspacePage({
 
   const activityTimelineItems = useMemo<readonly TimelineItem[]>(
     () =>
-      entity?.activity_events.map((activityEvent) => ({
+      entity?.activity_events.map((activityEvent: EntityActivityEvent) => ({
         badge: activityEvent.actor?.full_name ?? "System",
         detail: `${activityEvent.summary} via ${activityEvent.source_surface}${
           activityEvent.trace_id ? ` • trace ${activityEvent.trace_id}` : ""
