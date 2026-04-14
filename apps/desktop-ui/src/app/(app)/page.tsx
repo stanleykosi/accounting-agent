@@ -37,6 +37,8 @@ type DashboardActivityRow = {
   lastActivity: NonNullable<EntitySummary["last_activity"]>;
 };
 
+type DashboardEntitySummary = EntitySummary;
+
 /**
  * Purpose: Render the primary authenticated dashboard for desktop operators.
  * Inputs: None.
@@ -326,7 +328,7 @@ async function loadDashboard(options: {
   try {
     const entityList = await listEntities();
     const closeRunsByEntity = await Promise.all(
-      entityList.entities.map(async (entity) => ({
+      entityList.entities.map(async (entity: DashboardEntitySummary) => ({
         closeRuns: await listCloseRuns(entity.id),
         entity,
       })),
