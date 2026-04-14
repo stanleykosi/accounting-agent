@@ -22,7 +22,12 @@ DEFAULT_ENTITY_CONFIDENCE_THRESHOLDS = {
     "posting": 0.95,
 }
 DEFAULT_ENTITY_CONFIDENCE_THRESHOLDS_SQL = (
-    "'{\"classification\":0.85,\"coding\":0.85,\"reconciliation\":0.9,\"posting\":0.95}'::jsonb"
+    "jsonb_build_object("
+    "'classification', 0.85, "
+    "'coding', 0.85, "
+    "'reconciliation', 0.9, "
+    "'posting', 0.95"
+    ")"
 )
 
 

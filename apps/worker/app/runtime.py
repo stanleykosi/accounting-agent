@@ -11,10 +11,8 @@ import sys
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-import psycopg
-from minio import Minio
-from redis import Redis
 from services.common.logging import configure_logging, get_logger
+from services.common.runtime_checks import run_backend_dependency_healthcheck
 from services.common.settings import AppSettings, get_settings
 from services.jobs.task_names import task_queue_names
 
@@ -100,65 +98,7 @@ def run_celery_worker(*, settings: AppSettings) -> None:
 def run_dependency_healthcheck(settings: AppSettings) -> None:
     """Verify that the worker can reach its canonical backing services and buckets."""
 
-    verify_database_connectivity(settings)
-    verify_redis_connectivity(settings)
-    verify_object_storage_connectivity(settings)
-
-
-def verify_database_connectivity(settings: AppSettings) -> None:
-    """Confirm that PostgreSQL is reachable and responds to a trivial query."""
-
-    with psycopg.connect(
-        dbname=settings.database.name,
-        host=settings.database.host,
-        password=settings.database.password.get_secret_value(),
-        port=settings.database.port,
-        user=settings.database.user,
-        connect_timeout=5,
-    ) as connection:
-        with connection.cursor() as cursor:
-            cursor.execute("SELECT 1;")
-            cursor.fetchone()
-
-
-def verify_redis_connectivity(settings: AppSettings) -> None:
-    """Confirm that the configured Redis broker URL is reachable for future task dispatch."""
-
-    client = Redis.from_url(
-        settings.redis.broker_url,
-        decode_responses=True,
-        socket_connect_timeout=5,
-        socket_timeout=5,
-    )
-    try:
-        client.ping()
-    finally:
-        client.close()
-
-
-def verify_object_storage_connectivity(settings: AppSettings) -> None:
-    """Confirm that MinIO is reachable and that the canonical buckets already exist."""
-
-    client = Minio(
-        endpoint=settings.storage.endpoint,
-        access_key=settings.storage.access_key,
-        secret_key=settings.storage.secret_key.get_secret_value(),
-        secure=settings.storage.secure,
-        region=settings.storage.region,
-    )
-    bucket_names = {bucket.name for bucket in client.list_buckets()}
-    required_bucket_names = {
-        settings.storage.document_bucket,
-        settings.storage.artifact_bucket,
-        settings.storage.derivative_bucket,
-    }
-    missing_bucket_names = sorted(required_bucket_names - bucket_names)
-    if missing_bucket_names:
-        formatted_bucket_names = ", ".join(missing_bucket_names)
-        raise RuntimeError(
-            "Worker object-storage validation failed. Missing required MinIO buckets: "
-            f"{formatted_bucket_names}."
-        )
+    run_backend_dependency_healthcheck(settings)
 
 
 if __name__ == "__main__":

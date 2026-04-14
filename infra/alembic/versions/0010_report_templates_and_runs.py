@@ -29,7 +29,7 @@ def upgrade() -> None:
 
     op.create_table(
         "report_templates",
-        _uuid_primary_key_column(),
+        *_uuid_primary_key_column(),
         sa.Column(
             "entity_id",
             sa.Uuid(),
@@ -128,7 +128,7 @@ def upgrade() -> None:
 
     op.create_table(
         "report_template_sections",
-        _uuid_primary_key_column(),
+        *_uuid_primary_key_column(),
         sa.Column(
             "template_id",
             sa.Uuid(),
@@ -180,7 +180,7 @@ def upgrade() -> None:
 
     op.create_table(
         "report_runs",
-        _uuid_primary_key_column(),
+        *_uuid_primary_key_column(),
         sa.Column(
             "close_run_id",
             sa.Uuid(),
@@ -262,7 +262,7 @@ def upgrade() -> None:
 
     op.create_table(
         "report_commentary",
-        _uuid_primary_key_column(),
+        *_uuid_primary_key_column(),
         sa.Column(
             "report_run_id",
             sa.Uuid(),

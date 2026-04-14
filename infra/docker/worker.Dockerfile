@@ -14,17 +14,29 @@ ENV UV_COMPILE_BYTECODE=1
 WORKDIR /workspace
 
 RUN apt-get update \
-    && apt-get install --yes --no-install-recommends ca-certificates \
+    && apt-get install --yes --no-install-recommends \
+        ca-certificates \
+        fonts-dejavu-core \
+        ghostscript \
+        libcairo2 \
+        libgdk-pixbuf-2.0-0 \
+        libglib2.0-0 \
+        libharfbuzz0b \
+        libpango-1.0-0 \
+        libpangocairo-1.0-0 \
+        ocrmypdf \
+        shared-mime-info \
+        tesseract-ocr \
     && rm -rf /var/lib/apt/lists/*
 
 RUN python -m ensurepip --upgrade \
     && python -m pip install --no-cache-dir --upgrade pip uv
 
-COPY pyproject.toml README.md ./
+COPY pyproject.toml uv.lock README.md ./
 RUN uv sync --no-dev --no-install-project
 
 COPY apps/worker ./apps/worker
 COPY services ./services
 COPY .env.example ./.env.example
 
-CMD ["python", "-m", "apps.worker.app.runtime", "--heartbeat-seconds", "30"]
+CMD ["python", "-m", "apps.worker.app.runtime"]

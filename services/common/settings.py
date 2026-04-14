@@ -8,9 +8,11 @@ Dependencies: pydantic-settings, services/common/types.py, and the
 
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping
 from functools import lru_cache
 from typing import Any
+from urllib.parse import SplitResult, urlsplit, urlunsplit
 
 from pydantic import BaseModel, Field, SecretStr, computed_field, field_validator, model_validator
 from pydantic.fields import FieldInfo
@@ -121,6 +123,7 @@ class WorkerSettings(BaseModel):
 class DatabaseSettings(BaseModel):
     """Define PostgreSQL connectivity and SQLAlchemy behavior for the demo stack."""
 
+    url: str | None = Field(default=None)
     host: str = Field(default="127.0.0.1", min_length=1)
     port: PortNumber = Field(default=5432)
     name: str = Field(default="accounting_agent", min_length=1)
@@ -134,23 +137,57 @@ class DatabaseSettings(BaseModel):
     def sqlalchemy_url(self) -> str:
         """Build the canonical SQLAlchemy DSN for synchronous database access."""
 
+        if self.url is not None and self.url.strip():
+            return _normalize_postgres_url(self.url, for_sqlalchemy=True)
+
         password = self.password.get_secret_value()
         return (
             f"postgresql+psycopg://{self.user}:{password}@{self.host}:{self.port}/{self.name}"
         )
 
+    @computed_field(return_type=str)  # type: ignore[prop-decorator]
+    @property
+    def connection_url(self) -> str:
+        """Build the canonical libpq-style PostgreSQL DSN for psycopg connectivity checks."""
+
+        if self.url is not None and self.url.strip():
+            return _normalize_postgres_url(self.url, for_sqlalchemy=False)
+
+        password = self.password.get_secret_value()
+        return f"postgresql://{self.user}:{password}@{self.host}:{self.port}/{self.name}"
+
 
 class RedisSettings(BaseModel):
     """Define Redis connection URLs for broker, result backend, and cache usage."""
 
+    url: str | None = Field(default=None)
     broker_url: str = Field(default="redis://127.0.0.1:6379/0", min_length=1)
     result_backend_url: str = Field(default="redis://127.0.0.1:6379/1", min_length=1)
     cache_url: str = Field(default="redis://127.0.0.1:6379/2", min_length=1)
+
+    @model_validator(mode="after")
+    def apply_shared_redis_url(self) -> RedisSettings:
+        """Derive queue, result, and cache URLs from one provider URL when requested."""
+
+        if self.url is None or not self.url.strip():
+            return self
+
+        normalized_url = self.url.strip()
+        if self.broker_url == "redis://127.0.0.1:6379/0":
+            self.broker_url = _with_redis_database(normalized_url, database_index=0)
+        if self.result_backend_url == "redis://127.0.0.1:6379/1":
+            self.result_backend_url = _with_redis_database(normalized_url, database_index=1)
+        if self.cache_url == "redis://127.0.0.1:6379/2":
+            self.cache_url = _with_redis_database(normalized_url, database_index=2)
+
+        return self
 
 
 class StorageSettings(BaseModel):
     """Define local object-storage connection details and canonical bucket names."""
 
+    url: str | None = Field(default=None)
+    bucket_name: str | None = Field(default=None)
     endpoint: str = Field(default="127.0.0.1:9000", min_length=1)
     access_key: str = Field(default="minioadmin", min_length=1)
     secret_key: SecretStr = Field(default=SecretStr("minioadmin"), repr=False)
@@ -159,6 +196,30 @@ class StorageSettings(BaseModel):
     document_bucket: str = Field(default="close-run-documents", min_length=3)
     artifact_bucket: str = Field(default="close-run-artifacts", min_length=3)
     derivative_bucket: str = Field(default="close-run-derivatives", min_length=3)
+
+    @model_validator(mode="after")
+    def apply_hosted_storage_overrides(self) -> StorageSettings:
+        """Allow one hosted S3 endpoint and bucket to back all logical storage families."""
+
+        if self.url is not None and self.url.strip():
+            parsed_url = urlsplit(self.url.strip())
+            if parsed_url.scheme not in {"http", "https"}:
+                raise ValueError("Storage URL must use http or https.")
+            if not parsed_url.netloc:
+                raise ValueError("Storage URL must include a host.")
+            self.endpoint = parsed_url.netloc
+            self.secure = parsed_url.scheme == "https"
+
+        if self.bucket_name is not None and self.bucket_name.strip():
+            shared_bucket_name = self.bucket_name.strip()
+            if self.document_bucket == "close-run-documents":
+                self.document_bucket = shared_bucket_name
+            if self.artifact_bucket == "close-run-artifacts":
+                self.artifact_bucket = shared_bucket_name
+            if self.derivative_bucket == "close-run-derivatives":
+                self.derivative_bucket = shared_bucket_name
+
+        return self
 
     @computed_field(return_type=str)  # type: ignore[prop-decorator]
     @property
@@ -190,6 +251,41 @@ class QuickBooksSettings(BaseModel):
     )
     sandbox_company_id: str | None = Field(default=None)
     use_sandbox: bool = Field(default=True)
+    allowed_return_origins: tuple[str, ...] = Field(default=())
+
+    @field_validator("allowed_return_origins", mode="before")
+    @classmethod
+    def normalize_allowed_return_origins(cls, value: object) -> object:
+        """Accept either a JSON array or a comma-delimited env string of allowed browser origins."""
+
+        if isinstance(value, str):
+            stripped_value = value.strip()
+            if not stripped_value:
+                return ()
+
+            if stripped_value.startswith("["):
+                try:
+                    value = json.loads(stripped_value)
+                except json.JSONDecodeError as error:
+                    raise ValueError(
+                        "QuickBooks allowed return origins JSON value must be a valid array."
+                    ) from error
+            else:
+                value = stripped_value.split(",")
+
+        if isinstance(value, (list, tuple)):
+            normalized_origins: list[str] = []
+            for origin in value:
+                if not isinstance(origin, str):
+                    raise ValueError(
+                        "QuickBooks allowed return origins entries must be strings."
+                    )
+
+                normalized_origin = origin.strip().rstrip("/")
+                if normalized_origin:
+                    normalized_origins.append(normalized_origin)
+            return tuple(normalized_origins)
+        return value
 
 
 class ObservabilitySettings(BaseModel):
@@ -331,7 +427,73 @@ def _build_flat_field_mapping(settings_cls: type[BaseSettings]) -> dict[str, tup
         for field_name in annotation.model_fields:
             mapping[f"{section_name}_{field_name}".casefold()] = (section_name, field_name)
 
+    mapping.update(
+        {
+            "port": ("api", "port"),
+            "host": ("api", "host"),
+            "database_url": ("database", "url"),
+            "postgres_url": ("database", "url"),
+            "postgresql_url": ("database", "url"),
+            "redis_url": ("redis", "url"),
+            "redis_private_url": ("redis", "url"),
+            "s3_url": ("storage", "url"),
+            "storage_url": ("storage", "url"),
+            "endpoint": ("storage", "url"),
+            "storage_bucket": ("storage", "bucket_name"),
+            "bucket": ("storage", "bucket_name"),
+            "bucket_name": ("storage", "bucket_name"),
+            "access_key_id": ("storage", "access_key"),
+            "secret_access_key": ("storage", "secret_key"),
+            "region": ("storage", "region"),
+        }
+    )
+
     return mapping
+
+
+def _normalize_postgres_url(url: str, *, for_sqlalchemy: bool) -> str:
+    """Normalize a hosted PostgreSQL URL into the form required by the active client library."""
+
+    stripped_url = url.strip()
+    if not stripped_url:
+        raise ValueError("Database URL cannot be empty.")
+
+    parsed_url = urlsplit(stripped_url)
+    normalized_scheme = parsed_url.scheme
+    if normalized_scheme == "postgres":
+        normalized_scheme = "postgresql"
+    if normalized_scheme == "postgresql+psycopg":
+        normalized_scheme = "postgresql"
+    if normalized_scheme != "postgresql":
+        raise ValueError(
+            "Database URL must use postgres://, postgresql://, or postgresql+psycopg://."
+        )
+
+    target_scheme = "postgresql+psycopg" if for_sqlalchemy else "postgresql"
+    normalized = parsed_url._replace(scheme=target_scheme)
+    return urlunsplit(normalized)
+
+
+def _with_redis_database(url: str, *, database_index: int) -> str:
+    """Return one Redis URL rewritten to the requested database index."""
+
+    stripped_url = url.strip()
+    if not stripped_url:
+        raise ValueError("Redis URL cannot be empty.")
+
+    parsed_url = urlsplit(stripped_url)
+    if parsed_url.scheme not in {"redis", "rediss"}:
+        raise ValueError("Redis URL must use redis:// or rediss://.")
+
+    normalized_path = f"/{database_index}"
+    normalized = SplitResult(
+        scheme=parsed_url.scheme,
+        netloc=parsed_url.netloc,
+        path=normalized_path,
+        query=parsed_url.query,
+        fragment=parsed_url.fragment,
+    )
+    return urlunsplit(normalized)
 
 
 def _is_missing(value: SecretStr | str | None) -> bool:

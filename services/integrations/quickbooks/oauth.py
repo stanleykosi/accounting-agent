@@ -32,6 +32,7 @@ _REVOCATION_URL: Final[str] = "https://developer.api.intuit.com/v2/oauth2/tokens
 _QUICKBOOKS_SCOPE: Final[str] = "com.intuit.quickbooks.accounting"
 _STATE_MAX_AGE_SECONDS: Final[int] = 10 * 60
 _TOKEN_EXPIRY_SKEW_SECONDS: Final[int] = 300
+_ALLOWED_LOOPBACK_RETURN_HOSTS: Final[frozenset[str]] = frozenset({"127.0.0.1", "localhost"})
 
 
 class QuickBooksOAuthError(Exception):
@@ -126,7 +127,7 @@ class QuickBooksOAuth:
     ) -> str:
         """Create an HMAC-signed state payload used to validate the OAuth callback."""
 
-        _validate_return_url(return_url=return_url)
+        _validate_return_url(return_url=return_url, settings=self._settings)
         payload = {
             "actor_user_id": str(actor_user_id),
             "entity_id": str(entity_id),
@@ -176,7 +177,7 @@ class QuickBooksOAuth:
             raise QuickBooksOAuthError("QuickBooks callback state expired. Start connection again.")
 
         return_url = _require_str(raw_payload, "return_url")
-        _validate_return_url(return_url=return_url)
+        _validate_return_url(return_url=return_url, settings=self._settings)
         try:
             return QuickBooksOAuthState(
                 actor_user_id=UUID(_require_str(raw_payload, "actor_user_id")),
@@ -459,8 +460,8 @@ def _parse_aware_datetime(value: str) -> datetime:
     return parsed.astimezone(UTC)
 
 
-def _validate_return_url(*, return_url: str) -> None:
-    """Allow only local desktop/web return URLs in signed OAuth state."""
+def _validate_return_url(*, return_url: str, settings: AppSettings) -> None:
+    """Allow relative URLs plus explicitly configured local or hosted web return URLs."""
 
     normalized = return_url.strip()
     if not normalized:
@@ -468,10 +469,35 @@ def _validate_return_url(*, return_url: str) -> None:
     if normalized.startswith("/"):
         return
     parsed = httpx.URL(normalized)
-    if parsed.scheme != "http" or parsed.host not in {"127.0.0.1", "localhost"}:
+    if _is_allowed_loopback_return_origin(parsed):
+        return
+
+    normalized_origin = _normalize_origin(parsed)
+    allowed_origins = set(settings.quickbooks.allowed_return_origins)
+    if normalized_origin not in allowed_origins:
         raise QuickBooksOAuthError(
-            "QuickBooks return URL must point to the local desktop/web application."
+            "QuickBooks return URL must point to an allowed desktop or hosted web application."
         )
+
+
+def _is_allowed_loopback_return_origin(url: httpx.URL) -> bool:
+    """Allow canonical local browser callbacks on loopback hosts, regardless of explicit port."""
+
+    return url.scheme == "http" and url.host in _ALLOWED_LOOPBACK_RETURN_HOSTS
+
+
+def _normalize_origin(url: httpx.URL) -> str:
+    """Return the scheme/host[/port] origin string used for QuickBooks return-url allowlists."""
+
+    origin = f"{url.scheme}://{url.host}"
+    if url.port is None:
+        return origin
+
+    default_port = 80 if url.scheme == "http" else 443 if url.scheme == "https" else None
+    if default_port is not None and url.port == default_port:
+        return origin
+
+    return f"{origin}:{url.port}"
 
 
 def _sign_state(*, encoded_payload: str, secret: str) -> str:

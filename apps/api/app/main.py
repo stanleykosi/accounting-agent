@@ -31,6 +31,7 @@ from apps.api.app.routes.reports import router as reports_router
 from fastapi import APIRouter, FastAPI, Request
 from fastapi.routing import APIRoute
 from services.common.logging import configure_logging, get_logger
+from services.common.runtime_checks import run_backend_dependency_healthcheck
 from services.common.settings import AppSettings, get_settings
 from services.common.types import utc_now
 from services.contracts.api_models import (
@@ -68,6 +69,8 @@ def create_app(*, settings: AppSettings | None = None) -> FastAPI:
             docs_url=_join_api_path(api_base_path, "/docs"),
             openapi_url=_join_api_path(api_base_path, "/openapi.json"),
         )
+        run_backend_dependency_healthcheck(resolved_settings)
+        logger.info("API backend dependency healthcheck passed.")
         yield
         logger.info("API service stopping.")
 

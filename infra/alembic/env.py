@@ -10,9 +10,10 @@ from logging.config import fileConfig
 
 import services.db.models  # noqa: F401  # Register ORM models with Base.metadata.
 from alembic import context
+from alembic.ddl.impl import DefaultImpl
 from services.common.settings import get_settings
 from services.db.base import Base
-from sqlalchemy import engine_from_config, pool
+from sqlalchemy import Column, MetaData, PrimaryKeyConstraint, Table, Text, engine_from_config, pool
 
 config = context.config
 
@@ -22,6 +23,32 @@ if config.config_file_name is not None:
 settings = get_settings()
 config.set_main_option("sqlalchemy.url", settings.database.sqlalchemy_url)
 target_metadata = Base.metadata
+
+
+def _build_wide_version_table(
+    self: DefaultImpl,
+    *,
+    version_table: str,
+    version_table_schema: str | None,
+    version_table_pk: bool,
+    **_: object,
+) -> Table:
+    """Use an unrestricted version column so descriptive revision ids never overflow."""
+
+    version_table_definition = Table(
+        version_table,
+        MetaData(),
+        Column("version_num", Text(), nullable=False),
+        schema=version_table_schema,
+    )
+    if version_table_pk:
+        version_table_definition.append_constraint(
+            PrimaryKeyConstraint("version_num", name=f"{version_table}_pkc")
+        )
+    return version_table_definition
+
+
+DefaultImpl.version_table_impl = _build_wide_version_table
 
 
 def run_migrations_offline() -> None:

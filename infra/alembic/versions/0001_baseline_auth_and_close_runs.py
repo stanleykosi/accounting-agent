@@ -27,7 +27,12 @@ WORKFLOW_PHASES = ("collection", "processing", "reconciliation", "reporting", "r
 PHASE_STATUSES = ("not_started", "in_progress", "blocked", "ready", "completed")
 AUDIT_SOURCE_SURFACES = ("desktop", "cli", "system", "worker", "integration")
 DEFAULT_ENTITY_CONFIDENCE_THRESHOLDS_SQL = (
-    "'{\"classification\":0.85,\"coding\":0.85,\"reconciliation\":0.9,\"posting\":0.95}'::jsonb"
+    "jsonb_build_object("
+    "'classification', 0.85, "
+    "'coding', 0.85, "
+    "'reconciliation', 0.9, "
+    "'posting', 0.95"
+    ")"
 )
 
 

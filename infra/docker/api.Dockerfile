@@ -20,13 +20,15 @@ RUN apt-get update \
 RUN python -m ensurepip --upgrade \
     && python -m pip install --no-cache-dir --upgrade pip uv
 
-COPY pyproject.toml README.md ./
+COPY pyproject.toml uv.lock README.md ./
 RUN uv sync --no-dev --no-install-project
 
 COPY apps/api ./apps/api
 COPY services ./services
+COPY infra/alembic ./infra/alembic
+COPY infra/alembic.ini ./infra/alembic.ini
 COPY .env.example ./.env.example
 
 EXPOSE 8000
 
-CMD ["uvicorn", "apps.api.app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["/bin/sh", "-lc", "uvicorn apps.api.app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]

@@ -94,7 +94,7 @@ def start_quickbooks_connection(
     entity_service: EntityServiceDependency,
     return_url: Annotated[
         str | None,
-        Query(description="Optional local UI URL to return to after the callback."),
+        Query(description="Optional relative or allow-listed hosted UI URL to return to after the callback."),
     ] = None,
 ) -> QuickBooksConnectResponse:
     """Return the QuickBooks authorization URL for one accessible entity workspace."""
