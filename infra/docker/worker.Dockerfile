@@ -33,10 +33,11 @@ RUN python -m ensurepip --upgrade \
     && python -m pip install --no-cache-dir --upgrade pip uv
 
 COPY pyproject.toml uv.lock ./
-RUN uv sync --no-dev --no-install-project
+RUN uv sync --frozen --no-dev --no-install-project \
+    && /workspace/.venv/bin/python -m celery --version
 
 COPY apps/worker ./apps/worker
 COPY services ./services
 COPY .env.example ./.env.example
 
-CMD ["python", "-m", "apps.worker.app.runtime"]
+CMD ["/workspace/.venv/bin/python", "-m", "apps.worker.app.runtime"]

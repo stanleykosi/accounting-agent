@@ -21,7 +21,8 @@ RUN python -m ensurepip --upgrade \
     && python -m pip install --no-cache-dir --upgrade pip uv
 
 COPY pyproject.toml uv.lock ./
-RUN uv sync --no-dev --no-install-project
+RUN uv sync --frozen --no-dev --no-install-project \
+    && /workspace/.venv/bin/python -m uvicorn --version
 
 COPY apps/api ./apps/api
 COPY services ./services
@@ -31,4 +32,4 @@ COPY .env.example ./.env.example
 
 EXPOSE 8000
 
-CMD ["/bin/sh", "-lc", "uvicorn apps.api.app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
+CMD ["/bin/sh", "-lc", "/workspace/.venv/bin/python -m uvicorn apps.api.app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
