@@ -34,11 +34,6 @@ from services.reporting.guardrails import (
     build_guardrail_config_from_template,
     validate_template_guardrails,
 )
-from services.reporting.pdf_builder import (
-    PdfReportInput,
-    PdfReportResult,
-    build_pdf_report_pack,
-)
 
 __all__ = [
     "CANONICAL_REQUIRED_SECTIONS",
@@ -52,13 +47,10 @@ __all__ = [
     "ExportManifestBuilder",
     "ExportManifestResult",
     "GuardrailConfig",
-    "PdfReportInput",
-    "PdfReportResult",
     "build_evidence_pack",
     "build_excel_report_pack",
     "build_export_manifest",
     "build_guardrail_config_from_template",
-    "build_pdf_report_pack",
     "generate_commentary",
     "upload_evidence_pack",
     "validate_template_guardrails",
