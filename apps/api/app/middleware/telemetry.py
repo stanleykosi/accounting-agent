@@ -13,6 +13,7 @@ from time import perf_counter
 
 from fastapi import FastAPI, Request
 from opentelemetry import trace
+from opentelemetry.trace import SpanKind, Status, StatusCode
 from services.observability.context import (
     REQUEST_ID_HEADER,
     activate_incoming_context,
@@ -24,6 +25,7 @@ from services.observability.events import (
     OperationalEventOutcome,
     emit_operational_event,
 )
+from services.observability.otel import get_tracer
 from starlette.responses import Response
 
 
@@ -59,52 +61,58 @@ def install_request_telemetry_middleware(app: FastAPI) -> None:
 
         start_time = perf_counter()
         response: Response | None = None
-        span = trace.get_current_span()
-        span.set_attribute("accounting_agent.request_id", activation.request_id)
-        span.set_attribute("accounting_agent.route_group", route_group)
-
-        try:
-            response = await call_next(request)
-            outcome = _resolve_request_outcome(response.status_code)
-            _finalize_request_span(
-                request=request,
-                status_code=response.status_code,
-            )
-            emit_operational_event(
-                event_name=OperationalEventName.API_REQUEST,
-                outcome=outcome,
-                duration_ms=(perf_counter() - start_time) * 1000,
-                attributes={
-                    "http_method": request.method,
-                    "http_path": request.url.path,
-                    "route_group": route_group,
-                    "status_code": response.status_code,
-                },
-            )
-            return response
-        except Exception as error:
-            _finalize_request_span(
-                request=request,
-                status_code=500,
-                error=error,
-            )
-            emit_operational_event(
-                event_name=OperationalEventName.API_REQUEST,
-                outcome=OperationalEventOutcome.FAILED,
-                duration_ms=(perf_counter() - start_time) * 1000,
-                error=error,
-                attributes={
-                    "http_method": request.method,
-                    "http_path": request.url.path,
-                    "route_group": route_group,
-                    "status_code": 500,
-                },
-            )
-            raise
-        finally:
-            if response is not None:
-                response.headers[REQUEST_ID_HEADER] = activation.request_id
-            release_context(activation)
+        tracer = get_tracer(__name__)
+        span_name = f"{request.method} {request.url.path}"
+        with tracer.start_as_current_span(span_name, kind=SpanKind.SERVER) as span:
+            span.set_attribute("http.request.method", request.method)
+            span.set_attribute("url.path", request.url.path)
+            span.set_attribute("accounting_agent.request_id", activation.request_id)
+            span.set_attribute("accounting_agent.route_group", route_group)
+            try:
+                response = await call_next(request)
+                outcome = _resolve_request_outcome(response.status_code)
+                _finalize_request_span(
+                    request=request,
+                    status_code=response.status_code,
+                )
+                if response.status_code >= 500:
+                    span.set_status(Status(status_code=StatusCode.ERROR))
+                emit_operational_event(
+                    event_name=OperationalEventName.API_REQUEST,
+                    outcome=outcome,
+                    duration_ms=(perf_counter() - start_time) * 1000,
+                    attributes={
+                        "http_method": request.method,
+                        "http_path": request.url.path,
+                        "route_group": route_group,
+                        "status_code": response.status_code,
+                    },
+                )
+                return response
+            except Exception as error:
+                span.set_status(Status(status_code=StatusCode.ERROR, description=str(error)))
+                _finalize_request_span(
+                    request=request,
+                    status_code=500,
+                    error=error,
+                )
+                emit_operational_event(
+                    event_name=OperationalEventName.API_REQUEST,
+                    outcome=OperationalEventOutcome.FAILED,
+                    duration_ms=(perf_counter() - start_time) * 1000,
+                    error=error,
+                    attributes={
+                        "http_method": request.method,
+                        "http_path": request.url.path,
+                        "route_group": route_group,
+                        "status_code": 500,
+                    },
+                )
+                raise
+            finally:
+                if response is not None:
+                    response.headers[REQUEST_ID_HEADER] = activation.request_id
+                release_context(activation)
 
 
 def infer_api_route_group(path: str) -> str:

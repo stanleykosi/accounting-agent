@@ -15,7 +15,6 @@ from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import OTLPMetricExp
 from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter as GrpcOTLPSpanExporter
 from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter as HttpOTLPMetricExporter
 from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter as HttpOTLPSpanExporter
-from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 from opentelemetry.instrumentation.logging import LoggingInstrumentor
 from opentelemetry.sdk.metrics import MeterProvider
 from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
@@ -31,7 +30,6 @@ from services.common.settings import AppSettings
 from services.common.types import OtlpExportProtocol
 
 _CONFIGURED_PID: int | None = None
-_INSTRUMENTED_APP_IDS: set[int] = set()
 
 
 def configure_observability(
@@ -83,10 +81,6 @@ def configure_observability(
         LoggingInstrumentor().instrument(set_logging_format=False)
 
         _CONFIGURED_PID = current_pid
-
-    if app is not None and id(app) not in _INSTRUMENTED_APP_IDS:
-        FastAPIInstrumentor.instrument_app(app)
-        _INSTRUMENTED_APP_IDS.add(id(app))
 
 
 def get_tracer(name: str) -> Any:
