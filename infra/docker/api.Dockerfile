@@ -7,9 +7,10 @@ FROM python:3.12-slim
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONPATH=/workspace
-ENV PATH=/workspace/.venv/bin:/root/.local/bin:${PATH}
+ENV PATH=/workspace/.venv/bin:${PATH}
 ENV UV_LINK_MODE=copy
 ENV UV_COMPILE_BYTECODE=1
+ENV HOME=/home/appuser
 
 WORKDIR /workspace
 
@@ -20,6 +21,9 @@ RUN apt-get update \
 RUN python -m ensurepip --upgrade \
     && python -m pip install --no-cache-dir --upgrade pip uv
 
+RUN groupadd --system appuser \
+    && useradd --system --gid appuser --create-home --home-dir /home/appuser appuser
+
 COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-dev --no-install-project \
     && /workspace/.venv/bin/python -m uvicorn --version
@@ -29,6 +33,10 @@ COPY services ./services
 COPY infra/alembic ./infra/alembic
 COPY infra/alembic.ini ./infra/alembic.ini
 COPY .env.example ./.env.example
+
+RUN chown -R appuser:appuser /workspace /home/appuser
+
+USER appuser
 
 EXPOSE 8000
 

@@ -73,7 +73,7 @@ def run_celery_worker(*, settings: AppSettings) -> None:
     logger.info(
         "Launching Celery worker runtime.",
         concurrency=settings.worker.concurrency,
-        database_host=settings.database.host,
+        database_host=settings.database.resolve_connection_host(),
         queue_names=queue_names,
         redis_broker_url=settings.redis.broker_url,
         storage_endpoint=settings.storage.endpoint_url,
