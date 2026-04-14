@@ -63,7 +63,12 @@ class SecretStore:
             },
         )
         client_secret = self._settings.quickbooks.client_secret
-        if client_secret is None or self._settings.quickbooks.client_id is None:
+        redirect_uri = self._settings.quickbooks.redirect_uri
+        if (
+            client_secret is None
+            or self._settings.quickbooks.client_id is None
+            or redirect_uri is None
+        ):
             raise SecretStoreError(
                 "QuickBooks OAuth is not configured. Set the QuickBooks env vars and restart."
             )
@@ -71,7 +76,7 @@ class SecretStore:
         return QuickBooksClientSecrets(
             client_id=self._settings.quickbooks.client_id,
             client_secret=client_secret.get_secret_value(),
-            redirect_uri=self._settings.quickbooks.redirect_uri,
+            redirect_uri=redirect_uri,
             sandbox_company_id=self._settings.quickbooks.sandbox_company_id,
             use_sandbox=self._settings.quickbooks.use_sandbox,
         )

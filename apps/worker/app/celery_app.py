@@ -197,11 +197,9 @@ run_trace_probe = celery_app.task(
     max_retries=resolve_task_route(TaskName.SYSTEM_TRACE_PROBE).max_retries,
 )(_run_trace_probe)
 
-from apps.worker.app.tasks import extract_documents as _extract_documents  # noqa: E402,F401
-from apps.worker.app.tasks import (  # noqa: E402,F401
-    generate_recommendations as _generate_recommendations,
-)
-from apps.worker.app.tasks import generate_reports as _generate_reports  # noqa: E402,F401
-from apps.worker.app.tasks import parse_documents as _parse_documents  # noqa: E402,F401
+import apps.worker.app.tasks.extract_documents as _extract_documents  # noqa: E402,F401
+import apps.worker.app.tasks.generate_recommendations as _generate_recommendations  # noqa: E402,F401
+import apps.worker.app.tasks.generate_reports as _generate_reports  # noqa: E402,F401
+import apps.worker.app.tasks.parse_documents as _parse_documents  # noqa: E402,F401
 
 __all__ = ["ObservedTask", "celery_app", "run_trace_probe"]

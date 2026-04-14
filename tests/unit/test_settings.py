@@ -126,3 +126,16 @@ def test_app_settings_accepts_quickbooks_allowed_return_origins_csv(
         "https://app.example.com",
         "https://admin.example.com",
     )
+
+
+def test_app_settings_treats_blank_quickbooks_redirect_uri_as_unset(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Ensure blank hosted env values do not crash unrelated application startup."""
+
+    monkeypatch.setenv("quickbooks_redirect_uri", "   ")
+    monkeypatch.setitem(AppSettings.model_config, "env_file", None)
+
+    settings = AppSettings()
+
+    assert settings.quickbooks.redirect_uri is None

@@ -245,13 +245,26 @@ class QuickBooksSettings(BaseModel):
 
     client_id: str | None = Field(default=None)
     client_secret: SecretStr | None = Field(default=None, repr=False)
-    redirect_uri: str = Field(
+    redirect_uri: str | None = Field(
         default="http://127.0.0.1:8000/api/integrations/quickbooks/callback",
         min_length=1,
     )
     sandbox_company_id: str | None = Field(default=None)
     use_sandbox: bool = Field(default=True)
     allowed_return_origins: tuple[str, ...] = Field(default=())
+
+    @field_validator("redirect_uri", mode="before")
+    @classmethod
+    def normalize_redirect_uri(cls, value: object) -> object:
+        """Treat blank redirect URIs as unset so unrelated app startup can proceed."""
+
+        if isinstance(value, str):
+            stripped_value = value.strip()
+            if not stripped_value:
+                return None
+            return stripped_value
+
+        return value
 
     @field_validator("allowed_return_origins", mode="before")
     @classmethod

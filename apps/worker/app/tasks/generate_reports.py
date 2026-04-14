@@ -21,7 +21,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 from apps.worker.app.celery_app import celery_app
@@ -44,22 +44,12 @@ from services.db.repositories.report_repo import ReportRepository
 from services.db.session import get_session_factory
 from services.jobs.retry_policy import JobCancellationRequestedError
 from services.jobs.task_names import TaskName, resolve_task_route
-from services.reporting.commentary import (
-    CommentaryGenerationInput,
-    CommentaryGenerationResult,
-    generate_commentary,
-)
-from services.reporting.excel_builder import (
-    ExcelReportInput,
-    ExcelReportResult,
-    build_excel_report_pack,
-)
-from services.reporting.pdf_builder import (
-    PdfReportInput,
-    PdfReportResult,
-    build_pdf_report_pack,
-)
 from services.storage.repository import StorageRepository
+
+if TYPE_CHECKING:
+    from services.reporting.commentary import CommentaryGenerationResult
+    from services.reporting.excel_builder import ExcelReportResult
+    from services.reporting.pdf_builder import PdfReportResult
 
 logger = get_logger(__name__)
 
@@ -734,6 +724,11 @@ def _generate_commentary_phase(
         CommentaryGenerationResult with generated commentary.
     """
 
+    from services.reporting.commentary import (
+        CommentaryGenerationInput,
+        generate_commentary,
+    )
+
     input_data = CommentaryGenerationInput(
         close_run_id=context.close_run_id,
         entity_name=context.entity_name,
@@ -801,6 +796,11 @@ def _build_excel_report(
         ExcelReportResult with generated Excel bytes.
     """
 
+    from services.reporting.excel_builder import (
+        ExcelReportInput,
+        build_excel_report_pack,
+    )
+
     input_data = ExcelReportInput(
         close_run_id=context.close_run_id,
         entity_name=context.entity_name,
@@ -835,6 +835,11 @@ def _build_pdf_report(
     Returns:
         PdfReportResult with generated PDF bytes.
     """
+
+    from services.reporting.pdf_builder import (
+        PdfReportInput,
+        build_pdf_report_pack,
+    )
 
     input_data = PdfReportInput(
         close_run_id=context.close_run_id,

@@ -93,3 +93,22 @@ def test_secret_store_fails_fast_when_encryption_key_is_missing() -> None:
         SecretStore(settings=settings).get_credential_cipher()
 
     assert "security_credential_encryption_key" in str(error.value)
+
+
+def test_secret_store_fails_fast_when_quickbooks_redirect_uri_is_missing() -> None:
+    """Ensure QuickBooks OAuth remains opt-in when hosted env leaves the redirect blank."""
+
+    settings = AppSettings.model_construct(
+        quickbooks=AppSettings().quickbooks.model_copy(
+            update={
+                "client_id": "quickbooks-client-id",
+                "client_secret": SecretStr("quickbooks-client-secret"),
+                "redirect_uri": None,
+            }
+        )
+    )
+
+    with pytest.raises(ValueError) as error:
+        SecretStore(settings=settings).get_quickbooks_client_secrets()
+
+    assert "quickbooks_redirect_uri" in str(error.value)
