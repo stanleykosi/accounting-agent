@@ -14,7 +14,7 @@ from collections.abc import Mapping
 from functools import lru_cache
 from ipaddress import ip_address
 from typing import Any
-from urllib.parse import SplitResult, urlsplit, urlunsplit
+from urllib.parse import SplitResult, unquote, urlsplit, urlunsplit
 
 from pydantic import BaseModel, Field, SecretStr, computed_field, field_validator, model_validator
 from pydantic.fields import FieldInfo
@@ -366,8 +366,8 @@ class ObservabilitySettings(BaseModel):
                 if not isinstance(raw_key, str) or not isinstance(raw_header_value, str):
                     raise ValueError("Observability OTLP headers must use string keys and values.")
 
-                header_name = raw_key.strip()
-                header_value = raw_header_value.strip()
+                header_name = raw_key.strip().lower()
+                header_value = unquote(raw_header_value.strip())
                 if not header_name or not header_value:
                     raise ValueError("Observability OTLP headers cannot contain blank names or values.")
 
@@ -576,8 +576,8 @@ def _parse_otlp_headers_string(value: str) -> dict[str, str]:
                 "Observability OTLP headers must use comma-delimited key=value pairs."
             )
 
-        normalized_name = header_name.strip()
-        normalized_value = header_value.strip()
+        normalized_name = header_name.strip().lower()
+        normalized_value = unquote(header_value.strip())
         if not normalized_name or not normalized_value:
             raise ValueError("Observability OTLP headers cannot contain blank names or values.")
 

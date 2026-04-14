@@ -155,8 +155,8 @@ def test_app_settings_accepts_observability_otlp_headers_csv(
     settings = AppSettings()
 
     assert settings.observability.otlp_headers == {
-        "Authorization": "Basic abc123",
-        "X-Scope-OrgID": "tenant-42",
+        "authorization": "Basic abc123",
+        "x-scope-orgid": "tenant-42",
     }
 
 
@@ -187,6 +187,24 @@ def test_app_settings_accepts_observability_otlp_headers_json(
     settings = AppSettings()
 
     assert settings.observability.otlp_headers == {
-        "Authorization": "Basic abc123",
-        "X-Scope-OrgID": "tenant-42",
+        "authorization": "Basic abc123",
+        "x-scope-orgid": "tenant-42",
+    }
+
+
+def test_app_settings_normalizes_grafana_otlp_headers_for_grpc_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Ensure Grafana's copied OTLP header format becomes valid gRPC metadata."""
+
+    monkeypatch.setenv(
+        "observability_otlp_headers",
+        "Authorization=Basic%20abc123",
+    )
+    monkeypatch.setitem(AppSettings.model_config, "env_file", None)
+
+    settings = AppSettings()
+
+    assert settings.observability.otlp_headers == {
+        "authorization": "Basic abc123",
     }

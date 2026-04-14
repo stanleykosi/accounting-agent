@@ -75,8 +75,8 @@ def test_configure_observability_passes_optional_otlp_headers(monkeypatch) -> No
             update={
                 "otlp_endpoint": "https://otlp-gateway.example.com/otlp",
                 "otlp_headers": {
-                    "Authorization": "Basic abc123",
-                    "X-Scope-OrgID": "tenant-42",
+                    "authorization": "Basic abc123",
+                    "x-scope-orgid": "tenant-42",
                 },
             }
         )
@@ -87,16 +87,16 @@ def test_configure_observability_passes_optional_otlp_headers(monkeypatch) -> No
     assert captured_arguments["span_exporter"] == {
         "endpoint": "https://otlp-gateway.example.com/otlp",
         "headers": {
-            "Authorization": "Basic abc123",
-            "X-Scope-OrgID": "tenant-42",
+            "authorization": "Basic abc123",
+            "x-scope-orgid": "tenant-42",
         },
         "insecure": False,
     }
     assert captured_arguments["metric_exporter"] == {
         "endpoint": "https://otlp-gateway.example.com/otlp",
         "headers": {
-            "Authorization": "Basic abc123",
-            "X-Scope-OrgID": "tenant-42",
+            "authorization": "Basic abc123",
+            "x-scope-orgid": "tenant-42",
         },
         "insecure": False,
     }
