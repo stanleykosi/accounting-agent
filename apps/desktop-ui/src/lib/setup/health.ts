@@ -10,6 +10,7 @@ import type {
   LocalServiceHealthCheck,
   LocalServiceHealthStatus,
 } from "./types";
+import { resolveFrontendRuntimeMode } from "../runtime";
 
 const HEALTHCHECK_TIMEOUT_MS = 2_500;
 const RECOVERY_COMMANDS = [
@@ -25,6 +26,17 @@ const RECOVERY_COMMANDS = [
  * Behavior: Runs all checks in parallel and fails closed when any dependency is unreachable.
  */
 export async function readDesktopSetupHealth(): Promise<DesktopSetupHealthSnapshot> {
+  const mode = resolveFrontendRuntimeMode();
+  if (mode === "hosted") {
+    return {
+      checkedAt: new Date().toISOString(),
+      mode,
+      ready: true,
+      recoveryCommands: [],
+      services: [],
+    };
+  }
+
   const [apiHealth, minioHealth, postgresHealth, redisHealth] = await Promise.all([
     checkHttpService({
       endpoint: resolveApiHealthUrl(),
@@ -66,6 +78,7 @@ export async function readDesktopSetupHealth(): Promise<DesktopSetupHealthSnapsh
 
   return {
     checkedAt: new Date().toISOString(),
+    mode,
     ready: services.every((service) => service.status === "healthy"),
     recoveryCommands: RECOVERY_COMMANDS,
     services,

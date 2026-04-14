@@ -343,7 +343,7 @@ class DocumentUploadService:
             raise DocumentUploadServiceError(
                 status_code=413,
                 code=DocumentUploadServiceErrorCode.FILE_TOO_LARGE,
-                message=f"{filename} exceeds the 50 MB local-demo upload limit.",
+                message=f"{filename} exceeds the 50 MB hosted upload limit.",
             )
 
         try:

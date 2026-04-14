@@ -4,6 +4,8 @@ Scope: Typed service-health summaries, overall readiness snapshots, and operator
 Dependencies: Shared by server-only health helpers, Next.js API routes, and the setup client component.
 */
 
+import type { FrontendRuntimeMode } from "../runtime";
+
 export type LocalServiceHealthStatus = "healthy" | "unhealthy";
 
 export type LocalServiceHealthCheck = Readonly<{
@@ -17,6 +19,7 @@ export type LocalServiceHealthCheck = Readonly<{
 
 export type DesktopSetupHealthSnapshot = Readonly<{
   checkedAt: string;
+  mode: FrontendRuntimeMode;
   ready: boolean;
   recoveryCommands: readonly string[];
   services: readonly LocalServiceHealthCheck[];

@@ -21,6 +21,7 @@ const SIDECAR_STARTUP_TIMEOUT: Duration = Duration::from_secs(45);
 const SIDECAR_POLL_INTERVAL: Duration = Duration::from_millis(500);
 const DEV_UI_BUILD_COMMAND: [&str; 3] = ["--filter", "@accounting-ai-agent/desktop-ui", "build"];
 const DESKTOP_SHELL_ENV_FILE_NAME: &str = "desktop-shell.env";
+const REMOTE_FRONTEND_URL_ENV_KEY: &str = "ACCOUNTING_AGENT_DESKTOP_REMOTE_URL";
 const DEFAULT_API_BASE_PATH: &str = "/api";
 const DEFAULT_API_HOST: &str = "127.0.0.1";
 const DEFAULT_API_PORT: &str = "8000";
@@ -40,6 +41,22 @@ fn main() {
     let app = tauri::Builder::default()
         .manage(UiSidecarState::default())
         .setup(|app| {
+            if let Some(remote_frontend_url) = resolve_remote_frontend_url(app)? {
+                let main_window = app
+                    .get_webview_window("main")
+                    .ok_or("The main desktop window is missing from the Tauri configuration.")?;
+                let parsed_remote_url = Url::parse(&remote_frontend_url).map_err(|error| {
+                    format!(
+                        "Failed to parse the hosted frontend URL from {REMOTE_FRONTEND_URL_ENV_KEY}: {error}"
+                    )
+                })?;
+                main_window.navigate(parsed_remote_url).map_err(|error| {
+                    format!("Failed to navigate the desktop window to the hosted frontend: {error}")
+                })?;
+
+                return Ok(());
+            }
+
             let mut sidecar_child = spawn_ui_sidecar(app)?;
             let sidecar_url = parse_sidecar_url("/setup")?;
 
@@ -246,17 +263,7 @@ fn resolve_packaged_env_file_path(app: &App) -> Result<Option<PathBuf>, String> 
 }
 
 fn resolve_sidecar_env(env_file_path: Option<PathBuf>) -> Result<BTreeMap<String, String>, String> {
-    let mut raw_values = BTreeMap::new();
-
-    if let Some(path) = env_file_path {
-        raw_values.extend(parse_env_file(&path)?);
-    }
-
-    for key in supported_runtime_env_keys() {
-        if let Ok(value) = env::var(key) {
-            raw_values.insert(key.to_string(), value);
-        }
-    }
+    let raw_values = resolve_raw_runtime_values(env_file_path)?;
 
     let mut sidecar_env = BTreeMap::new();
     sidecar_env.insert(
@@ -266,6 +273,10 @@ fn resolve_sidecar_env(env_file_path: Option<PathBuf>) -> Result<BTreeMap<String
     sidecar_env.insert(
         "ACCOUNTING_AGENT_SESSION_COOKIE_NAME".to_string(),
         resolve_session_cookie_name(&raw_values),
+    );
+    sidecar_env.insert(
+        "ACCOUNTING_AGENT_FRONTEND_MODE".to_string(),
+        "desktop-local".to_string(),
     );
     sidecar_env.insert(
         "database_host".to_string(),
@@ -291,8 +302,28 @@ fn resolve_sidecar_env(env_file_path: Option<PathBuf>) -> Result<BTreeMap<String
     Ok(sidecar_env)
 }
 
-fn supported_runtime_env_keys() -> [&'static str; 11] {
+fn resolve_raw_runtime_values(
+    env_file_path: Option<PathBuf>,
+) -> Result<BTreeMap<String, String>, String> {
+    let mut raw_values = BTreeMap::new();
+
+    if let Some(path) = env_file_path {
+        raw_values.extend(parse_env_file(&path)?);
+    }
+
+    for key in supported_runtime_env_keys() {
+        if let Ok(value) = env::var(key) {
+            raw_values.insert(key.to_string(), value);
+        }
+    }
+
+    Ok(raw_values)
+}
+
+fn supported_runtime_env_keys() -> [&'static str; 13] {
     [
+        "ACCOUNTING_AGENT_DESKTOP_REMOTE_URL",
+        "ACCOUNTING_AGENT_FRONTEND_MODE",
         "ACCOUNTING_AGENT_API_URL",
         "ACCOUNTING_AGENT_SESSION_COOKIE_NAME",
         "api_host",
@@ -305,6 +336,28 @@ fn supported_runtime_env_keys() -> [&'static str; 11] {
         "storage_endpoint",
         "storage_secure",
     ]
+}
+
+fn resolve_remote_frontend_url(app: &App) -> Result<Option<String>, String> {
+    let raw_values = if cfg!(debug_assertions) {
+        let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../..")
+            .canonicalize()
+            .map_err(|error| {
+                format!(
+                    "Failed to resolve the repository root for the desktop shell: {error}"
+                )
+            })?;
+        let repo_env_file = repo_root.join(".env");
+        resolve_raw_runtime_values(repo_env_file.is_file().then_some(repo_env_file))?
+    } else {
+        resolve_raw_runtime_values(resolve_packaged_env_file_path(app)?)?
+    };
+
+    Ok(raw_values
+        .get(REMOTE_FRONTEND_URL_ENV_KEY)
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty()))
 }
 
 fn resolve_api_url(raw_values: &BTreeMap<String, String>) -> String {

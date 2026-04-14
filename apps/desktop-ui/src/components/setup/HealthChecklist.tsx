@@ -25,6 +25,7 @@ export function HealthChecklist({
   initialSnapshot,
   nextPath,
 }: Readonly<HealthChecklistProps>): ReactElement {
+  const isHostedMode = initialSnapshot.mode === "hosted";
   const [snapshot, setSnapshot] = useState(initialSnapshot);
   const [requestError, setRequestError] = useState<string | null>(null);
   const [isRefreshing, startTransition] = useTransition();
@@ -62,23 +63,29 @@ export function HealthChecklist({
     <section className="setup-checklist">
       <div className="setup-checklist-header">
         <div>
-          <p className="eyebrow">First-run validation</p>
-          <h2>Confirm the local stack before entering the accounting workspace.</h2>
+          <p className="eyebrow">{isHostedMode ? "Hosted runtime" : "First-run validation"}</p>
+          <h2>
+            {isHostedMode
+              ? "Hosted frontend routing is active."
+              : "Confirm the local stack before entering the accounting workspace."}
+          </h2>
         </div>
 
         <div className="setup-checklist-actions">
-          <button
-            className="secondary-button"
-            disabled={isRefreshing}
-            onClick={() => {
-              startTransition(() => {
-                void refreshSnapshot();
-              });
-            }}
-            type="button"
-          >
-            {isRefreshing ? "Refreshing..." : "Refresh checks"}
-          </button>
+          {!isHostedMode ? (
+            <button
+              className="secondary-button"
+              disabled={isRefreshing}
+              onClick={() => {
+                startTransition(() => {
+                  void refreshSnapshot();
+                });
+              }}
+              type="button"
+            >
+              {isRefreshing ? "Refreshing..." : "Refresh checks"}
+            </button>
+          ) : null}
           <Link
             className={snapshot.ready ? "primary-button" : "secondary-button disabled-link"}
             href={nextPath}
@@ -90,14 +97,17 @@ export function HealthChecklist({
       </div>
 
       <p className="form-helper">
-        Last checked {checkedAtLabel}. The desktop shell blocks the main workflow routes until the
-        local API, storage, and job infrastructure are reachable on loopback.
+        {isHostedMode
+          ? `Last checked ${checkedAtLabel}. Hosted mode skips loopback dependency checks and routes browser or remote desktop traffic through the deployed frontend origin.`
+          : `Last checked ${checkedAtLabel}. The desktop shell blocks the main workflow routes until the local API, storage, and job infrastructure are reachable on loopback.`}
       </p>
 
       <div className={snapshot.ready ? "status-banner success" : "status-banner warning"}>
-        {snapshot.ready
-          ? "All required local services are reachable. Continue into the protected workspace."
-          : "One or more required services are still unavailable. Start the local demo stack, then refresh these checks."}
+        {isHostedMode
+          ? "Hosted runtime mode is active. Continue into the protected workspace."
+          : snapshot.ready
+            ? "All required local services are reachable. Continue into the protected workspace."
+            : "One or more required services are still unavailable. Start the local demo stack, then refresh these checks."}
       </div>
 
       {requestError ? (
@@ -106,36 +116,40 @@ export function HealthChecklist({
         </div>
       ) : null}
 
-      <div className="setup-service-grid">
-        {snapshot.services.map((service) => (
-          <article className="setup-service-card" key={service.id}>
-            <div className="setup-service-header">
-              <div>
-                <h3>{service.label}</h3>
-                {service.endpoint ? <p>{service.endpoint}</p> : null}
+      {snapshot.services.length > 0 ? (
+        <div className="setup-service-grid">
+          {snapshot.services.map((service) => (
+            <article className="setup-service-card" key={service.id}>
+              <div className="setup-service-header">
+                <div>
+                  <h3>{service.label}</h3>
+                  {service.endpoint ? <p>{service.endpoint}</p> : null}
+                </div>
+                <span className={`setup-service-badge ${service.status}`}>
+                  {service.status === "healthy" ? "Healthy" : "Blocked"}
+                </span>
               </div>
-              <span className={`setup-service-badge ${service.status}`}>
-                {service.status === "healthy" ? "Healthy" : "Blocked"}
-              </span>
-            </div>
-            <p className="form-helper">{service.detail}</p>
-            <p className="setup-service-latency">
-              {service.latencyMs === null ? "No response yet" : `${service.latencyMs} ms`}
-            </p>
-          </article>
-        ))}
-      </div>
-
-      <div className="setup-command-panel">
-        <h3>Canonical recovery commands</h3>
-        <div className="setup-command-list" role="list">
-          {snapshot.recoveryCommands.map((command) => (
-            <code key={command} role="listitem">
-              {command}
-            </code>
+              <p className="form-helper">{service.detail}</p>
+              <p className="setup-service-latency">
+                {service.latencyMs === null ? "No response yet" : `${service.latencyMs} ms`}
+              </p>
+            </article>
           ))}
         </div>
-      </div>
+      ) : null}
+
+      {snapshot.recoveryCommands.length > 0 ? (
+        <div className="setup-command-panel">
+          <h3>Canonical recovery commands</h3>
+          <div className="setup-command-list" role="list">
+            {snapshot.recoveryCommands.map((command) => (
+              <code key={command} role="listitem">
+                {command}
+              </code>
+            ))}
+          </div>
+        </div>
+      ) : null}
     </section>
   );
 }

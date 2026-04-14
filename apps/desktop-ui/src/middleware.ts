@@ -14,6 +14,7 @@ import {
   toSessionRedirectReason,
   validateSessionCookie,
 } from "./lib/auth/session";
+import { isHostedFrontendRuntime } from "./lib/runtime";
 
 const PUBLIC_FILE_PATTERN = /\.[^/]+$/u;
 const SETUP_PATH = "/setup";
@@ -33,7 +34,7 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
   const isSetupPath = pathname === SETUP_PATH;
   const hasSessionCookie = request.cookies.has(AUTH_COOKIE_NAME);
   const isLoginPath = pathname === "/login";
-  if (!isLoginPath && !isSetupPath) {
+  if (!isHostedFrontendRuntime() && !isLoginPath && !isSetupPath) {
     const runtimeReady = await isLocalRuntimeReady(request);
     if (!runtimeReady) {
       return redirectToSetup(request);

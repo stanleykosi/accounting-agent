@@ -98,9 +98,15 @@ export type DocumentReviewWorkspaceData = {
 
 export type DocumentReviewApiErrorCode =
   | "close_run_not_found"
+  | "empty_batch"
+  | "entity_archived"
   | "entity_not_found"
+  | "file_too_large"
+  | "integrity_conflict"
+  | "invalid_filename"
   | "session_expired"
   | "session_required"
+  | "unsupported_content"
   | "unknown_error"
   | "user_disabled"
   | "validation_error";
@@ -127,6 +133,10 @@ export class DocumentReviewApiError extends Error {
 
 const DEFAULT_CLASSIFICATION_THRESHOLD = 0.75;
 const ENTITIES_PROXY_BASE_PATH = "/api/entities";
+
+export type UploadedDocumentBatchResult = {
+  uploadedCount: number;
+};
 
 /**
  * Purpose: Load and normalize the document review workspace for one entity close run.
@@ -171,6 +181,34 @@ export async function readDocumentReviewWorkspace(
     items,
     queueCounts: buildQueueCounts(items),
   };
+}
+
+/**
+ * Purpose: Upload source documents through the same-origin API proxy.
+ * Inputs: Entity/close-run identifiers plus browser-selected files.
+ * Outputs: The number of files accepted and queued successfully.
+ * Behavior: Sends one multipart batch to the backend so hosted browser and desktop shells share the same canonical upload path.
+ */
+export async function uploadSourceDocuments(
+  entityId: string,
+  closeRunId: string,
+  files: readonly File[],
+): Promise<UploadedDocumentBatchResult> {
+  const formData = new FormData();
+  for (const file of files) {
+    formData.append("files", file);
+  }
+
+  const uploadResponse = await documentReviewRequest<unknown>(
+    buildEntityProxyPath(entityId, ["close-runs", closeRunId, "documents", "upload"]),
+    {
+      body: formData,
+      method: "POST",
+    },
+  );
+
+  const uploadedCount = parseUploadedDocumentCount(uploadResponse);
+  return { uploadedCount };
 }
 
 /**
@@ -232,13 +270,14 @@ async function documentReviewRequest<TResponse>(
   path: string,
   init: Readonly<RequestInit>,
 ): Promise<TResponse> {
+  const isFormDataBody = init.body instanceof FormData;
   const response = await fetch(path, {
     ...init,
     cache: "no-store",
     credentials: "same-origin",
     headers: {
       Accept: "application/json",
-      ...(init.body ? { "Content-Type": "application/json" } : {}),
+      ...(init.body && !isFormDataBody ? { "Content-Type": "application/json" } : {}),
       ...init.headers,
     },
   });
@@ -254,6 +293,14 @@ async function documentReviewRequest<TResponse>(
 function buildEntityProxyPath(entityId: string, pathSegments: readonly string[]): string {
   const encodedSegments = [entityId, ...pathSegments].map((segment) => encodeURIComponent(segment));
   return `${ENTITIES_PROXY_BASE_PATH}/${encodedSegments.join("/")}`;
+}
+
+function parseUploadedDocumentCount(payload: unknown): number {
+  if (!isRecord(payload) || !Array.isArray(payload.uploaded_documents)) {
+    throw new Error("Document upload must return an uploaded_documents array.");
+  }
+
+  return payload.uploaded_documents.length;
 }
 
 function buildDocumentReviewApiError(
@@ -293,10 +340,17 @@ function buildDocumentReviewApiError(
 function asDocumentReviewApiErrorCode(value: unknown): DocumentReviewApiErrorCode {
   switch (value) {
     case "close_run_not_found":
+    case "empty_batch":
+    case "entity_archived":
     case "entity_not_found":
+    case "file_too_large":
+    case "integrity_conflict":
+    case "invalid_filename":
     case "session_expired":
     case "session_required":
+    case "unsupported_content":
     case "user_disabled":
+    case "validation_error":
       return value;
     default:
       return "unknown_error";

@@ -7,7 +7,8 @@ Dependencies: Document review API helpers, queue/detail components, and shared U
 "use client";
 
 import { EvidenceDrawer, ReviewLayout, SurfaceCard } from "@accounting-ai-agent/ui";
-import { use, useEffect, useMemo, useState, type ReactElement } from "react";
+import { use, useCallback, useEffect, useMemo, useState, type ReactElement } from "react";
+import { DocumentUploadPanel } from "../../../../../../../components/documents/DocumentUploadPanel";
 import { DocumentReviewTable } from "../../../../../../../components/documents/DocumentReviewTable";
 import { ExtractionPanel } from "../../../../../../../components/documents/ExtractionPanel";
 import {
@@ -63,18 +64,31 @@ export default function CloseRunDocumentsPage({
   const [workspaceData, setWorkspaceData] = useState<DocumentReviewWorkspaceData | null>(null);
   const [evidenceDrawer, setEvidenceDrawer] = useState<EvidenceDrawerState>(defaultEvidenceDrawerState);
 
-  useEffect(() => {
-    void loadWorkspace({
+  const refreshWorkspace = useCallback(async (): Promise<void> => {
+    await loadWorkspace({
       closeRunId,
       entityId,
       onError: setErrorMessage,
       onLoaded: (nextWorkspace) => {
         setWorkspaceData(nextWorkspace);
-        setSelectedDocumentId(selectInitialDocumentId(nextWorkspace));
+        setSelectedDocumentId((currentSelectedDocumentId) => {
+          if (
+            currentSelectedDocumentId !== null &&
+            nextWorkspace.items.some((item) => item.id === currentSelectedDocumentId)
+          ) {
+            return currentSelectedDocumentId;
+          }
+
+          return selectInitialDocumentId(nextWorkspace);
+        });
       },
       onLoadingChange: setIsLoading,
     });
   }, [closeRunId, entityId]);
+
+  useEffect(() => {
+    void refreshWorkspace();
+  }, [refreshWorkspace]);
 
   const visibleItems = useMemo(
     () =>
@@ -224,6 +238,16 @@ export default function CloseRunDocumentsPage({
           {errorMessage}
         </div>
       ) : null}
+
+      <SurfaceCard title="Add Source Documents" subtitle="API-managed upload">
+        <DocumentUploadPanel
+          closeRunId={closeRunId}
+          entityId={entityId}
+          onUploadComplete={async () => {
+            await refreshWorkspace();
+          }}
+        />
+      </SurfaceCard>
 
       <ReviewLayout
         className="document-review-grid"

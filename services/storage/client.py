@@ -75,7 +75,6 @@ class MinioClientLike(Protocol):
     def remove_object(self, bucket_name: str, object_name: str) -> None:
         """Delete one object from the provider."""
 
-
 @dataclass(frozen=True)
 class StorageObjectStat:
     """Capture the canonical metadata returned by low-level storage operations."""
