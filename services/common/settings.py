@@ -319,10 +319,62 @@ class QuickBooksSettings(BaseModel):
 class ObservabilitySettings(BaseModel):
     """Define trace and metrics export settings for the local observability pipeline."""
 
-    enabled: bool = Field(default=True)
     service_namespace: str = Field(default="accounting-agent", min_length=1)
-    otlp_endpoint: str = Field(default="http://127.0.0.1:4317", min_length=1)
+    otlp_endpoint: str | None = Field(default=None)
+    otlp_headers: dict[str, str] = Field(default_factory=dict)
     sample_ratio: Ratio = Field(default=1.0)
+
+    @field_validator("otlp_endpoint", mode="before")
+    @classmethod
+    def normalize_otlp_endpoint(cls, value: object) -> object:
+        """Treat blank OTLP endpoints as unset so telemetry export stays disabled by default."""
+
+        if isinstance(value, str):
+            stripped_value = value.strip()
+            if not stripped_value:
+                return None
+            return stripped_value
+
+        return value
+
+    @field_validator("otlp_headers", mode="before")
+    @classmethod
+    def normalize_otlp_headers(cls, value: object) -> object:
+        """Accept either a JSON object or OTEL-style comma-delimited key=value headers."""
+
+        if value is None:
+            return {}
+
+        if isinstance(value, str):
+            stripped_value = value.strip()
+            if not stripped_value:
+                return {}
+
+            if stripped_value.startswith("{"):
+                try:
+                    value = json.loads(stripped_value)
+                except json.JSONDecodeError as error:
+                    raise ValueError(
+                        "Observability OTLP headers JSON value must be a valid object."
+                    ) from error
+            else:
+                return _parse_otlp_headers_string(stripped_value)
+
+        if isinstance(value, Mapping):
+            normalized_headers: dict[str, str] = {}
+            for raw_key, raw_header_value in value.items():
+                if not isinstance(raw_key, str) or not isinstance(raw_header_value, str):
+                    raise ValueError("Observability OTLP headers must use string keys and values.")
+
+                header_name = raw_key.strip()
+                header_value = raw_header_value.strip()
+                if not header_name or not header_value:
+                    raise ValueError("Observability OTLP headers cannot contain blank names or values.")
+
+                normalized_headers[header_name] = header_value
+            return normalized_headers
+
+        return value
 
 
 class SecuritySettings(BaseModel):
@@ -507,6 +559,31 @@ def _extract_url_hostname(url: str) -> str | None:
 
     parsed_url = urlsplit(url.strip())
     return parsed_url.hostname
+
+
+def _parse_otlp_headers_string(value: str) -> dict[str, str]:
+    """Parse OTEL-style comma-delimited key=value pairs into canonical OTLP headers."""
+
+    parsed_headers: dict[str, str] = {}
+    for raw_entry in value.split(","):
+        entry = raw_entry.strip()
+        if not entry:
+            continue
+
+        header_name, separator, header_value = entry.partition("=")
+        if not separator:
+            raise ValueError(
+                "Observability OTLP headers must use comma-delimited key=value pairs."
+            )
+
+        normalized_name = header_name.strip()
+        normalized_value = header_value.strip()
+        if not normalized_name or not normalized_value:
+            raise ValueError("Observability OTLP headers cannot contain blank names or values.")
+
+        parsed_headers[normalized_name] = normalized_value
+
+    return parsed_headers
 
 
 @lru_cache(maxsize=128)

@@ -139,3 +139,54 @@ def test_app_settings_treats_blank_quickbooks_redirect_uri_as_unset(
     settings = AppSettings()
 
     assert settings.quickbooks.redirect_uri is None
+
+
+def test_app_settings_accepts_observability_otlp_headers_csv(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Ensure OTLP headers can be supplied in OTEL-style comma-delimited env format."""
+
+    monkeypatch.setenv(
+        "observability_otlp_headers",
+        "Authorization=Basic abc123,X-Scope-OrgID=tenant-42",
+    )
+    monkeypatch.setitem(AppSettings.model_config, "env_file", None)
+
+    settings = AppSettings()
+
+    assert settings.observability.otlp_headers == {
+        "Authorization": "Basic abc123",
+        "X-Scope-OrgID": "tenant-42",
+    }
+
+
+def test_app_settings_treats_blank_observability_otlp_endpoint_as_unset(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Ensure blank OTLP endpoint values disable export instead of targeting localhost by default."""
+
+    monkeypatch.setenv("observability_otlp_endpoint", "   ")
+    monkeypatch.setitem(AppSettings.model_config, "env_file", None)
+
+    settings = AppSettings()
+
+    assert settings.observability.otlp_endpoint is None
+
+
+def test_app_settings_accepts_observability_otlp_headers_json(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Ensure OTLP headers can be supplied as a JSON object for hosted vendors."""
+
+    monkeypatch.setenv(
+        "observability_otlp_headers",
+        '{"Authorization":"Basic abc123","X-Scope-OrgID":"tenant-42"}',
+    )
+    monkeypatch.setitem(AppSettings.model_config, "env_file", None)
+
+    settings = AppSettings()
+
+    assert settings.observability.otlp_headers == {
+        "Authorization": "Basic abc123",
+        "X-Scope-OrgID": "tenant-42",
+    }

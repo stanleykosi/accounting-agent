@@ -47,17 +47,52 @@ def configure_logging(settings: AppSettings, *, service_name: str | None = None)
                     "processor": renderer,
                 }
             },
+            "filters": {
+                "below_error": {
+                    "()": _LogLevelFilter,
+                    "max_level": "WARNING",
+                },
+                "errors_and_above": {
+                    "()": _LogLevelFilter,
+                    "min_level": "ERROR",
+                },
+            },
             "handlers": {
-                "default": {
+                "stdout": {
                     "class": "logging.StreamHandler",
                     "level": settings.logging.level,
                     "formatter": "structured",
                     "stream": "ext://sys.stdout",
+                    "filters": ["below_error"],
+                },
+                "stderr": {
+                    "class": "logging.StreamHandler",
+                    "level": "ERROR",
+                    "formatter": "structured",
+                    "stream": "ext://sys.stderr",
+                    "filters": ["errors_and_above"],
                 }
             },
             "root": {
-                "handlers": ["default"],
+                "handlers": ["stdout", "stderr"],
                 "level": settings.logging.level,
+            },
+            "loggers": {
+                "uvicorn": {
+                    "handlers": ["stdout", "stderr"],
+                    "level": settings.logging.level,
+                    "propagate": False,
+                },
+                "uvicorn.access": {
+                    "handlers": ["stdout", "stderr"],
+                    "level": settings.logging.level,
+                    "propagate": False,
+                },
+                "uvicorn.error": {
+                    "handlers": ["stdout", "stderr"],
+                    "level": settings.logging.level,
+                    "propagate": False,
+                },
             },
         }
     )
@@ -110,6 +145,32 @@ def _build_renderer(log_format: StructuredLogFormat) -> Processor:
     return structlog.processors.JSONRenderer()
 
 
+class _LogLevelFilter(logging.Filter):
+    """Filter records into one output stream so INFO logs do not get mislabeled as errors."""
+
+    def __init__(
+        self,
+        name: str = "",
+        *,
+        min_level: str | int | None = None,
+        max_level: str | int | None = None,
+    ) -> None:
+        super().__init__(name)
+        self._min_level = _normalize_log_level(min_level)
+        self._max_level = _normalize_log_level(max_level)
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        """Accept only records within the configured inclusive level bounds."""
+
+        if self._min_level is not None and record.levelno < self._min_level:
+            return False
+
+        if self._max_level is not None and record.levelno > self._max_level:
+            return False
+
+        return True
+
+
 def _inject_service_name(service_name: str) -> Processor:
     """Create a processor that stamps the active service name onto every event."""
 
@@ -118,6 +179,23 @@ def _inject_service_name(service_name: str) -> Processor:
         return event_dict
 
     return processor
+
+
+def _normalize_log_level(value: str | int | None) -> int | None:
+    """Convert dictConfig log-level values into integer thresholds for stream filters."""
+
+    if value is None:
+        return None
+
+    if isinstance(value, int):
+        return value
+
+    normalized = value.strip().upper()
+    resolved = logging.getLevelName(normalized)
+    if isinstance(resolved, int):
+        return resolved
+
+    raise ValueError(f"Unsupported log level for logging filter: {value!r}")
 
 
 def _redact_sensitive_fields(redact_fields: tuple[str, ...]) -> Processor:

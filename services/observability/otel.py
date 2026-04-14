@@ -42,33 +42,40 @@ def configure_observability(
 
     global _CONFIGURED_PID
 
-    if not settings.observability.enabled:
-        return
-
     current_pid = os.getpid()
     if _CONFIGURED_PID != current_pid:
+        otlp_endpoint = settings.observability.otlp_endpoint
+        otlp_headers = settings.observability.otlp_headers or None
         resource = _build_resource(
             settings=settings,
             service_name=service_name,
             service_version=service_version,
         )
         trace_provider = TracerProvider(resource=resource)
-        trace_provider.add_span_processor(
-            BatchSpanProcessor(
-                OTLPSpanExporter(
-                    endpoint=settings.observability.otlp_endpoint,
-                    insecure=settings.observability.otlp_endpoint.startswith("http://"),
+
+        if otlp_endpoint is not None:
+            trace_provider.add_span_processor(
+                BatchSpanProcessor(
+                    OTLPSpanExporter(
+                        endpoint=otlp_endpoint,
+                        headers=otlp_headers,
+                        insecure=otlp_endpoint.startswith("http://"),
+                    )
                 )
             )
-        )
-        metric_reader = PeriodicExportingMetricReader(
-            OTLPMetricExporter(
-                endpoint=settings.observability.otlp_endpoint,
-                insecure=settings.observability.otlp_endpoint.startswith("http://"),
-            ),
-            export_interval_millis=30_000,
-        )
-        metrics.set_meter_provider(MeterProvider(resource=resource, metric_readers=[metric_reader]))
+            metric_reader = PeriodicExportingMetricReader(
+                OTLPMetricExporter(
+                    endpoint=otlp_endpoint,
+                    headers=otlp_headers,
+                    insecure=otlp_endpoint.startswith("http://"),
+                ),
+                export_interval_millis=30_000,
+            )
+            meter_provider = MeterProvider(resource=resource, metric_readers=[metric_reader])
+        else:
+            meter_provider = MeterProvider(resource=resource)
+
+        metrics.set_meter_provider(meter_provider)
         trace.set_tracer_provider(trace_provider)
         LoggingInstrumentor().instrument(set_logging_format=False)
 

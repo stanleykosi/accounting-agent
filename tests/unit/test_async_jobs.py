@@ -27,6 +27,16 @@ from services.observability.context import (
 from services.observability.otel import configure_observability, get_tracer
 
 
+def _build_observability_settings() -> AppSettings:
+    """Return app settings with an explicit OTLP endpoint for trace-propagation tests."""
+
+    return AppSettings(
+        observability=AppSettings().observability.model_copy(
+            update={"otlp_endpoint": "http://127.0.0.1:4317"}
+        )
+    )
+
+
 def test_build_celery_configuration_uses_canonical_queue_defaults() -> None:
     """Ensure the shared Celery config stays aligned with the documented queue topology."""
 
@@ -51,7 +61,7 @@ def test_build_celery_configuration_uses_canonical_queue_defaults() -> None:
 def test_task_dispatcher_injects_request_id_and_route_metadata() -> None:
     """Ensure the API dispatcher uses the canonical route table and propagates trace headers."""
 
-    configure_observability(AppSettings(), service_name="pytest")
+    configure_observability(_build_observability_settings(), service_name="pytest")
     activation = activate_incoming_context(headers={REQUEST_ID_HEADER: "req-123"})
     try:
         dispatcher = TaskDispatcher(celery_app=FakeCeleryApp())
@@ -89,7 +99,7 @@ def test_task_dispatcher_rejects_non_json_payloads() -> None:
 def test_trace_context_round_trips_between_publish_and_worker_activation() -> None:
     """Ensure injected trace headers preserve request IDs and trace IDs across async boundaries."""
 
-    configure_observability(AppSettings(), service_name="pytest")
+    configure_observability(_build_observability_settings(), service_name="pytest")
     request_activation = activate_incoming_context(headers={REQUEST_ID_HEADER: "req-456"})
     try:
         with get_tracer(__name__).start_as_current_span("unit-test.publish"):
@@ -110,7 +120,7 @@ def test_trace_context_round_trips_between_publish_and_worker_activation() -> No
 def test_trace_probe_task_runs_eagerly_and_returns_context_metadata() -> None:
     """Ensure the worker-side probe task exposes request and trace metadata when run eagerly."""
 
-    configure_observability(AppSettings(), service_name="pytest")
+    configure_observability(_build_observability_settings(), service_name="pytest")
     request_activation = activate_incoming_context(headers={REQUEST_ID_HEADER: "req-789"})
     try:
         with get_tracer(__name__).start_as_current_span("unit-test.eager-probe"):
