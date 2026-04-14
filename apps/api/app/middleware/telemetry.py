@@ -64,6 +64,13 @@ def install_request_telemetry_middleware(app: FastAPI) -> None:
         tracer = get_tracer(__name__)
         span_name = f"{request.method} {request.url.path}"
         with tracer.start_as_current_span(span_name, kind=SpanKind.SERVER) as span:
+            bind_runtime_log_context(
+                request_id=activation.request_id,
+                http_method=request.method,
+                http_path=request.url.path,
+                route_group=route_group,
+                source_surface="api",
+            )
             span.set_attribute("http.request.method", request.method)
             span.set_attribute("url.path", request.url.path)
             span.set_attribute("accounting_agent.request_id", activation.request_id)
