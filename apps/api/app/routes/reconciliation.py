@@ -82,7 +82,7 @@ router = APIRouter(prefix=REC_PREFIX, tags=[RECONCILIATION_TAG])
 
 SettingsDependency = Annotated[AppSettings, Depends(get_settings)]
 AuthServiceDependency = Annotated[AuthService, Depends(get_auth_service)]
-DbSessionDep = Annotated[DatabaseSessionDependency, Depends()]
+DbSessionDep = DatabaseSessionDependency
 
 
 def _get_reconciliation_service(

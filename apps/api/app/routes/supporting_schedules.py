@@ -43,7 +43,7 @@ SCHEDULES_PREFIX = "/entities/{entity_id}/close-runs/{close_run_id}"
 SCHEDULES_TAG = "supporting_schedules"
 router = APIRouter(prefix=SCHEDULES_PREFIX, tags=[SCHEDULES_TAG])
 
-DbSessionDep = Annotated[DatabaseSessionDependency, Depends()]
+DbSessionDep = DatabaseSessionDependency
 
 
 def _get_schedule_service(
@@ -366,4 +366,3 @@ def _resolve_schedule_updated_at(snapshot: SupportingScheduleSnapshot):
     if not snapshot.rows:
         return snapshot.schedule.updated_at
     return max(snapshot.schedule.updated_at, *(row.updated_at for row in snapshot.rows))
-
