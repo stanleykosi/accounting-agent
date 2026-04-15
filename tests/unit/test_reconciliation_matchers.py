@@ -577,6 +577,61 @@ class TestBudgetVsActualMatcher:
         assert results[0].metadata["variance_pct"] == 100.0
         assert results[0].confidence == 0.0
 
+    def test_budget_dimensions_are_matched_independently(self) -> None:
+        """Budget rows should stay split by department/cost centre/project dimensions."""
+
+        source_items = [
+            {
+                "account_code": "6100",
+                "budget_amount": "20000.00",
+                "period": "2026-03",
+                "department": "Ops",
+                "cost_centre": "HQ",
+            },
+            {
+                "account_code": "6100",
+                "budget_amount": "10000.00",
+                "period": "2026-03",
+                "department": "Sales",
+                "cost_centre": "HQ",
+            },
+        ]
+        counterparts = [
+            {
+                "ref": "ledger:budget:6100:2026-03:Ops:HQ",
+                "account_code": "6100",
+                "period": "2026-03",
+                "department": "Ops",
+                "cost_centre": "HQ",
+                "amount": "7500.00",
+            },
+            {
+                "ref": "ledger:budget:6100:2026-03:Sales:HQ",
+                "account_code": "6100",
+                "period": "2026-03",
+                "department": "Sales",
+                "cost_centre": "HQ",
+                "amount": "9900.00",
+            },
+        ]
+
+        results = self.matcher.match(source_items, counterparts)
+
+        assert len(results) == 2
+        results_by_ref = {result.source_ref: result for result in results}
+        ops_result = results_by_ref["budget:6100:2026-03:Ops:HQ"]
+        sales_result = results_by_ref["budget:6100:2026-03:Sales:HQ"]
+
+        assert ops_result.match_status == MatchStatus.EXCEPTION
+        assert ops_result.counterparts[0].source_ref == "ledger:budget:6100:2026-03:Ops:HQ"
+        assert ops_result.metadata["department"] == "Ops"
+        assert ops_result.difference_amount == Decimal("-12500.00")
+
+        assert sales_result.match_status == MatchStatus.MATCHED
+        assert sales_result.counterparts[0].source_ref == "ledger:budget:6100:2026-03:Sales:HQ"
+        assert sales_result.metadata["department"] == "Sales"
+        assert sales_result.difference_amount == Decimal("-100.00")
+
 
 # ---------------------------------------------------------------------------
 # Trial balance checker tests

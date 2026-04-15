@@ -21,6 +21,7 @@ from apps.api.app.routes.auth import (
     get_auth_service,
 )
 from apps.api.app.routes.request_auth import AuthenticatedUserContext, RequestAuthDependency
+from apps.api.app.routes.workflow_phase import require_active_close_run_phase
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from services.auth.service import (
     AuthenticatedSessionResult,
@@ -28,6 +29,7 @@ from services.auth.service import (
     AuthService,
     AuthServiceError,
 )
+from services.common.enums import WorkflowPhase
 from services.common.settings import AppSettings, get_settings
 from services.common.types import JsonObject
 from services.contracts.report_models import (
@@ -321,6 +323,7 @@ def update_commentary(
     settings: SettingsDependency,
     auth_service: AuthServiceDependency,
     report_service: ReportServiceDependency,
+    db_session: DatabaseSessionDependency,
 ) -> CommentarySummary:
     """Update or create draft commentary text for one report section."""
 
@@ -331,6 +334,14 @@ def update_commentary(
         auth_service=auth_service,
     )
     try:
+        require_active_close_run_phase(
+            actor_user=_to_entity_user(session_result),
+            entity_id=entity_id,
+            close_run_id=close_run_id,
+            required_phase=WorkflowPhase.REPORTING,
+            action_label="Commentary update",
+            db_session=db_session,
+        )
         return report_service.update_commentary(
             actor_user=_to_entity_user(session_result),
             entity_id=entity_id,
@@ -361,6 +372,7 @@ def approve_commentary(
     settings: SettingsDependency,
     auth_service: AuthServiceDependency,
     report_service: ReportServiceDependency,
+    db_session: DatabaseSessionDependency,
 ) -> CommentarySummary:
     """Approve commentary for one report section, optionally with a final text edit."""
 
@@ -371,6 +383,14 @@ def approve_commentary(
         auth_service=auth_service,
     )
     try:
+        require_active_close_run_phase(
+            actor_user=_to_entity_user(session_result),
+            entity_id=entity_id,
+            close_run_id=close_run_id,
+            required_phase=WorkflowPhase.REPORTING,
+            action_label="Commentary approval",
+            db_session=db_session,
+        )
         return report_service.approve_commentary(
             actor_user=_to_entity_user(session_result),
             entity_id=entity_id,

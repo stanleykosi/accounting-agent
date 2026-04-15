@@ -202,14 +202,240 @@ class ChatThreadListResponse(ContractModel):
     )
 
 
+class AgentMemorySummary(ContractModel):
+    """Describe the persisted working memory for one agent-scoped chat thread."""
+
+    last_operator_message: str | None = Field(
+        default=None,
+        description="Most recent operator instruction retained in thread memory.",
+    )
+    last_assistant_response: str | None = Field(
+        default=None,
+        description="Most recent assistant response summary retained in thread memory.",
+    )
+    last_tool_name: str | None = Field(
+        default=None,
+        description="Most recent deterministic tool used by the agent, if any.",
+    )
+    last_action_status: str | None = Field(
+        default=None,
+        description="Outcome state of the last recorded agent action.",
+    )
+    last_trace_id: str | None = Field(
+        default=None,
+        description="Trace identifier linked to the most recent agent turn.",
+    )
+    pending_action_count: int = Field(
+        default=0,
+        ge=0,
+        description="Number of staged approvals currently pending in the thread.",
+    )
+    progress_summary: str | None = Field(
+        default=None,
+        description="Latest compact progress narrative for the close run.",
+    )
+    recent_tool_names: tuple[str, ...] = Field(
+        default=(),
+        description="Recently used tool names retained in compact thread memory.",
+    )
+    updated_at: datetime | None = Field(
+        default=None,
+        description="UTC timestamp when the thread memory was last refreshed.",
+    )
+
+
+class AgentCoaAccountSummary(ContractModel):
+    """Describe one active COA account surfaced into the agent workspace."""
+
+    account_code: str = Field(min_length=1, description="Canonical account code.")
+    account_name: str = Field(min_length=1, description="Display account name.")
+    account_type: str = Field(min_length=1, description="Normalized account type label.")
+    is_active: bool = Field(description="Whether the account is active in the current COA set.")
+    is_postable: bool = Field(description="Whether the account is eligible for journal posting.")
+
+
+class AgentCoaSummary(ContractModel):
+    """Describe the active chart-of-accounts state available to the agent."""
+
+    is_available: bool = Field(
+        default=False,
+        description="Whether an active chart of accounts is currently available.",
+    )
+    status: str = Field(
+        default="missing",
+        description="Readiness label for the COA state: missing, fallback, or active.",
+    )
+    source: str | None = Field(
+        default=None,
+        description="Source of the active COA set when available.",
+    )
+    version_no: int | None = Field(
+        default=None,
+        ge=1,
+        description="Active COA version number when available.",
+    )
+    account_count: int = Field(
+        default=0,
+        ge=0,
+        description="Number of active accounts in the current COA set.",
+    )
+    postable_account_count: int = Field(
+        default=0,
+        ge=0,
+        description="Number of postable active accounts in the current COA set.",
+    )
+    requires_operator_upload: bool = Field(
+        default=False,
+        description="Whether the operator should upload or sync a production COA.",
+    )
+    activated_at: datetime | None = Field(
+        default=None,
+        description="UTC timestamp when the active COA set became effective.",
+    )
+    summary: str | None = Field(
+        default=None,
+        description="Compact narrative of the active COA readiness state.",
+    )
+    accounts: tuple[AgentCoaAccountSummary, ...] = Field(
+        default=(),
+        description="Active COA accounts exposed to the planner for grounded reasoning.",
+    )
+
+
+class AgentRunPhaseState(ContractModel):
+    """Describe one workflow phase shown in the agent readiness timeline."""
+
+    phase: str = Field(min_length=1, description="Stable workflow phase key.")
+    label: str = Field(min_length=1, description="Operator-facing workflow phase label.")
+    status: str = Field(min_length=1, description="Current state of the workflow phase.")
+    blocking_reason: str | None = Field(
+        default=None,
+        description="Reason the phase is blocked, when applicable.",
+    )
+    completed_at: datetime | None = Field(
+        default=None,
+        description="UTC timestamp when the phase completed, when applicable.",
+    )
+
+
+class AgentRunReadiness(ContractModel):
+    """Describe the run-level readiness state exposed to the chat workbench."""
+
+    has_close_run: bool = Field(
+        default=False,
+        description="Whether this chat thread is currently scoped to a close run.",
+    )
+    status: str = Field(
+        default="not_scoped",
+        description="Overall readiness state: ready, attention_required, blocked, or not_scoped.",
+    )
+    blockers: tuple[str, ...] = Field(
+        default=(),
+        description="Issues that should be resolved before the next major workflow step.",
+    )
+    warnings: tuple[str, ...] = Field(
+        default=(),
+        description="Advisory notices that should remain visible to the operator.",
+    )
+    next_actions: tuple[str, ...] = Field(
+        default=(),
+        description="Suggested next operator or agent actions based on current state.",
+    )
+    document_count: int = Field(
+        default=0,
+        ge=0,
+        description="Total documents currently attached to the close run.",
+    )
+    has_source_documents: bool = Field(
+        default=False,
+        description="Whether the close run has any uploaded source documents.",
+    )
+    parsed_document_count: int = Field(
+        default=0,
+        ge=0,
+        description="Number of documents that have reached parsed or later states.",
+    )
+    phase_states: tuple[AgentRunPhaseState, ...] = Field(
+        default=(),
+        description="Ordered workflow phases with current status for timeline rendering.",
+    )
+
+
+class AgentToolManifestItem(ContractModel):
+    """Describe one registered agent tool surfaced to UI and external runtimes."""
+
+    name: str = Field(description="Stable registered tool name.")
+    prompt_signature: str = Field(description="Prompt-facing function signature.")
+    description: str = Field(description="Operator-facing summary of what the tool does.")
+    intent: str = Field(description="Intent bucket used for routing and review.")
+    requires_human_approval: bool = Field(
+        description="Whether tool execution stages for human approval by policy.",
+    )
+    input_schema: dict[str, object] = Field(
+        default_factory=dict,
+        description="Portable tool input schema for external runtimes and manifests.",
+    )
+
+
+class AgentTraceRecord(ContractModel):
+    """Describe one recent trace event from an agent message or system action."""
+
+    message_id: str = Field(description="Chat message UUID that emitted this trace.")
+    created_at: datetime = Field(description="UTC timestamp when the trace was recorded.")
+    mode: str | None = Field(default=None, description="Planner or system execution mode.")
+    tool_name: str | None = Field(default=None, description="Deterministic tool name when present.")
+    trace_id: str | None = Field(default=None, description="Request trace identifier when present.")
+    action_status: str | None = Field(
+        default=None,
+        description="Action status linked to the trace.",
+    )
+    summary: str | None = Field(default=None, description="Compact summary of what happened.")
+
+
+class ChatThreadWorkspaceResponse(ContractModel):
+    """Return the agent workspace context surfaced for one chat thread."""
+
+    thread_id: str = Field(description="Chat thread UUID.")
+    grounding: GroundingContext = Field(description="Grounding context for this thread.")
+    progress_summary: str | None = Field(
+        default=None,
+        description="Current close-run progress summary visible to the agent.",
+    )
+    coa: AgentCoaSummary = Field(description="Active chart-of-accounts state visible to the agent.")
+    readiness: AgentRunReadiness = Field(
+        description="Run readiness, workflow phases, and next-step guidance for the workbench.",
+    )
+    memory: AgentMemorySummary = Field(description="Persisted working memory for the thread.")
+    tools: tuple[AgentToolManifestItem, ...] = Field(
+        default=(),
+        description="Registered deterministic tools available to the agent.",
+    )
+    recent_traces: tuple[AgentTraceRecord, ...] = Field(
+        default=(),
+        description="Recent trace events emitted by the agent in this thread.",
+    )
+    mcp_manifest: dict[str, object] = Field(
+        default_factory=dict,
+        description="Portable MCP-style tool manifest for external agent integrations.",
+    )
+
+
 __all__ = [
     "CHAT_MESSAGE_ROLES",
     "CHAT_MESSAGE_TYPES",
+    "AgentCoaAccountSummary",
+    "AgentCoaSummary",
+    "AgentMemorySummary",
+    "AgentRunPhaseState",
+    "AgentRunReadiness",
+    "AgentToolManifestItem",
+    "AgentTraceRecord",
     "ChatMessageRecord",
     "ChatMessageResponse",
     "ChatThreadListResponse",
     "ChatThreadSummary",
     "ChatThreadWithMessages",
+    "ChatThreadWorkspaceResponse",
     "CreateChatThreadRequest",
     "GroundingContext",
     "SendChatMessageRequest",

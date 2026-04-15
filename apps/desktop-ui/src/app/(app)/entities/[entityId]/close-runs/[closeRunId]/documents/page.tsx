@@ -12,14 +12,16 @@ import { DocumentUploadPanel } from "../../../../../../../components/documents/D
 import { DocumentReviewTable } from "../../../../../../../components/documents/DocumentReviewTable";
 import { ExtractionPanel } from "../../../../../../../components/documents/ExtractionPanel";
 import {
+  type DocumentVerificationChecklist,
   DocumentReviewApiError,
   filterDocumentReviewItems,
   formatPeriodLabel,
+  persistDocumentReviewDecision,
+  persistExtractedFieldCorrection,
   readDocumentReviewWorkspace,
   type DocumentReviewFilter,
   type DocumentReviewWorkspaceData,
   type EvidenceReference,
-  type ReviewDraftDecision,
 } from "../../../../../../../lib/documents";
 
 type CloseRunDocumentsPageProps = {
@@ -36,6 +38,13 @@ type EvidenceDrawerState = {
   title: string;
 };
 
+const defaultVerificationChecklist: DocumentVerificationChecklist = {
+  authorized: false,
+  complete: false,
+  period: false,
+  transactionMatch: false,
+};
+
 const defaultEvidenceDrawerState: EvidenceDrawerState = {
   isOpen: false,
   references: [],
@@ -47,7 +56,7 @@ const defaultEvidenceDrawerState: EvidenceDrawerState = {
  * Purpose: Compose the document exception queue workspace for one entity close run.
  * Inputs: Route params containing entity and close-run UUIDs.
  * Outputs: A client-rendered review workspace with queue table, extraction panel, and evidence drawer.
- * Behavior: Loads queue state from same-origin API routes and keeps reviewer decisions local to the active page session.
+ * Behavior: Loads queue state from same-origin API routes and persists reviewer decisions and corrections through the backend workflow.
  */
 export default function CloseRunDocumentsPage({
   params,
@@ -57,10 +66,14 @@ export default function CloseRunDocumentsPage({
   const [activeFilter, setActiveFilter] = useState<DocumentReviewFilter>("all");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-  const [reviewDecisions, setReviewDecisions] = useState<
-    Readonly<Record<string, ReviewDraftDecision | undefined>>
-  >({});
+  const [fieldMutationId, setFieldMutationId] = useState<string | null>(null);
+  const [noteDraft, setNoteDraft] = useState("");
+  const [operationMessage, setOperationMessage] = useState<string | null>(null);
+  const [reviewMutationDocumentId, setReviewMutationDocumentId] = useState<string | null>(null);
   const [selectedDocumentId, setSelectedDocumentId] = useState<string | null>(null);
+  const [verificationDrafts, setVerificationDrafts] = useState<
+    Record<string, DocumentVerificationChecklist>
+  >({});
   const [workspaceData, setWorkspaceData] = useState<DocumentReviewWorkspaceData | null>(null);
   const [evidenceDrawer, setEvidenceDrawer] = useState<EvidenceDrawerState>(defaultEvidenceDrawerState);
 
@@ -106,8 +119,14 @@ export default function CloseRunDocumentsPage({
     return workspaceData.items.find((item) => item.id === selectedDocumentId) ?? null;
   }, [selectedDocumentId, workspaceData]);
 
-  const selectedDraftDecision =
-    selectedDocument !== null ? (reviewDecisions[selectedDocument.id] ?? null) : null;
+  const selectedChecklist = useMemo(() => {
+    if (selectedDocument === null) {
+      return null;
+    }
+    return (
+      verificationDrafts[selectedDocument.id] ?? deriveVerificationChecklistDraft(selectedDocument)
+    );
+  }, [selectedDocument, verificationDrafts]);
 
   const closeRunPeriodLabel =
     workspaceData === null
@@ -130,12 +149,86 @@ export default function CloseRunDocumentsPage({
     }
   };
 
-  const handleReviewAction = (documentId: string, decision: ReviewDraftDecision): void => {
-    setReviewDecisions((currentState) => ({
-      ...currentState,
-      [documentId]: decision,
-    }));
-  };
+  const handleReviewAction = useCallback(
+    async (
+      documentId: string,
+      decision: "approved" | "rejected" | "needs_info",
+    ): Promise<void> => {
+      setReviewMutationDocumentId(documentId);
+      setOperationMessage(null);
+      try {
+        const checklist = verificationDrafts[documentId];
+        await persistDocumentReviewDecision(
+          entityId,
+          closeRunId,
+          documentId,
+          decision,
+          noteDraft.trim().length > 0 ? noteDraft : undefined,
+          decision === "approved"
+            ? (checklist ??
+              deriveVerificationChecklistDraft(
+                workspaceData?.items.find((item) => item.id === documentId) ?? null,
+              ))
+            : checklist,
+        );
+        setOperationMessage(
+          decision === "approved"
+            ? "Document approved and extraction state refreshed."
+            : decision === "rejected"
+              ? "Document rejection saved."
+              : "Request-for-info decision saved.",
+        );
+        setNoteDraft("");
+        setVerificationDrafts((current) => {
+          const nextDrafts = { ...current };
+          delete nextDrafts[documentId];
+          return nextDrafts;
+        });
+        await refreshWorkspace();
+      } catch (error) {
+        setErrorMessage(resolveDocumentReviewErrorMessage(error));
+      } finally {
+        setReviewMutationDocumentId(null);
+      }
+    },
+    [closeRunId, entityId, noteDraft, refreshWorkspace, verificationDrafts, workspaceData],
+  );
+
+  const handleFieldCorrection = useCallback(
+    async (input: {
+      correctedType: string;
+      correctedValue: string;
+      fieldId: string;
+    }): Promise<void> => {
+      setFieldMutationId(input.fieldId);
+      setOperationMessage(null);
+      try {
+        await persistExtractedFieldCorrection(
+          entityId,
+          closeRunId,
+          input.fieldId,
+          noteDraft.trim().length > 0
+            ? {
+                correctedType: input.correctedType,
+                correctedValue: input.correctedValue,
+                reason: noteDraft,
+              }
+            : {
+                correctedType: input.correctedType,
+                correctedValue: input.correctedValue,
+              },
+        );
+        setOperationMessage("Field correction saved and the document returned to review.");
+        setNoteDraft("");
+        await refreshWorkspace();
+      } catch (error) {
+        setErrorMessage(resolveDocumentReviewErrorMessage(error));
+      } finally {
+        setFieldMutationId(null);
+      }
+    },
+    [closeRunId, entityId, noteDraft, refreshWorkspace],
+  );
 
   const handleOpenEvidenceForDocument = (documentId: string): void => {
     if (workspaceData === null) {
@@ -168,6 +261,22 @@ export default function CloseRunDocumentsPage({
       title: input.title,
     });
   };
+
+  const handleChecklistChange = useCallback(
+    (field: keyof DocumentVerificationChecklist, nextValue: boolean): void => {
+      if (selectedDocument === null) {
+        return;
+      }
+      setVerificationDrafts((current) => ({
+        ...current,
+        [selectedDocument.id]: {
+          ...(current[selectedDocument.id] ?? deriveVerificationChecklistDraft(selectedDocument)),
+          [field]: nextValue,
+        },
+      }));
+    },
+    [selectedDocument],
+  );
 
   if (isLoading) {
     return (
@@ -239,6 +348,12 @@ export default function CloseRunDocumentsPage({
         </div>
       ) : null}
 
+      {operationMessage ? (
+        <div className="status-banner success" role="status">
+          {operationMessage}
+        </div>
+      ) : null}
+
       <SurfaceCard title="Add Source Documents" subtitle="API-managed upload">
         <DocumentUploadPanel
           closeRunId={closeRunId}
@@ -258,10 +373,9 @@ export default function CloseRunDocumentsPage({
               items={visibleItems}
               onFilterChange={handleFilterChange}
               onOpenEvidence={handleOpenEvidenceForDocument}
-              onReviewAction={handleReviewAction}
               onSelectDocument={setSelectedDocumentId}
               queueCounts={workspaceData.queueCounts}
-              reviewDecisions={reviewDecisions}
+              reviewMutationDocumentId={reviewMutationDocumentId}
               selectedDocumentId={selectedDocumentId}
             />
           </SurfaceCard>
@@ -270,9 +384,16 @@ export default function CloseRunDocumentsPage({
           <div className="document-review-side-column">
             <SurfaceCard title="Extraction Context" subtitle="Selected document">
               <ExtractionPanel
-                draftDecision={selectedDraftDecision}
+                key={selectedDocument?.id ?? "no-document-selected"}
+                actionNote={noteDraft}
+                checklist={selectedChecklist}
+                fieldMutationId={fieldMutationId}
+                onChecklistChange={handleChecklistChange}
                 onOpenEvidence={handleOpenEvidence}
+                onFieldCorrection={handleFieldCorrection}
+                onNoteChange={setNoteDraft}
                 onReviewAction={handleReviewAction}
+                reviewMutationDocumentId={reviewMutationDocumentId}
                 selectedDocument={selectedDocument}
               />
             </SurfaceCard>
@@ -340,6 +461,14 @@ function selectInitialDocumentId(workspace: DocumentReviewWorkspaceData): string
   return workspace.items.find((item) => item.hasException)?.id ?? workspace.items[0]?.id ?? null;
 }
 
+function resolveDocumentReviewErrorMessage(error: unknown): string {
+  if (error instanceof DocumentReviewApiError) {
+    return error.message;
+  }
+
+  return "The requested document review action could not be completed. Retry after refreshing the workspace.";
+}
+
 /**
  * Purpose: Render a compact numeric metric chip for queue summary cards.
  * Inputs: Metric label and integer count value.
@@ -359,4 +488,27 @@ function MetricChip({
       <strong>{value}</strong>
     </div>
   );
+}
+
+function deriveVerificationChecklistDraft(
+  document: DocumentReviewWorkspaceData["items"][number] | null,
+): DocumentVerificationChecklist {
+  if (document === null) {
+    return defaultVerificationChecklist;
+  }
+  const autoTransactionMatchStatus = document.latestExtraction?.autoTransactionMatch?.status;
+  if (document.status === "approved") {
+    return {
+      authorized: true,
+      complete: true,
+      period: true,
+      transactionMatch: true,
+    };
+  }
+  return {
+    ...defaultVerificationChecklist,
+    transactionMatch:
+      autoTransactionMatchStatus === "matched" ||
+      autoTransactionMatchStatus === "not_applicable",
+  };
 }

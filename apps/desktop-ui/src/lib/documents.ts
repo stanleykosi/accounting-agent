@@ -13,6 +13,13 @@ export type DocumentReviewFilter =
 
 export type ReviewDraftDecision = "approved" | "rejected" | "needs_info";
 
+export type DocumentVerificationChecklist = {
+  authorized: boolean;
+  complete: boolean;
+  period: boolean;
+  transactionMatch: boolean;
+};
+
 export type DocumentReviewIssueType = Exclude<DocumentReviewFilter, "all">;
 
 export type DocumentReviewIssueSeverity = "warning" | "blocking";
@@ -49,12 +56,53 @@ export type EvidenceReference = {
   snippet: string | null;
 };
 
+export type DocumentIssueSummary = {
+  createdAt: string;
+  details: Record<string, unknown>;
+  id: string;
+  issueType: string;
+  severity: string;
+  status: string;
+  updatedAt: string;
+};
+
 export type ExtractionFieldSummary = {
   confidence: number | null;
   evidenceRefs: readonly EvidenceReference[];
   id: string;
+  fieldName: string;
+  fieldType: string;
+  isHumanCorrected: boolean;
   label: string;
+  rawValue: unknown;
   value: string;
+};
+
+export type ExtractionSummary = {
+  approvedVersion: boolean;
+  autoApproved: boolean;
+  autoTransactionMatch: AutoTransactionMatchSummary | null;
+  confidenceSummary: Record<string, unknown>;
+  fields: readonly ExtractionFieldSummary[];
+  id: string;
+  needsReview: boolean;
+  schemaName: string;
+  schemaVersion: string;
+  versionNo: number;
+};
+
+export type AutoTransactionMatchSummary = {
+  matchSource: string | null;
+  matchedAmount: string | null;
+  matchedDate: string | null;
+  matchedDescription: string | null;
+  matchedDocumentFilename: string | null;
+  matchedDocumentId: string | null;
+  matchedLineNo: number | null;
+  matchedReference: string | null;
+  reasons: readonly string[];
+  score: number | null;
+  status: "matched" | "unmatched" | "not_applicable";
 };
 
 export type DocumentReviewQueueItem = {
@@ -81,6 +129,8 @@ export type DocumentReviewQueueItem = {
   confidenceBand: DocumentConfidenceBand;
   evidenceRefs: readonly EvidenceReference[];
   extractedFields: readonly ExtractionFieldSummary[];
+  latestExtraction: ExtractionSummary | null;
+  openIssues: readonly DocumentIssueSummary[];
 };
 
 export type DocumentReviewQueueCounts = Record<DocumentReviewFilter, number>;
@@ -98,11 +148,15 @@ export type DocumentReviewWorkspaceData = {
 
 export type DocumentReviewApiErrorCode =
   | "close_run_not_found"
+  | "document_not_found"
   | "empty_batch"
   | "entity_archived"
+  | "extraction_not_found"
+  | "field_not_found"
   | "entity_not_found"
   | "file_too_large"
   | "integrity_conflict"
+  | "invalid_action"
   | "invalid_filename"
   | "session_expired"
   | "session_required"
@@ -136,6 +190,17 @@ const ENTITIES_PROXY_BASE_PATH = "/api/entities";
 
 export type UploadedDocumentBatchResult = {
   uploadedCount: number;
+};
+
+export type DocumentReviewActionResult = {
+  decision: ReviewDraftDecision;
+  document: DocumentReviewQueueItem;
+  extractionApproved: boolean;
+};
+
+export type ExtractedFieldCorrectionResult = {
+  document: DocumentReviewQueueItem;
+  field: ExtractionFieldSummary;
 };
 
 /**
@@ -209,6 +274,67 @@ export async function uploadSourceDocuments(
 
   const uploadedCount = parseUploadedDocumentCount(uploadResponse);
   return { uploadedCount };
+}
+
+export async function persistDocumentReviewDecision(
+  entityId: string,
+  closeRunId: string,
+  documentId: string,
+  decision: ReviewDraftDecision,
+  reason?: string,
+  checklist?: DocumentVerificationChecklist,
+): Promise<DocumentReviewActionResult> {
+  const reviewPayload: Record<string, unknown> = { decision };
+  if (reason && reason.trim().length > 0) {
+    reviewPayload.reason = reason;
+  }
+  if (checklist) {
+    reviewPayload.verified_complete = checklist.complete;
+    reviewPayload.verified_authorized = checklist.authorized;
+    reviewPayload.verified_period = checklist.period;
+    reviewPayload.verified_transaction_match = checklist.transactionMatch;
+  }
+  const payload = await documentReviewRequest<unknown>(
+    buildEntityProxyPath(entityId, ["close-runs", closeRunId, "documents", documentId, "review"]),
+    {
+      body: JSON.stringify(reviewPayload),
+      method: "POST",
+    },
+  );
+
+  return parseDocumentReviewActionResult(payload);
+}
+
+export async function persistExtractedFieldCorrection(
+  entityId: string,
+  closeRunId: string,
+  fieldId: string,
+  input: {
+    correctedType: string;
+    correctedValue: string;
+    reason?: string;
+  },
+): Promise<ExtractedFieldCorrectionResult> {
+  const payload = await documentReviewRequest<unknown>(
+    buildEntityProxyPath(entityId, ["close-runs", closeRunId, "documents", "fields", fieldId]),
+    {
+      body: JSON.stringify(
+        input.reason && input.reason.trim().length > 0
+          ? {
+              corrected_type: input.correctedType,
+              corrected_value: input.correctedValue,
+              reason: input.reason,
+            }
+          : {
+              corrected_type: input.correctedType,
+              corrected_value: input.correctedValue,
+            },
+      ),
+      method: "PUT",
+    },
+  );
+
+  return parseFieldCorrectionResult(payload);
 }
 
 /**
@@ -340,11 +466,15 @@ function buildDocumentReviewApiError(
 function asDocumentReviewApiErrorCode(value: unknown): DocumentReviewApiErrorCode {
   switch (value) {
     case "close_run_not_found":
+    case "document_not_found":
     case "empty_batch":
     case "entity_archived":
+    case "extraction_not_found":
+    case "field_not_found":
     case "entity_not_found":
     case "file_too_large":
     case "integrity_conflict":
+    case "invalid_action":
     case "invalid_filename":
     case "session_expired":
     case "session_required":
@@ -413,6 +543,52 @@ function parseDocumentSummary(value: unknown, index: number): DocumentApiSummary
     status: requireDocumentStatus(value.status, `documents[${index}].status`),
     storageKey: requireString(value.storage_key, `documents[${index}].storage_key`),
     updatedAt: requireString(value.updated_at, `documents[${index}].updated_at`),
+    openIssues: parseDocumentIssues(value.open_issues, `documents[${index}].open_issues`),
+    latestExtraction: parseExtractionSummary(
+      value.latest_extraction,
+      `documents[${index}].latest_extraction`,
+      requireString(value.original_filename, `documents[${index}].original_filename`),
+    ),
+  };
+}
+
+function parseDocumentReviewActionResult(payload: unknown): DocumentReviewActionResult {
+  if (!isRecord(payload)) {
+    throw new Error("Document review action response was not an object.");
+  }
+
+  return {
+    decision: requireReviewDraftDecision(payload.decision, "documentReview.decision"),
+    document: buildQueueItemFromDocument(
+      parseDocumentSummary(payload.document, 0),
+      DEFAULT_CLASSIFICATION_THRESHOLD,
+    ),
+    extractionApproved: requireBoolean(
+      payload.extraction_approved,
+      "documentReview.extraction_approved",
+    ),
+  };
+}
+
+function parseFieldCorrectionResult(payload: unknown): ExtractedFieldCorrectionResult {
+  if (!isRecord(payload)) {
+    throw new Error("Field correction response was not an object.");
+  }
+
+  const document = buildQueueItemFromDocument(
+    parseDocumentSummary(payload.document, 0),
+    DEFAULT_CLASSIFICATION_THRESHOLD,
+  );
+  const field = parseExtractedFieldSummary(
+    payload.field,
+    "fieldCorrection.field",
+    document.originalFilename,
+  );
+
+  return {
+    document,
+    field:
+      document.latestExtraction?.fields.find((candidate) => candidate.id === field.id) ?? field,
   };
 }
 
@@ -433,22 +609,37 @@ function buildQueueItem(options: {
   const issueTypes: DocumentReviewIssueType[] = [];
 
   const lowConfidence =
-    document.status === "needs_review" ||
+    document.latestExtraction?.needsReview === true ||
+    document.latestExtraction?.fields.some(
+      (field) => field.confidence !== null && field.confidence < options.confidenceThreshold,
+    ) === true ||
     (document.classificationConfidence !== null &&
       document.classificationConfidence < options.confidenceThreshold);
   if (lowConfidence) {
     issueTypes.push("low_confidence");
   }
 
-  if (document.status === "blocked" || document.status === "failed") {
+  if (
+    document.status === "blocked" ||
+    document.status === "failed" ||
+    document.openIssues.some((issue) =>
+      ["unauthorized_document", "transaction_mismatch", "unclassified_document"].includes(issue.issueType),
+    )
+  ) {
     issueTypes.push("blocked");
   }
 
-  if (document.status === "duplicate") {
+  if (
+    document.status === "duplicate" ||
+    document.openIssues.some((issue) => issue.issueType === "duplicate_document")
+  ) {
     issueTypes.push("duplicate");
   }
 
-  if (periodState === "out_of_period") {
+  if (
+    periodState === "out_of_period" ||
+    document.openIssues.some((issue) => issue.issueType === "wrong_period_document")
+  ) {
     issueTypes.push("wrong_period");
   }
 
@@ -474,6 +665,7 @@ function buildQueueItem(options: {
     mimeType: document.mimeType,
     ocrRequired: document.ocrRequired,
     originalFilename: document.originalFilename,
+    openIssues: document.openIssues,
     periodEnd: document.periodEnd,
     periodStart: document.periodStart,
     periodState,
@@ -482,7 +674,21 @@ function buildQueueItem(options: {
     status: document.status,
     storageKey: document.storageKey,
     updatedAt: document.updatedAt,
+    latestExtraction: document.latestExtraction,
   };
+}
+
+function buildQueueItemFromDocument(
+  document: DocumentApiSummary,
+  confidenceThreshold: number,
+): DocumentReviewQueueItem {
+  const fallbackPeriodBoundary = new Date().toISOString().slice(0, 10);
+  return buildQueueItem({
+    closeRunPeriodEnd: document.periodEnd ?? fallbackPeriodBoundary,
+    closeRunPeriodStart: document.periodStart ?? fallbackPeriodBoundary,
+    confidenceThreshold,
+    document,
+  });
 }
 
 function buildQueueCounts(items: readonly DocumentReviewQueueItem[]): DocumentReviewQueueCounts {
@@ -636,6 +842,22 @@ function buildEvidenceRefs(
     });
   }
 
+  for (const issue of document.openIssues) {
+    references.push({
+      confidence: null,
+      id: `${document.id}:issue:${issue.id}`,
+      kind: "workflow_state",
+      label: issue.issueType.replaceAll("_", " "),
+      location: "document_issues",
+      snippet:
+        typeof issue.details.reason === "string"
+          ? issue.details.reason
+          : typeof issue.details.validation_method === "string"
+            ? `Validation: ${issue.details.validation_method}`
+            : `Open issue (${issue.severity}) requires reviewer action.`,
+    });
+  }
+
   return references;
 }
 
@@ -644,6 +866,10 @@ function buildExtractionFieldSummaries(
   periodState: DocumentPeriodState,
   evidenceRefs: readonly EvidenceReference[],
 ): readonly ExtractionFieldSummary[] {
+  if (document.latestExtraction !== null && document.latestExtraction.fields.length > 0) {
+    return document.latestExtraction.fields;
+  }
+
   const classificationEvidence = evidenceRefs.filter(
     (reference) => reference.kind === "classification" || reference.kind === "workflow_state",
   );
@@ -655,42 +881,66 @@ function buildExtractionFieldSummaries(
       confidence: document.classificationConfidence,
       evidenceRefs: classificationEvidence,
       id: `${document.id}:field:document-type`,
+      fieldName: "document_type",
+      fieldType: "string",
+      isHumanCorrected: false,
       label: "Document type",
+      rawValue: document.documentType,
       value: formatLabelValue(document.documentType),
     },
     {
       confidence: null,
       evidenceRefs: metadataEvidence,
       id: `${document.id}:field:source-channel`,
+      fieldName: "source_channel",
+      fieldType: "string",
+      isHumanCorrected: false,
       label: "Source channel",
+      rawValue: document.sourceChannel,
       value: formatLabelValue(document.sourceChannel),
     },
     {
       confidence: null,
       evidenceRefs: periodEvidence.length > 0 ? periodEvidence : metadataEvidence,
       id: `${document.id}:field:detected-period`,
+      fieldName: "detected_period",
+      fieldType: "string",
+      isHumanCorrected: false,
       label: "Detected period",
+      rawValue: formatDetectedPeriod(document.periodStart, document.periodEnd),
       value: formatDetectedPeriod(document.periodStart, document.periodEnd),
     },
     {
       confidence: null,
       evidenceRefs: metadataEvidence,
       id: `${document.id}:field:lifecycle`,
+      fieldName: "lifecycle_status",
+      fieldType: "string",
+      isHumanCorrected: false,
       label: "Lifecycle status",
+      rawValue: document.status,
       value: formatLabelValue(document.status),
     },
     {
       confidence: null,
       evidenceRefs: metadataEvidence,
       id: `${document.id}:field:ocr-required`,
+      fieldName: "ocr_required",
+      fieldType: "boolean",
+      isHumanCorrected: false,
       label: "OCR required",
+      rawValue: document.ocrRequired,
       value: document.ocrRequired ? "Yes" : "No",
     },
     {
       confidence: null,
       evidenceRefs: metadataEvidence,
       id: `${document.id}:field:period-state`,
+      fieldName: "period_state",
+      fieldType: "string",
+      isHumanCorrected: false,
       label: "Period validation",
+      rawValue: periodState,
       value:
         periodState === "out_of_period"
           ? "Outside close-run period"
@@ -836,6 +1086,199 @@ function requireNullableString(value: unknown, fieldName: string): string | null
   return requireString(value, fieldName);
 }
 
+function requireReviewDraftDecision(value: unknown, fieldName: string): ReviewDraftDecision {
+  switch (value) {
+    case "approved":
+    case "rejected":
+    case "needs_info":
+      return value;
+    default:
+      throw new Error(`${fieldName} must be a supported document review decision.`);
+  }
+}
+
+function requireRecord(value: unknown, fieldName: string): Record<string, unknown> {
+  if (!isRecord(value)) {
+    throw new Error(`${fieldName} must be an object.`);
+  }
+
+  return value;
+}
+
+function parseExtractionSummary(
+  value: unknown,
+  fieldName: string,
+  sourceLabel: string,
+): ExtractionSummary | null {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  if (!isRecord(value)) {
+    throw new Error(`${fieldName} must be an object or null.`);
+  }
+  if (!Array.isArray(value.fields)) {
+    throw new Error(`${fieldName}.fields must be an array.`);
+  }
+
+  return {
+    approvedVersion: requireBoolean(value.approved_version, `${fieldName}.approved_version`),
+    autoApproved: requireBoolean(value.auto_approved, `${fieldName}.auto_approved`),
+    autoTransactionMatch: parseAutoTransactionMatchSummary(
+      value.auto_transaction_match,
+      `${fieldName}.auto_transaction_match`,
+    ),
+    confidenceSummary: requireRecord(value.confidence_summary, `${fieldName}.confidence_summary`),
+    fields: value.fields.map((field, index) =>
+      parseExtractedFieldSummary(field, `${fieldName}.fields[${index}]`, sourceLabel),
+    ),
+    id: requireString(value.id, `${fieldName}.id`),
+    needsReview: requireBoolean(value.needs_review, `${fieldName}.needs_review`),
+    schemaName: requireString(value.schema_name, `${fieldName}.schema_name`),
+    schemaVersion: requireString(value.schema_version, `${fieldName}.schema_version`),
+    versionNo: requireNumber(value.version_no, `${fieldName}.version_no`),
+  };
+}
+
+function parseAutoTransactionMatchSummary(
+  value: unknown,
+  fieldName: string,
+): AutoTransactionMatchSummary | null {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  if (!isRecord(value)) {
+    throw new Error(`${fieldName} must be an object or null.`);
+  }
+
+  const status = requireAutoTransactionMatchStatus(value.status, `${fieldName}.status`);
+  const reasons = value.reasons;
+  if (!Array.isArray(reasons)) {
+    throw new Error(`${fieldName}.reasons must be an array.`);
+  }
+
+  return {
+    matchSource: requireNullableString(value.match_source, `${fieldName}.match_source`),
+    matchedAmount: requireNullableString(value.matched_amount, `${fieldName}.matched_amount`),
+    matchedDate: requireNullableString(value.matched_date, `${fieldName}.matched_date`),
+    matchedDescription: requireNullableString(
+      value.matched_description,
+      `${fieldName}.matched_description`,
+    ),
+    matchedDocumentFilename: requireNullableString(
+      value.matched_document_filename,
+      `${fieldName}.matched_document_filename`,
+    ),
+    matchedDocumentId: requireNullableString(
+      value.matched_document_id,
+      `${fieldName}.matched_document_id`,
+    ),
+    matchedLineNo:
+      value.matched_line_no === null || value.matched_line_no === undefined
+        ? null
+        : requireNumber(value.matched_line_no, `${fieldName}.matched_line_no`),
+    matchedReference: requireNullableString(
+      value.matched_reference,
+      `${fieldName}.matched_reference`,
+    ),
+    reasons: reasons.map((reason, index) =>
+      requireString(reason, `${fieldName}.reasons[${index}]`),
+    ),
+    score: requireNullableNumber(value.score, `${fieldName}.score`),
+    status,
+  };
+}
+
+function parseExtractedFieldSummary(
+  value: unknown,
+  fieldName: string,
+  sourceLabel: string,
+): ExtractionFieldSummary {
+  if (!isRecord(value)) {
+    throw new Error(`${fieldName} must be an object.`);
+  }
+
+  const confidence = requireNullableNumber(value.confidence, `${fieldName}.confidence`);
+  const fieldNameValue = requireString(value.field_name, `${fieldName}.field_name`);
+  const rawValue = value.field_value ?? null;
+  const evidenceRef = requireRecord(value.evidence_ref, `${fieldName}.evidence_ref`);
+
+  return {
+    confidence,
+    evidenceRefs: buildEvidenceReferencesFromField(
+      sourceLabel,
+      fieldNameValue,
+      rawValue,
+      evidenceRef,
+      confidence,
+    ),
+    id: requireString(value.id, `${fieldName}.id`),
+    fieldName: fieldNameValue,
+    fieldType: requireString(value.field_type, `${fieldName}.field_type`),
+    isHumanCorrected: requireBoolean(
+      value.is_human_corrected,
+      `${fieldName}.is_human_corrected`,
+    ),
+    label: formatLabelValue(fieldNameValue),
+    rawValue,
+    value: formatFieldValue(rawValue),
+  };
+}
+
+function buildEvidenceReferencesFromField(
+  sourceLabel: string,
+  fieldName: string,
+  rawValue: unknown,
+  evidenceRef: Record<string, unknown>,
+  confidence: number | null,
+): readonly EvidenceReference[] {
+  return [
+    {
+      confidence,
+      id: `${sourceLabel}:${fieldName}:evidence`,
+      kind: "source_metadata",
+      label: formatLabelValue(fieldName),
+      location:
+        typeof evidenceRef.location === "string"
+          ? evidenceRef.location
+          : typeof evidenceRef.page_ref === "string"
+            ? evidenceRef.page_ref
+            : "extraction.evidence_ref",
+      snippet: formatFieldEvidenceSnippet(rawValue, evidenceRef),
+    },
+  ];
+}
+
+function formatFieldEvidenceSnippet(
+  rawValue: unknown,
+  evidenceRef: Record<string, unknown>,
+): string {
+  if (typeof evidenceRef.snippet === "string" && evidenceRef.snippet.trim().length > 0) {
+    return evidenceRef.snippet;
+  }
+  if (typeof evidenceRef.text === "string" && evidenceRef.text.trim().length > 0) {
+    return evidenceRef.text;
+  }
+
+  return `Extracted value: ${formatFieldValue(rawValue)}`;
+}
+
+function formatFieldValue(value: unknown): string {
+  if (value === null || value === undefined) {
+    return "Not detected";
+  }
+  if (typeof value === "string") {
+    return value;
+  }
+  if (typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return "Complex structured value";
+  }
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
@@ -857,4 +1300,52 @@ type DocumentApiSummary = {
   status: DocumentStatus;
   storageKey: string;
   updatedAt: string;
+  latestExtraction: ExtractionSummary | null;
+  openIssues: readonly DocumentIssueSummary[];
 };
+
+function requireAutoTransactionMatchStatus(
+  value: unknown,
+  fieldName: string,
+): AutoTransactionMatchSummary["status"] {
+  const normalized = requireString(value, fieldName);
+  if (
+    normalized === "matched" ||
+    normalized === "unmatched" ||
+    normalized === "not_applicable"
+  ) {
+    return normalized;
+  }
+  throw new Error(`${fieldName} must be a supported auto transaction-match status.`);
+}
+
+function parseDocumentIssues(
+  value: unknown,
+  path: string,
+): readonly DocumentIssueSummary[] {
+  if (value === undefined || value === null) {
+    return [];
+  }
+  if (!Array.isArray(value)) {
+    throw new Error(`${path} must be an array when present.`);
+  }
+  return value.map((entry, index) => parseDocumentIssue(entry, `${path}[${index}]`));
+}
+
+function parseDocumentIssue(
+  value: unknown,
+  path: string,
+): DocumentIssueSummary {
+  if (!isRecord(value)) {
+    throw new Error(`${path} was not an object.`);
+  }
+  return {
+    createdAt: requireString(value.created_at, `${path}.created_at`),
+    details: isRecord(value.details) ? value.details : {},
+    id: requireString(value.id, `${path}.id`),
+    issueType: requireString(value.issue_type, `${path}.issue_type`),
+    severity: requireString(value.severity, `${path}.severity`),
+    status: requireString(value.status, `${path}.status`),
+    updatedAt: requireString(value.updated_at, `${path}.updated_at`),
+  };
+}

@@ -7,9 +7,10 @@ Dependencies: Document repository, close run models, and document type enums.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Protocol, Set
+from typing import ClassVar, Protocol
+from uuid import UUID
 
-from services.common.enums import DocumentType
+from services.common.enums import DocumentStatus, DocumentType
 from services.db.repositories.document_repo import DocumentRepository
 
 
@@ -18,9 +19,9 @@ class CompletenessCheckResult:
     """Result of document completeness check."""
 
     is_complete: bool
-    missing_document_types: Set[DocumentType]
-    present_document_types: Set[DocumentType]
-    required_document_types: Set[DocumentType]
+    missing_document_types: set[DocumentType]
+    present_document_types: set[DocumentType]
+    required_document_types: set[DocumentType]
 
 
 class CompletenessCheckProtocol(Protocol):
@@ -30,7 +31,7 @@ class CompletenessCheckProtocol(Protocol):
         self,
         *,
         close_run_id: str,
-        required_document_types: Set[DocumentType] | None = None,
+        required_document_types: set[DocumentType] | None = None,
     ) -> CompletenessCheckResult:
         """Check if all required document types are present in the close run."""
         ...
@@ -40,7 +41,7 @@ class CompletenessCheckService:
     """Service for checking document type completeness in close runs."""
 
     # Default required document types for a basic accounting close run
-    DEFAULT_REQUIRED_DOCUMENT_TYPES = {
+    DEFAULT_REQUIRED_DOCUMENT_TYPES: ClassVar[set[DocumentType]] = {
         DocumentType.INVOICE,
         DocumentType.BANK_STATEMENT,
         DocumentType.RECEIPT,
@@ -58,7 +59,7 @@ class CompletenessCheckService:
         self,
         *,
         close_run_id: str,
-        required_document_types: Set[DocumentType] | None = None,
+        required_document_types: set[DocumentType] | None = None,
     ) -> CompletenessCheckResult:
         """
         Check if all required document types are present in the close run.
@@ -74,18 +75,22 @@ class CompletenessCheckService:
         if required_document_types is None:
             required_document_types = self.DEFAULT_REQUIRED_DOCUMENT_TYPES
 
-        # In a real implementation, we would query the database for documents
-        # in the close run and check their document types
-        # For now, we'll return a basic implementation
+        documents = self._document_repo.list_documents_for_close_run(
+            close_run_id=UUID(close_run_id)
+        )
+        present_document_types: set[DocumentType] = set()
+        ignored_statuses = {DocumentStatus.REJECTED, DocumentStatus.DUPLICATE}
 
-        # This is a simplified implementation - in production we'd query the database
-        # for documents in the close run and extract their document types
+        for document in documents:
+            try:
+                document_type = DocumentType(document.document_type)
+                document_status = DocumentStatus(document.status)
+            except ValueError:
+                continue
 
-        # For demonstration, let's assume we have some documents
-        present_document_types: Set[DocumentType] = set()
-
-        # TODO: Implement actual database query to get document types for close run
-        # For now, we'll return incomplete status to demonstrate the structure
+            if document_type is DocumentType.UNKNOWN or document_status in ignored_statuses:
+                continue
+            present_document_types.add(document_type)
 
         missing_document_types = required_document_types - present_document_types
 
@@ -97,4 +102,4 @@ class CompletenessCheckService:
         )
 
 
-__all__ = ["CompletenessCheckResult", "CompletenessCheckProtocol", "CompletenessCheckService"]
+__all__ = ["CompletenessCheckProtocol", "CompletenessCheckResult", "CompletenessCheckService"]

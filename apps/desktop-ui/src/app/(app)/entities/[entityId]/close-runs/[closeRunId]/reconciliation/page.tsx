@@ -10,11 +10,13 @@ Dependencies: Reconciliation API helpers, review components, and shared UI surfa
 import { EvidenceDrawer, ReviewLayout, SurfaceCard } from "@accounting-ai-agent/ui";
 import type { EvidenceDrawerReference } from "@accounting-ai-agent/ui";
 import { use, useCallback, useEffect, useMemo, useState, type ReactElement } from "react";
+import Link from "next/link";
 import { DispositionPanel } from "../../../../../../../components/reconciliation/DispositionPanel";
 import { MatchReviewTable } from "../../../../../../../components/reconciliation/MatchReviewTable";
 import {
   type DispositionActionValue,
   type ReconciliationAnomalySummary,
+  type ReconciliationRunResponse,
   type ReconciliationReviewFilter,
   type ReconciliationReviewWorkspaceData,
   filterReconciliationItems,
@@ -22,6 +24,7 @@ import {
   getSeverityColor,
   readReconciliationReviewWorkspace,
   resolveAnomaly,
+  runReconciliation,
   submitDispositionItem,
   ReconciliationApiError,
 } from "../../../../../../../lib/reconciliation";
@@ -66,6 +69,8 @@ export default function CloseRunReconciliationPage({
   const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
   const [workspaceData, setWorkspaceData] = useState<ReconciliationReviewWorkspaceData | null>(null);
   const [evidenceDrawer, setEvidenceDrawer] = useState<EvidenceDrawerState>(defaultEvidenceDrawerState);
+  const [isQueueingRun, setIsQueueingRun] = useState(false);
+  const [queuedRun, setQueuedRun] = useState<ReconciliationRunResponse | null>(null);
   const [resolutionNotes, setResolutionNotes] = useState<Record<string, string>>({});
 
   useEffect(() => {
@@ -164,6 +169,19 @@ export default function CloseRunReconciliationPage({
     [entityId, closeRunId, resolutionNotes],
   );
 
+  const handleRunReconciliation = useCallback(async (): Promise<void> => {
+    setIsQueueingRun(true);
+    try {
+      const result = await runReconciliation(entityId, closeRunId);
+      setQueuedRun(result);
+      setErrorMessage(null);
+    } catch (error: unknown) {
+      setErrorMessage(resolveReconciliationErrorMessage(error));
+    } finally {
+      setIsQueueingRun(false);
+    }
+  }, [closeRunId, entityId]);
+
   if (isLoading) {
     return (
       <div className="app-shell reconciliation-review-page">
@@ -231,8 +249,123 @@ export default function CloseRunReconciliationPage({
             <MetricChip label="Unmatched" value={workspaceData.queueCounts.unmatched} />
             <MetricChip label="Unresolved anomalies" value={workspaceData.queueCounts.anomalyUnresolved} />
           </div>
+
+          <div className="integration-action-stack" style={{ marginTop: "16px" }}>
+            <button
+              className="primary-button"
+              disabled={isQueueingRun}
+              onClick={() => {
+                void handleRunReconciliation();
+              }}
+              type="button"
+            >
+              {isQueueingRun ? "Queueing..." : "Run reconciliation"}
+            </button>
+            <p className="form-helper">
+              Queue the full reconciliation engine for this period. Existing review queues update
+              as new matches, exceptions, and anomalies are produced.
+            </p>
+          </div>
         </SurfaceCard>
       </section>
+
+      {queuedRun ? (
+        <div className="status-banner success" role="status">
+          Reconciliation job queued: {queuedRun.job_id}
+        </div>
+      ) : null}
+
+      <SurfaceCard title="Phase 3 Workflow Coverage" subtitle="Steps 05, 06, and 07">
+        <div className="dashboard-row-list">
+          <article className="dashboard-row">
+            <strong className="close-run-row-title">05. Reconcile key accounts</strong>
+            <p className="form-helper">
+              Bank reconciliation, AR/AP ageing, intercompany balances, and payroll control all
+              run through this workspace and its exception queue.
+            </p>
+          </article>
+          <article className="dashboard-row">
+            <strong className="close-run-row-title">06. Update supporting schedules</strong>
+            <p className="form-helper">
+              Fixed asset register, loan amortisation, accrual tracker, and budget-vs-actual
+              workpapers are now maintained in a dedicated Step 06 editor and then fed into this
+              reconciliation workspace.
+            </p>
+          </article>
+          <article className="dashboard-row">
+            <strong className="close-run-row-title">07. Run and review trial balance</strong>
+            <p className="form-helper">
+              Debits versus credits, anomalies, and unexplained variances must be cleared here
+              before the close run can advance into Reporting.
+            </p>
+          </article>
+        </div>
+      </SurfaceCard>
+
+      <SurfaceCard title="Supporting Schedules" subtitle="Step 06 schedule coverage">
+        <div className="close-run-action-row" style={{ marginBottom: "16px" }}>
+          <Link
+            className="secondary-button"
+            href={`/entities/${entityId}/close-runs/${closeRunId}/schedules`}
+          >
+            Open Step 06 editor
+          </Link>
+        </div>
+        <div className="dashboard-row-list">
+          {[
+            {
+              label: "Fixed asset register",
+              reconciliationType: "fixed_assets",
+            },
+            {
+              label: "Loan amortisation",
+              reconciliationType: "loan_amortisation",
+            },
+            {
+              label: "Accrual tracker",
+              reconciliationType: "accrual_tracker",
+            },
+            {
+              label: "Budget vs actual",
+              reconciliationType: "budget_vs_actual",
+            },
+          ].map((schedule) => {
+            const run =
+              workspaceData.reconciliations.find(
+                (reconciliation) =>
+                  reconciliation.reconciliationType === schedule.reconciliationType,
+              ) ?? null;
+            return (
+              <article className="dashboard-row" key={schedule.reconciliationType}>
+                <div className="close-run-row-header">
+                  <div>
+                    <strong className="close-run-row-title">{schedule.label}</strong>
+                    <p className="close-run-row-meta">
+                      {run === null ? "Not run yet" : formatReconciliationTypeLabel(run.reconciliationType)}
+                    </p>
+                  </div>
+                  <span className="close-run-row-meta">
+                    {run === null ? "Pending" : run.status.replaceAll("_", " ")}
+                  </span>
+                </div>
+                <p className="form-helper">
+                  {run === null
+                    ? "Maintain this workpaper in the Step 06 editor, then run reconciliation to surface exceptions."
+                    : run.blockingReason ?? "Schedule checks are available in the reconciliation review queue."}
+                </p>
+                <div className="close-run-link-row">
+                  <Link
+                    className="workspace-link-inline"
+                    href={`/entities/${entityId}/close-runs/${closeRunId}/schedules`}
+                  >
+                    Open editor
+                  </Link>
+                </div>
+              </article>
+            );
+          })}
+        </div>
+      </SurfaceCard>
 
       {/* Trial balance summary */}
       {workspaceData.trialBalance && (
@@ -418,6 +551,16 @@ async function loadWorkspace(options: {
   } finally {
     options.onLoadingChange(false);
   }
+}
+
+function resolveReconciliationErrorMessage(error: unknown): string {
+  if (error instanceof ReconciliationApiError) {
+    return error.message;
+  }
+  if (error instanceof Error) {
+    return error.message;
+  }
+  return "The reconciliation action failed. Retry the request.";
 }
 
 /**

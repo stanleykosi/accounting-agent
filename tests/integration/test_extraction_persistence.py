@@ -200,9 +200,22 @@ class TestExtractionServicePersistence:
 
         assert result is True
         db_session.refresh(field)
+        db_session.refresh(extraction)
         assert field.field_value == "12500.00"
         assert field.field_type == "decimal"
         assert field.is_human_corrected is True
+        assert extraction.extracted_payload == {
+            "fields": [
+                {
+                    "field_name": "total",
+                    "field_value": "12500.00",
+                    "field_type": "decimal",
+                    "confidence": 0.65,
+                    "evidence_ref": {"snippet": "Total: 10000.00"},
+                    "is_human_corrected": True,
+                }
+            ]
+        }
 
     def test_get_fields_below_threshold(
         self,

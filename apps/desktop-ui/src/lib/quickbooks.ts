@@ -120,7 +120,7 @@ export async function disconnectQuickBooks(
  * Purpose: Synchronize QuickBooks chart-of-accounts accounts into a versioned COA set.
  * Inputs: Entity UUID.
  * Outputs: Created COA set metadata and account count.
- * Behavior: Leaves direct posting out of scope and delegates activation precedence to the backend.
+ * Behavior: Keeps direct posting out of scope while enabling provider-aware COA and posting-package flows.
  */
 export async function syncQuickBooksCoa(entityId: string): Promise<QuickBooksCoaSyncResponse> {
   return quickBooksRequest<QuickBooksCoaSyncResponse>(

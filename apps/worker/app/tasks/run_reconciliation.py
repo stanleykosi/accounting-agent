@@ -20,6 +20,7 @@ Design notes:
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import date
 from decimal import Decimal
 from typing import Any
 from uuid import UUID
@@ -34,10 +35,12 @@ from services.db.models.documents import Document, DocumentType
 from services.db.models.extractions import DocumentExtraction
 from services.db.models.journals import JournalEntry, JournalLine
 from services.db.repositories.reconciliation_repo import ReconciliationRepository
+from services.db.repositories.supporting_schedule_repo import SupportingScheduleRepository
 from services.db.session import get_session_factory
 from services.jobs.task_names import TaskName, resolve_task_route
 from services.reconciliation.matchers import DEFAULT_MATCHING_CONFIG, MatchingConfig
 from services.reconciliation.service import ReconciliationService
+from services.supporting_schedules.service import SupportingScheduleService
 
 logger = get_logger(__name__)
 
@@ -93,37 +96,64 @@ def _load_bank_statement_data(session, close_run_id: UUID) -> dict[str, list[dic
     )
 
     for doc in bank_docs:
-        # Get extractions for this document
-        extractions = (
+        latest_extraction = (
             session.query(DocumentExtraction)
             .filter(DocumentExtraction.document_id == doc.id)
-            .all()
+            .order_by(
+                DocumentExtraction.version_no.desc(),
+                DocumentExtraction.created_at.desc(),
+            )
+            .first()
         )
+        if latest_extraction is None:
+            continue
 
-        for extraction in extractions:
-            payload = extraction.extracted_payload
-            # Bank statement lines are in the 'lines' key of the extraction
-            for line_data in payload.get("lines", []):
-                line_ref = f"bank:{doc.id}:{line_data.get('line_no', 0)}"
-                source_items.append(
-                    {
-                        "ref": line_ref,
-                        "amount": line_data.get("amount"),
-                        "date": line_data.get("date"),
-                        "reference": line_data.get("reference", ""),
-                        "description": line_data.get("description", ""),
-                    }
-                )
-                counterpart_index[line_ref] = {
-                    "source_type": "bank_statement_line",
-                    "document_id": str(doc.id),
+        payload = latest_extraction.extracted_payload
+        for line_data in _read_statement_lines_from_payload(payload=payload):
+            line_ref = f"bank:{doc.id}:{line_data.get('line_no', 0)}"
+            amount = (
+                line_data.get("amount")
+                or line_data.get("debit")
+                or line_data.get("credit")
+            )
+            source_items.append(
+                {
+                    "ref": line_ref,
+                    "amount": amount,
+                    "date": line_data.get("date"),
+                    "reference": line_data.get("reference", ""),
+                    "description": line_data.get("description", ""),
                 }
+            )
+            counterpart_index[line_ref] = {
+                "source_type": "bank_statement_line",
+                "document_id": str(doc.id),
+            }
 
     return {
         "source_items": source_items,
         "counterparts": [],  # Counterparts are ledger transactions, loaded separately
         "counterpart_index": counterpart_index,
     }
+
+
+def _read_statement_lines_from_payload(*, payload: Any) -> tuple[dict[str, Any], ...]:
+    """Read bank-statement lines from either the legacy or normalized extraction payload."""
+
+    if not isinstance(payload, dict):
+        return ()
+
+    parser_output = payload.get("parser_output")
+    for candidate in (
+        payload.get("statement_lines"),
+        payload.get("lines"),
+        (parser_output or {}).get("statement_lines") if isinstance(parser_output, dict) else None,
+        (parser_output or {}).get("lines") if isinstance(parser_output, dict) else None,
+    ):
+        if isinstance(candidate, list):
+            return tuple(item for item in candidate if isinstance(item, dict))
+
+    return ()
 
 
 def _load_ledger_transactions(session, close_run_id: UUID) -> list[dict[str, Any]]:
@@ -158,15 +188,21 @@ def _load_ledger_transactions(session, close_run_id: UUID) -> list[dict[str, Any
         )
 
         for line in lines:
+            amount = Decimal(str(line.amount))
             transactions.append(
                 {
                     "ref": f"je:{journal.journal_number}:{line.line_no}",
                     "amount": str(line.amount),
+                    "signed_amount": str(
+                        amount if line.line_type == "debit" else Decimal("0.00") - amount
+                    ),
                     "date": str(journal.posting_date),
+                    "period": journal.posting_date.strftime("%Y-%m"),
                     "reference": line.reference or "",
                     "account_code": line.account_code,
                     "description": line.description or "",
                     "dimensions": line.dimensions,
+                    "line_type": line.line_type,
                 }
             )
 
@@ -193,7 +229,7 @@ def _load_coa_accounts(session, close_run_id: UUID) -> dict[str, dict[str, Any]]
         session.query(CoaSet)
         .filter(
             CoaSet.entity_id == close_run.entity_id,
-            CoaSet.is_active == True,  # noqa: E712
+            CoaSet.is_active,
         )
         .order_by(CoaSet.version_no.desc())
         .first()
@@ -207,7 +243,7 @@ def _load_coa_accounts(session, close_run_id: UUID) -> dict[str, dict[str, Any]]
         session.query(CoaAccount)
         .filter(
             CoaAccount.coa_set_id == coa_set.id,
-            CoaAccount.is_active == True,  # noqa: E712
+            CoaAccount.is_active,
         )
         .all()
     )
@@ -294,6 +330,17 @@ def _build_reconciliation_source_data(
     """
     source_data: dict[ReconciliationType, dict[str, list[dict[str, Any]]]] = {}
     ledger_transactions = _load_ledger_transactions(session, close_run_id)
+    supporting_schedule_service = SupportingScheduleService(
+        repository=SupportingScheduleRepository(session=session),
+    )
+    supporting_schedule_workspace = supporting_schedule_service.list_workspace(
+        close_run_id=close_run_id
+    )
+    schedule_rows_by_type = {
+        snapshot.schedule.schedule_type.value: [dict(row.payload) for row in snapshot.rows]
+        for snapshot in supporting_schedule_workspace
+        if snapshot.schedule.status.value != "not_applicable"
+    }
 
     for rec_type in reconciliation_types:
         if rec_type == ReconciliationType.BANK_RECONCILIATION:
@@ -318,6 +365,55 @@ def _build_reconciliation_source_data(
                 "counterparts": [],
             }
 
+        elif rec_type == ReconciliationType.FIXED_ASSETS:
+            source_items = schedule_rows_by_type.get(ReconciliationType.FIXED_ASSETS.value, [])
+            source_data[rec_type] = {
+                "source_items": source_items,
+                "counterparts": _build_fixed_asset_counterparts(
+                    source_items=source_items,
+                    ledger_transactions=ledger_transactions,
+                ),
+            }
+
+        elif rec_type == ReconciliationType.LOAN_AMORTISATION:
+            source_items = schedule_rows_by_type.get(
+                ReconciliationType.LOAN_AMORTISATION.value,
+                [],
+            )
+            source_data[rec_type] = {
+                "source_items": source_items,
+                "counterparts": _build_loan_counterparts(
+                    source_items=source_items,
+                    ledger_transactions=ledger_transactions,
+                ),
+            }
+
+        elif rec_type == ReconciliationType.ACCRUAL_TRACKER:
+            source_items = schedule_rows_by_type.get(
+                ReconciliationType.ACCRUAL_TRACKER.value,
+                [],
+            )
+            source_data[rec_type] = {
+                "source_items": source_items,
+                "counterparts": _build_accrual_counterparts(
+                    source_items=source_items,
+                    ledger_transactions=ledger_transactions,
+                ),
+            }
+
+        elif rec_type == ReconciliationType.BUDGET_VS_ACTUAL:
+            source_items = schedule_rows_by_type.get(
+                ReconciliationType.BUDGET_VS_ACTUAL.value,
+                [],
+            )
+            source_data[rec_type] = {
+                "source_items": source_items,
+                "counterparts": _build_budget_counterparts(
+                    source_items=source_items,
+                    ledger_transactions=ledger_transactions,
+                ),
+            }
+
         else:
             # Other types: use ledger transactions as counterparts
             source_data[rec_type] = {
@@ -326,6 +422,315 @@ def _build_reconciliation_source_data(
             }
 
     return source_data
+
+
+def _build_fixed_asset_counterparts(
+    *,
+    source_items: list[dict[str, Any]],
+    ledger_transactions: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Build fixed-asset ledger counterparts from tagged journal lines."""
+
+    counterparts: list[dict[str, Any]] = []
+    for item in source_items:
+        asset_id = str(item.get("asset_id", "")).strip()
+        if not asset_id:
+            continue
+        asset_lines = _filter_lines_by_tag(
+            ledger_transactions,
+            tags={asset_id},
+            account_codes={
+                str(item.get("asset_account_code", "")).strip(),
+                str(item.get("accumulated_depreciation_account_code", "")).strip(),
+            },
+        )
+        cost_total = _sum_signed_amounts(
+            asset_lines,
+            account_codes={str(item.get("asset_account_code", "")).strip()},
+        )
+        depreciation_total = _sum_signed_amounts(
+            asset_lines,
+            account_codes={str(item.get("accumulated_depreciation_account_code", "")).strip()},
+        )
+        counterparts.append(
+            {
+                "asset_id": asset_id,
+                "ref": f"ledger:asset:{asset_id}",
+                "cost": _decimal_abs_to_string(cost_total),
+                "accumulated_depreciation": _decimal_abs_to_string(depreciation_total),
+            }
+        )
+    return counterparts
+
+
+def _build_loan_counterparts(
+    *,
+    source_items: list[dict[str, Any]],
+    ledger_transactions: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Build loan-amortisation counterparts from tagged journal lines."""
+
+    counterparts: list[dict[str, Any]] = []
+    for item in source_items:
+        loan_id = str(item.get("loan_id", "")).strip()
+        payment_no = str(item.get("payment_no", "")).strip()
+        if not loan_id or not payment_no:
+            continue
+        tags = {loan_id, payment_no}
+        due_date = _parse_iso_date(item.get("due_date"))
+        payment_lines = _filter_lines_by_tag(
+            ledger_transactions,
+            tags=tags,
+            account_codes={
+                str(item.get("loan_account_code", "")).strip(),
+                str(item.get("interest_account_code", "")).strip(),
+            },
+        )
+        loan_history_lines = _filter_lines_by_tag(
+            ledger_transactions,
+            tags={loan_id},
+            account_codes={str(item.get("loan_account_code", "")).strip()},
+            up_to_date=due_date,
+        )
+        counterparts.append(
+            {
+                "payment_no": item.get("payment_no"),
+                "ref": f"ledger:loan:{loan_id}:payment:{payment_no}",
+                "principal": _decimal_abs_to_string(
+                    _sum_signed_amounts(
+                        payment_lines,
+                        account_codes={str(item.get("loan_account_code", "")).strip()},
+                    )
+                ),
+                "interest": _decimal_abs_to_string(
+                    _sum_signed_amounts(
+                        payment_lines,
+                        account_codes={str(item.get("interest_account_code", "")).strip()},
+                    )
+                ),
+                "balance": _decimal_abs_to_string(_sum_signed_amounts(loan_history_lines)),
+            }
+        )
+    return counterparts
+
+
+def _build_accrual_counterparts(
+    *,
+    source_items: list[dict[str, Any]],
+    ledger_transactions: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Build accrual-tracker counterparts from tagged journal lines."""
+
+    counterparts: list[dict[str, Any]] = []
+    for item in source_items:
+        account_code = str(item.get("account_code", "")).strip()
+        period = str(item.get("period", "")).strip()
+        reference = str(item.get("ref", "")).strip()
+        if not account_code or not period:
+            continue
+        lines = [
+            line
+            for line in ledger_transactions
+            if str(line.get("account_code", "")).strip() == account_code
+            and str(line.get("period", "")).strip() == period
+            and (
+                not reference
+                or _line_contains_any_tag(line, {reference})
+            )
+        ]
+        if not lines:
+            continue
+        counterparts.append(
+            {
+                "ref": f"ledger:accrual:{reference or account_code}:{period}",
+                "account_code": account_code,
+                "period": period,
+                "amount": _decimal_abs_to_string(_sum_signed_amounts(lines)),
+            }
+        )
+    return counterparts
+
+
+def _build_budget_counterparts(
+    *,
+    source_items: list[dict[str, Any]],
+    ledger_transactions: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Build budget-vs-actual counterparts from ledger actuals."""
+
+    counterparts: list[dict[str, Any]] = []
+    seen_keys: set[tuple[str, str, str, str, str]] = set()
+    for item in source_items:
+        account_code = str(item.get("account_code", "")).strip()
+        period = str(item.get("period", "")).strip()
+        department = str(item.get("department", "")).strip()
+        cost_centre = str(item.get("cost_centre", "")).strip()
+        project = str(item.get("project", "")).strip()
+        key = (account_code, period, department, cost_centre, project)
+        if not account_code or not period or key in seen_keys:
+            continue
+        seen_keys.add(key)
+        lines = [
+            line
+            for line in ledger_transactions
+            if str(line.get("account_code", "")).strip() == account_code
+            and str(line.get("period", "")).strip() == period
+            and _dimensions_match(
+                line.get("dimensions", {}),
+                department=department or None,
+                cost_centre=cost_centre or None,
+                project=project or None,
+            )
+        ]
+        if not lines:
+            continue
+        counterparts.append(
+            {
+                "ref": _build_budget_reference(
+                    prefix="ledger:budget",
+                    account_code=account_code,
+                    period=period,
+                    department=department,
+                    cost_centre=cost_centre,
+                    project=project,
+                ),
+                "account_code": account_code,
+                "period": period,
+                **({"department": department} if department else {}),
+                **({"cost_centre": cost_centre} if cost_centre else {}),
+                **({"project": project} if project else {}),
+                "amount": _decimal_to_string(_sum_signed_amounts(lines)),
+            }
+        )
+    return counterparts
+
+
+def _build_budget_reference(
+    *,
+    prefix: str,
+    account_code: str,
+    period: str,
+    department: str,
+    cost_centre: str,
+    project: str,
+) -> str:
+    """Build a stable budget reference that retains dimensional context."""
+
+    reference_parts = [prefix, account_code, period]
+    reference_parts.extend(
+        dimension
+        for dimension in (department, cost_centre, project)
+        if dimension
+    )
+    return ":".join(reference_parts)
+
+
+def _filter_lines_by_tag(
+    ledger_transactions: list[dict[str, Any]],
+    *,
+    tags: set[str],
+    account_codes: set[str],
+    up_to_date: date | None = None,
+) -> list[dict[str, Any]]:
+    """Filter journal lines by account code plus a stable tag in ref or dimensions."""
+
+    normalized_account_codes = {code for code in account_codes if code}
+    filtered_lines: list[dict[str, Any]] = []
+    for line in ledger_transactions:
+        if (
+            normalized_account_codes
+            and str(line.get("account_code", "")).strip() not in normalized_account_codes
+        ):
+            continue
+        if not _line_contains_any_tag(line, tags):
+            continue
+        parsed_date = _parse_iso_date(line.get("date"))
+        if up_to_date is not None and (parsed_date is None or parsed_date > up_to_date):
+            continue
+        filtered_lines.append(line)
+    return filtered_lines
+
+
+def _line_contains_any_tag(line: dict[str, Any], tags: set[str]) -> bool:
+    """Return whether a journal line carries any of the supplied tags."""
+
+    normalized_tags = {tag for tag in (str(tag).strip() for tag in tags) if tag}
+    if not normalized_tags:
+        return False
+
+    reference = str(line.get("reference", "")).strip()
+    if reference and reference in normalized_tags:
+        return True
+
+    dimensions = line.get("dimensions", {})
+    if isinstance(dimensions, dict):
+        for value in dimensions.values():
+            if str(value).strip() in normalized_tags:
+                return True
+
+    return False
+
+
+def _dimensions_match(
+    dimensions: Any,
+    *,
+    department: str | None,
+    cost_centre: str | None,
+    project: str | None,
+) -> bool:
+    """Return whether a line matches the supplied optional budget dimensions."""
+
+    if not isinstance(dimensions, dict):
+        dimensions = {}
+    if department and str(dimensions.get("department", "")).strip() != department:
+        return False
+    if cost_centre and str(dimensions.get("cost_centre", "")).strip() != cost_centre:
+        return False
+    if project and str(dimensions.get("project", "")).strip() != project:
+        return False
+    return True
+
+
+def _sum_signed_amounts(
+    lines: list[dict[str, Any]],
+    *,
+    account_codes: set[str] | None = None,
+) -> Decimal:
+    """Return the signed journal-line amount total for the supplied filtered lines."""
+
+    normalized_account_codes = {code for code in (account_codes or set()) if code}
+    total = Decimal("0.00")
+    for line in lines:
+        if (
+            normalized_account_codes
+            and str(line.get("account_code", "")).strip() not in normalized_account_codes
+        ):
+            continue
+        total += Decimal(str(line.get("signed_amount", "0.00")))
+    return total.quantize(Decimal("0.01"))
+
+
+def _decimal_abs_to_string(value: Decimal) -> str:
+    """Return a positive decimal string for a ledger aggregate."""
+
+    return _decimal_to_string(abs(value))
+
+
+def _decimal_to_string(value: Decimal) -> str:
+    """Return a normalized decimal string for reconciliation payloads."""
+
+    return f"{value.quantize(Decimal('0.01')):.2f}"
+
+
+def _parse_iso_date(value: Any) -> date | None:
+    """Parse an ISO date string when available."""
+
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        return date.fromisoformat(value)
+    except ValueError:
+        return None
 
 
 def _run_reconciliation_task(

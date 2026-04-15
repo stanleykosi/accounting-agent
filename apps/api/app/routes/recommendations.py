@@ -20,6 +20,7 @@ from typing import Annotated, Any
 from uuid import UUID
 
 from apps.api.app.dependencies.db import DatabaseSessionDependency
+from apps.api.app.dependencies.tasks import TaskDispatcherDependency
 from apps.api.app.routes.auth import (
     _build_http_exception,
     _clear_session_cookie,
@@ -28,8 +29,11 @@ from apps.api.app.routes.auth import (
     _set_session_cookie,
     get_auth_service,
 )
+from apps.api.app.routes.close_runs import _to_entity_user
 from apps.api.app.routes.request_auth import RequestAuthDependency
+from apps.api.app.routes.workflow_phase import require_active_close_run_phase
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from pydantic import BaseModel, Field
 from services.accounting.recommendation_apply import (
     ActorContext,
     RecommendationApplyError,
@@ -42,7 +46,7 @@ from services.auth.service import (
     AuthService,
     AuthServiceError,
 )
-from services.common.enums import ReviewStatus
+from services.common.enums import DocumentStatus, DocumentType, ReviewStatus, WorkflowPhase
 from services.common.settings import AppSettings, get_settings
 from services.contracts.journal_models import (
     ApplyJournalRequest,
@@ -50,14 +54,24 @@ from services.contracts.journal_models import (
     JournalActionResponse,
     JournalLineSummary,
     JournalListResponse,
+    JournalPostingSummary,
     JournalSummary,
     RejectJournalRequest,
 )
+from services.contracts.storage_models import StorageBucketKind
 from services.db.models.audit import AuditSourceSurface
+from services.db.models.documents import Document
+from services.db.models.extractions import DocumentExtraction
+from services.db.models.recommendations import Recommendation
 from services.db.repositories.entity_repo import EntityUserRecord
+from services.db.repositories.integration_repo import IntegrationRepository
 from services.db.repositories.recommendation_journal_repo import (
     RecommendationJournalRepository,
 )
+from services.jobs.service import JobService, JobServiceError
+from services.jobs.task_names import TaskName
+from services.storage.client import StorageClient
+from services.storage.repository import StorageRepository
 
 RECOMMENDATIONS_TAG = "recommendations"
 REC_PREFIX = "/entities/{entity_id}/close-runs/{close_run_id}"
@@ -79,12 +93,28 @@ def _get_recommendation_journal_service(
     return RecommendationApplyService(
         repository=repository,
         audit_service=audit_service,
+        db_session=db_session,
+        integration_repository=IntegrationRepository(db_session=db_session),
+        storage_repository=StorageRepository(),
     )
 
 
 RecommendationServiceDependency = Annotated[
     RecommendationApplyService, Depends(_get_recommendation_journal_service)
 ]
+
+
+class GenerateRecommendationsRequest(BaseModel):
+    """Capture an explicit request to generate recommendations for a close run."""
+
+    force: bool = Field(
+        default=False,
+        description="Queue jobs even when a document already has an active recommendation.",
+    )
+    document_ids: list[UUID] | None = Field(
+        default=None,
+        description="Optional subset of document IDs to process.",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -178,6 +208,120 @@ def list_recommendations(
 
 
 @router.post(
+    "/recommendations/generate",
+    response_model=object,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Queue recommendation generation for eligible close-run documents",
+)
+def generate_recommendations_for_close_run(
+    entity_id: UUID,
+    close_run_id: UUID,
+    payload: GenerateRecommendationsRequest,
+    request: Request,
+    response: Response,
+    settings: SettingsDependency,
+    auth_service: AuthServiceDependency,
+    db_session: DbSessionDep,
+    task_dispatcher: TaskDispatcherDependency,
+    auth_context: RequestAuthDependency,
+) -> dict[str, object]:
+    """Queue accounting recommendation jobs for parsed documents in this close run."""
+
+    session_result = auth_context
+    _require_close_run_access(
+        entity_id=entity_id,
+        close_run_id=close_run_id,
+        user_id=session_result.user.id,
+        db_session=db_session,
+    )
+    require_active_close_run_phase(
+        actor_user=_to_entity_user(session_result),
+        entity_id=entity_id,
+        close_run_id=close_run_id,
+        required_phase=WorkflowPhase.PROCESSING,
+        action_label="Recommendation generation",
+        db_session=db_session,
+    )
+
+    document_query = (
+        db_session.query(Document)
+        .join(DocumentExtraction, DocumentExtraction.document_id == Document.id)
+        .filter(
+            Document.close_run_id == close_run_id,
+            Document.document_type != DocumentType.UNKNOWN.value,
+            Document.status == DocumentStatus.APPROVED.value,
+        )
+        .order_by(Document.created_at.asc(), Document.id.asc())
+    )
+    if payload.document_ids:
+        document_query = document_query.filter(Document.id.in_(payload.document_ids))
+
+    eligible_documents = document_query.all()
+    existing_recommendations = set()
+    if not payload.force:
+        existing_recommendations = {
+            recommendation.document_id
+            for recommendation in db_session.query(Recommendation)
+            .filter(
+                Recommendation.close_run_id == close_run_id,
+                Recommendation.document_id.isnot(None),
+                Recommendation.superseded_by_id.is_(None),
+            )
+            .all()
+            if recommendation.document_id is not None
+        }
+
+    job_service = JobService(db_session=db_session)
+    queued_jobs: list[dict[str, object]] = []
+    skipped_document_ids: list[str] = []
+
+    for document in eligible_documents:
+        if not payload.force and document.id in existing_recommendations:
+            skipped_document_ids.append(str(document.id))
+            continue
+
+        try:
+            job = job_service.dispatch_job(
+                dispatcher=task_dispatcher,
+                task_name=TaskName.ACCOUNTING_RECOMMEND_CLOSE_RUN,
+                payload={
+                    "entity_id": str(entity_id),
+                    "close_run_id": str(close_run_id),
+                    "document_id": str(document.id),
+                    "actor_user_id": str(session_result.user.id),
+                },
+                entity_id=entity_id,
+                close_run_id=close_run_id,
+                document_id=document.id,
+                actor_user_id=session_result.user.id,
+                trace_id=str(getattr(request.state, "request_id", "")),
+            )
+        except JobServiceError as error:
+            raise HTTPException(
+                status_code=error.status_code,
+                detail={
+                    "code": str(error.code),
+                    "message": error.message,
+                },
+            ) from error
+
+        queued_jobs.append(
+            {
+                "job_id": str(job.id),
+                "document_id": str(document.id),
+                "task_name": job.task_name,
+                "status": job.status.value,
+            }
+        )
+
+    return {
+        "queued_count": len(queued_jobs),
+        "queued_jobs": queued_jobs,
+        "skipped_document_ids": skipped_document_ids,
+    }
+
+
+@router.post(
     "/recommendations/{recommendation_id}/approve",
     response_model=object,
     summary="Approve one recommendation and generate its journal draft",
@@ -201,6 +345,14 @@ def approve_recommendation(
         entity_id=entity_id,
         close_run_id=close_run_id,
         user_id=session_result.user.id,
+        db_session=db_session,
+    )
+    require_active_close_run_phase(
+        actor_user=_to_entity_user(session_result),
+        entity_id=entity_id,
+        close_run_id=close_run_id,
+        required_phase=WorkflowPhase.PROCESSING,
+        action_label="Recommendation approval",
         db_session=db_session,
     )
     actor = ActorContext(
@@ -266,6 +418,14 @@ def reject_recommendation(
         user_id=session_result.user.id,
         db_session=db_session,
     )
+    require_active_close_run_phase(
+        actor_user=_to_entity_user(session_result),
+        entity_id=entity_id,
+        close_run_id=close_run_id,
+        required_phase=WorkflowPhase.PROCESSING,
+        action_label="Recommendation rejection",
+        db_session=db_session,
+    )
     actor = ActorContext(
         user_id=session_result.user.id,
         full_name=session_result.user.full_name,
@@ -317,32 +477,15 @@ def list_journals(
     )
     repo = RecommendationJournalRepository(db_session=db_session)
     journals = repo.list_journals_for_close_run(close_run_id=close_run_id)
+    postings_by_journal_id = repo.list_postings_for_journal_ids(
+        journal_entry_ids=tuple(journal.id for journal in journals),
+    )
     return JournalListResponse(
         journals=tuple(
-            JournalSummary(
-                id=str(j.id),
-                entity_id=str(j.entity_id),
-                close_run_id=str(j.close_run_id),
-                recommendation_id=str(j.recommendation_id) if j.recommendation_id else None,
-                journal_number=j.journal_number,
-                posting_date=j.posting_date,
-                status=ReviewStatus(j.status),
-                description=j.description,
-                total_debits=str(j.total_debits),
-                total_credits=str(j.total_credits),
-                line_count=j.line_count,
-                source_surface=j.source_surface,
-                autonomy_mode=j.autonomy_mode,
-                reasoning_summary=j.reasoning_summary,
-                approved_by_user_id=(
-                    str(j.approved_by_user_id) if j.approved_by_user_id else None
-                ),
-                applied_by_user_id=(
-                    str(j.applied_by_user_id) if j.applied_by_user_id else None
-                ),
-                lines=[],
-                created_at=j.created_at.isoformat(),
-                updated_at=j.updated_at.isoformat(),
+            _build_journal_summary(
+                entry=j,
+                lines=(),
+                postings=postings_by_journal_id.get(j.id, ()),
             )
             for j in journals
         )
@@ -385,44 +528,76 @@ def read_journal(
             detail={"code": "journal_not_found", "message": f"Journal {journal_id} not found."},
         )
     entry = result.entry
-    return JournalSummary(
-        id=str(entry.id),
-        entity_id=str(entry.entity_id),
-        close_run_id=str(entry.close_run_id),
-        recommendation_id=(
-            str(entry.recommendation_id) if entry.recommendation_id else None
+    return _build_journal_summary(
+        entry=entry,
+        lines=result.lines,
+        postings=result.postings,
+    )
+
+
+@router.get(
+    "/journals/{journal_id}/postings/{posting_id}/download",
+    summary="Download one external posting package for a journal",
+)
+def download_journal_posting_package(
+    entity_id: UUID,
+    close_run_id: UUID,
+    journal_id: UUID,
+    posting_id: UUID,
+    request: Request,
+    response: Response,
+    settings: SettingsDependency,
+    auth_service: AuthServiceDependency,
+    db_session: DbSessionDep,
+) -> Response:
+    """Stream one generated journal posting package through the authenticated API surface."""
+
+    session_result = _require_authenticated_browser_session(
+        request=request,
+        response=response,
+        settings=settings,
+        auth_service=auth_service,
+    )
+    _require_close_run_access(
+        entity_id=entity_id,
+        close_run_id=close_run_id,
+        user_id=session_result.user.id,
+        db_session=db_session,
+    )
+    repo = RecommendationJournalRepository(db_session=db_session)
+    result = repo.get_journal_entry(journal_id=journal_id)
+    if (
+        result is None
+        or result.entry.close_run_id != close_run_id
+        or result.entry.entity_id != entity_id
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"code": "journal_not_found", "message": f"Journal {journal_id} not found."},
+        )
+    posting = next((item for item in result.postings if item.id == posting_id), None)
+    if posting is None or posting.artifact_storage_key is None or posting.artifact_filename is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={
+                "code": "posting_artifact_not_found",
+                "message": "The requested journal posting package does not exist.",
+            },
+        )
+
+    payload = StorageClient.from_settings(settings).download_bytes(
+        bucket_kind=StorageBucketKind.ARTIFACTS,
+        object_key=posting.artifact_storage_key,
+    )
+    return Response(
+        content=payload,
+        media_type=_infer_posting_content_type(
+            artifact_type=posting.artifact_type,
+            filename=posting.artifact_filename,
         ),
-        journal_number=entry.journal_number,
-        posting_date=entry.posting_date,
-        status=ReviewStatus(entry.status),
-        description=entry.description,
-        total_debits=str(entry.total_debits),
-        total_credits=str(entry.total_credits),
-        line_count=entry.line_count,
-        source_surface=entry.source_surface,
-        autonomy_mode=entry.autonomy_mode,
-        reasoning_summary=entry.reasoning_summary,
-        approved_by_user_id=(
-            str(entry.approved_by_user_id) if entry.approved_by_user_id else None
-        ),
-        applied_by_user_id=(
-            str(entry.applied_by_user_id) if entry.applied_by_user_id else None
-        ),
-        lines=[
-            JournalLineSummary(
-                id=str(line.id),
-                line_no=line.line_no,
-                account_code=line.account_code,
-                line_type=line.line_type,
-                amount=str(line.amount),
-                description=line.description,
-                dimensions=line.dimensions,
-                reference=line.reference,
-            )
-            for line in result.lines
-        ],
-        created_at=entry.created_at.isoformat(),
-        updated_at=entry.updated_at.isoformat(),
+        headers={
+            "Content-Disposition": f'attachment; filename="{posting.artifact_filename}"',
+        },
     )
 
 
@@ -450,6 +625,14 @@ def approve_journal(
         entity_id=entity_id,
         close_run_id=close_run_id,
         user_id=session_result.user.id,
+        db_session=db_session,
+    )
+    require_active_close_run_phase(
+        actor_user=_to_entity_user(session_result),
+        entity_id=entity_id,
+        close_run_id=close_run_id,
+        required_phase=WorkflowPhase.PROCESSING,
+        action_label="Journal approval",
         db_session=db_session,
     )
     actor = ActorContext(
@@ -483,7 +666,7 @@ def approve_journal(
 @router.post(
     "/journals/{journal_id}/apply",
     response_model=JournalActionResponse,
-    summary="Apply one approved journal to working state",
+    summary="Post one approved journal through the chosen target",
 )
 def apply_journal(
     entity_id: UUID,
@@ -498,12 +681,20 @@ def apply_journal(
     db_session: DbSessionDep,
     auth_context: RequestAuthDependency,
 ) -> JournalActionResponse:
-    """Apply an approved journal entry to working accounting state."""
+    """Post an approved journal entry to the selected ledger target."""
     session_result = auth_context
     _require_close_run_access(
         entity_id=entity_id,
         close_run_id=close_run_id,
         user_id=session_result.user.id,
+        db_session=db_session,
+    )
+    require_active_close_run_phase(
+        actor_user=_to_entity_user(session_result),
+        entity_id=entity_id,
+        close_run_id=close_run_id,
+        required_phase=WorkflowPhase.PROCESSING,
+        action_label="Journal application",
         db_session=db_session,
     )
     actor = ActorContext(
@@ -517,6 +708,7 @@ def apply_journal(
             entity_id=entity_id,
             close_run_id=close_run_id,
             actor=actor,
+            posting_target=payload.posting_target,
             reason=payload.reason,
             trace_id=_resolve_trace_id(request),
             source_surface=AuditSourceSurface.DESKTOP,
@@ -560,6 +752,14 @@ def reject_journal(
         user_id=session_result.user.id,
         db_session=db_session,
     )
+    require_active_close_run_phase(
+        actor_user=_to_entity_user(session_result),
+        entity_id=entity_id,
+        close_run_id=close_run_id,
+        required_phase=WorkflowPhase.PROCESSING,
+        action_label="Journal rejection",
+        db_session=db_session,
+    )
     actor = ActorContext(
         user_id=session_result.user.id,
         full_name=session_result.user.full_name,
@@ -600,48 +800,87 @@ def _build_journal_action_response(
     """Assemble a JournalActionResponse from a journal query result and action result."""
     entry = journal_result.entry
     return JournalActionResponse(
-        journal=JournalSummary(
-            id=str(entry.id),
-            entity_id=str(entry.entity_id),
-            close_run_id=str(entry.close_run_id),
-            recommendation_id=(
-                str(entry.recommendation_id) if entry.recommendation_id else None
-            ),
-            journal_number=entry.journal_number,
-            posting_date=entry.posting_date,
-            status=ReviewStatus(entry.status),
-            description=entry.description,
-            total_debits=str(entry.total_debits),
-            total_credits=str(entry.total_credits),
-            line_count=entry.line_count,
-            source_surface=entry.source_surface,
-            autonomy_mode=entry.autonomy_mode,
-            reasoning_summary=entry.reasoning_summary,
-            approved_by_user_id=(
-                str(entry.approved_by_user_id) if entry.approved_by_user_id else None
-            ),
-            applied_by_user_id=(
-                str(entry.applied_by_user_id) if entry.applied_by_user_id else None
-            ),
-            lines=[
-                JournalLineSummary(
-                    id=str(line.id),
-                    line_no=line.line_no,
-                    account_code=line.account_code,
-                    line_type=line.line_type,
-                    amount=str(line.amount),
-                    description=line.description,
-                    dimensions=line.dimensions,
-                    reference=line.reference,
-                )
-                for line in journal_result.lines
-            ],
-            created_at=entry.created_at.isoformat(),
-            updated_at=entry.updated_at.isoformat(),
+        journal=_build_journal_summary(
+            entry=entry,
+            lines=journal_result.lines,
+            postings=journal_result.postings,
         ),
         action=action_result.action,
         autonomy_mode=action_result.autonomy_mode,
     )
+
+
+def _build_journal_summary(
+    *,
+    entry: Any,
+    lines: Any,
+    postings: Any,
+) -> JournalSummary:
+    """Assemble one journal summary with lines and posting outcomes."""
+
+    return JournalSummary(
+        id=str(entry.id),
+        entity_id=str(entry.entity_id),
+        close_run_id=str(entry.close_run_id),
+        recommendation_id=str(entry.recommendation_id) if entry.recommendation_id else None,
+        journal_number=entry.journal_number,
+        posting_date=entry.posting_date,
+        status=ReviewStatus(entry.status),
+        description=entry.description,
+        total_debits=str(entry.total_debits),
+        total_credits=str(entry.total_credits),
+        line_count=entry.line_count,
+        source_surface=entry.source_surface,
+        autonomy_mode=entry.autonomy_mode,
+        reasoning_summary=entry.reasoning_summary,
+        approved_by_user_id=str(entry.approved_by_user_id) if entry.approved_by_user_id else None,
+        applied_by_user_id=str(entry.applied_by_user_id) if entry.applied_by_user_id else None,
+        postings=[_build_journal_posting_summary(posting) for posting in postings],
+        lines=[
+            JournalLineSummary(
+                id=str(line.id),
+                line_no=line.line_no,
+                account_code=line.account_code,
+                line_type=line.line_type,
+                amount=str(line.amount),
+                description=line.description,
+                dimensions=line.dimensions,
+                reference=line.reference,
+            )
+            for line in lines
+        ],
+        created_at=entry.created_at.isoformat(),
+        updated_at=entry.updated_at.isoformat(),
+    )
+
+
+def _build_journal_posting_summary(posting: Any) -> JournalPostingSummary:
+    """Translate one posting record into the strict API contract."""
+
+    return JournalPostingSummary(
+        id=str(posting.id),
+        posting_target=posting.posting_target,
+        provider=posting.provider,
+        status=posting.status,
+        artifact_id=str(posting.artifact_id) if posting.artifact_id else None,
+        artifact_type=posting.artifact_type,
+        artifact_filename=posting.artifact_filename,
+        artifact_storage_key=posting.artifact_storage_key,
+        note=posting.note,
+        posted_by_user_id=str(posting.posted_by_user_id) if posting.posted_by_user_id else None,
+        posted_at=posting.posted_at.isoformat(),
+        posting_metadata=dict(posting.posting_metadata),
+    )
+
+
+def _infer_posting_content_type(*, artifact_type: str | None, filename: str) -> str:
+    """Infer the content type for a stored journal posting package."""
+
+    if artifact_type == "gl_posting_package" or filename.endswith(".csv"):
+        return "text/csv; charset=utf-8"
+    if filename.endswith(".xlsx"):
+        return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    return "application/octet-stream"
 
 
 def _require_authenticated_browser_session(

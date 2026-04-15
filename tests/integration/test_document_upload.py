@@ -32,6 +32,7 @@ from services.db.repositories.document_repo import (
     DocumentCloseRunRecord,
     DocumentEntityRecord,
     DocumentRecord,
+    DocumentWithExtractionRecord,
 )
 from services.db.repositories.entity_repo import EntityUserRecord
 from services.documents.upload_service import (
@@ -237,6 +238,18 @@ class InMemoryDocumentRepository:
             document
             for document in self.documents.values()
             if document.close_run_id == close_run_id
+        )
+
+    def list_documents_for_close_run_with_latest_extraction(
+        self,
+        *,
+        close_run_id: UUID,
+    ) -> tuple[DocumentWithExtractionRecord, ...]:
+        """Return in-memory documents without extraction metadata for upload tests."""
+
+        return tuple(
+            DocumentWithExtractionRecord(document=document, latest_extraction=None)
+            for document in self.list_documents_for_close_run(close_run_id=close_run_id)
         )
 
     def create_activity_event(

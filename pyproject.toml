@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "accounting-ai-agent"
 version = "0.1.0"
-description = "Canonical Python workspace for the Accounting AI Agent local demo."
+description = "Canonical Python workspace for the Accounting AI Agent workflow platform."
 readme = "README.md"
 requires-python = ">=3.12"
 license = { text = "Proprietary" }

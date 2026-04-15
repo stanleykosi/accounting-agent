@@ -226,6 +226,11 @@ class ReviewStatus(CanonicalDomainEnum):
 class ArtifactType(CanonicalDomainEnum):
     """Enumerate the released artifact categories linked to close run versions."""
 
+    GL_POSTING_PACKAGE = (
+        "gl_posting_package",
+        "GL posting package",
+        "CSV or workbook package prepared for external ERP or GL journal import.",
+    )
     REPORT_EXCEL = (
         "report_excel",
         "Excel report pack",
@@ -545,6 +550,66 @@ class ReconciliationType(CanonicalDomainEnum):
         "trial_balance",
         "Trial balance",
         "Debit-equals-credit verification and anomaly detection across all accounts.",
+    )
+
+
+DEFAULT_RECONCILIATION_EXECUTION_TYPES = (
+    ReconciliationType.BANK_RECONCILIATION,
+    ReconciliationType.FIXED_ASSETS,
+    ReconciliationType.LOAN_AMORTISATION,
+    ReconciliationType.ACCRUAL_TRACKER,
+    ReconciliationType.BUDGET_VS_ACTUAL,
+    ReconciliationType.TRIAL_BALANCE,
+)
+
+
+class SupportingScheduleType(CanonicalDomainEnum):
+    """Enumerate the standalone supporting schedules maintained during Step 6."""
+
+    FIXED_ASSETS = (
+        "fixed_assets",
+        "Fixed asset register",
+        "Maintain the fixed asset register, depreciation, disposals, and book values.",
+    )
+    LOAN_AMORTISATION = (
+        "loan_amortisation",
+        "Loan amortisation",
+        "Maintain lender schedules, payment sequencing, balances, and interest allocations.",
+    )
+    ACCRUAL_TRACKER = (
+        "accrual_tracker",
+        "Accrual tracker",
+        "Maintain accrued income and expense schedules across periods and reversals.",
+    )
+    BUDGET_VS_ACTUAL = (
+        "budget_vs_actual",
+        "Budget vs actual",
+        "Maintain the budget workpaper used for variance analysis against ledger actuals.",
+    )
+
+
+class SupportingScheduleStatus(CanonicalDomainEnum):
+    """Enumerate the lifecycle states of a standalone supporting schedule."""
+
+    DRAFT = (
+        "draft",
+        "Draft",
+        "The schedule exists but has not entered formal review yet.",
+    )
+    IN_REVIEW = (
+        "in_review",
+        "In review",
+        "The schedule has content and is waiting for accountant review or completion.",
+    )
+    APPROVED = (
+        "approved",
+        "Approved",
+        "The schedule was reviewed and accepted for the current close run.",
+    )
+    NOT_APPLICABLE = (
+        "not_applicable",
+        "Not applicable",
+        "The schedule is explicitly not required for this entity or reporting period.",
     )
 
 

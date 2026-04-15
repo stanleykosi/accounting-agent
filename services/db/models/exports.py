@@ -17,7 +17,6 @@ from services.common.enums import ArtifactType
 from services.common.types import JsonObject
 from services.db.base import Base, TimestampedModel, UUIDPrimaryKeyMixin, build_text_choice_check
 from sqlalchemy import (
-    BigInteger,
     CheckConstraint,
     ForeignKey,
     Index,
@@ -46,6 +45,12 @@ class ExportStatus(StrEnum):
 
 _ARTIFACT_TYPES = tuple(t.value for t in ArtifactType)
 _EXPORT_STATUSES = tuple(s.value for s in ExportStatus)
+_EXPORT_DELIVERY_CHANNELS = (
+    "secure_email",
+    "management_portal",
+    "board_pack",
+    "file_share",
+)
 
 
 # ---------------------------------------------------------------------------
@@ -216,8 +221,87 @@ class ExportRun(Base, UUIDPrimaryKeyMixin, TimestampedModel):
     )
 
 
+class ExportDistribution(Base, UUIDPrimaryKeyMixin, TimestampedModel):
+    """Persist one management-delivery event for a completed export run."""
+
+    __tablename__ = "export_distributions"
+    __table_args__ = (
+        build_text_choice_check(
+            column_name="delivery_channel",
+            values=_EXPORT_DELIVERY_CHANNELS,
+            constraint_name="export_distribution_delivery_channel_valid",
+        ),
+        Index("ix_export_distributions_export_run_id", "export_run_id"),
+        Index("ix_export_distributions_distributed_at", "distributed_at"),
+        Index("ix_export_distributions_close_run_id", "close_run_id"),
+        UniqueConstraint(
+            "export_run_id",
+            "recipient_email",
+            "delivery_channel",
+            "distributed_at",
+            name="uq_export_distributions_export_recipient_channel_time",
+        ),
+    )
+
+    export_run_id: Mapped[UUID] = mapped_column(
+        ForeignKey("export_runs.id", ondelete="CASCADE"),
+        nullable=False,
+        comment="Completed export package this delivery record belongs to.",
+    )
+    entity_id: Mapped[UUID] = mapped_column(
+        ForeignKey("entities.id"),
+        nullable=False,
+        comment="Entity workspace that owns the distribution event.",
+    )
+    close_run_id: Mapped[UUID] = mapped_column(
+        ForeignKey("close_runs.id"),
+        nullable=False,
+        comment="Close run that the export delivery belongs to.",
+    )
+    version_no: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        comment="Close-run version number that was distributed.",
+    )
+    recipient_name: Mapped[str] = mapped_column(
+        String,
+        nullable=False,
+        comment="Stakeholder display name for the recorded release.",
+    )
+    recipient_email: Mapped[str] = mapped_column(
+        String,
+        nullable=False,
+        comment="Stakeholder delivery email recorded for the release.",
+    )
+    recipient_role: Mapped[str | None] = mapped_column(
+        String,
+        nullable=True,
+        comment="Optional stakeholder role such as CFO or Finance Manager.",
+    )
+    delivery_channel: Mapped[str] = mapped_column(
+        String,
+        nullable=False,
+        comment="Canonical delivery channel used for the stakeholder release.",
+    )
+    note: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+        comment="Optional operator note recorded with the delivery event.",
+    )
+    distributed_by_user_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("users.id"),
+        nullable=True,
+        comment="User who recorded the distribution event.",
+    )
+    distributed_at: Mapped[datetime] = mapped_column(
+        nullable=False,
+        comment="UTC timestamp when the package was released to the stakeholder.",
+    )
+
+
 __all__ = [
     "Artifact",
+    "ExportDistribution",
     "ExportRun",
     "ExportStatus",
 ]

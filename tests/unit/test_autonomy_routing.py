@@ -9,6 +9,7 @@ Dependencies: pytest, canonical enums, recommendation apply service, and mock ob
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import date
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -23,7 +24,6 @@ from services.common.enums import AutonomyMode, ReviewStatus, RiskLevel
 from services.db.models.audit import AuditSourceSurface
 from services.db.repositories.recommendation_journal_repo import (
     JournalEntryRecord,
-    JournalLineRecord,
     JournalWithLinesResult,
 )
 
@@ -96,6 +96,7 @@ class _MockRepository:
         self.journals: dict[UUID, _MockJournalEntry] = {}
         self.journal_sequence: int = 0
         self.audit_records: list[_MockAuditRecord] = []
+        self.postings: dict[UUID, list[dict[str, Any]]] = {}
 
     def get_recommendation(self, *, recommendation_id: UUID) -> _MockRecommendation | None:
         return self.recommendations.get(recommendation_id)
@@ -121,7 +122,7 @@ class _MockRepository:
             close_run_id=entry.close_run_id,
             recommendation_id=entry.recommendation_id,
             journal_number=entry.journal_number,
-            posting_date=entry.posting_date or uuid4(),
+            posting_date=entry.posting_date or date.today(),
             status=entry.status,
             description=entry.description,
             total_debits=entry.total_debits,
@@ -137,7 +138,7 @@ class _MockRepository:
             created_at=None,
             updated_at=None,
         )
-        return JournalWithLinesResult(entry=record, lines=())
+        return JournalWithLinesResult(entry=record, lines=(), postings=())
 
     def create_journal_entry(self, **kwargs: Any) -> _MockJournalEntry:
         entry = _MockJournalEntry(
@@ -192,6 +193,10 @@ class _MockRepository:
         self.journal_sequence += 1
         return self.journal_sequence
 
+    def create_journal_posting(self, **kwargs: Any) -> Any:
+        self.postings.setdefault(kwargs["journal_entry_id"], []).append(kwargs)
+        return kwargs
+
 
 class _MockAuditService:
     """Minimal in-memory double for the audit service."""
@@ -237,6 +242,22 @@ class _MockAuditService:
         return record
 
 
+class _MockDbSession:
+    """Minimal DB session double for close-run version lookups during posting."""
+
+    def get(self, model: Any, key: UUID) -> Any:
+        return type(
+            "_CloseRunRow",
+            (),
+            {
+                "id": key,
+                "current_version_no": 1,
+                "period_start": date(2026, 1, 1),
+                "period_end": date(2026, 1, 31),
+            },
+        )()
+
+
 def _make_actor() -> ActorContext:
     return ActorContext(
         user_id=uuid4(),
@@ -278,6 +299,7 @@ class TestAutonomyRouting:
         service = RecommendationApplyService(
             repository=repo,
             audit_service=audit,
+            db_session=_MockDbSession(),
         )
         return service, repo, audit
 
@@ -520,6 +542,7 @@ class TestJournalApprovalRejectionAndApply:
         service = RecommendationApplyService(
             repository=repo,
             audit_service=audit,
+            db_session=_MockDbSession(),
         )
         return service, repo, audit
 
@@ -574,6 +597,7 @@ class TestJournalApprovalRejectionAndApply:
             entity_id=entry.entity_id,
             close_run_id=entry.close_run_id,
             actor=_make_actor(),
+            posting_target="internal_ledger",
             reason="Applied to working state",
             trace_id="test-trace",
         )
@@ -593,6 +617,7 @@ class TestJournalApprovalRejectionAndApply:
                 entity_id=entry.entity_id,
                 close_run_id=entry.close_run_id,
                 actor=_make_actor(),
+                posting_target="internal_ledger",
                 reason=None,
                 trace_id="test-trace",
             )

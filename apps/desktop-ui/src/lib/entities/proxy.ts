@@ -33,17 +33,26 @@ export async function proxyEntityRequest(
   );
 
   const responseHeaders = new Headers();
-  const contentType = backendResponse.headers.get("content-type");
-  const setCookie = backendResponse.headers.get("set-cookie");
-  if (contentType !== null) {
-    responseHeaders.set("content-type", contentType);
+  for (const headerName of [
+    "cache-control",
+    "content-disposition",
+    "content-length",
+    "content-type",
+    "etag",
+    "last-modified",
+  ]) {
+    const headerValue = backendResponse.headers.get(headerName);
+    if (headerValue !== null) {
+      responseHeaders.set(headerName, headerValue);
+    }
   }
 
+  const setCookie = backendResponse.headers.get("set-cookie");
   if (setCookie !== null) {
     responseHeaders.append("set-cookie", setCookie);
   }
 
-  return new Response(await backendResponse.text(), {
+  return new Response(await backendResponse.arrayBuffer(), {
     headers: responseHeaders,
     status: backendResponse.status,
     statusText: backendResponse.statusText,

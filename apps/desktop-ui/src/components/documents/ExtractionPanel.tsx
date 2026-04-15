@@ -1,42 +1,63 @@
 /*
 Purpose: Render extracted-field context for the selected document review queue item.
-Scope: Field summaries, confidence cues, issue context, and reviewer action controls beside the queue table.
+Scope: Field summaries, evidence inspection, reviewer notes, persisted review actions,
+and extracted-field correction controls beside the queue table.
 Dependencies: Shared review UI primitives plus document review types and page-provided callbacks.
 */
 
 "use client";
 
-import { ConfidenceBadge, DiffViewer } from "@accounting-ai-agent/ui";
-import { type ReactElement } from "react";
+import { ConfidenceBadge } from "@accounting-ai-agent/ui";
+import { useState, type ChangeEvent, type ReactElement } from "react";
 import {
+  type AutoTransactionMatchSummary,
+  type DocumentVerificationChecklist,
   type DocumentReviewQueueItem,
   type EvidenceReference,
-  type ReviewDraftDecision,
 } from "../../lib/documents";
 
 export type ExtractionPanelProps = {
-  draftDecision: ReviewDraftDecision | null;
+  actionNote: string;
+  fieldMutationId: string | null;
+  checklist: DocumentVerificationChecklist | null;
+  onFieldCorrection: (input: {
+    correctedType: string;
+    correctedValue: string;
+    fieldId: string;
+  }) => Promise<void> | void;
+  onChecklistChange: (
+    field: keyof DocumentVerificationChecklist,
+    nextValue: boolean,
+  ) => void;
+  onNoteChange: (value: string) => void;
   onOpenEvidence: (input: {
     references: readonly EvidenceReference[];
     sourceLabel: string;
     title: string;
   }) => void;
-  onReviewAction: (documentId: string, decision: ReviewDraftDecision) => void;
+  onReviewAction: (
+    documentId: string,
+    decision: "approved" | "rejected" | "needs_info",
+  ) => Promise<void> | void;
+  reviewMutationDocumentId: string | null;
   selectedDocument: DocumentReviewQueueItem | null;
 };
 
-/**
- * Purpose: Display extraction context and reviewer controls for one selected queue document.
- * Inputs: Selected document summary, optional local draft decision, and action/evidence callbacks.
- * Outputs: A detail panel aligned with the evidence-first review workflow.
- * Behavior: Presents field evidence links before actions so reviewers can validate context first.
- */
 export function ExtractionPanel({
-  draftDecision,
+  actionNote,
+  fieldMutationId,
+  checklist,
+  onFieldCorrection,
+  onChecklistChange,
+  onNoteChange,
   onOpenEvidence,
   onReviewAction,
+  reviewMutationDocumentId,
   selectedDocument,
 }: Readonly<ExtractionPanelProps>): ReactElement {
+  const [editingFieldId, setEditingFieldId] = useState<string | null>(null);
+  const [fieldDraftValue, setFieldDraftValue] = useState("");
+
   if (selectedDocument === null) {
     return (
       <section className="extraction-panel-empty" aria-live="polite">
@@ -45,6 +66,14 @@ export function ExtractionPanel({
       </section>
     );
   }
+
+  const isReviewMutating = reviewMutationDocumentId === selectedDocument.id;
+  const approvalReady =
+    checklist !== null &&
+    checklist.complete &&
+    checklist.authorized &&
+    checklist.period &&
+    checklist.transactionMatch;
 
   return (
     <section className="extraction-panel-shell" aria-label="Extraction panel">
@@ -57,16 +86,26 @@ export function ExtractionPanel({
             {selectedDocument.mimeType}
           </p>
         </div>
-        <div className="review-pane-badge-row">
+      <div className="review-pane-badge-row">
           <ConfidenceBadge
             score={selectedDocument.classificationConfidence}
             tone={selectedDocument.confidenceBand}
           />
-          {draftDecision ? (
-            <span className="review-draft-chip">Draft decision: {formatLabel(draftDecision)}</span>
+          {selectedDocument.latestExtraction ? (
+            <span className="review-draft-chip">
+              Extraction v{selectedDocument.latestExtraction.versionNo}
+              {selectedDocument.latestExtraction.approvedVersion ? " approved" : " pending"}
+            </span>
           ) : null}
         </div>
       </header>
+
+      {selectedDocument.latestExtraction?.autoApproved ? (
+        <div className="status-banner success" role="status">
+          System-approved in reduced interruption mode because extraction and transaction-linking
+          checks passed without blockers.
+        </div>
+      ) : null}
 
       <div className="panel-action-row review-linked-actions">
         <button
@@ -84,38 +123,47 @@ export function ExtractionPanel({
         </button>
         <button
           className="secondary-button compact-action"
-          disabled={!selectedDocument.hasException}
-          onClick={() => onReviewAction(selectedDocument.id, "approved")}
+          disabled={isReviewMutating || !approvalReady}
+          onClick={() => {
+            void onReviewAction(selectedDocument.id, "approved");
+          }}
           type="button"
         >
-          Approve
+          {isReviewMutating ? "Saving..." : "Approve"}
         </button>
         <button
           className="secondary-button compact-action"
-          disabled={!selectedDocument.hasException}
-          onClick={() => onReviewAction(selectedDocument.id, "rejected")}
+          disabled={isReviewMutating}
+          onClick={() => {
+            void onReviewAction(selectedDocument.id, "rejected");
+          }}
           type="button"
         >
           Reject
         </button>
         <button
           className="secondary-button compact-action"
-          onClick={() => onReviewAction(selectedDocument.id, "needs_info")}
+          disabled={isReviewMutating}
+          onClick={() => {
+            void onReviewAction(selectedDocument.id, "needs_info");
+          }}
           type="button"
         >
           Request info
         </button>
       </div>
 
-      {draftDecision !== null ? (
-        <DiffViewer
-          afterLabel="Draft routing"
-          afterValue={buildDraftDecisionSummary(draftDecision)}
-          beforeLabel="Current review state"
-          beforeValue={buildCurrentReviewSummary(selectedDocument)}
-          title="Decision impact"
-        />
-      ) : null}
+      <label className="form-label" htmlFor="document-review-note">
+        Reviewer note
+      </label>
+      <textarea
+        className="native-textarea"
+        id="document-review-note"
+        onChange={(event: ChangeEvent<HTMLTextAreaElement>) => onNoteChange(event.target.value)}
+        placeholder="Add approval context, rejection rationale, or correction notes."
+        rows={3}
+        value={actionNote}
+      />
 
       <div className="exception-summary-row">
         {selectedDocument.issueTypes.length === 0 ? (
@@ -132,6 +180,148 @@ export function ExtractionPanel({
         )}
       </div>
 
+      <section className="dashboard-row">
+        <strong className="close-run-row-title">Phase 1 review checklist</strong>
+        <p className="form-helper">
+          The accountant workflow requires completeness, authorization, period alignment, and
+          transaction matching before Collection can move into Processing.
+        </p>
+        <div className="entity-card-list">
+          <label className="entity-card">
+            <input
+              checked={checklist?.complete ?? false}
+              onChange={(event) => {
+                onChecklistChange("complete", event.target.checked);
+              }}
+              type="checkbox"
+            />
+            <strong>Complete</strong>
+            <p className="form-helper">All required source support is present for this document.</p>
+          </label>
+          <label className="entity-card">
+            <input
+              checked={checklist?.authorized ?? false}
+              onChange={(event) => {
+                onChecklistChange("authorized", event.target.checked);
+              }}
+              type="checkbox"
+            />
+            <strong>Authorized</strong>
+            <p className="form-helper">The document is approved and valid for posting.</p>
+          </label>
+          <label className="entity-card">
+            <input
+              checked={checklist?.period ?? false}
+              onChange={(event) => {
+                onChecklistChange("period", event.target.checked);
+              }}
+              type="checkbox"
+            />
+            <strong>Correct period</strong>
+            <p className="form-helper">The source belongs to this close-run reporting window.</p>
+          </label>
+          <label className="entity-card">
+            <input
+              checked={checklist?.transactionMatch ?? false}
+              onChange={(event) => {
+                onChecklistChange("transactionMatch", event.target.checked);
+              }}
+              type="checkbox"
+            />
+            <strong>Matched to transaction</strong>
+            <p className="form-helper">Evidence ties back to the transaction being recorded.</p>
+          </label>
+        </div>
+        {!approvalReady ? (
+          <p className="form-helper">
+            Approval stays locked until all four verification controls are confirmed.
+          </p>
+        ) : null}
+      </section>
+
+      {selectedDocument.latestExtraction?.autoTransactionMatch ? (
+        <section className="dashboard-row">
+          <strong className="close-run-row-title">Auto transaction link</strong>
+          <div className="dashboard-row-list">
+            <article className="dashboard-row">
+              <div className="close-run-row-header">
+                <div>
+                  <strong className="close-run-row-title">
+                    {formatAutoTransactionMatchStatus(
+                      selectedDocument.latestExtraction.autoTransactionMatch.status,
+                    )}
+                  </strong>
+                  <p className="close-run-row-meta">
+                    {formatAutoTransactionMatchMeta(
+                      selectedDocument.latestExtraction.autoTransactionMatch,
+                    )}
+                  </p>
+                </div>
+              </div>
+              {selectedDocument.latestExtraction.autoTransactionMatch.reasons.map((reason) => (
+                <p className="form-helper" key={`${selectedDocument.id}:${reason}`}>
+                  {reason}
+                </p>
+              ))}
+            </article>
+          </div>
+        </section>
+      ) : null}
+
+      {selectedDocument.openIssues.length > 0 ? (
+        <section className="dashboard-row">
+          <strong className="close-run-row-title">Open verification findings</strong>
+          <div className="dashboard-row-list">
+            {selectedDocument.openIssues.map((issue) => (
+              <article className="dashboard-row" key={issue.id}>
+                <div className="close-run-row-header">
+                  <div>
+                    <strong className="close-run-row-title">{formatLabel(issue.issueType)}</strong>
+                    <p className="close-run-row-meta">
+                      {formatLabel(issue.severity)} • {formatLabel(issue.status)}
+                    </p>
+                  </div>
+                </div>
+                <p className="form-helper">
+                  {typeof issue.details.reason === "string"
+                    ? issue.details.reason
+                    : "This finding must be resolved or explicitly dispositioned before approval."}
+                </p>
+              </article>
+            ))}
+          </div>
+        </section>
+      ) : null}
+
+      <dl className="entity-meta-grid document-review-summary-grid">
+        <div>
+          <dt>Period state</dt>
+          <dd>{formatPeriodState(selectedDocument.periodState)}</dd>
+        </div>
+        <div>
+          <dt>OCR required</dt>
+          <dd>{selectedDocument.ocrRequired ? "Yes" : "No"}</dd>
+        </div>
+        <div>
+          <dt>Extraction schema</dt>
+          <dd>
+            {selectedDocument.latestExtraction
+              ? `${selectedDocument.latestExtraction.schemaName} ${selectedDocument.latestExtraction.schemaVersion}`
+              : "Not available"}
+          </dd>
+        </div>
+        <div>
+          <dt>Extraction review</dt>
+          <dd>
+            {selectedDocument.latestExtraction?.approvedVersion
+              ? "Approved"
+              : selectedDocument.latestExtraction
+                ? "Pending review"
+                : "Not extracted"}
+          </dd>
+        </div>
+      </dl>
+
       {selectedDocument.extractedFields.length === 0 ? (
         <div className="status-banner warning" role="status">
           No structured fields were extracted for this document yet. Review source evidence before
@@ -139,45 +329,101 @@ export function ExtractionPanel({
         </div>
       ) : (
         <ul className="extraction-field-list">
-          {selectedDocument.extractedFields.map((field) => (
-            <li
-              className={`extraction-field-row ${field.confidence !== null && field.confidence < 0.75 ? "is-low-confidence" : ""}`}
-              key={field.id}
-            >
-              <div>
-                <h4>{field.label}</h4>
-                <p>{field.value}</p>
-              </div>
-              <div className="field-row-actions">
-                <ConfidenceBadge score={field.confidence} size="compact" />
-                <button
-                  className="secondary-button compact-action"
-                  onClick={() =>
-                    onOpenEvidence({
-                      references: field.evidenceRefs,
-                      sourceLabel: selectedDocument.originalFilename,
-                      title: `${field.label} evidence`,
-                    })
-                  }
-                  type="button"
-                >
-                  View evidence
-                </button>
-              </div>
-            </li>
-          ))}
+          {selectedDocument.extractedFields.map((field) => {
+            const isEditing = editingFieldId === field.id;
+            const isSaving = fieldMutationId === field.id;
+
+            return (
+              <li
+                className={`extraction-field-row ${field.confidence !== null && field.confidence < 0.75 ? "is-low-confidence" : ""}`}
+                key={field.id}
+              >
+                <div>
+                  <h4>
+                    {field.label}
+                    {field.isHumanCorrected ? (
+                      <span className="review-draft-chip">Human corrected</span>
+                    ) : null}
+                  </h4>
+                  {isEditing ? (
+                    <textarea
+                      className="native-textarea"
+                      onChange={(event: ChangeEvent<HTMLTextAreaElement>) =>
+                        setFieldDraftValue(event.target.value)
+                      }
+                      rows={2}
+                      value={fieldDraftValue}
+                    />
+                  ) : (
+                    <p>{field.value}</p>
+                  )}
+                </div>
+                <div className="field-row-actions">
+                  <ConfidenceBadge score={field.confidence} size="compact" />
+                  <button
+                    className="secondary-button compact-action"
+                    onClick={() =>
+                      onOpenEvidence({
+                        references: field.evidenceRefs,
+                        sourceLabel: selectedDocument.originalFilename,
+                        title: `${field.label} evidence`,
+                      })
+                    }
+                    type="button"
+                  >
+                    View evidence
+                  </button>
+                  {isEditing ? (
+                    <>
+                      <button
+                        className="secondary-button compact-action"
+                        disabled={isSaving || fieldDraftValue.trim().length === 0}
+                        onClick={() => {
+                          void onFieldCorrection({
+                            correctedType: field.fieldType,
+                            correctedValue: fieldDraftValue,
+                            fieldId: field.id,
+                          });
+                          setEditingFieldId(null);
+                        }}
+                        type="button"
+                      >
+                        {isSaving ? "Saving..." : "Save"}
+                      </button>
+                      <button
+                        className="secondary-button compact-action"
+                        disabled={isSaving}
+                        onClick={() => {
+                          setEditingFieldId(null);
+                          setFieldDraftValue("");
+                        }}
+                        type="button"
+                      >
+                        Cancel
+                      </button>
+                    </>
+                  ) : (
+                    <button
+                      className="secondary-button compact-action"
+                      onClick={() => {
+                        setEditingFieldId(field.id);
+                        setFieldDraftValue(field.value === "Not detected" ? "" : field.value);
+                      }}
+                      type="button"
+                    >
+                      Edit field
+                    </button>
+                  )}
+                </div>
+              </li>
+            );
+          })}
         </ul>
       )}
     </section>
   );
 }
 
-/**
- * Purpose: Convert canonical snake_case values to short title-case labels for UI chips.
- * Inputs: Canonical workflow or issue label value.
- * Outputs: Human-readable display text.
- * Behavior: Applies deterministic string transformation without maintaining a second label map.
- */
 function formatLabel(value: string): string {
   return value
     .split("_")
@@ -185,36 +431,53 @@ function formatLabel(value: string): string {
     .join(" ");
 }
 
-function buildCurrentReviewSummary(selectedDocument: DocumentReviewQueueItem): string {
-  const issues =
-    selectedDocument.issueTypes.length === 0
-      ? "No active exceptions"
-      : selectedDocument.issueTypes.map(formatLabel).join(", ");
-
-  return [
-    `Status: ${formatLabel(selectedDocument.status)}`,
-    `Period state: ${
-      selectedDocument.periodState === "in_period"
-        ? "In period"
-        : selectedDocument.periodState === "out_of_period"
-          ? "Outside period"
-          : "Not detected"
-    }`,
-    `Exceptions: ${issues}`,
-    `OCR required: ${selectedDocument.ocrRequired ? "Yes" : "No"}`,
-  ].join("\n");
+function formatPeriodState(value: DocumentReviewQueueItem["periodState"]): string {
+  if (value === "in_period") {
+    return "Within close-run period";
+  }
+  if (value === "out_of_period") {
+    return "Outside close-run period";
+  }
+  return "Period not detected";
 }
 
-function buildDraftDecisionSummary(draftDecision: ReviewDraftDecision): string {
-  const outcomeMap: Readonly<Record<ReviewDraftDecision, string>> = {
-    approved: "Move the document toward phase-gate clearance after review logging.",
-    needs_info: "Keep the document in review and request more supporting evidence.",
-    rejected: "Preserve the block and record explicit reviewer rejection context.",
-  };
+function formatAutoTransactionMatchStatus(
+  value: AutoTransactionMatchSummary["status"],
+): string {
+  if (value === "not_applicable") {
+    return "Not applicable";
+  }
+  if (value === "matched") {
+    return "Matched automatically";
+  }
+  return "Match not found";
+}
 
-  return [
-    `Draft action: ${formatLabel(draftDecision)}`,
-    `Routing: ${outcomeMap[draftDecision]}`,
-    "Audit trail: Evidence links and source metadata remain attached.",
-  ].join("\n");
+function formatAutoTransactionMatchMeta(
+  summary: AutoTransactionMatchSummary,
+): string {
+  if (summary.status === "not_applicable") {
+    return "No separate transaction link is required for this document type.";
+  }
+
+  const fragments: string[] = [];
+  if (summary.matchedDocumentFilename) {
+    fragments.push(summary.matchedDocumentFilename);
+  }
+  if (summary.matchedLineNo !== null) {
+    fragments.push(`line ${summary.matchedLineNo}`);
+  }
+  if (summary.matchedAmount) {
+    fragments.push(summary.matchedAmount);
+  }
+  if (summary.matchedDate) {
+    fragments.push(summary.matchedDate);
+  }
+  if (summary.score !== null) {
+    fragments.push(`score ${Math.round(summary.score * 100)}%`);
+  }
+  if (fragments.length === 0) {
+    return "No deterministic counterpart details were captured.";
+  }
+  return fragments.join(" • ");
 }

@@ -1,6 +1,6 @@
 /*
-Purpose: Render the document exception queue table with filters and reviewer decisions.
-Scope: Exception-focused filtering, row selection, confidence indicators, and inline review actions.
+Purpose: Render the document exception queue table with filters and review-panel routing.
+Scope: Exception-focused filtering, row selection, confidence indicators, and evidence access.
 Dependencies: Shared review UI primitives plus document review domain helpers and page-provided callbacks.
 */
 
@@ -12,7 +12,6 @@ import {
   type DocumentReviewFilter,
   type DocumentReviewQueueCounts,
   type DocumentReviewQueueItem,
-  type ReviewDraftDecision,
 } from "../../lib/documents";
 
 export type DocumentReviewTableProps = {
@@ -20,10 +19,9 @@ export type DocumentReviewTableProps = {
   items: readonly DocumentReviewQueueItem[];
   onFilterChange: (filter: DocumentReviewFilter) => void;
   onOpenEvidence: (documentId: string) => void;
-  onReviewAction: (documentId: string, decision: ReviewDraftDecision) => void;
   onSelectDocument: (documentId: string) => void;
   queueCounts: DocumentReviewQueueCounts;
-  reviewDecisions: Readonly<Record<string, ReviewDraftDecision | undefined>>;
+  reviewMutationDocumentId: string | null;
   selectedDocumentId: string | null;
 };
 
@@ -41,20 +39,19 @@ const filterDefinitions: readonly QueueFilterDefinition[] = [
 ];
 
 /**
- * Purpose: Render the collection-phase document review queue and in-row reviewer controls.
- * Inputs: Queue rows, filter state, current selection, and review action callbacks.
+ * Purpose: Render the collection-phase document review queue and route reviewers into the checklist panel.
+ * Inputs: Queue rows, filter state, current selection, and evidence callbacks.
  * Outputs: A dense table optimized for side-by-side queue and evidence workflows.
- * Behavior: Keeps filters explicit and surfaces exception chips before reviewer action buttons.
+ * Behavior: Keeps filters explicit while preventing operators from bypassing the PDF verification checklist.
  */
 export function DocumentReviewTable({
   activeFilter,
   items,
   onFilterChange,
   onOpenEvidence,
-  onReviewAction,
   onSelectDocument,
   queueCounts,
-  reviewDecisions,
+  reviewMutationDocumentId,
   selectedDocumentId,
 }: Readonly<DocumentReviewTableProps>): ReactElement {
   return (
@@ -93,13 +90,13 @@ export function DocumentReviewTable({
                 <th scope="col">Confidence</th>
                 <th scope="col">Exceptions</th>
                 <th scope="col">Period</th>
-                <th scope="col">Reviewer actions</th>
+                <th scope="col">Review routing</th>
               </tr>
             </thead>
             <tbody>
               {items.map((item) => {
                 const selected = selectedDocumentId === item.id;
-                const draftDecision = reviewDecisions[item.id];
+                const isMutating = reviewMutationDocumentId === item.id;
                 return (
                   <tr
                     aria-selected={selected}
@@ -184,39 +181,21 @@ export function DocumentReviewTable({
                         </button>
                         <button
                           className="secondary-button compact-action"
-                          disabled={!item.hasException}
                           onClick={(event) => {
                             event.stopPropagation();
-                            onReviewAction(item.id, "approved");
+                            onSelectDocument(item.id);
                           }}
                           type="button"
                         >
-                          Approve
-                        </button>
-                        <button
-                          className="secondary-button compact-action"
-                          disabled={!item.hasException}
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            onReviewAction(item.id, "rejected");
-                          }}
-                          type="button"
-                        >
-                          Reject
-                        </button>
-                        <button
-                          className="secondary-button compact-action"
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            onReviewAction(item.id, "needs_info");
-                          }}
-                          type="button"
-                        >
-                          Request info
+                          Review in panel
                         </button>
                       </div>
-                      {draftDecision ? (
-                        <p className="review-decision-label">Draft: {formatLabel(draftDecision)}</p>
+                      {isMutating ? (
+                        <p className="review-decision-label">Persisting review action...</p>
+                      ) : selected ? (
+                        <p className="review-decision-label">
+                          Use the side panel checklist to approve, reject, or request info.
+                        </p>
                       ) : null}
                     </td>
                   </tr>

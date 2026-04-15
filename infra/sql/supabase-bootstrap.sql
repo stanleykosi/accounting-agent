@@ -1172,5 +1172,179 @@ CREATE INDEX ix_jobs_task_name_status ON jobs (task_name, status);
 
 UPDATE alembic_version SET version_num='0013_jobs' WHERE alembic_version.version_num = '0012_chat_action_plans';
 
-COMMIT;
+-- Running upgrade 0013_jobs -> 0014_export_distribution_records
 
+CREATE TABLE artifacts (
+    id UUID DEFAULT gen_random_uuid() NOT NULL,
+    close_run_id UUID NOT NULL,
+    report_run_id UUID,
+    artifact_type TEXT NOT NULL,
+    storage_key TEXT NOT NULL,
+    mime_type TEXT NOT NULL,
+    checksum TEXT NOT NULL,
+    idempotency_key TEXT NOT NULL,
+    version_no INTEGER NOT NULL,
+    released_at TIMESTAMP WITH TIME ZONE,
+    metadata JSONB DEFAULT '{}'::jsonb NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
+    CONSTRAINT pk_artifacts PRIMARY KEY (id),
+    CONSTRAINT ck_artifacts_artifact_type_valid CHECK (artifact_type IN ('gl_posting_package', 'report_excel', 'report_pdf', 'audit_trail', 'evidence_pack', 'quickbooks_export')),
+    CONSTRAINT ck_artifacts_version_no_positive CHECK (version_no >= 1),
+    CONSTRAINT uq_artifacts_type_idempotency UNIQUE (artifact_type, idempotency_key),
+    CONSTRAINT fk_artifacts_close_run_id_close_runs FOREIGN KEY(close_run_id) REFERENCES close_runs (id),
+    CONSTRAINT fk_artifacts_report_run_id_report_runs FOREIGN KEY(report_run_id) REFERENCES report_runs (id)
+);
+
+CREATE INDEX ix_artifacts_close_run_id ON artifacts (close_run_id);
+
+CREATE INDEX ix_artifacts_artifact_type ON artifacts (artifact_type);
+
+CREATE INDEX ix_artifacts_idempotency_key ON artifacts (idempotency_key);
+
+CREATE INDEX ix_artifacts_close_run_version ON artifacts (close_run_id, version_no);
+
+CREATE TABLE export_runs (
+    id UUID DEFAULT gen_random_uuid() NOT NULL,
+    close_run_id UUID NOT NULL,
+    version_no INTEGER NOT NULL,
+    idempotency_key TEXT NOT NULL,
+    status TEXT NOT NULL,
+    failure_reason TEXT,
+    artifact_manifest JSONB DEFAULT '[]'::jsonb NOT NULL,
+    evidence_pack_key TEXT,
+    triggered_by_user_id UUID,
+    completed_at TIMESTAMP WITH TIME ZONE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
+    CONSTRAINT pk_export_runs PRIMARY KEY (id),
+    CONSTRAINT ck_export_runs_export_status_valid CHECK (status IN ('pending', 'generating', 'completed', 'failed', 'canceled')),
+    CONSTRAINT ck_export_runs_export_version_no_positive CHECK (version_no >= 1),
+    CONSTRAINT uq_export_runs_close_run_idempotency UNIQUE (close_run_id, idempotency_key),
+    CONSTRAINT fk_export_runs_close_run_id_close_runs FOREIGN KEY(close_run_id) REFERENCES close_runs (id),
+    CONSTRAINT fk_export_runs_triggered_by_user_id_users FOREIGN KEY(triggered_by_user_id) REFERENCES users (id)
+);
+
+CREATE INDEX ix_export_runs_close_run_id ON export_runs (close_run_id);
+
+CREATE INDEX ix_export_runs_status ON export_runs (status);
+
+CREATE INDEX ix_export_runs_idempotency_key ON export_runs (idempotency_key);
+
+CREATE TABLE export_distributions (
+    id UUID DEFAULT gen_random_uuid() NOT NULL,
+    export_run_id UUID NOT NULL,
+    entity_id UUID NOT NULL,
+    close_run_id UUID NOT NULL,
+    version_no INTEGER NOT NULL,
+    recipient_name TEXT NOT NULL,
+    recipient_email TEXT NOT NULL,
+    recipient_role TEXT,
+    delivery_channel TEXT NOT NULL,
+    note TEXT,
+    distributed_by_user_id UUID,
+    distributed_at TIMESTAMP WITH TIME ZONE NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
+    CONSTRAINT pk_export_distributions PRIMARY KEY (id),
+    CONSTRAINT ck_export_distributions_export_distribution_delivery_channel_valid CHECK (delivery_channel IN ('secure_email', 'management_portal', 'board_pack', 'file_share')),
+    CONSTRAINT uq_export_distributions_export_recipient_channel_time UNIQUE (export_run_id, recipient_email, delivery_channel, distributed_at),
+    CONSTRAINT fk_export_distributions_export_run_id_export_runs FOREIGN KEY(export_run_id) REFERENCES export_runs (id) ON DELETE CASCADE,
+    CONSTRAINT fk_export_distributions_entity_id_entities FOREIGN KEY(entity_id) REFERENCES entities (id),
+    CONSTRAINT fk_export_distributions_close_run_id_close_runs FOREIGN KEY(close_run_id) REFERENCES close_runs (id),
+    CONSTRAINT fk_export_distributions_distributed_by_user_id_users FOREIGN KEY(distributed_by_user_id) REFERENCES users (id)
+);
+
+CREATE INDEX ix_export_distributions_export_run_id ON export_distributions (export_run_id);
+
+CREATE INDEX ix_export_distributions_distributed_at ON export_distributions (distributed_at);
+
+CREATE INDEX ix_export_distributions_close_run_id ON export_distributions (close_run_id);
+
+UPDATE alembic_version SET version_num='0014_export_distribution_records' WHERE alembic_version.version_num = '0013_jobs';
+
+-- Running upgrade 0014_export_distribution_records -> 0015_journal_postings
+
+CREATE TABLE journal_postings (
+    id UUID DEFAULT gen_random_uuid() NOT NULL,
+    journal_entry_id UUID NOT NULL,
+    entity_id UUID NOT NULL,
+    close_run_id UUID NOT NULL,
+    version_no INTEGER NOT NULL,
+    posting_target VARCHAR(40) NOT NULL,
+    provider VARCHAR(60),
+    status VARCHAR(30) DEFAULT 'completed' NOT NULL,
+    artifact_id UUID,
+    artifact_type VARCHAR(60),
+    note TEXT,
+    posting_metadata JSONB DEFAULT '{}'::jsonb NOT NULL,
+    posted_by_user_id UUID,
+    posted_at TIMESTAMP WITH TIME ZONE NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
+    CONSTRAINT pk_journal_postings PRIMARY KEY (id),
+    CONSTRAINT ck_journal_postings_journal_posting_target_valid CHECK (posting_target IN ('internal_ledger', 'external_erp_package')),
+    CONSTRAINT ck_journal_postings_journal_posting_status_valid CHECK (status IN ('completed', 'failed')),
+    CONSTRAINT ck_journal_postings_journal_posting_version_no_positive CHECK (version_no >= 1),
+    CONSTRAINT ck_journal_postings_journal_posting_artifact_matches_target CHECK ((posting_target = 'internal_ledger' AND artifact_id IS NULL) OR (posting_target = 'external_erp_package' AND artifact_id IS NOT NULL)),
+    CONSTRAINT ck_journal_postings_journal_posting_provider_valid CHECK (provider IS NULL OR provider IN ('generic_erp', 'quickbooks_online')),
+    CONSTRAINT ck_journal_postings_journal_posting_artifact_type_valid CHECK (artifact_type IS NULL OR artifact_type IN ('gl_posting_package', 'quickbooks_export')),
+    CONSTRAINT uq_journal_postings_journal_entry_id UNIQUE (journal_entry_id),
+    CONSTRAINT fk_journal_postings_journal_entry_id_journal_entries FOREIGN KEY(journal_entry_id) REFERENCES journal_entries (id) ON DELETE CASCADE,
+    CONSTRAINT fk_journal_postings_entity_id_entities FOREIGN KEY(entity_id) REFERENCES entities (id) ON DELETE CASCADE,
+    CONSTRAINT fk_journal_postings_close_run_id_close_runs FOREIGN KEY(close_run_id) REFERENCES close_runs (id) ON DELETE CASCADE,
+    CONSTRAINT fk_journal_postings_artifact_id_artifacts FOREIGN KEY(artifact_id) REFERENCES artifacts (id) ON DELETE SET NULL,
+    CONSTRAINT fk_journal_postings_posted_by_user_id_users FOREIGN KEY(posted_by_user_id) REFERENCES users (id)
+);
+
+CREATE INDEX ix_journal_postings_close_run_id ON journal_postings (close_run_id);
+
+CREATE INDEX ix_journal_postings_posting_target ON journal_postings (posting_target);
+
+CREATE INDEX ix_journal_postings_status ON journal_postings (status);
+
+UPDATE alembic_version SET version_num='0015_journal_postings' WHERE alembic_version.version_num = '0014_export_distribution_records';
+
+-- Running upgrade 0015_journal_postings -> 0016_supporting_schedules
+
+CREATE TABLE supporting_schedules (
+    id UUID DEFAULT gen_random_uuid() NOT NULL,
+    close_run_id UUID NOT NULL,
+    schedule_type VARCHAR(40) NOT NULL,
+    status VARCHAR(20) DEFAULT 'draft' NOT NULL,
+    note TEXT,
+    reviewed_by_user_id UUID,
+    reviewed_at TIMESTAMP WITH TIME ZONE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
+    CONSTRAINT pk_supporting_schedules PRIMARY KEY (id),
+    CONSTRAINT ck_supporting_schedules_supporting_schedule_type_valid CHECK (schedule_type IN ('fixed_assets', 'loan_amortisation', 'accrual_tracker', 'budget_vs_actual')),
+    CONSTRAINT ck_supporting_schedules_supporting_schedule_status_valid CHECK (status IN ('draft', 'in_review', 'approved', 'not_applicable')),
+    CONSTRAINT uq_supporting_schedules_close_run_type UNIQUE (close_run_id, schedule_type),
+    CONSTRAINT fk_supporting_schedules_close_run_id_close_runs FOREIGN KEY(close_run_id) REFERENCES close_runs (id) ON DELETE CASCADE,
+    CONSTRAINT fk_supporting_schedules_reviewed_by_user_id_users FOREIGN KEY(reviewed_by_user_id) REFERENCES users (id)
+);
+
+CREATE INDEX ix_supporting_schedules_close_run_id ON supporting_schedules (close_run_id);
+
+CREATE INDEX ix_supporting_schedules_close_run_status ON supporting_schedules (close_run_id, status);
+
+CREATE TABLE supporting_schedule_rows (
+    id UUID DEFAULT gen_random_uuid() NOT NULL,
+    supporting_schedule_id UUID NOT NULL,
+    row_ref VARCHAR(200) NOT NULL,
+    line_no INTEGER NOT NULL,
+    payload JSONB DEFAULT '{}'::jsonb NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
+    CONSTRAINT pk_supporting_schedule_rows PRIMARY KEY (id),
+    CONSTRAINT uq_supporting_schedule_rows_schedule_row_ref UNIQUE (supporting_schedule_id, row_ref),
+    CONSTRAINT uq_supporting_schedule_rows_schedule_line_no UNIQUE (supporting_schedule_id, line_no),
+    CONSTRAINT fk_supporting_schedule_rows_supporting_schedule_id_supporting_schedules FOREIGN KEY(supporting_schedule_id) REFERENCES supporting_schedules (id) ON DELETE CASCADE
+);
+
+CREATE INDEX ix_supporting_schedule_rows_schedule_id ON supporting_schedule_rows (supporting_schedule_id);
+
+UPDATE alembic_version SET version_num='0016_supporting_schedules' WHERE alembic_version.version_num = '0015_journal_postings';
+
+COMMIT;

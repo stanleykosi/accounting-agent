@@ -1,5 +1,5 @@
 """
-Purpose: Expose the canonical FastAPI application and OpenAPI schema for the local demo API.
+Purpose: Expose the canonical FastAPI application and OpenAPI schema for the accounting API.
 Scope: Application construction, lifecycle logging, stable operation IDs,
 and seed contract routes for health and metadata discovery.
 Dependencies: FastAPI, shared runtime settings, structured logging,
@@ -28,6 +28,7 @@ from apps.api.app.routes.recommendations import router as recommendations_router
 from apps.api.app.routes.reconciliation import router as reconciliation_router
 from apps.api.app.routes.report_templates import router as report_templates_router
 from apps.api.app.routes.reports import router as reports_router
+from apps.api.app.routes.supporting_schedules import router as supporting_schedules_router
 from fastapi import APIRouter, FastAPI, Request
 from fastapi.routing import APIRoute
 from services.common.logging import configure_logging, get_logger
@@ -76,11 +77,11 @@ def create_app(*, settings: AppSettings | None = None) -> FastAPI:
 
     app = FastAPI(
         title="Accounting AI Agent API",
-        summary="Canonical local API for the Accounting AI Agent workflow platform.",
+        summary="Canonical API for the Accounting AI Agent workflow platform.",
         description=(
-            "Loopback API for the Accounting AI Agent local demo. Pydantic models are the source "
-            "of truth for request and response contracts, and the OpenAPI schema drives generated "
-            "TypeScript clients."
+            "API surface for the Accounting AI Agent workflow platform. Pydantic models are the "
+            "source of truth for request and response contracts, and the OpenAPI schema drives "
+            "generated TypeScript clients."
         ),
         version=API_VERSION,
         openapi_url=_join_api_path(api_base_path, "/openapi.json"),
@@ -139,6 +140,7 @@ def create_app(*, settings: AppSettings | None = None) -> FastAPI:
     api_router.include_router(quickbooks_router)
     api_router.include_router(recommendations_router)
     api_router.include_router(reconciliation_router)
+    api_router.include_router(supporting_schedules_router)
     api_router.include_router(report_templates_router)
     api_router.include_router(reports_router)
     api_router.include_router(exports_router)

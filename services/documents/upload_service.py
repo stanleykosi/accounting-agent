@@ -9,6 +9,7 @@ and task dispatch abstractions.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import date
 from enum import StrEnum
 from typing import Any, Protocol
 from uuid import UUID, uuid4
@@ -16,10 +17,14 @@ from uuid import UUID, uuid4
 from services.auth.service import serialize_uuid
 from services.common.types import JsonObject
 from services.contracts.document_models import (
+    AutoTransactionMatchSummary,
     BatchUploadDocumentsResponse,
+    DocumentExtractionSummary,
+    DocumentIssueSummary,
     DocumentListResponse,
     DocumentProcessingDispatch,
     DocumentSummary,
+    ExtractedFieldSummary,
     UploadedDocumentResult,
 )
 from services.contracts.storage_models import CloseRunStorageScope
@@ -27,10 +32,18 @@ from services.db.models.audit import AuditSourceSurface
 from services.db.models.entity import EntityStatus
 from services.db.repositories.document_repo import (
     DocumentCloseRunAccessRecord,
+    DocumentExtractionRecord,
+    DocumentIssueRecord,
     DocumentRecord,
+    DocumentWithExtractionRecord,
+    ExtractedFieldRecord,
 )
 from services.db.repositories.entity_repo import EntityUserRecord
 from services.documents.mime import UnsupportedDocumentMimeError, sniff_document_mime
+from services.documents.transaction_matching import (
+    extract_auto_review_metadata,
+    extract_auto_transaction_match_metadata,
+)
 from services.jobs.service import JobRecord
 from services.jobs.task_names import TaskName
 from services.storage.checksums import compute_sha256_bytes
@@ -116,6 +129,13 @@ class DocumentRepositoryProtocol(Protocol):
 
     def list_documents_for_close_run(self, *, close_run_id: UUID) -> tuple[DocumentRecord, ...]:
         """Return documents attached to one close run."""
+
+    def list_documents_for_close_run_with_latest_extraction(
+        self,
+        *,
+        close_run_id: UUID,
+    ) -> tuple[DocumentWithExtractionRecord, ...]:
+        """Return close-run documents together with their latest extraction, if any."""
 
     def create_activity_event(
         self,
@@ -266,9 +286,18 @@ class DocumentUploadService:
             entity_id=entity_id,
             close_run_id=close_run_id,
         )
-        documents = self._repository.list_documents_for_close_run(close_run_id=close_run_id)
+        documents = self._repository.list_documents_for_close_run_with_latest_extraction(
+            close_run_id=close_run_id
+        )
         return DocumentListResponse(
-            documents=tuple(_build_document_summary(row) for row in documents)
+            documents=tuple(
+                _build_document_summary(
+                    row.document,
+                    row.latest_extraction,
+                    row.open_issues,
+                )
+                for row in documents
+            )
         )
 
     def upload_documents(
@@ -410,7 +439,7 @@ class DocumentUploadService:
         )
 
         return UploadedDocumentResult(
-            document=_build_document_summary(document),
+            document=_build_document_summary(document, None, ()),
             dispatch=DocumentProcessingDispatch(
                 task_id=dispatch.task_id,
                 task_name=dispatch.task_name,
@@ -478,7 +507,11 @@ class DocumentUploadService:
         return access_record
 
 
-def _build_document_summary(document: DocumentRecord) -> DocumentSummary:
+def _build_document_summary(
+    document: DocumentRecord,
+    latest_extraction: DocumentExtractionRecord | None,
+    open_issues: tuple[DocumentIssueRecord, ...],
+) -> DocumentSummary:
     """Translate a document repository record into the strict API response contract."""
 
     return DocumentSummary(
@@ -509,8 +542,122 @@ def _build_document_summary(document: DocumentRecord) -> DocumentSummary:
             if document.last_touched_by_user_id is not None
             else None
         ),
+        latest_extraction=_build_extraction_summary(latest_extraction),
+        open_issues=tuple(_build_document_issue_summary(issue) for issue in open_issues),
         created_at=document.created_at,
         updated_at=document.updated_at,
+    )
+
+
+def _build_extraction_summary(
+    extraction: DocumentExtractionRecord | None,
+) -> DocumentExtractionSummary | None:
+    """Translate the latest extraction record into the API response contract."""
+
+    if extraction is None:
+        return None
+
+    auto_review_metadata = extract_auto_review_metadata(extraction.extracted_payload)
+    auto_transaction_match = extract_auto_transaction_match_metadata(extraction.extracted_payload)
+    return DocumentExtractionSummary(
+        id=serialize_uuid(extraction.id),
+        version_no=extraction.version_no,
+        schema_name=extraction.schema_name,
+        schema_version=extraction.schema_version,
+        confidence_summary=dict(extraction.confidence_summary),
+        needs_review=extraction.needs_review,
+        approved_version=extraction.approved_version,
+        auto_approved=bool(
+            auto_review_metadata and auto_review_metadata.get("auto_approved") is True
+        ),
+        auto_transaction_match=_build_auto_transaction_match_summary(auto_transaction_match),
+        fields=tuple(_build_extracted_field_summary(field) for field in extraction.fields),
+        created_at=extraction.created_at,
+        updated_at=extraction.updated_at,
+    )
+
+
+def _build_auto_transaction_match_summary(
+    metadata: object | None,
+) -> AutoTransactionMatchSummary | None:
+    """Translate persisted extraction metadata into the strict API contract."""
+
+    if not isinstance(metadata, dict):
+        return None
+
+    reasons = metadata.get("reasons")
+    return AutoTransactionMatchSummary(
+        status=str(metadata.get("status") or "unmatched"),
+        score=float(metadata["score"]) if isinstance(metadata.get("score"), (float, int)) else None,
+        match_source=(
+            str(metadata["match_source"]) if isinstance(metadata.get("match_source"), str) else None
+        ),
+        matched_document_id=(
+            str(metadata["matched_document_id"])
+            if isinstance(metadata.get("matched_document_id"), str)
+            else None
+        ),
+        matched_document_filename=(
+            str(metadata["matched_document_filename"])
+            if isinstance(metadata.get("matched_document_filename"), str)
+            else None
+        ),
+        matched_line_no=(
+            int(metadata["matched_line_no"])
+            if isinstance(metadata.get("matched_line_no"), int)
+            else None
+        ),
+        matched_reference=(
+            str(metadata["matched_reference"])
+            if isinstance(metadata.get("matched_reference"), str)
+            else None
+        ),
+        matched_description=(
+            str(metadata["matched_description"])
+            if isinstance(metadata.get("matched_description"), str)
+            else None
+        ),
+        matched_date=(
+            date.fromisoformat(str(metadata["matched_date"]))
+            if isinstance(metadata.get("matched_date"), str)
+            else None
+        ),
+        matched_amount=(
+            str(metadata["matched_amount"])
+            if isinstance(metadata.get("matched_amount"), str)
+            else None
+        ),
+        reasons=tuple(str(reason) for reason in reasons) if isinstance(reasons, list) else (),
+    )
+
+
+def _build_extracted_field_summary(field: ExtractedFieldRecord) -> ExtractedFieldSummary:
+    """Translate one extracted-field record into the strict API response contract."""
+
+    return ExtractedFieldSummary(
+        id=serialize_uuid(field.id),
+        field_name=field.field_name,
+        field_value=field.field_value,
+        field_type=field.field_type,
+        confidence=field.confidence,
+        evidence_ref=dict(field.evidence_ref),
+        is_human_corrected=field.is_human_corrected,
+        created_at=field.created_at,
+        updated_at=field.updated_at,
+    )
+
+
+def _build_document_issue_summary(issue: DocumentIssueRecord) -> DocumentIssueSummary:
+    """Translate one document-issue record into the strict API response contract."""
+
+    return DocumentIssueSummary(
+        id=serialize_uuid(issue.id),
+        issue_type=issue.issue_type,
+        severity=issue.severity,
+        status=issue.status,
+        details=dict(issue.details),
+        created_at=issue.created_at,
+        updated_at=issue.updated_at,
     )
 
 

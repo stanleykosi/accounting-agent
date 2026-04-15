@@ -146,6 +146,27 @@ class ChatActionRepository:
         plans = self._db_session.execute(statement).scalars().all()
         return tuple(_map_action_plan(plan) for plan in plans)
 
+    def list_actions_for_thread(
+        self,
+        *,
+        thread_id: UUID,
+        entity_id: UUID,
+        limit: int = 50,
+    ) -> tuple[ChatActionPlanRecord, ...]:
+        """Return recent action plans for one thread in newest-first order."""
+
+        statement = (
+            select(ChatActionPlan)
+            .where(
+                ChatActionPlan.thread_id == thread_id,
+                ChatActionPlan.entity_id == entity_id,
+            )
+            .order_by(desc(ChatActionPlan.created_at))
+            .limit(limit)
+        )
+        plans = self._db_session.execute(statement).scalars().all()
+        return tuple(_map_action_plan(plan) for plan in plans)
+
     def list_actions_for_target(
         self,
         *,

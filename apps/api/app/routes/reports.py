@@ -23,6 +23,7 @@ from apps.api.app.routes.auth import (
     get_auth_service,
 )
 from apps.api.app.routes.request_auth import AuthenticatedUserContext, RequestAuthDependency
+from apps.api.app.routes.workflow_phase import require_active_close_run_phase
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from services.auth.service import (
     AuthenticatedSessionResult,
@@ -30,20 +31,21 @@ from services.auth.service import (
     AuthService,
     AuthServiceError,
 )
+from services.common.enums import WorkflowPhase
 from services.common.settings import AppSettings, get_settings
 from services.contracts.report_models import (
     ReportRunDetail,
     ReportRunListResponse,
     ReportRunSummary,
-    ReportTemplateDetail,
-    ReportTemplateListResponse,
 )
+from services.contracts.storage_models import StorageBucketKind
 from services.db.models.reporting import ReportRunStatus
 from services.db.repositories.entity_repo import EntityUserRecord
 from services.db.repositories.report_repo import ReportRepository
 from services.jobs.service import JobService, JobServiceError
 from services.jobs.task_names import TaskName
 from services.reporting.service import ReportService, ReportServiceError
+from services.storage.client import StorageClient
 
 router = APIRouter(prefix="/entities/{entity_id}/reports", tags=["reports"])
 
@@ -106,6 +108,14 @@ def trigger_report_generation(
         )
     except ReportServiceError as error:
         raise _build_report_http_exception(error) from error
+    require_active_close_run_phase(
+        actor_user=_to_entity_user(session_result),
+        entity_id=entity_id,
+        close_run_id=close_run_id,
+        required_phase=WorkflowPhase.REPORTING,
+        action_label="Report generation",
+        db_session=db_session,
+    )
 
     # Resolve template: explicit ID, entity active, or global default
     repo = ReportRepository(db_session=db_session)
@@ -267,24 +277,22 @@ def read_report_run_detail(
         raise _build_report_http_exception(error) from error
 
 
-# ---------------------------------------------------------------------------
-# Template routes (re-exported for convenience under the same prefix)
-# ---------------------------------------------------------------------------
-
 @router.get(
-    "/templates",
-    response_model=ReportTemplateListResponse,
-    summary="List report templates for one entity",
+    "/close-runs/{close_run_id}/runs/{report_run_id}/artifacts/{artifact_type}",
+    summary="Download one generated report artifact",
 )
-def list_report_templates(
+def download_report_artifact(
     entity_id: UUID,
+    close_run_id: UUID,
+    report_run_id: UUID,
+    artifact_type: str,
     request: Request,
     response: Response,
     settings: SettingsDependency,
     auth_service: AuthServiceDependency,
     report_service: ReportServiceDependency,
-) -> ReportTemplateListResponse:
-    """Return all report template versions for the entity workspace."""
+) -> Response:
+    """Stream one generated report artifact through the authenticated API surface."""
 
     session_result = _require_authenticated_browser_session(
         request=request,
@@ -293,45 +301,54 @@ def list_report_templates(
         auth_service=auth_service,
     )
     try:
-        return report_service.list_templates_for_entity(
+        report_run = report_service.get_report_run(
             actor_user=_to_entity_user(session_result),
             entity_id=entity_id,
+            close_run_id=close_run_id,
+            report_run_id=report_run_id,
         )
     except ReportServiceError as error:
         raise _build_report_http_exception(error) from error
 
-
-@router.get(
-    "/templates/{template_id}",
-    response_model=ReportTemplateDetail,
-    summary="Read one report template",
-)
-def read_report_template_detail(
-    entity_id: UUID,
-    template_id: UUID,
-    request: Request,
-    response: Response,
-    settings: SettingsDependency,
-    auth_service: AuthServiceDependency,
-    report_service: ReportServiceDependency,
-) -> ReportTemplateDetail:
-    """Return one report template with full section definitions and guardrail config."""
-
-    session_result = _require_authenticated_browser_session(
-        request=request,
-        response=response,
-        settings=settings,
-        auth_service=auth_service,
+    artifact_ref = _resolve_report_artifact_ref(
+        artifact_refs=report_run.artifact_refs,
+        artifact_type=artifact_type,
     )
-    try:
-        return report_service.get_template(
-            actor_user=_to_entity_user(session_result),
-            entity_id=entity_id,
-            template_id=template_id,
+    if artifact_ref is None:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "code": "artifact_not_found",
+                "message": "The requested artifact does not exist for this report run.",
+            },
         )
-    except ReportServiceError as error:
-        raise _build_report_http_exception(error) from error
 
+    bucket_kind = StorageBucketKind(str(artifact_ref.get("bucket_kind") or "artifacts"))
+    object_key = str(artifact_ref.get("storage_key") or "").strip()
+    filename = str(artifact_ref.get("filename") or f"{artifact_type}.bin")
+    if object_key == "":
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "artifact_not_ready",
+                "message": "The requested artifact does not have a storage key yet.",
+            },
+        )
+
+    payload = StorageClient.from_settings(settings).download_bytes(
+        bucket_kind=bucket_kind,
+        object_key=object_key,
+    )
+    return Response(
+        content=payload,
+        media_type=_infer_report_artifact_content_type(
+            artifact_type=artifact_type,
+            filename=filename,
+        ),
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+        },
+    )
 
 # ---------------------------------------------------------------------------
 # Internal helpers
@@ -396,6 +413,32 @@ def _build_report_http_exception(error: ReportServiceError) -> HTTPException:
             "message": error.message,
         },
     )
+
+
+def _resolve_report_artifact_ref(
+    *,
+    artifact_refs: list[dict[str, object]],
+    artifact_type: str,
+) -> dict[str, object] | None:
+    """Return the artifact ref that matches the requested report artifact type."""
+
+    normalized_artifact_type = artifact_type.strip().lower()
+    for artifact_ref in artifact_refs:
+        ref_type = str(artifact_ref.get("type") or "").strip().lower()
+        if ref_type == normalized_artifact_type:
+            return artifact_ref
+    return None
+
+
+def _infer_report_artifact_content_type(*, artifact_type: str, filename: str) -> str:
+    """Infer the content type for a generated report artifact."""
+
+    normalized_artifact_type = artifact_type.strip().lower()
+    if normalized_artifact_type == "report_pdf" or filename.endswith(".pdf"):
+        return "application/pdf"
+    if normalized_artifact_type == "report_excel" or filename.endswith(".xlsx"):
+        return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    return "application/octet-stream"
 
 
 __all__ = ["router"]

@@ -328,7 +328,7 @@ def sync_quickbooks_chart_of_accounts(
     integration_repository: IntegrationRepositoryDependency,
     coa_repository: CoaRepositoryDependency,
 ) -> QuickBooksCoaSyncResponse:
-    """Import QuickBooks accounts into a versioned COA set without implementing direct posting."""
+    """Import QuickBooks accounts into a versioned COA set for COA and posting-package workflows."""
 
     session_result = _require_authenticated_browser_session(
         request=request,

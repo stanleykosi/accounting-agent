@@ -17,8 +17,10 @@ Design notes:
 
 from __future__ import annotations
 
+import csv
 from dataclasses import dataclass
 from enum import StrEnum
+from io import StringIO
 from typing import Any, Protocol, cast
 from uuid import UUID
 
@@ -29,17 +31,28 @@ from services.accounting.journal_drafts import (
     generate_journal_number,
 )
 from services.common.enums import (
+    ArtifactType,
     AutonomyMode,
     ReviewStatus,
     RiskLevel,
 )
 from services.common.types import JsonObject, utc_now
 from services.contracts.journal_models import (
+    JOURNAL_POSTING_TARGETS,
     AutonomyRoutingResult,
     JournalDraftResult,
 )
+from services.contracts.storage_models import CloseRunStorageScope
 from services.db.models.audit import AuditSourceSurface
+from services.db.models.close_run import CloseRun
+from services.db.models.exports import Artifact
+from services.db.models.integration import IntegrationConnectionStatus, IntegrationProvider
+from services.db.models.journals import JournalPostingStatus, JournalPostingTarget
+from services.db.repositories.integration_repo import IntegrationRepository
 from services.db.repositories.recommendation_journal_repo import JournalWithLinesResult
+from services.idempotency.service import build_idempotency_key
+from services.storage.repository import StorageRepository
+from sqlalchemy.orm import Session
 
 
 class RecommendationApplyError(ValueError):
@@ -62,6 +75,7 @@ class RecommendationApplyErrorCode(StrEnum):
     APPROVAL_NOT_ALLOWED = "approval_not_allowed"
     REJECTION_NOT_ALLOWED = "rejection_not_allowed"
     APPLY_NOT_ALLOWED = "apply_not_allowed"
+    INVALID_POSTING_TARGET = "invalid_posting_target"
     EDIT_NOT_ALLOWED = "edit_not_allowed"
     SUPERSEDED = "superseded"
 
@@ -193,6 +207,25 @@ class JournalRepositoryProtocol(Protocol):
     ) -> int:
         """Return the next journal sequence number for an entity in a given year."""
 
+    def create_journal_posting(
+        self,
+        *,
+        journal_entry_id: UUID,
+        entity_id: UUID,
+        close_run_id: UUID,
+        version_no: int,
+        posting_target: str,
+        provider: str | None,
+        status: str,
+        artifact_id: UUID | None,
+        artifact_type: str | None,
+        note: str | None,
+        posting_metadata: dict[str, Any],
+        posted_by_user_id: UUID | None,
+        posted_at: Any,
+    ) -> Any:
+        """Persist the canonical posting result for one journal entry."""
+
 
 class RecommendationApplyService:
     """Orchestrate approval routing, journal drafting, and apply-state transitions.
@@ -212,10 +245,16 @@ class RecommendationApplyService:
         *,
         repository: JournalRepositoryProtocol,
         audit_service: AuditServiceProtocol,
+        db_session: Session | None = None,
+        integration_repository: IntegrationRepository | None = None,
+        storage_repository: StorageRepository | None = None,
     ) -> None:
         """Capture persistence and audit boundaries."""
         self._repository = repository
         self._audit_service = audit_service
+        self._db_session = db_session
+        self._integration_repository = integration_repository
+        self._storage_repository = storage_repository
 
     def route_recommendation_to_review(
         self,
@@ -592,23 +631,25 @@ class RecommendationApplyService:
         entity_id: UUID,
         close_run_id: UUID,
         actor: ActorContext,
+        posting_target: str,
         reason: str | None,
         trace_id: str | None,
         source_surface: AuditSourceSurface = AuditSourceSurface.DESKTOP,
     ) -> JournalActionResult:
-        """Apply an approved journal entry to working accounting state.
+        """Post an approved journal through the selected target.
 
         Args:
-            journal_id: The approved journal to apply.
+            journal_id: The approved journal to post.
             entity_id: Entity workspace.
             close_run_id: Close run under processing.
             actor: Authenticated actor context.
+            posting_target: Canonical posting target chosen by the operator.
             reason: Optional operator note.
             trace_id: Current trace ID.
-            source_surface: Surface that triggered the apply.
+            source_surface: Surface that triggered the posting action.
 
         Returns:
-            JournalActionResult with the apply result.
+            JournalActionResult with the posting result.
         """
         result = self._repository.get_journal_entry(journal_id=journal_id)
         if result is None:
@@ -622,13 +663,59 @@ class RecommendationApplyService:
             raise RecommendationApplyError(
                 code=RecommendationApplyErrorCode.APPLY_NOT_ALLOWED,
                 message=(
-                    f"Journal status is '{journal.status}' and cannot be applied. "
-                    f"Only approved journals can be applied to working state."
+                    f"Journal status is '{journal.status}' and cannot be posted. "
+                    "Only approved journals can be posted."
+                ),
+            )
+        if result.postings:
+            raise RecommendationApplyError(
+                code=RecommendationApplyErrorCode.APPLY_NOT_ALLOWED,
+                message=(
+                    f"Journal {journal.journal_number} already has a recorded posting outcome and "
+                    "cannot be posted again."
+                ),
+            )
+
+        normalized_posting_target = posting_target.strip().lower()
+        if normalized_posting_target not in JOURNAL_POSTING_TARGETS:
+            raise RecommendationApplyError(
+                code=RecommendationApplyErrorCode.INVALID_POSTING_TARGET,
+                message=(
+                    f"Posting target must be one of {', '.join(JOURNAL_POSTING_TARGETS)}."
                 ),
             )
 
         initial_status = ReviewStatus(journal.status)
         autonomy_mode = self._resolve_autonomy_mode(journal.autonomy_mode)
+        posted_at = utc_now()
+        posting_provider: str | None = None
+        artifact: Artifact | None = None
+        posting_metadata: dict[str, Any] = {
+            "journal_number": journal.journal_number,
+            "posting_target": normalized_posting_target,
+            "line_count": journal.line_count,
+        }
+        if normalized_posting_target == JournalPostingTarget.EXTERNAL_ERP_PACKAGE.value:
+            try:
+                (
+                    artifact,
+                    posting_provider,
+                    posting_metadata,
+                ) = self._create_external_posting_package(
+                    journal_result=result,
+                    entity_id=entity_id,
+                    close_run_id=close_run_id,
+                    journal_id=journal_id,
+                    posted_at=posted_at,
+                )
+            except Exception as error:  # pragma: no cover - defensive runtime boundary
+                raise RecommendationApplyError(
+                    code=RecommendationApplyErrorCode.APPLY_NOT_ALLOWED,
+                    message=(
+                        "The external ERP posting package could not be generated. "
+                        "Check storage and close-run configuration, then retry."
+                    ),
+                ) from error
 
         self._audit_service.record_review_action(
             entity_id=entity_id,
@@ -644,13 +731,16 @@ class RecommendationApplyService:
             after_payload={
                 "status": ReviewStatus.APPLIED.value,
                 "applied_by": str(actor.user_id),
-                "applied_at": utc_now().isoformat(),
+                "applied_at": posted_at.isoformat(),
+                "posting_target": normalized_posting_target,
+                "posting_provider": posting_provider,
+                "artifact_id": str(artifact.id) if artifact is not None else None,
             },
             trace_id=trace_id,
             audit_payload={
                 "summary": (
-                    f"{actor.full_name} applied journal {journal.journal_number} "
-                    f"to working state."
+                    f"{actor.full_name} posted journal {journal.journal_number} via "
+                    f"{normalized_posting_target.replace('_', ' ')}."
                 ),
             },
         )
@@ -659,6 +749,21 @@ class RecommendationApplyService:
             journal_id=journal_id,
             status=ReviewStatus.APPLIED.value,
             applied_by_user_id=actor.user_id,
+        )
+        self._repository.create_journal_posting(
+            journal_entry_id=journal_id,
+            entity_id=entity_id,
+            close_run_id=close_run_id,
+            version_no=self._require_close_run(close_run_id=close_run_id).current_version_no,
+            posting_target=normalized_posting_target,
+            provider=posting_provider,
+            status=JournalPostingStatus.COMPLETED.value,
+            artifact_id=artifact.id if artifact is not None else None,
+            artifact_type=artifact.artifact_type if artifact is not None else None,
+            note=reason,
+            posting_metadata=posting_metadata,
+            posted_by_user_id=actor.user_id,
+            posted_at=posted_at,
         )
 
         return JournalActionResult(
@@ -794,6 +899,104 @@ class RecommendationApplyService:
                 f"{risk_level.value} requires human review before applying."
             ),
         )
+
+    def _create_external_posting_package(
+        self,
+        *,
+        journal_result: JournalWithLinesResult,
+        entity_id: UUID,
+        close_run_id: UUID,
+        journal_id: UUID,
+        posted_at: Any,
+    ) -> tuple[Artifact, str, dict[str, Any]]:
+        """Generate and persist the external ERP posting package for a journal."""
+
+        if self._db_session is None or self._storage_repository is None:
+            raise RuntimeError(
+                "External posting package generation requires db_session and storage_repository."
+            )
+
+        close_run = self._require_close_run(close_run_id=close_run_id)
+        provider = self._resolve_external_posting_provider(entity_id=entity_id)
+        csv_payload, row_count = _build_gl_posting_csv(journal_result=journal_result)
+        idempotency_key = build_idempotency_key(
+            close_run_id=close_run_id,
+            artifact_type=ArtifactType.GL_POSTING_PACKAGE.value,
+            action_qualifier=f"journal:{journal_id}",
+            version_override=close_run.current_version_no,
+        )
+        filename_prefix = "quickbooks" if provider == "quickbooks_online" else "erp"
+        filename = f"{filename_prefix}-journal-{journal_result.entry.journal_number.lower()}.csv"
+        storage_scope = CloseRunStorageScope(
+            entity_id=entity_id,
+            close_run_id=close_run_id,
+            period_start=close_run.period_start,
+            period_end=close_run.period_end,
+            close_run_version_no=close_run.current_version_no,
+        )
+        stored_artifact = self._storage_repository.store_artifact(
+            scope=storage_scope,
+            artifact_type=ArtifactType.GL_POSTING_PACKAGE,
+            idempotency_key=idempotency_key,
+            filename=filename,
+            payload=csv_payload,
+            content_type="text/csv; charset=utf-8",
+        )
+        artifact = Artifact(
+            close_run_id=close_run_id,
+            report_run_id=None,
+            artifact_type=ArtifactType.GL_POSTING_PACKAGE.value,
+            storage_key=stored_artifact.reference.object_key,
+            mime_type=stored_artifact.content_type,
+            checksum=stored_artifact.sha256_checksum,
+            idempotency_key=idempotency_key,
+            version_no=close_run.current_version_no,
+            released_at=posted_at,
+            artifact_metadata={
+                "filename": filename,
+                "provider": provider,
+                "format": "csv",
+                "journal_id": str(journal_id),
+                "journal_number": journal_result.entry.journal_number,
+                "row_count": row_count,
+                "size_bytes": stored_artifact.size_bytes,
+            },
+        )
+        self._db_session.add(artifact)
+        self._db_session.flush()
+        return (
+            artifact,
+            provider,
+            {
+                "filename": filename,
+                "provider": provider,
+                "format": "csv",
+                "row_count": row_count,
+            },
+        )
+
+    def _require_close_run(self, *, close_run_id: UUID) -> CloseRun:
+        """Load one close run or fail fast when posting dependencies are inconsistent."""
+
+        if self._db_session is None:
+            raise RuntimeError("Close-run-backed posting workflows require a db_session.")
+        close_run = self._db_session.get(CloseRun, close_run_id)
+        if close_run is None:
+            raise LookupError(f"Close run {close_run_id} does not exist.")
+        return close_run
+
+    def _resolve_external_posting_provider(self, *, entity_id: UUID) -> str:
+        """Return the canonical provider label used for external package generation."""
+
+        if self._integration_repository is None:
+            return "generic_erp"
+        connection = self._integration_repository.get_connection(
+            entity_id=entity_id,
+            provider=IntegrationProvider.QUICKBOOKS_ONLINE,
+        )
+        if connection is None or connection.status is not IntegrationConnectionStatus.CONNECTED:
+            return "generic_erp"
+        return "quickbooks_online"
 
     def _generate_journal_from_approved_recommendation(
         self,
@@ -952,6 +1155,50 @@ def build_before_payload(obj: Any) -> JsonObject:
             val = getattr(obj, attr)
             payload[attr] = str(val) if val is not None else None
     return payload
+
+
+def _build_gl_posting_csv(
+    *,
+    journal_result: JournalWithLinesResult,
+) -> tuple[bytes, int]:
+    """Render the canonical external posting CSV for one approved journal."""
+
+    buffer = StringIO()
+    writer = csv.writer(buffer)
+    writer.writerow(
+        [
+            "journal_number",
+            "posting_date",
+            "description",
+            "line_no",
+            "account_code",
+            "line_type",
+            "debit_amount",
+            "credit_amount",
+            "reference",
+            "cost_centre",
+            "department",
+            "project",
+        ]
+    )
+    for line in journal_result.lines:
+        writer.writerow(
+            [
+                journal_result.entry.journal_number,
+                journal_result.entry.posting_date.isoformat(),
+                journal_result.entry.description,
+                line.line_no,
+                line.account_code,
+                line.line_type,
+                f"{line.amount:.2f}" if line.line_type == "debit" else "",
+                f"{line.amount:.2f}" if line.line_type == "credit" else "",
+                line.reference or "",
+                str(line.dimensions.get("cost_centre") or ""),
+                str(line.dimensions.get("department") or ""),
+                str(line.dimensions.get("project") or ""),
+            ]
+        )
+    return buffer.getvalue().encode("utf-8"), len(journal_result.lines)
 
 
 __all__ = [

@@ -16,6 +16,7 @@ def test_baseline_metadata_registers_expected_tables() -> None:
 
     expected_tables = {
         "api_tokens",
+        "artifacts",
         "audit_events",
         "close_run_phase_states",
         "close_runs",
@@ -26,12 +27,17 @@ def test_baseline_metadata_registers_expected_tables() -> None:
         "documents",
         "entities",
         "entity_memberships",
+        "export_distributions",
+        "export_runs",
         "extracted_fields",
         "integration_connections",
+        "journal_postings",
         "jobs",
         "ownership_targets",
         "review_actions",
         "sessions",
+        "supporting_schedule_rows",
+        "supporting_schedules",
         "users",
     }
 

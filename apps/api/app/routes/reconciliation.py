@@ -22,21 +22,28 @@ from typing import Annotated
 from uuid import UUID
 
 from apps.api.app.dependencies.db import DatabaseSessionDependency
+from apps.api.app.dependencies.tasks import TaskDispatcherDependency
 from apps.api.app.routes.auth import (
     get_auth_service,
 )
+from apps.api.app.routes.close_runs import _to_entity_user
 from apps.api.app.routes.recommendations import (
     _require_authenticated_browser_session,
 )
 from apps.api.app.routes.request_auth import RequestAuthDependency
+from apps.api.app.routes.workflow_phase import require_active_close_run_phase
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from pydantic import BaseModel, Field
 from services.auth.service import (
     AuthService,
 )
 from services.common.enums import (
+    DEFAULT_RECONCILIATION_EXECUTION_TYPES,
     MatchStatus,
     ReconciliationSourceType,
     ReconciliationStatus,
+    ReconciliationType,
+    WorkflowPhase,
 )
 from services.common.settings import AppSettings, get_settings
 from services.contracts.reconciliation_models import (
@@ -65,6 +72,8 @@ from services.db.repositories.reconciliation_repo import (
     ReconciliationRecord,
     ReconciliationRepository,
 )
+from services.jobs.service import JobService, JobServiceError
+from services.jobs.task_names import TaskName
 from services.reconciliation.service import ReconciliationService
 
 RECONCILIATION_TAG = "reconciliation"
@@ -87,6 +96,15 @@ def _get_reconciliation_service(
 ReconciliationServiceDependency = Annotated[
     ReconciliationService, Depends(_get_reconciliation_service)
 ]
+
+
+class RunReconciliationRequest(BaseModel):
+    """Capture an explicit request to execute reconciliation for a close run."""
+
+    reconciliation_types: list[ReconciliationType] | None = Field(
+        default=None,
+        description="Optional reconciliation types. Defaults to all canonical types.",
+    )
 
 
 def _require_close_run_access(
@@ -159,6 +177,83 @@ def list_reconciliations(
     return ReconciliationListResponse(
         reconciliations=tuple(_build_reconciliation_summary(rec) for rec in records)
     )
+
+
+@router.post(
+    "/reconciliations/run",
+    response_model=object,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Queue reconciliation execution for a close run",
+)
+def queue_reconciliation_run(
+    entity_id: UUID,
+    close_run_id: UUID,
+    payload: RunReconciliationRequest,
+    request: Request,
+    response: Response,
+    settings: SettingsDependency,
+    auth_service: AuthServiceDependency,
+    db_session: DbSessionDep,
+    task_dispatcher: TaskDispatcherDependency,
+    auth_context: RequestAuthDependency,
+) -> dict[str, object]:
+    """Queue the canonical reconciliation execution workflow for this close run."""
+
+    session_result = auth_context
+    _require_close_run_access(
+        entity_id=entity_id,
+        close_run_id=close_run_id,
+        user_id=session_result.user.id,
+        db_session=db_session,
+    )
+    require_active_close_run_phase(
+        actor_user=_to_entity_user(session_result),
+        entity_id=entity_id,
+        close_run_id=close_run_id,
+        required_phase=WorkflowPhase.RECONCILIATION,
+        action_label="Reconciliation execution",
+        db_session=db_session,
+    )
+
+    reconciliation_types = payload.reconciliation_types or list(
+        DEFAULT_RECONCILIATION_EXECUTION_TYPES
+    )
+    job_service = JobService(db_session=db_session)
+    try:
+        job = job_service.dispatch_job(
+            dispatcher=task_dispatcher,
+            task_name=TaskName.RECONCILIATION_EXECUTE_CLOSE_RUN,
+            payload={
+                "close_run_id": str(close_run_id),
+                "reconciliation_types": [
+                    reconciliation_type.value
+                    for reconciliation_type in reconciliation_types
+                ],
+                "actor_user_id": str(session_result.user.id),
+            },
+            entity_id=entity_id,
+            close_run_id=close_run_id,
+            document_id=None,
+            actor_user_id=session_result.user.id,
+            trace_id=str(getattr(request.state, "request_id", "")),
+        )
+    except JobServiceError as error:
+        raise HTTPException(
+            status_code=error.status_code,
+            detail={
+                "code": str(error.code),
+                "message": error.message,
+            },
+        ) from error
+
+    return {
+        "job_id": str(job.id),
+        "task_name": job.task_name,
+        "status": job.status.value,
+        "reconciliation_types": [
+            reconciliation_type.value for reconciliation_type in reconciliation_types
+        ],
+    }
 
 
 @router.get(
@@ -364,6 +459,14 @@ def resolve_anomaly(
         user_id=session_result.user.id,
         db_session=db_session,
     )
+    require_active_close_run_phase(
+        actor_user=_to_entity_user(session_result),
+        entity_id=entity_id,
+        close_run_id=close_run_id,
+        required_phase=WorkflowPhase.RECONCILIATION,
+        action_label="Anomaly resolution",
+        db_session=db_session,
+    )
     result = reconciliation_service.resolve_anomaly(
         anomaly_id=anomaly_id,
         close_run_id=close_run_id,
@@ -412,6 +515,14 @@ def disposition_item(
         entity_id=entity_id,
         close_run_id=close_run_id,
         user_id=session_result.user.id,
+        db_session=db_session,
+    )
+    require_active_close_run_phase(
+        actor_user=_to_entity_user(session_result),
+        entity_id=entity_id,
+        close_run_id=close_run_id,
+        required_phase=WorkflowPhase.RECONCILIATION,
+        action_label="Reconciliation disposition",
         db_session=db_session,
     )
     result = reconciliation_service.disposition_item(
@@ -467,6 +578,14 @@ def bulk_disposition_items(
         user_id=session_result.user.id,
         db_session=db_session,
     )
+    require_active_close_run_phase(
+        actor_user=_to_entity_user(session_result),
+        entity_id=entity_id,
+        close_run_id=close_run_id,
+        required_phase=WorkflowPhase.RECONCILIATION,
+        action_label="Bulk reconciliation disposition",
+        db_session=db_session,
+    )
     result = reconciliation_service.bulk_disposition_items(
         item_ids=payload.item_ids,
         close_run_id=close_run_id,
@@ -515,6 +634,14 @@ def approve_reconciliation(
         entity_id=entity_id,
         close_run_id=close_run_id,
         user_id=session_result.user.id,
+        db_session=db_session,
+    )
+    require_active_close_run_phase(
+        actor_user=_to_entity_user(session_result),
+        entity_id=entity_id,
+        close_run_id=close_run_id,
+        required_phase=WorkflowPhase.RECONCILIATION,
+        action_label="Reconciliation approval",
         db_session=db_session,
     )
     result = reconciliation_service.approve_reconciliation(

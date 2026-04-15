@@ -39,14 +39,17 @@ from services.contracts.domain_models import (
 )
 from services.contracts.export_models import (
     CreateExportRequest,
+    DistributeExportRequest,
     DuplicateExportResponse,
     EvidencePackBundle,
     EvidencePackItem,
     ExportArtifactEntry,
     ExportDetail,
+    ExportDistributionRecord,
     ExportListResponse,
     ExportManifest,
     ExportSummary,
+    EXPORT_DELIVERY_CHANNELS,
     IdempotencyKeyResponse,
 )
 from services.contracts.job_models import (
@@ -106,6 +109,7 @@ __all__ = [
     "CreateCloseRunRequest",
     "CreateExportRequest",
     "CreateReconciliationRequest",
+    "DistributeExportRequest",
     "DispositionItemRequest",
     "DispositionResult",
     "DomainLanguageCatalog",
@@ -115,9 +119,11 @@ __all__ = [
     "EvidencePackItem",
     "ExportArtifactEntry",
     "ExportDetail",
+    "ExportDistributionRecord",
     "ExportListResponse",
     "ExportManifest",
     "ExportSummary",
+    "EXPORT_DELIVERY_CHANNELS",
     "IdempotencyKeyResponse",
     "JobDetail",
     "JobListResponse",

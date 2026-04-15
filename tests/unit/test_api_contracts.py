@@ -25,6 +25,20 @@ def test_openapi_schema_exposes_seed_contract_routes() -> None:
     assert "/api/metadata" in schema["paths"]
 
 
+def test_openapi_operation_ids_are_unique() -> None:
+    """Generated SDK operation IDs should remain unique across the OpenAPI surface."""
+
+    schema = api_main.app.openapi()
+    operation_ids = [
+        operation["operationId"]
+        for path_item in schema["paths"].values()
+        for operation in path_item.values()
+        if isinstance(operation, dict) and "operationId" in operation
+    ]
+
+    assert len(operation_ids) == len(set(operation_ids))
+
+
 def test_metadata_endpoint_returns_contract_catalog(monkeypatch) -> None:
     """Ensure the metadata endpoint publishes route descriptors for the generated SDK."""
 

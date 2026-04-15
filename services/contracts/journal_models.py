@@ -24,6 +24,18 @@ from pydantic import Field, field_validator, model_validator
 from services.common.enums import AutonomyMode, ReviewStatus
 from services.contracts.api_models import ContractModel
 
+JOURNAL_POSTING_TARGETS = ("internal_ledger", "external_erp_package")
+
+
+def _normalize_posting_target(value: str) -> str:
+    """Normalize one posting target and enforce the canonical options."""
+
+    normalized = value.strip().lower()
+    if normalized not in JOURNAL_POSTING_TARGETS:
+        allowed = ", ".join(JOURNAL_POSTING_TARGETS)
+        raise ValueError(f"posting_target must be one of: {allowed}.")
+    return normalized
+
 # ---------------------------------------------------------------------------
 # Journal line contracts
 # ---------------------------------------------------------------------------
@@ -195,7 +207,15 @@ class ApproveJournalRequest(ContractModel):
 
 
 class ApplyJournalRequest(ContractModel):
-    """Capture a request to apply an approved journal to working accounting state."""
+    """Capture a request to post an approved journal through the chosen target."""
+
+    posting_target: str = Field(
+        min_length=1,
+        description=(
+            "Canonical posting target: internal_ledger writes to the platform working ledger, "
+            "while external_erp_package generates an accountant-managed ERP import package."
+        ),
+    )
 
     reason: str | None = Field(
         default=None,
@@ -203,6 +223,13 @@ class ApplyJournalRequest(ContractModel):
         max_length=500,
         description="Optional operator note for audit and timeline context.",
     )
+
+    @field_validator("posting_target")
+    @classmethod
+    def normalize_posting_target(cls, value: str) -> str:
+        """Normalize and validate the requested posting target."""
+
+        return _normalize_posting_target(value)
 
 
 class RejectJournalRequest(ContractModel):
@@ -254,6 +281,47 @@ class JournalLineSummary(ContractModel):
     reference: str | None = Field(default=None, description="External reference.")
 
 
+class JournalPostingSummary(ContractModel):
+    """Describe the applied posting outcome for a journal entry."""
+
+    id: str = Field(description="Journal posting UUID.")
+    posting_target: str = Field(description="Selected posting target for the journal.")
+    provider: str | None = Field(
+        default=None,
+        description="Resolved provider or package format when applicable.",
+    )
+    status: str = Field(description="Posting lifecycle state.")
+    artifact_id: str | None = Field(
+        default=None,
+        description="Generated artifact UUID when an external package was created.",
+    )
+    artifact_type: str | None = Field(
+        default=None,
+        description="Artifact type released for the posting, when applicable.",
+    )
+    artifact_filename: str | None = Field(
+        default=None,
+        description="Download filename for the posting package, when applicable.",
+    )
+    artifact_storage_key: str | None = Field(
+        default=None,
+        description="Storage key for the posting package artifact, when applicable.",
+    )
+    note: str | None = Field(
+        default=None,
+        description="Optional operator note recorded at posting time.",
+    )
+    posted_by_user_id: str | None = Field(
+        default=None,
+        description="User who executed the posting action.",
+    )
+    posted_at: str = Field(description="UTC timestamp when the posting completed.")
+    posting_metadata: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Structured posting metadata for UI and audit rendering.",
+    )
+
+
 class JournalSummary(ContractModel):
     """Represent a journal entry in API response payloads."""
 
@@ -276,6 +344,10 @@ class JournalSummary(ContractModel):
     reasoning_summary: str | None = Field(default=None, description="Why this journal was created.")
     approved_by_user_id: str | None = Field(default=None, description="Approver user ID.")
     applied_by_user_id: str | None = Field(default=None, description="Applier user ID.")
+    postings: list[JournalPostingSummary] = Field(
+        default_factory=list,
+        description="Posting outcomes recorded for this journal entry.",
+    )
     lines: list[JournalLineSummary] = Field(description="Journal line items.")
     created_at: str = Field(description="UTC creation timestamp.")
     updated_at: str = Field(description="UTC update timestamp.")
@@ -324,6 +396,7 @@ class AutonomyRoutingResult(ContractModel):
 
 
 __all__ = [
+    "JOURNAL_POSTING_TARGETS",
     "ApplyJournalRequest",
     "ApproveJournalRequest",
     "AutonomyRoutingResult",
@@ -334,6 +407,7 @@ __all__ = [
     "JournalLineInput",
     "JournalLineSummary",
     "JournalListResponse",
+    "JournalPostingSummary",
     "JournalSummary",
     "RejectJournalRequest",
 ]

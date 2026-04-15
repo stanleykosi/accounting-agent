@@ -14,15 +14,17 @@ Behavior:
 
 "use client";
 
-import { useCallback, useEffect, useState, type FormEvent, type KeyboardEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import {
   approveChatAction,
+  type ChatAttachmentIntent,
   type ChatActionResponse,
   type ChatActionSummary,
   ChatApiError,
   listThreadActions,
   rejectChatAction,
   sendChatAction,
+  sendChatActionWithAttachments,
   sendChatMessage,
 } from "../../lib/chat";
 
@@ -32,6 +34,8 @@ export type ActionComposerProps = {
   threadId: string;
   /** Entity workspace ID for access verification. */
   entityId: string;
+  /** Optional close run scope; attachments use this to default routing intent. */
+  closeRunId?: string | undefined;
   /** Called when a message is successfully sent. */
   onMessageSent: (response: ChatActionResponse) => void;
   /** Called when an action is approved, rejected, or errored. */
@@ -71,16 +75,35 @@ const ACTION_INTENT_COLORS: Record<string, string> = {
 export function ActionComposer({
   threadId,
   entityId,
+  closeRunId,
   onMessageSent,
   onActionStateChange,
   disabled = false,
 }: ActionComposerProps) {
   const [inputValue, setInputValue] = useState("");
   const [isLoading, setIsLoading] = useState(false);
-  const [actionMode, setActionMode] = useState(false);
+  const [actionMode, setActionMode] = useState(true);
+  const [attachmentIntent, setAttachmentIntent] = useState<ChatAttachmentIntent>(
+    closeRunId ? "source_documents" : "chart_of_accounts",
+  );
+  const [attachments, setAttachments] = useState<readonly File[]>([]);
   const [pendingActions, setPendingActions] = useState<ChatActionSummary[]>([]);
   const [loadingActions, setLoadingActions] = useState<Set<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const availableAttachmentIntents = useMemo(
+    () =>
+      closeRunId
+        ? ([
+            { label: "Source documents", value: "source_documents" },
+            { label: "Chart of accounts", value: "chart_of_accounts" },
+          ] satisfies ReadonlyArray<{ label: string; value: ChatAttachmentIntent }>)
+        : ([{ label: "Chart of accounts", value: "chart_of_accounts" }] satisfies ReadonlyArray<{
+            label: string;
+            value: ChatAttachmentIntent;
+          }>),
+    [closeRunId],
+  );
 
   const loadPendingActions = useCallback(async () => {
     try {
@@ -102,7 +125,7 @@ export function ActionComposer({
     async (e: FormEvent) => {
       e.preventDefault();
       const trimmed = inputValue.trim();
-      if (!trimmed || isLoading || disabled) return;
+      if ((trimmed.length === 0 && attachments.length === 0) || isLoading || disabled) return;
 
       setIsLoading(true);
       setError(null);
@@ -111,7 +134,24 @@ export function ActionComposer({
         // Route through action endpoint when action mode is enabled,
         // otherwise fall back to standard read-only message endpoint
         let actionResponse: ChatActionResponse;
-        if (actionMode) {
+        if (attachments.length > 0) {
+          const attachmentRequest: {
+            attachmentIntent: ChatAttachmentIntent;
+            content?: string;
+            files: readonly File[];
+          } = {
+            attachmentIntent,
+            files: attachments,
+          };
+          if (trimmed.length > 0) {
+            attachmentRequest.content = trimmed;
+          }
+          actionResponse = await sendChatActionWithAttachments(
+            threadId,
+            entityId,
+            attachmentRequest,
+          );
+        } else if (actionMode) {
           actionResponse = await sendChatAction(threadId, entityId, trimmed);
         } else {
           const standardResponse = await sendChatMessage(threadId, entityId, trimmed);
@@ -124,7 +164,12 @@ export function ActionComposer({
         }
 
         setInputValue("");
+        setAttachments([]);
+        if (fileInputRef.current !== null) {
+          fileInputRef.current.value = "";
+        }
         onMessageSent(actionResponse);
+        await loadPendingActions();
       } catch (err) {
         const message =
           err instanceof ChatApiError ? err.message : "Failed to send message. Please try again.";
@@ -133,7 +178,18 @@ export function ActionComposer({
         setIsLoading(false);
       }
     },
-    [inputValue, isLoading, disabled, actionMode, threadId, entityId, onMessageSent],
+    [
+      inputValue,
+      attachments,
+      isLoading,
+      disabled,
+      attachmentIntent,
+      actionMode,
+      threadId,
+      entityId,
+      loadPendingActions,
+      onMessageSent,
+    ],
   );
 
   const handleActionApproval = useCallback(
@@ -190,7 +246,7 @@ export function ActionComposer({
   );
 
   const isSubmitting = isLoading || disabled;
-  const hasInput = inputValue.trim().length > 0;
+  const hasInput = inputValue.trim().length > 0 || attachments.length > 0;
 
   return (
     <div
@@ -385,7 +441,7 @@ export function ActionComposer({
               </svg>
             )}
           </span>
-          Action mode
+          Agent mode
         </button>
         {actionMode && (
           <span
@@ -397,10 +453,139 @@ export function ActionComposer({
               borderRadius: 4,
             }}
           >
-            Actions route through review
+            Tools, approvals, and audit aware
           </span>
         )}
       </div>
+
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 8,
+          marginBottom: attachments.length > 0 ? 10 : 8,
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            style={{
+              background: "rgba(76, 139, 245, 0.12)",
+              border: "1px solid rgba(76, 139, 245, 0.32)",
+              borderRadius: 8,
+              color: "#A8CBFF",
+              cursor: "pointer",
+              fontSize: 11,
+              fontWeight: 600,
+              padding: "5px 9px",
+            }}
+            type="button"
+          >
+            Attach files
+          </button>
+          <input
+            accept=".pdf,.csv,.xlsx,.xls,.xlsm"
+            multiple
+            onChange={(event) => {
+              const nextFiles = Array.from(event.target.files ?? []);
+              setAttachments(nextFiles);
+              setError(null);
+              if (nextFiles.length > 0) {
+                setActionMode(true);
+              }
+            }}
+            ref={fileInputRef}
+            style={{ display: "none" }}
+            type="file"
+          />
+          {attachments.length > 0 ? (
+            <select
+              onChange={(event) =>
+                setAttachmentIntent(event.target.value as ChatAttachmentIntent)
+              }
+              style={{
+                background: "#0B1020",
+                border: "1px solid #24324A",
+                borderRadius: 8,
+                color: "#D7E0ED",
+                fontSize: 11,
+                padding: "5px 9px",
+              }}
+              value={attachmentIntent}
+            >
+              {availableAttachmentIntents.map((option) => (
+                <option key={option.value} value={option.value}>
+                  Route as {option.label.toLowerCase()}
+                </option>
+              ))}
+            </select>
+          ) : null}
+        </div>
+        {attachments.length > 0 ? (
+          <button
+            onClick={() => {
+              setAttachments([]);
+              setError(null);
+              if (fileInputRef.current !== null) {
+                fileInputRef.current.value = "";
+              }
+            }}
+            style={{
+              background: "transparent",
+              border: "none",
+              color: "#8FA2BF",
+              cursor: "pointer",
+              fontSize: 11,
+              padding: 0,
+            }}
+            type="button"
+          >
+            Clear
+          </button>
+        ) : null}
+      </div>
+
+      {attachments.length > 0 ? (
+        <div
+          style={{
+            display: "flex",
+            flexWrap: "wrap",
+            gap: 6,
+            marginBottom: 10,
+          }}
+        >
+          {attachments.map((file) => (
+            <span
+              key={`${file.name}:${file.size}`}
+              style={{
+                background: "#182338",
+                border: "1px solid #24324A",
+                borderRadius: 999,
+                color: "#D7E0ED",
+                display: "inline-flex",
+                gap: 6,
+                maxWidth: "100%",
+                padding: "5px 9px",
+              }}
+            >
+              <span
+                style={{
+                  fontSize: 11,
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {file.name}
+              </span>
+              <span style={{ color: "#8FA2BF", fontSize: 10 }}>
+                {formatByteSize(file.size)}
+              </span>
+            </span>
+          ))}
+        </div>
+      ) : null}
 
       {/* Input form */}
       <form
@@ -428,7 +613,9 @@ export function ActionComposer({
             }}
             placeholder={
               actionMode
-                ? "Type a message with action intent (e.g. approve, change, post...)"
+                ? attachments.length > 0
+                  ? "Tell the agent what to do with the attached files..."
+                  : "Ask the agent to review, correct, approve, run workflow steps, or explain the current state..."
                 : "Ask about this close run..."
             }
             disabled={isSubmitting}
@@ -473,4 +660,14 @@ export function ActionComposer({
       </form>
     </div>
   );
+}
+
+function formatByteSize(value: number): string {
+  if (value < 1024) {
+    return `${value} B`;
+  }
+  if (value < 1024 * 1024) {
+    return `${(value / 1024).toFixed(1)} KB`;
+  }
+  return `${(value / (1024 * 1024)).toFixed(2)} MB`;
 }

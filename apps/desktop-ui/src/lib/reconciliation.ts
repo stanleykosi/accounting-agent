@@ -114,6 +114,13 @@ export type DispositionActionValue =
   | "escalated"
   | "pending_info";
 
+export type ReconciliationRunResponse = {
+  job_id: string;
+  reconciliation_types: readonly string[];
+  status: string;
+  task_name: string;
+};
+
 /** Represent an API error from reconciliation endpoints. */
 export class ReconciliationApiError extends Error {
   constructor(
@@ -476,6 +483,39 @@ export async function approveReconciliation(
     reconciliationId: asString(result.reconciliation_id, reconciliationId),
     status: asString(result.status),
     approvedByUserId: asString(result.approved_by_user_id),
+  };
+}
+
+/**
+ * Purpose: Trigger reconciliation execution for one close run.
+ * Inputs: Entity UUID, close-run UUID, and optional reconciliation type filters.
+ * Outputs: Durable job metadata for the queued reconciliation execution.
+ * Behavior: POSTs to the close-run reconciliation run endpoint.
+ */
+export async function runReconciliation(
+  entityId: string,
+  closeRunId: string,
+  reconciliationTypes?: readonly string[],
+): Promise<ReconciliationRunResponse> {
+  const result = await fetchWithAuth(
+    buildEntityProxyPath(entityId, ["close-runs", closeRunId, "reconciliations", "run"]),
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        reconciliation_types: reconciliationTypes && reconciliationTypes.length > 0
+          ? reconciliationTypes
+          : null,
+      }),
+    },
+  ) as Record<string, unknown>;
+  return {
+    job_id: asString(result.job_id),
+    reconciliation_types: ((result.reconciliation_types as string[]) ?? []).map((value) =>
+      asString(value),
+    ),
+    status: asString(result.status),
+    task_name: asString(result.task_name),
   };
 }
 

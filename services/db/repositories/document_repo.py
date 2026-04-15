@@ -21,7 +21,8 @@ from services.common.enums import (
 from services.common.types import JsonObject
 from services.db.models.audit import AuditSourceSurface
 from services.db.models.close_run import CloseRun
-from services.db.models.documents import Document, DocumentVersion
+from services.db.models.documents import Document, DocumentIssue, DocumentVersion
+from services.db.models.extractions import DocumentExtraction, ExtractedField
 from services.db.models.entity import Entity, EntityMembership, EntityStatus
 from sqlalchemy import asc, func, select
 from sqlalchemy.exc import IntegrityError
@@ -79,6 +80,72 @@ class DocumentRecord:
     last_touched_by_user_id: UUID | None
     created_at: datetime
     updated_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class ExtractedFieldRecord:
+    """Describe one persisted extracted field for review and correction workflows."""
+
+    id: UUID
+    document_extraction_id: UUID
+    field_name: str
+    field_value: object | None
+    field_type: str
+    confidence: float
+    evidence_ref: dict[str, object]
+    is_human_corrected: bool
+    created_at: datetime
+    updated_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class DocumentIssueRecord:
+    """Describe one persisted document issue for collection-phase verification workflows."""
+
+    id: UUID
+    document_id: UUID
+    issue_type: str
+    severity: str
+    status: str
+    details: JsonObject
+    created_at: datetime
+    updated_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class DocumentExtractionRecord:
+    """Describe one persisted extraction version with its reviewable field set."""
+
+    id: UUID
+    document_id: UUID
+    version_no: int
+    schema_name: str
+    schema_version: str
+    extracted_payload: JsonObject
+    confidence_summary: JsonObject
+    needs_review: bool
+    approved_version: bool
+    created_at: datetime
+    updated_at: datetime
+    fields: tuple[ExtractedFieldRecord, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class DocumentWithExtractionRecord:
+    """Describe one close-run document together with its latest extraction, if any."""
+
+    document: DocumentRecord
+    latest_extraction: DocumentExtractionRecord | None
+    open_issues: tuple[DocumentIssueRecord, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class DocumentAccessRecord:
+    """Describe one accessible document together with its close-run and entity context."""
+
+    close_run: DocumentCloseRunRecord
+    entity: DocumentEntityRecord
+    document: DocumentRecord
 
 
 @dataclass(frozen=True, slots=True)
@@ -207,6 +274,132 @@ class DocumentRepository:
         )
         return tuple(_map_document(document) for document in self._db_session.scalars(statement))
 
+    def list_documents_for_close_run_with_latest_extraction(
+        self,
+        *,
+        close_run_id: UUID,
+    ) -> tuple[DocumentWithExtractionRecord, ...]:
+        """Return close-run documents together with their latest extraction and fields."""
+
+        documents = self.list_documents_for_close_run(close_run_id=close_run_id)
+        if not documents:
+            return ()
+
+        document_ids = tuple(document.id for document in documents)
+        extraction_rows = self._db_session.scalars(
+            select(DocumentExtraction)
+            .where(DocumentExtraction.document_id.in_(document_ids))
+            .order_by(
+                DocumentExtraction.document_id.asc(),
+                DocumentExtraction.version_no.desc(),
+                DocumentExtraction.created_at.desc(),
+            )
+        ).all()
+
+        latest_extraction_models: dict[UUID, DocumentExtraction] = {}
+        for extraction in extraction_rows:
+            latest_extraction_models.setdefault(extraction.document_id, extraction)
+
+        extraction_ids = tuple(extraction.id for extraction in latest_extraction_models.values())
+        fields_by_extraction_id: dict[UUID, list[ExtractedFieldRecord]] = {
+            extraction_id: [] for extraction_id in extraction_ids
+        }
+        if extraction_ids:
+            field_rows = self._db_session.scalars(
+                select(ExtractedField)
+                .where(ExtractedField.document_extraction_id.in_(extraction_ids))
+                .order_by(
+                    ExtractedField.document_extraction_id.asc(),
+                    ExtractedField.field_name.asc(),
+                    ExtractedField.created_at.asc(),
+                )
+            ).all()
+            for field in field_rows:
+                fields_by_extraction_id.setdefault(field.document_extraction_id, []).append(
+                    _map_extracted_field(field)
+                )
+
+        open_issue_rows = self._db_session.scalars(
+            select(DocumentIssue)
+            .where(
+                DocumentIssue.document_id.in_(document_ids),
+                DocumentIssue.status == "open",
+            )
+            .order_by(
+                DocumentIssue.document_id.asc(),
+                DocumentIssue.created_at.asc(),
+            )
+        ).all()
+        issues_by_document_id: dict[UUID, list[DocumentIssueRecord]] = {
+            document_id: [] for document_id in document_ids
+        }
+        for issue in open_issue_rows:
+            issues_by_document_id.setdefault(issue.document_id, []).append(_map_document_issue(issue))
+
+        results: list[DocumentWithExtractionRecord] = []
+        for document in documents:
+            extraction_model = latest_extraction_models.get(document.id)
+            latest_extraction = (
+                _map_document_extraction(
+                    extraction_model,
+                    tuple(fields_by_extraction_id.get(extraction_model.id, [])),
+                )
+                if extraction_model is not None
+                else None
+            )
+            results.append(
+                DocumentWithExtractionRecord(
+                    document=document,
+                    latest_extraction=latest_extraction,
+                    open_issues=tuple(issues_by_document_id.get(document.id, [])),
+                )
+            )
+
+        return tuple(results)
+
+    def get_document_for_user(
+        self,
+        *,
+        entity_id: UUID,
+        close_run_id: UUID,
+        document_id: UUID,
+        user_id: UUID,
+    ) -> DocumentAccessRecord | None:
+        """Return one document when it belongs to an accessible entity close run."""
+
+        statement = (
+            select(Document, CloseRun, Entity)
+            .join(CloseRun, CloseRun.id == Document.close_run_id)
+            .join(Entity, Entity.id == CloseRun.entity_id)
+            .join(EntityMembership, EntityMembership.entity_id == Entity.id)
+            .where(
+                Document.id == document_id,
+                Document.close_run_id == close_run_id,
+                CloseRun.entity_id == entity_id,
+                EntityMembership.user_id == user_id,
+            )
+        )
+        row = self._db_session.execute(statement).one_or_none()
+        if row is None:
+            return None
+
+        document, close_run, entity = row
+        return DocumentAccessRecord(
+            close_run=DocumentCloseRunRecord(
+                id=close_run.id,
+                entity_id=close_run.entity_id,
+                period_start=close_run.period_start,
+                period_end=close_run.period_end,
+                current_version_no=close_run.current_version_no,
+            ),
+            entity=DocumentEntityRecord(
+                id=entity.id,
+                autonomy_mode=_resolve_autonomy_mode(entity.autonomy_mode),
+                status=EntityStatus(entity.status),
+            ),
+            document=_map_document(document),
+        )
+
     def get_document_for_parse(
         self,
         *,
@@ -272,6 +465,36 @@ class DocumentRepository:
         document.status = status.value
         if ocr_required is not None:
             document.ocr_required = ocr_required
+        self._db_session.flush()
+        return _map_document(document)
+
+    def update_document_classification(
+        self,
+        *,
+        document_id: UUID,
+        document_type: DocumentType,
+        classification_confidence: float | None,
+    ) -> DocumentRecord:
+        """Update the document type and classification confidence after parsing."""
+
+        document = self._load_document(document_id=document_id)
+        document.document_type = document_type.value
+        document.classification_confidence = classification_confidence
+        self._db_session.flush()
+        return _map_document(document)
+
+    def update_document_period(
+        self,
+        *,
+        document_id: UUID,
+        period_start: date | None,
+        period_end: date | None,
+    ) -> DocumentRecord:
+        """Persist the detected source-period window for one document."""
+
+        document = self._load_document(document_id=document_id)
+        document.period_start = period_start
+        document.period_end = period_end
         self._db_session.flush()
         return _map_document(document)
 
@@ -405,6 +628,60 @@ def _map_document_version(document_version: DocumentVersion) -> DocumentVersionR
     )
 
 
+def _map_document_extraction(
+    extraction: DocumentExtraction,
+    fields: tuple[ExtractedFieldRecord, ...],
+) -> DocumentExtractionRecord:
+    """Convert an ORM extraction row into the immutable service-layer record."""
+
+    return DocumentExtractionRecord(
+        id=extraction.id,
+        document_id=extraction.document_id,
+        version_no=extraction.version_no,
+        schema_name=extraction.schema_name,
+        schema_version=extraction.schema_version,
+        extracted_payload=dict(extraction.extracted_payload),
+        confidence_summary=dict(extraction.confidence_summary),
+        needs_review=extraction.needs_review,
+        approved_version=extraction.approved_version,
+        created_at=extraction.created_at,
+        updated_at=extraction.updated_at,
+        fields=fields,
+    )
+
+
+def _map_document_issue(issue: DocumentIssue) -> DocumentIssueRecord:
+    """Convert an ORM document-issue row into the immutable service-layer record."""
+
+    return DocumentIssueRecord(
+        id=issue.id,
+        document_id=issue.document_id,
+        issue_type=issue.issue_type,
+        severity=issue.severity,
+        status=issue.status,
+        details=dict(issue.details),
+        created_at=issue.created_at,
+        updated_at=issue.updated_at,
+    )
+
+
+def _map_extracted_field(field: ExtractedField) -> ExtractedFieldRecord:
+    """Convert an ORM extracted-field row into the immutable service-layer record."""
+
+    return ExtractedFieldRecord(
+        id=field.id,
+        document_extraction_id=field.document_extraction_id,
+        field_name=field.field_name,
+        field_value=field.field_value,
+        field_type=field.field_type,
+        confidence=float(field.confidence),
+        evidence_ref=dict(field.evidence_ref),
+        is_human_corrected=field.is_human_corrected,
+        created_at=field.created_at,
+        updated_at=field.updated_at,
+    )
+
+
 def _resolve_autonomy_mode(value: str) -> AutonomyMode:
     """Resolve a stored autonomy-mode value or fail fast on schema drift."""
 
@@ -446,11 +723,16 @@ def _resolve_document_status(value: str) -> DocumentStatus:
 
 
 __all__ = [
+    "DocumentAccessRecord",
     "DocumentCloseRunAccessRecord",
     "DocumentCloseRunRecord",
+    "DocumentExtractionRecord",
     "DocumentEntityRecord",
+    "DocumentIssueRecord",
     "DocumentRecord",
     "DocumentRepository",
     "DocumentVersionRecord",
+    "DocumentWithExtractionRecord",
+    "ExtractedFieldRecord",
     "ParseDocumentRecord",
 ]

@@ -1,7 +1,7 @@
 /*
-Purpose: Centralize hosted-vs-local frontend runtime mode resolution for web and desktop shells.
+Purpose: Centralize frontend runtime mode resolution for hosted and self-managed deployments.
 Scope: Deployment-mode defaults, hosted/runtime guards, and small helpers shared by middleware and setup flows.
-Dependencies: Process environment variables injected by Vercel, Tauri, or local development shells.
+Dependencies: Process environment variables injected by Vercel, Tauri, or self-managed runtimes.
 */
 
 export type FrontendRuntimeMode = "hosted" | "desktop-local";
@@ -9,8 +9,8 @@ export type FrontendRuntimeMode = "hosted" | "desktop-local";
 /**
  * Purpose: Resolve the canonical frontend runtime mode for the current Next.js process.
  * Inputs: Process environment only.
- * Outputs: Either `hosted` for Vercel/remote desktop shells or `desktop-local` for local sidecar flows.
- * Behavior: Prefers explicit configuration, defaults to local mode during development, and hosted mode otherwise.
+ * Outputs: Either `hosted` for deployed web origins or `desktop-local` for self-managed sidecar flows.
+ * Behavior: Prefers explicit configuration, defaults to self-managed mode during development, and hosted mode otherwise.
  */
 export function resolveFrontendRuntimeMode(): FrontendRuntimeMode {
   const configuredMode = process.env.ACCOUNTING_AGENT_FRONTEND_MODE?.trim().toLowerCase();
@@ -26,7 +26,7 @@ export function resolveFrontendRuntimeMode(): FrontendRuntimeMode {
 }
 
 /**
- * Purpose: Tell callers whether the current frontend should skip local runtime gating entirely.
+ * Purpose: Tell callers whether the current frontend should skip loopback runtime gating entirely.
  * Inputs: None.
  * Outputs: True when the app runs as a hosted frontend for browser or remote desktop shells.
  * Behavior: Keeps all hosted-mode branching grounded in one explicit runtime helper.

@@ -47,6 +47,124 @@ export type ChatThreadWithMessages = {
   thread: ChatThreadSummary;
 };
 
+export type ChatAttachmentIntent = "chart_of_accounts" | "source_documents";
+
+export type AgentMemorySummary = {
+  last_action_status: string | null;
+  last_assistant_response: string | null;
+  last_operator_message: string | null;
+  last_tool_name: string | null;
+  last_trace_id: string | null;
+  pending_action_count: number;
+  progress_summary: string | null;
+  recent_tool_names: string[];
+  updated_at: string | null;
+};
+
+export type AgentCoaAccountSummary = {
+  account_code: string;
+  account_name: string;
+  account_type: string;
+  is_active: boolean;
+  is_postable: boolean;
+};
+
+export type AgentCoaSummary = {
+  account_count: number;
+  accounts: AgentCoaAccountSummary[];
+  activated_at: string | null;
+  is_available: boolean;
+  postable_account_count: number;
+  requires_operator_upload: boolean;
+  source: string | null;
+  status: string;
+  summary: string | null;
+  version_no: number | null;
+};
+
+export type AgentRunPhaseState = {
+  blocking_reason: string | null;
+  completed_at: string | null;
+  label: string;
+  phase: string;
+  status: string;
+};
+
+export type AgentRunReadiness = {
+  blockers: string[];
+  document_count: number;
+  has_close_run: boolean;
+  has_source_documents: boolean;
+  next_actions: string[];
+  parsed_document_count: number;
+  phase_states: AgentRunPhaseState[];
+  status: string;
+  warnings: string[];
+};
+
+export type AgentToolManifestItem = {
+  description: string;
+  input_schema: Record<string, unknown>;
+  intent: string;
+  name: string;
+  prompt_signature: string;
+  requires_human_approval: boolean;
+};
+
+export type AgentTraceRecord = {
+  action_status: string | null;
+  created_at: string;
+  message_id: string;
+  mode: string | null;
+  summary: string | null;
+  tool_name: string | null;
+  trace_id: string | null;
+};
+
+export type ToolSchemaNode = {
+  additionalProperties?: boolean | ToolSchemaNode;
+  description?: string;
+  enum?: unknown[];
+  format?: string;
+  items?: ToolSchemaNode;
+  properties?: Record<string, ToolSchemaNode>;
+  required?: string[];
+  type?: string | string[];
+};
+
+export type ChatToolManifestTool = {
+  description: string;
+  inputSchema: ToolSchemaNode;
+  name: string;
+};
+
+export type ChatToolManifest = {
+  protocol: string;
+  tools: ChatToolManifestTool[];
+  version: string;
+};
+
+export type ToolSchemaField = {
+  description: string | null;
+  enumValues: string[];
+  format: string | null;
+  name: string;
+  required: boolean;
+  typeLabel: string;
+};
+
+export type ChatThreadWorkspace = {
+  coa: AgentCoaSummary;
+  grounding: GroundingContext;
+  mcp_manifest: ChatToolManifest;
+  memory: AgentMemorySummary;
+  progress_summary: string | null;
+  readiness: AgentRunReadiness;
+  recent_traces: AgentTraceRecord[];
+  thread_id: string;
+  tools: AgentToolManifestItem[];
+};
+
 export type ChatThreadListResponse = {
   threads: ChatThreadSummary[];
 };
@@ -183,8 +301,21 @@ export async function getChatThread(
   return fetchJson<ChatThreadWithMessages>(`${API_BASE}/threads/${threadId}?${params.toString()}`);
 }
 
+export async function getChatThreadWorkspace(
+  threadId: string,
+  entityId: string,
+): Promise<ChatThreadWorkspace> {
+  const workspace = await fetchJson<ChatThreadWorkspace>(
+    `${API_BASE}/threads/${threadId}/workspace?entity_id=${encodeURIComponent(entityId)}`,
+  );
+  return {
+    ...workspace,
+    mcp_manifest: normalizeChatToolManifest(workspace.mcp_manifest as Record<string, unknown>),
+  };
+}
+
 /**
- * Purpose: Send a user message and receive a grounded read-only copilot analysis response.
+ * Purpose: Send a user message and receive a grounded read-only agent analysis response.
  * Inputs: Thread ID, entity ID for access verification, and message content.
  * Outputs: The persisted user message and the generated assistant response with evidence.
  * Behavior: Posts to the thread messages endpoint.
@@ -267,6 +398,46 @@ export async function sendChatAction(
   );
 }
 
+export async function sendChatActionWithAttachments(
+  threadId: string,
+  entityId: string,
+  input: {
+    attachmentIntent: ChatAttachmentIntent;
+    content?: string;
+    files: readonly File[];
+  },
+): Promise<ChatActionResponse> {
+  const formData = new FormData();
+  formData.append("attachment_intent", input.attachmentIntent);
+  if (typeof input.content === "string") {
+    formData.append("content", input.content);
+  }
+  for (const file of input.files) {
+    formData.append("files", file);
+  }
+
+  const response = await fetch(
+    `${API_BASE}/threads/${threadId}/actions/attachments?entity_id=${encodeURIComponent(entityId)}`,
+    {
+      body: formData,
+      credentials: "include",
+      method: "POST",
+    },
+  );
+
+  if (!response.ok) {
+    const body = await parseJsonResponse(response);
+    const bodyRecord = isRecord(body) ? body : null;
+    throw new ChatApiError(
+      response.status,
+      typeof bodyRecord?.message === "string" ? bodyRecord.message : undefined,
+      typeof bodyRecord?.code === "string" ? bodyRecord.code : undefined,
+    );
+  }
+
+  return (await parseJsonResponse(response)) as ChatActionResponse;
+}
+
 /**
  * Purpose: List pending action plans for a chat thread.
  * Inputs: Thread ID, entity ID, and optional limit.
@@ -325,6 +496,167 @@ export async function rejectChatAction(
       method: "POST",
     },
   );
+}
+
+export async function getChatToolManifest(): Promise<ChatToolManifest> {
+  const manifest = await fetchJson<Record<string, unknown>>(`${API_BASE}/tools/mcp`);
+  return normalizeChatToolManifest(manifest);
+}
+
+export function normalizeChatToolManifest(
+  manifest: Record<string, unknown> | null | undefined,
+): ChatToolManifest {
+  const safeManifest = isRecord(manifest) ? manifest : {};
+  const tools = Array.isArray(safeManifest.tools) ? safeManifest.tools : [];
+
+  return {
+    protocol:
+      typeof safeManifest.protocol === "string"
+        ? safeManifest.protocol
+        : "model-context-protocol",
+    tools: tools
+      .filter(isRecord)
+      .map((tool) => ({
+        description: typeof tool.description === "string" ? tool.description : "",
+        inputSchema: normalizeToolSchemaNode(tool.inputSchema),
+        name: typeof tool.name === "string" ? tool.name : "unknown_tool",
+      })),
+    version: typeof safeManifest.version === "string" ? safeManifest.version : "unknown",
+  };
+}
+
+export function summarizeToolSchema(
+  schema: Record<string, unknown> | ToolSchemaNode,
+): {
+  fieldCount: number;
+  requiredCount: number;
+} {
+  const fields = extractToolSchemaFields(schema);
+  return {
+    fieldCount: fields.length,
+    requiredCount: fields.filter((field) => field.required).length,
+  };
+}
+
+export function extractToolSchemaFields(
+  schema: Record<string, unknown> | ToolSchemaNode,
+): ToolSchemaField[] {
+  const normalizedSchema = normalizeToolSchemaNode(schema);
+  const collectedFields = collectToolSchemaFields(normalizedSchema);
+  return collectedFields.sort((left, right) => left.name.localeCompare(right.name));
+}
+
+function collectToolSchemaFields(
+  schema: ToolSchemaNode,
+  prefix = "",
+  required = true,
+): ToolSchemaField[] {
+  const properties = schema.properties;
+  const requiredFields = new Set(schema.required ?? []);
+  if (properties && Object.keys(properties).length > 0) {
+    return Object.entries(properties).flatMap(([name, childSchema]) =>
+      collectToolSchemaFields(
+        childSchema,
+        prefix ? `${prefix}.${name}` : name,
+        requiredFields.has(name),
+      ),
+    );
+  }
+
+  if (!prefix) {
+    return [];
+  }
+
+  return [
+    {
+      description: schema.description ?? null,
+      enumValues: Array.isArray(schema.enum)
+        ? schema.enum.filter((value): value is string => typeof value === "string")
+        : [],
+      format: typeof schema.format === "string" ? schema.format : null,
+      name: prefix,
+      required,
+      typeLabel: formatToolSchemaTypeLabel(schema),
+    },
+  ];
+}
+
+function formatToolSchemaTypeLabel(schema: ToolSchemaNode): string {
+  const normalizedType = schema.type;
+  if (Array.isArray(normalizedType)) {
+    return normalizedType.join(" | ");
+  }
+  if (normalizedType === "array") {
+    const itemType = schema.items ? formatToolSchemaTypeLabel(schema.items) : "unknown";
+    return `array<${itemType}>`;
+  }
+  if (typeof normalizedType === "string") {
+    return normalizedType;
+  }
+  if (Array.isArray(schema.enum) && schema.enum.length > 0) {
+    return "enum";
+  }
+  return "value";
+}
+
+function normalizeToolSchemaNode(value: unknown): ToolSchemaNode {
+  if (!isRecord(value)) {
+    return {};
+  }
+
+  const normalizedProperties: Record<string, ToolSchemaNode> = {};
+  if (isRecord(value.properties)) {
+    for (const [propertyName, propertyValue] of Object.entries(value.properties)) {
+      normalizedProperties[propertyName] = normalizeToolSchemaNode(propertyValue);
+    }
+  }
+
+  let normalizedAdditionalProperties: boolean | ToolSchemaNode | undefined;
+  if (typeof value.additionalProperties === "boolean") {
+    normalizedAdditionalProperties = value.additionalProperties;
+  } else if (isRecord(value.additionalProperties)) {
+    normalizedAdditionalProperties = normalizeToolSchemaNode(value.additionalProperties);
+  }
+
+  const normalizedNode: ToolSchemaNode = {};
+  if (normalizedAdditionalProperties !== undefined) {
+    normalizedNode.additionalProperties = normalizedAdditionalProperties;
+  }
+  if (typeof value.description === "string") {
+    normalizedNode.description = value.description;
+  }
+  if (Array.isArray(value.enum)) {
+    normalizedNode.enum = value.enum;
+  }
+  if (typeof value.format === "string") {
+    normalizedNode.format = value.format;
+  }
+  const normalizedItems = normalizeToolSchemaItems(value.items);
+  if (normalizedItems !== undefined) {
+    normalizedNode.items = normalizedItems;
+  }
+  if (Object.keys(normalizedProperties).length > 0) {
+    normalizedNode.properties = normalizedProperties;
+  }
+  if (
+    Array.isArray(value.required) &&
+    value.required.every((item): item is string => typeof item === "string")
+  ) {
+    normalizedNode.required = value.required;
+  }
+  if (typeof value.type === "string") {
+    normalizedNode.type = value.type;
+  } else if (
+    Array.isArray(value.type) &&
+    value.type.every((item): item is string => typeof item === "string")
+  ) {
+    normalizedNode.type = value.type;
+  }
+  return normalizedNode;
+}
+
+function normalizeToolSchemaItems(value: unknown): ToolSchemaNode | undefined {
+  return isRecord(value) ? normalizeToolSchemaNode(value) : undefined;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

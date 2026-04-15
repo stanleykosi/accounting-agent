@@ -64,6 +64,44 @@ class MatchingConfig:
 
 DEFAULT_MATCHING_CONFIG = MatchingConfig()
 
+
+def _normalize_dimension_value(value: Any) -> str:
+    """Normalize an optional reconciliation dimension into a stable string."""
+
+    return str(value or "").strip()
+
+
+def _budget_dimension_key(item: dict[str, Any]) -> tuple[str, str, str, str, str]:
+    """Build the canonical budget grouping key including all supported dimensions."""
+
+    return (
+        str(item.get("account_code", "")).strip(),
+        str(item.get("period", "")).strip(),
+        _normalize_dimension_value(item.get("department")),
+        _normalize_dimension_value(item.get("cost_centre")),
+        _normalize_dimension_value(item.get("project")),
+    )
+
+
+def _build_budget_reference(
+    *,
+    prefix: str,
+    account_code: str,
+    period: str,
+    department: str,
+    cost_centre: str,
+    project: str,
+) -> str:
+    """Build a stable budget reference that preserves dimensional splits."""
+
+    reference_parts = [prefix, account_code, period]
+    reference_parts.extend(
+        dimension
+        for dimension in (department, cost_centre, project)
+        if dimension
+    )
+    return ":".join(reference_parts)
+
 # ---------------------------------------------------------------------------
 # Core match result types
 # ---------------------------------------------------------------------------
@@ -1287,23 +1325,47 @@ class BudgetVsActualMatcher:
         effective_config = config or DEFAULT_MATCHING_CONFIG
         results: list[MatchResult] = []
 
-        # Index counterparts by account_code + period
-        cp_index: dict[tuple[str, str], Decimal] = {}
+        # Index counterparts by account_code + period + dimensional split.
+        cp_index: dict[tuple[str, str, str, str, str], Decimal] = {}
+        cp_ref_by_key: dict[tuple[str, str, str, str, str], str] = {}
         for cp in counterparts:
-            key = (cp.get("account_code", ""), cp.get("period", ""))
+            key = _budget_dimension_key(cp)
             amount = _parse_amount(cp.get("amount")) or Decimal("0")
             cp_index[key] = cp_index.get(key, Decimal("0")) + amount
+            cp_ref_by_key.setdefault(
+                key,
+                str(
+                    cp.get("ref")
+                    or _build_budget_reference(
+                        prefix="ledger:budget",
+                        account_code=key[0],
+                        period=key[1],
+                        department=key[2],
+                        cost_centre=key[3],
+                        project=key[4],
+                    )
+                ),
+            )
 
         for item in source_items:
-            account_code = item.get("account_code", "")
-            period = item.get("period", "")
-            item_ref = f"budget:{account_code}:{period}"
+            account_code, period, department, cost_centre, project = _budget_dimension_key(item)
+            item_ref = _build_budget_reference(
+                prefix="budget",
+                account_code=account_code,
+                period=period,
+                department=department,
+                cost_centre=cost_centre,
+                project=project,
+            )
             budget_amount = _parse_amount(item.get("budget_amount"))
 
             if budget_amount is None:
                 continue
 
-            actual_amount = cp_index.get((account_code, period), Decimal("0"))
+            actual_amount = cp_index.get(
+                (account_code, period, department, cost_centre, project),
+                Decimal("0"),
+            )
             variance = actual_amount - budget_amount
 
             # Budget vs actual is informational — we report variance, not match
@@ -1338,7 +1400,17 @@ class BudgetVsActualMatcher:
                     counterparts=[
                         MatchCounterpart(
                             source_type=ReconciliationSourceType.LEDGER_TRANSACTION,
-                            source_ref=f"ledger:{account_code}:{period}",
+                            source_ref=cp_ref_by_key.get(
+                                (account_code, period, department, cost_centre, project),
+                                _build_budget_reference(
+                                    prefix="ledger:budget",
+                                    account_code=account_code,
+                                    period=period,
+                                    department=department,
+                                    cost_centre=cost_centre,
+                                    project=project,
+                                ),
+                            ),
                             amount=actual_amount,
                             confidence=confidence,
                             match_reason=f"Budget vs actual: variance={variance} ({variance_pct:.1f}%)",
@@ -1351,6 +1423,9 @@ class BudgetVsActualMatcher:
                     metadata={
                         "account_code": account_code,
                         "period": period,
+                        **({"department": department} if department else {}),
+                        **({"cost_centre": cost_centre} if cost_centre else {}),
+                        **({"project": project} if project else {}),
                         "variance_pct": float(variance_pct),
                     },
                 )

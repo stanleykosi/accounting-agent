@@ -18,7 +18,7 @@ from services.db.models.entity import (
     EntityStatus,
     build_default_confidence_thresholds,
 )
-from services.db.models.exports import Artifact, ExportRun, ExportStatus
+from services.db.models.exports import Artifact, ExportDistribution, ExportRun, ExportStatus
 from services.db.models.extractions import DocumentExtraction, DocumentLineItem, ExtractedField
 from services.db.models.integration import (
     IntegrationConnection,
@@ -26,7 +26,13 @@ from services.db.models.integration import (
     IntegrationProvider,
 )
 from services.db.models.jobs import Job
-from services.db.models.journals import JournalEntry, JournalLine
+from services.db.models.journals import (
+    JournalEntry,
+    JournalLine,
+    JournalPosting,
+    JournalPostingStatus,
+    JournalPostingTarget,
+)
 from services.db.models.ownership import OwnershipTarget
 from services.db.models.recommendations import Recommendation
 from services.db.models.reconciliation import (
@@ -44,6 +50,7 @@ from services.db.models.reporting import (
     ReportTemplateSection,
     ReportTemplateSource,
 )
+from services.db.models.supporting_schedules import SupportingSchedule, SupportingScheduleRow
 
 __all__ = [
     "DEFAULT_ENTITY_CONFIDENCE_THRESHOLDS",
@@ -69,6 +76,7 @@ __all__ = [
     "Entity",
     "EntityMembership",
     "EntityStatus",
+    "ExportDistribution",
     "ExportRun",
     "ExportStatus",
     "ExtractedField",
@@ -78,6 +86,9 @@ __all__ = [
     "Job",
     "JournalEntry",
     "JournalLine",
+    "JournalPosting",
+    "JournalPostingStatus",
+    "JournalPostingTarget",
     "OwnershipTarget",
     "Recommendation",
     "Reconciliation",
@@ -91,6 +102,8 @@ __all__ = [
     "ReportTemplateSource",
     "ReviewAction",
     "Session",
+    "SupportingSchedule",
+    "SupportingScheduleRow",
     "TrialBalanceSnapshot",
     "User",
     "UserStatus",

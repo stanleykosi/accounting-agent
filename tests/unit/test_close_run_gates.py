@@ -50,6 +50,25 @@ def test_collection_gate_blocks_missing_and_unauthorized_documents() -> None:
     assert processing.status is CloseRunPhaseStatus.NOT_STARTED
 
 
+def test_collection_gate_mentions_pending_verification_and_transaction_mismatch() -> None:
+    """Collection should stay blocked until verification and document matching are complete."""
+
+    evaluated = evaluate_phase_gates(
+        phase_states=_existing_states_from_initial(),
+        signals=PhaseGateSignals(
+            pending_document_review_count=2,
+            unmatched_transaction_count=1,
+        ),
+    )
+
+    collection = evaluated[0]
+
+    assert collection.status is CloseRunPhaseStatus.BLOCKED
+    assert collection.blocking_reason is not None
+    assert "awaiting verification" in collection.blocking_reason
+    assert "matched to transactions" in collection.blocking_reason
+
+
 def test_transition_opens_only_the_immediate_next_phase() -> None:
     """Ensure transitions complete the active ready phase and reject phase skipping."""
 
@@ -91,6 +110,34 @@ def test_processing_gate_blocks_before_reconciliation_when_items_remain() -> Non
         )
 
 
+def test_reconciliation_gate_blocks_missing_or_unreviewed_supporting_schedules() -> None:
+    """Reconciliation should stay blocked until Step 6 workpapers are ready."""
+
+    reconciliation_active = _existing_states(
+        completed=(
+            WorkflowPhase.COLLECTION,
+            WorkflowPhase.PROCESSING,
+        ),
+        active=WorkflowPhase.RECONCILIATION,
+    )
+
+    blocked = evaluate_phase_gates(
+        phase_states=reconciliation_active,
+        signals=PhaseGateSignals(
+            missing_supporting_schedules=("fixed_assets", "loan_amortisation"),
+            pending_supporting_schedule_review_count=3,
+        ),
+    )
+
+    reconciliation = blocked[2]
+
+    assert reconciliation.phase is WorkflowPhase.RECONCILIATION
+    assert reconciliation.status is CloseRunPhaseStatus.BLOCKED
+    assert reconciliation.blocking_reason is not None
+    assert "missing supporting schedules" in reconciliation.blocking_reason
+    assert "awaiting review" in reconciliation.blocking_reason
+
+
 def test_signoff_readiness_requires_prior_phases_and_blocks_open_review_items() -> None:
     """Ensure Review / Sign-off is only ready after upstream phases and review blockers clear."""
 
@@ -106,13 +153,19 @@ def test_signoff_readiness_requires_prior_phases_and_blocks_open_review_items() 
 
     blocked = evaluate_signoff_readiness(
         phase_states=review_active,
-        signals=PhaseGateSignals(unresolved_signoff_item_count=1),
+        signals=PhaseGateSignals(
+            missing_signoff_requirements=(
+                "completed export package",
+                "management distribution record",
+            ),
+            unresolved_signoff_item_count=2,
+        ),
     )
     ready = evaluate_signoff_readiness(phase_states=review_active, signals=PhaseGateSignals())
 
     assert blocked.status is CloseRunPhaseStatus.BLOCKED
     assert blocked.blocking_reason is not None
-    assert "sign-off" in blocked.blocking_reason
+    assert "management distribution" in blocked.blocking_reason
     assert ready.status is CloseRunPhaseStatus.READY
 
 
@@ -126,8 +179,7 @@ def test_reopened_phase_states_preserve_work_and_reopen_signoff() -> None:
     assert phase_states[-1].phase is WorkflowPhase.REVIEW_SIGNOFF
     assert phase_states[-1].status is CloseRunPhaseStatus.IN_PROGRESS
     assert all(
-        phase_state.status is CloseRunPhaseStatus.COMPLETED
-        for phase_state in phase_states[:-1]
+        phase_state.status is CloseRunPhaseStatus.COMPLETED for phase_state in phase_states[:-1]
     )
     assert all(phase_state.completed_at == reopened_at for phase_state in phase_states[:-1])
 

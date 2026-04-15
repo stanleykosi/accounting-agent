@@ -9,6 +9,7 @@ Dependencies: React hooks, Next.js route params, the entity API helpers, and sha
 import { SurfaceCard, Timeline, type TimelineItem } from "@accounting-ai-agent/ui";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { AgentCapabilityCatalog } from "../../../../components/chat/AgentCapabilityCatalog";
 import {
   use,
   useEffect,
@@ -21,6 +22,7 @@ import {
 } from "react";
 import {
   CloseRunApiError,
+  createCloseRun,
   deriveCloseRunAttention,
   formatCloseRunPeriod,
   getCloseRunStatusLabel,
@@ -58,12 +60,24 @@ type AddMembershipFormState = {
   userEmail: string;
 };
 
+type CreateCloseRunFormState = {
+  periodEnd: string;
+  periodStart: string;
+  reportingCurrency: string;
+};
+
 type EntityActivityEvent = EntityWorkspace["activity_events"][number];
 
 const defaultMembershipFormState: AddMembershipFormState = {
   isDefaultActor: false,
   role: "member",
   userEmail: "",
+};
+
+const defaultCreateCloseRunFormState: CreateCloseRunFormState = {
+  periodEnd: "",
+  periodStart: "",
+  reportingCurrency: "NGN",
 };
 
 /**
@@ -85,6 +99,9 @@ export default function EntityWorkspacePage({
   const [isPending, startTransition] = useTransition();
   const [membershipFormState, setMembershipFormState] = useState<AddMembershipFormState>(
     defaultMembershipFormState,
+  );
+  const [closeRunFormState, setCloseRunFormState] = useState<CreateCloseRunFormState>(
+    defaultCreateCloseRunFormState,
   );
   const [settingsFormState, setSettingsFormState] = useState<EntitySettingsFormState | null>(null);
 
@@ -137,6 +154,15 @@ export default function EntityWorkspacePage({
       setMembershipFormState((currentState) => ({
         ...currentState,
         [fieldName]: nextValue,
+      }));
+    };
+
+  const handleCloseRunFieldChange =
+    (fieldName: keyof CreateCloseRunFormState) =>
+    (event: ChangeEvent<HTMLInputElement>): void => {
+      setCloseRunFormState((currentState) => ({
+        ...currentState,
+        [fieldName]: event.target.value,
       }));
     };
 
@@ -208,6 +234,33 @@ export default function EntityWorkspacePage({
         })
         .catch((error: unknown) => {
           setEntityErrorMessage(resolveEntityErrorMessage(error));
+        });
+    });
+  };
+
+  const handleCreateCloseRun = (event: FormEvent<HTMLFormElement>): void => {
+    event.preventDefault();
+    setCloseRunErrorMessage(null);
+    const baseCurrency = entity?.base_currency ?? defaultCreateCloseRunFormState.reportingCurrency;
+    const nextEntityId = entity?.id ?? entityId;
+
+    startTransition(() => {
+      void createCloseRun(entityId, {
+        period_start: closeRunFormState.periodStart,
+        period_end: closeRunFormState.periodEnd,
+        reporting_currency: emptyStringToNull(closeRunFormState.reportingCurrency),
+      })
+        .then((createdCloseRun) => {
+          setCloseRuns((currentCloseRuns) => [createdCloseRun, ...currentCloseRuns]);
+          setCloseRunFormState({
+            ...defaultCreateCloseRunFormState,
+            reportingCurrency: baseCurrency,
+          });
+          router.push(`/entities/${nextEntityId}/close-runs/${createdCloseRun.id}`);
+          router.refresh();
+        })
+        .catch((error: unknown) => {
+          setCloseRunErrorMessage(resolveWorkspaceViewErrorMessage(error));
         });
     });
   };
@@ -475,10 +528,54 @@ export default function EntityWorkspacePage({
             </div>
           ) : null}
 
+          <form className="entity-form close-run-create-form" onSubmit={handleCreateCloseRun}>
+            <div className="entity-form-row">
+              <label className="field">
+                <span>Period start</span>
+                <input
+                  className="text-input"
+                  onChange={handleCloseRunFieldChange("periodStart")}
+                  required
+                  type="date"
+                  value={closeRunFormState.periodStart}
+                />
+              </label>
+              <label className="field">
+                <span>Period end</span>
+                <input
+                  className="text-input"
+                  onChange={handleCloseRunFieldChange("periodEnd")}
+                  required
+                  type="date"
+                  value={closeRunFormState.periodEnd}
+                />
+              </label>
+            </div>
+
+            <div className="entity-form-row">
+              <label className="field">
+                <span>Reporting currency</span>
+                <input
+                  className="text-input"
+                  maxLength={3}
+                  onChange={handleCloseRunFieldChange("reportingCurrency")}
+                  type="text"
+                  value={closeRunFormState.reportingCurrency}
+                />
+              </label>
+              <div className="field close-run-create-actions">
+                <span>New close run</span>
+                <button className="primary-button" disabled={isPending} type="submit">
+                  {isPending ? "Creating close run..." : "Create close run"}
+                </button>
+              </div>
+            </div>
+          </form>
+
           {closeRunErrorMessage === null && closeRuns.length === 0 ? (
             <p className="form-helper">
-              No close runs exist yet for this workspace. Create the first period run from the
-              dashboard flow when you are ready to start the accounting cycle.
+              No close runs exist yet for this workspace. Create the first period run here to begin
+              the accounting workflow for this entity.
             </p>
           ) : (
             <div className="dashboard-row-list">
@@ -522,15 +619,25 @@ export default function EntityWorkspacePage({
                     </Link>
                     <Link
                       className="workspace-link-inline"
+                      href={`/entities/${entity.id}/close-runs/${closeRun.id}/schedules`}
+                    >
+                      Schedules
+                    </Link>
+                    <Link
+                      className="workspace-link-inline"
                       href={`/entities/${entity.id}/close-runs/${closeRun.id}/chat`}
                     >
-                      Copilot
+                      Agent
                     </Link>
                   </div>
                 </article>
               ))}
             </div>
           )}
+        </SurfaceCard>
+
+        <SurfaceCard title="Agent Capability Catalog" subtitle="Workspace-level runtime map">
+          <AgentCapabilityCatalog maxTools={6} />
         </SurfaceCard>
       </section>
 

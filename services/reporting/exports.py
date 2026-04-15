@@ -61,6 +61,7 @@ class ExportManifestInput:
         artifact_records: List of already-released artifact metadata.
         include_evidence_pack: Whether to assemble an evidence pack bundle.
         include_audit_trail: Whether to include audit trail artifacts.
+        action_qualifier: Optional caller-supplied qualifier for idempotent export variants.
         evidence_pack_input: Optional pre-assembled evidence pack input data.
         generated_at: Timestamp when the manifest was assembled.
     """
@@ -74,6 +75,7 @@ class ExportManifestInput:
     artifact_records: list[dict[str, Any]] = field(default_factory=list)
     include_evidence_pack: bool = True
     include_audit_trail: bool = True
+    action_qualifier: str | None = None
     evidence_pack_input: EvidencePackInput | None = None
     generated_at: datetime | None = None
 
@@ -114,7 +116,7 @@ def build_export_manifest(
     idempotency_key = build_idempotency_key(
         close_run_id=input_data.close_run_id,
         artifact_type="export_manifest",
-        action_qualifier="full_export",
+        action_qualifier=input_data.action_qualifier or "full_export",
         version_override=input_data.close_run_version_no,
     )
 

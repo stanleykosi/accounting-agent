@@ -241,3 +241,63 @@ export async function approveReportCommentary(
     },
   );
 }
+
+export async function generateReportRun(
+  entityId: string,
+  closeRunId: string,
+  options?: {
+    generateCommentary?: boolean;
+    useLlmCommentary?: boolean;
+  },
+): Promise<ReportRunSummary> {
+  const searchParams = new URLSearchParams();
+  searchParams.set(
+    "generate_commentary",
+    String(options?.generateCommentary ?? true),
+  );
+  searchParams.set(
+    "use_llm_commentary",
+    String(options?.useLlmCommentary ?? false),
+  );
+  return requestJson<ReportRunSummary>(
+    apiPath(entityId, `/close-runs/${closeRunId}/generate?${searchParams.toString()}`),
+    {
+      method: "POST",
+    },
+  );
+}
+
+export async function listReportRuns(
+  entityId: string,
+  closeRunId: string,
+): Promise<readonly ReportRunSummary[]> {
+  const payload = await requestJson<{ report_runs: ReportRunSummary[] }>(
+    apiPath(entityId, `/close-runs/${closeRunId}/runs`),
+  );
+  return payload.report_runs;
+}
+
+export async function readReportRun(
+  entityId: string,
+  closeRunId: string,
+  reportRunId: string,
+): Promise<ReportRunSummary & { artifact_refs: readonly Record<string, unknown>[]; commentary: readonly CommentarySummary[] }> {
+  return requestJson<
+    ReportRunSummary & {
+      artifact_refs: readonly Record<string, unknown>[];
+      commentary: readonly CommentarySummary[];
+    }
+  >(apiPath(entityId, `/close-runs/${closeRunId}/runs/${reportRunId}`));
+}
+
+export function buildReportArtifactDownloadPath(
+  entityId: string,
+  closeRunId: string,
+  reportRunId: string,
+  artifactType: string,
+): string {
+  return apiPath(
+    entityId,
+    `/close-runs/${closeRunId}/runs/${reportRunId}/artifacts/${encodeURIComponent(artifactType)}`,
+  );
+}

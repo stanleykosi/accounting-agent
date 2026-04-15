@@ -17,8 +17,10 @@ from services.common.enums import (
     DocumentIssueStatus,
 )
 from services.db.models.audit import AuditSourceSurface
-from services.db.models.document_issue import DocumentIssue
+from services.db.models.close_run import CloseRun
+from services.db.models.documents import Document, DocumentIssue
 from services.db.repositories.document_repo import DocumentRepository
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 
@@ -145,8 +147,6 @@ class DocumentIssueService:
             },
         )
 
-        self._db_session.commit()
-
         return DocumentIssueRecord(
             id=issue.id,
             document_id=issue.document_id,
@@ -210,8 +210,6 @@ class DocumentIssueService:
             },
         )
 
-        self._db_session.commit()
-
         return DocumentIssueRecord(
             id=issue.id,
             document_id=issue.document_id,
@@ -269,9 +267,6 @@ class DocumentIssueService:
 
     def _get_entity_id_from_document(self, document_id: UUID) -> UUID:
         """Get entity ID from document ID."""
-        from sqlalchemy import select
-        from services.db.models.close_run import CloseRun
-        from services.db.models.document import Document
 
         statement = (
             select(CloseRun.entity_id)
@@ -284,12 +279,9 @@ class DocumentIssueService:
 
     def _get_close_run_id_from_document(self, document_id: UUID) -> UUID:
         """Get close run ID from document ID."""
-        from sqlalchemy import select
-        from services.db.models.document import Document
-
         statement = select(Document.close_run_id).where(Document.id == document_id)
         close_run_id = self._db_session.execute(statement).scalar_one()
         return close_run_id
 
 
-__all__ = ["DocumentIssueRecord", "DocumentIssueServiceProtocol", "DocumentIssueService"]
+__all__ = ["DocumentIssueRecord", "DocumentIssueService", "DocumentIssueServiceProtocol"]

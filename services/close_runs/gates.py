@@ -34,10 +34,15 @@ class PhaseGateSignals:
 
     missing_required_documents: tuple[str, ...] = ()
     unauthorized_document_count: int = 0
+    pending_document_review_count: int = 0
+    unmatched_transaction_count: int = 0
     wrong_period_document_count: int = 0
     unresolved_processing_item_count: int = 0
     unresolved_reconciliation_exception_count: int = 0
+    missing_supporting_schedules: tuple[str, ...] = ()
+    pending_supporting_schedule_review_count: int = 0
     missing_required_reports: tuple[str, ...] = ()
+    missing_signoff_requirements: tuple[str, ...] = ()
     unresolved_signoff_item_count: int = 0
 
 
@@ -273,8 +278,16 @@ def _build_blocking_reason(*, phase: WorkflowPhase, signals: PhaseGateSignals) -
             blockers.append(
                 "missing required documents: " + ", ".join(signals.missing_required_documents)
             )
+        if signals.pending_document_review_count > 0:
+            blockers.append(
+                f"{signals.pending_document_review_count} document(s) still awaiting verification"
+            )
         if signals.unauthorized_document_count > 0:
             blockers.append(f"{signals.unauthorized_document_count} unauthorized document(s)")
+        if signals.unmatched_transaction_count > 0:
+            blockers.append(
+                f"{signals.unmatched_transaction_count} document(s) are not matched to transactions"
+            )
         if signals.wrong_period_document_count > 0:
             blockers.append(f"{signals.wrong_period_document_count} wrong-period document(s)")
         return _join_blockers(phase=phase, blockers=tuple(blockers))
@@ -290,12 +303,28 @@ def _build_blocking_reason(*, phase: WorkflowPhase, signals: PhaseGateSignals) -
 
     if (
         phase is WorkflowPhase.RECONCILIATION
-        and signals.unresolved_reconciliation_exception_count > 0
-    ):
-        return (
-            "Reconciliation is blocked by "
-            f"{signals.unresolved_reconciliation_exception_count} unresolved exception(s)."
+        and (
+            signals.unresolved_reconciliation_exception_count > 0
+            or signals.pending_supporting_schedule_review_count > 0
+            or bool(signals.missing_supporting_schedules)
         )
+    ):
+        blockers: list[str] = []
+        if signals.unresolved_reconciliation_exception_count > 0:
+            blockers.append(
+                f"{signals.unresolved_reconciliation_exception_count} unresolved exception(s)"
+            )
+        if signals.missing_supporting_schedules:
+            blockers.append(
+                "missing supporting schedules: "
+                + ", ".join(signals.missing_supporting_schedules)
+            )
+        if signals.pending_supporting_schedule_review_count > 0:
+            blockers.append(
+                f"{signals.pending_supporting_schedule_review_count} "
+                "supporting schedule(s) awaiting review"
+            )
+        return _join_blockers(phase=phase, blockers=tuple(blockers))
 
     if phase is WorkflowPhase.REPORTING and signals.missing_required_reports:
         missing_reports = ", ".join(signals.missing_required_reports)
@@ -305,6 +334,12 @@ def _build_blocking_reason(*, phase: WorkflowPhase, signals: PhaseGateSignals) -
         phase is WorkflowPhase.REVIEW_SIGNOFF
         and signals.unresolved_signoff_item_count > 0
     ):
+        if signals.missing_signoff_requirements:
+            return (
+                "Review / Sign-off is blocked until these release controls are complete: "
+                + ", ".join(signals.missing_signoff_requirements)
+                + "."
+            )
         return (
             "Review / Sign-off is blocked by "
             f"{signals.unresolved_signoff_item_count} unresolved sign-off item(s)."

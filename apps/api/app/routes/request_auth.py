@@ -8,7 +8,7 @@ Dependencies: FastAPI request/response dependencies, auth/session helpers, and P
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Annotated, Protocol
+from typing import Annotated, Literal, Protocol
 
 from apps.api.app.dependencies.db import DatabaseSessionDependency
 from apps.api.app.routes.auth import (
@@ -49,6 +49,7 @@ class AuthenticatedRequestContext:
     """Describe the authenticated user resolved from a cookie session or CLI PAT."""
 
     user: AuthUserRecord
+    authenticated_via: Literal["browser_session", "api_token"]
     session_token: str | None = None
     rotated: bool = False
 
@@ -84,6 +85,7 @@ def require_authenticated_request(
 
         return AuthenticatedRequestContext(
             user=session_result.user,
+            authenticated_via="browser_session",
             session_token=session_result.session_token,
             rotated=session_result.rotated,
         )
@@ -121,7 +123,10 @@ def require_authenticated_request(
                 },
             ) from error
 
-        return AuthenticatedRequestContext(user=token_result.user)
+        return AuthenticatedRequestContext(
+            user=token_result.user,
+            authenticated_via="api_token",
+        )
 
     raise _build_http_exception(
         AuthServiceError(

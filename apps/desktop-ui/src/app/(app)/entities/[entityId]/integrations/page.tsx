@@ -119,10 +119,12 @@ export default function EntityIntegrationsPage({
       <section className="hero-grid integrations-hero-grid">
         <div className="hero-copy">
           <p className="eyebrow">Integrations</p>
-          <h1>QuickBooks Online stays limited to account sync and export-ready files.</h1>
+          <h1>QuickBooks Online syncs accounts and informs external posting packages.</h1>
           <p className="lede">
             Connect a company realm, refresh credentials safely, and import chart-of-accounts
-            accounts into the same versioned COA workspace used by manual uploads.
+            accounts into the same versioned COA workspace used by manual uploads. Approved
+            journals can then generate ERP posting packages with QuickBooks-aware context when a
+            connection is available.
           </p>
           <div className="coa-hero-actions">
             <Link className="secondary-button" href={`/entities/${entityId}`}>

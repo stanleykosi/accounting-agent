@@ -1,7 +1,9 @@
 """
 Purpose: Run document quality checks as part of the document processing pipeline.
-Scope: Execute duplicate detection, period validation, completeness checks, and issue creation.
-Dependencies: Document upload service, issue service, and quality check services.
+Scope: Execute duplicate detection, period validation, completeness checks,
+auto transaction-linking, and issue creation.
+Dependencies: Document upload service, issue service, quality check services, and deterministic
+transaction matching.
 """
 
 from __future__ import annotations
@@ -11,12 +13,15 @@ from uuid import UUID
 
 from services.common.enums import DocumentIssueSeverity
 from services.db.models.audit import AuditSourceSurface
+from services.db.repositories.document_repo import DocumentRepository
+from services.db.repositories.entity_repo import EntityRepository
 from services.documents.completeness import CompletenessCheckService
 from services.documents.duplicate_detection import DuplicateDetectionService
 from services.documents.issues import DocumentIssueService
 from services.documents.period_validation import PeriodValidationService
-from services.db.repositories.document_repo import DocumentRepository
-from services.db.repositories.entity_repo import EntityRepository
+from services.documents.transaction_matching import (
+    TransactionMatchingService,
+)
 from services.storage.repository import StorageRepository
 
 logger = logging.getLogger(__name__)
@@ -29,6 +34,10 @@ def run_document_quality_checks(
     document_id: UUID,
     document_hash: str,
     document_file_size: int,
+    document_period_start,
+    document_period_end,
+    close_run_period_start,
+    close_run_period_end,
     actor_user_id: UUID,
     document_repo: DocumentRepository,
     entity_repo: EntityRepository,
@@ -42,7 +51,8 @@ def run_document_quality_checks(
     1. Duplicate detection using SHA-256 hash
     2. Period validation (if period can be detected from document)
     3. Completeness check for the close run
-    4. Creates issues for any problems found
+    4. Deterministic transaction linking against bank-statement evidence
+    5. Creates issues for any problems found
 
     Args:
         entity_id: Entity ID
@@ -72,12 +82,14 @@ def run_document_quality_checks(
         db_session=db_session,
         document_repo=document_repo,
     )
+    transaction_matcher = TransactionMatchingService(db_session=db_session)
 
     results = {
         "document_id": str(document_id),
         "checks_performed": [],
         "issues_created": [],
         "passed_all_checks": True,
+        "transaction_match": None,
     }
 
     # 1. Duplicate Detection Check
@@ -128,9 +140,67 @@ def run_document_quality_checks(
         )
 
     # 2. Period Validation Check
-    # Note: In a real implementation, we would extract period from the document during parsing
-    # For this task, we'll assume period extraction happens elsewhere and we receive it as input
-    # For now, we'll skip period validation as it requires parsed data
+    try:
+        period_result = period_service.validate_period(
+            document_period_start=document_period_start,
+            document_period_end=document_period_end,
+            close_run_period_start=close_run_period_start,
+            close_run_period_end=close_run_period_end,
+        )
+        results["checks_performed"].append(
+            {
+                "check": "period_validation",
+                "result": period_result.__dict__,
+            }
+        )
+
+        if not period_result.is_valid:
+            issue = issue_service.create_issue(
+                document_id=document_id,
+                issue_type="wrong_period_document",
+                severity=DocumentIssueSeverity.BLOCKING,
+                details={
+                    "document_period_start": (
+                        period_result.document_period_start.isoformat()
+                        if period_result.document_period_start is not None
+                        else None
+                    ),
+                    "document_period_end": (
+                        period_result.document_period_end.isoformat()
+                        if period_result.document_period_end is not None
+                        else None
+                    ),
+                    "close_run_period_start": (
+                        period_result.close_run_period_start.isoformat()
+                        if period_result.close_run_period_start is not None
+                        else None
+                    ),
+                    "close_run_period_end": (
+                        period_result.close_run_period_end.isoformat()
+                        if period_result.close_run_period_end is not None
+                        else None
+                    ),
+                    "validation_method": period_result.validation_method,
+                },
+                actor_user_id=actor_user_id,
+                source_surface=AuditSourceSurface.WORKER,
+            )
+            results["issues_created"].append(
+                {
+                    "issue_id": str(issue.id),
+                    "issue_type": "wrong_period_document",
+                    "severity": issue.severity.value,
+                }
+            )
+            results["passed_all_checks"] = False
+    except Exception as e:
+        logger.error(f"Error running period validation: {e}")
+        results["checks_performed"].append(
+            {
+                "check": "period_validation",
+                "error": str(e),
+            }
+        )
 
     # 3. Completeness Check
     try:
@@ -171,7 +241,7 @@ def run_document_quality_checks(
                     "severity": issue.severity.value,
                 }
             )
-            # Completeness issues are warnings, not blocking, so we don't set passed_all_checks to False
+            # Completeness issues are warnings, not blocking for workflow progression.
 
     except Exception as e:
         logger.error(f"Error running completeness check: {e}")
@@ -182,8 +252,68 @@ def run_document_quality_checks(
             }
         )
 
+    # 4. Auto Transaction-Linking Check
+    try:
+        transaction_match_result = transaction_matcher.evaluate_and_persist(
+            close_run_id=close_run_id,
+            document_id=document_id,
+        )
+        results["checks_performed"].append(
+            {
+                "check": "transaction_linking",
+                "result": transaction_match_result.to_payload(),
+            }
+        )
+        results["transaction_match"] = transaction_match_result.to_payload()
+
+        if transaction_match_result.should_block_collection:
+            issue = issue_service.create_issue(
+                document_id=document_id,
+                issue_type="transaction_mismatch",
+                severity=DocumentIssueSeverity.BLOCKING,
+                details={
+                    "reason": transaction_match_result.primary_reason,
+                    "auto_transaction_match": transaction_match_result.to_payload(),
+                },
+                actor_user_id=actor_user_id,
+                source_surface=AuditSourceSurface.WORKER,
+            )
+            results["issues_created"].append(
+                {
+                    "issue_id": str(issue.id),
+                    "issue_type": "transaction_mismatch",
+                    "severity": issue.severity.value,
+                }
+            )
+            results["passed_all_checks"] = False
+        else:
+            for existing_issue in issue_service.get_document_issues(document_id=document_id):
+                if (
+                    existing_issue.status.value == "open"
+                    and existing_issue.issue_type == "transaction_mismatch"
+                ):
+                    issue_service.resolve_issue(
+                        issue_id=existing_issue.id,
+                        resolution_details={
+                            "resolution_reason": transaction_match_result.primary_reason,
+                            "auto_transaction_match": transaction_match_result.to_payload(),
+                        },
+                        actor_user_id=actor_user_id,
+                        source_surface=AuditSourceSurface.WORKER,
+                    )
+    except Exception as e:
+        logger.error(f"Error running auto transaction-linking: {e}")
+        results["checks_performed"].append(
+            {
+                "check": "transaction_linking",
+                "error": str(e),
+            }
+        )
+
     logger.info(
-        f"Completed document quality checks for document {document_id}. Issues created: {len(results['issues_created'])}"
+        "Completed document quality checks for document %s. Issues created: %s",
+        document_id,
+        len(results["issues_created"]),
     )
     return results
 

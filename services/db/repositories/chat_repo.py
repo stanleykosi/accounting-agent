@@ -111,6 +111,22 @@ class ChatRepository:
 
         return _map_thread(thread)
 
+    def update_thread_context(
+        self,
+        *,
+        thread_id: UUID,
+        context_payload: dict[str, Any],
+    ) -> ChatThreadRecord | None:
+        """Replace one thread's context payload and flush the updated row."""
+
+        statement = select(ChatThread).where(ChatThread.id == thread_id)
+        thread = self._db_session.execute(statement).scalar_one_or_none()
+        if thread is None:
+            return None
+        thread.context_payload = dict(context_payload)
+        self._db_session.flush()
+        return _map_thread(thread)
+
     def list_threads_for_entity(
         self,
         *,

@@ -94,7 +94,7 @@ class ExtractionService:
         if document:
             document.status = DocumentStatus.APPROVED
 
-        self.db.commit()
+        self.db.flush()
         return True
 
     def apply_field_correction(
@@ -119,12 +119,74 @@ class ExtractionService:
         if field is None:
             return False
 
+        extraction = (
+            self.db.query(DocumentExtraction)
+            .filter(DocumentExtraction.id == field.document_extraction_id)
+            .first()
+        )
+        if extraction is None:
+            return False
+
         field.field_value = corrected_value
         field.field_type = corrected_type
         field.is_human_corrected = True
 
-        self.db.commit()
+        extraction.extracted_payload = self._update_extracted_payload_field(
+            extracted_payload=extraction.extracted_payload,
+            field=field,
+        )
+        self.db.flush()
         return True
+
+    def _update_extracted_payload_field(
+        self,
+        *,
+        extracted_payload: Any,
+        field: ExtractedField,
+    ) -> dict[str, Any]:
+        """Synchronize one corrected field into the canonical extraction payload JSON."""
+
+        payload = dict(extracted_payload) if isinstance(extracted_payload, dict) else {}
+        corrected_field_payload = {
+            "field_name": field.field_name,
+            "field_value": field.field_value,
+            "field_type": field.field_type,
+            "confidence": float(field.confidence),
+            "evidence_ref": dict(field.evidence_ref),
+            "is_human_corrected": field.is_human_corrected,
+        }
+
+        raw_fields = payload.get("fields")
+        next_fields: list[Any] = []
+        field_replaced = False
+        if isinstance(raw_fields, list):
+            for raw_field in raw_fields:
+                if (
+                    isinstance(raw_field, dict)
+                    and raw_field.get("field_name") == field.field_name
+                    and not field_replaced
+                ):
+                    next_fields.append({**raw_field, **corrected_field_payload})
+                    field_replaced = True
+                    continue
+                next_fields.append(raw_field)
+        if not field_replaced:
+            next_fields.append(corrected_field_payload)
+        payload["fields"] = next_fields
+
+        parser_output = payload.get("parser_output")
+        if isinstance(parser_output, dict):
+            raw_parser_fields = parser_output.get("raw_fields")
+            if isinstance(raw_parser_fields, dict):
+                payload["parser_output"] = {
+                    **parser_output,
+                    "raw_fields": {
+                        **raw_parser_fields,
+                        field.field_name: field.field_value,
+                    },
+                }
+
+        return payload
 
     def get_fields_below_threshold(
         self,

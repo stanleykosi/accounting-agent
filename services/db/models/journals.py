@@ -15,10 +15,11 @@ Design notes:
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import UTC, date, datetime
+from enum import StrEnum
 from uuid import UUID, uuid4
 
-from services.common.enums import ReviewStatus
+from services.common.enums import ArtifactType, ReviewStatus
 from services.common.types import JsonObject
 from services.db.base import (
     Base,
@@ -33,10 +34,35 @@ from sqlalchemy import (
     Numeric,
     String,
     Text,
+    UniqueConstraint,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
+
+
+class JournalPostingTarget(StrEnum):
+    """Enumerate the supported posting targets for an approved journal."""
+
+    INTERNAL_LEDGER = "internal_ledger"
+    EXTERNAL_ERP_PACKAGE = "external_erp_package"
+
+
+class JournalPostingStatus(StrEnum):
+    """Enumerate the lifecycle states of a journal posting record."""
+
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
+_JOURNAL_POSTING_TARGETS = tuple(target.value for target in JournalPostingTarget)
+_JOURNAL_POSTING_STATUSES = tuple(status.value for status in JournalPostingStatus)
+_JOURNAL_POSTING_PROVIDER_OPTIONS = ("generic_erp", "quickbooks_online")
+_JOURNAL_POSTING_ARTIFACT_TYPES = (
+    ArtifactType.GL_POSTING_PACKAGE.value,
+    ArtifactType.QUICKBOOKS_EXPORT.value,
+)
 
 
 class JournalEntry(Base, UUIDPrimaryKeyMixin, TimestampedModel):
@@ -235,7 +261,123 @@ class JournalLine(Base, UUIDPrimaryKeyMixin, TimestampedModel):
     )
 
 
+class JournalPosting(Base, UUIDPrimaryKeyMixin, TimestampedModel):
+    """Persist the canonical posting outcome for one approved journal entry."""
+
+    __tablename__ = "journal_postings"
+    __table_args__ = (
+        build_text_choice_check(
+            column_name="posting_target",
+            values=_JOURNAL_POSTING_TARGETS,
+            constraint_name="journal_posting_target_valid",
+        ),
+        build_text_choice_check(
+            column_name="status",
+            values=_JOURNAL_POSTING_STATUSES,
+            constraint_name="journal_posting_status_valid",
+        ),
+        CheckConstraint("version_no >= 1", name="journal_posting_version_no_positive"),
+        CheckConstraint(
+            "("
+            "posting_target = 'internal_ledger' AND artifact_id IS NULL"
+            ") OR ("
+            "posting_target = 'external_erp_package' AND artifact_id IS NOT NULL"
+            ")",
+            name="journal_posting_artifact_matches_target",
+        ),
+        CheckConstraint(
+            f"provider IS NULL OR provider IN {_JOURNAL_POSTING_PROVIDER_OPTIONS}",
+            name="journal_posting_provider_valid",
+        ),
+        CheckConstraint(
+            f"artifact_type IS NULL OR artifact_type IN {_JOURNAL_POSTING_ARTIFACT_TYPES}",
+            name="journal_posting_artifact_type_valid",
+        ),
+        UniqueConstraint("journal_entry_id", name="uq_journal_postings_journal_entry_id"),
+        Index("ix_journal_postings_close_run_id", "close_run_id"),
+        Index("ix_journal_postings_posting_target", "posting_target"),
+        Index("ix_journal_postings_status", "status"),
+    )
+
+    journal_entry_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("journal_entries.id", ondelete="CASCADE"),
+        nullable=False,
+        comment="Journal entry this posting outcome belongs to.",
+    )
+    entity_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("entities.id", ondelete="CASCADE"),
+        nullable=False,
+        comment="Entity workspace that owns the posted journal.",
+    )
+    close_run_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("close_runs.id", ondelete="CASCADE"),
+        nullable=False,
+        comment="Close run that owns the posted journal.",
+    )
+    version_no: Mapped[int] = mapped_column(
+        nullable=False,
+        comment="Close-run version number the posting was executed against.",
+    )
+    posting_target: Mapped[str] = mapped_column(
+        String(40),
+        nullable=False,
+        comment="Selected posting target: internal ledger or external ERP package.",
+    )
+    provider: Mapped[str | None] = mapped_column(
+        String(60),
+        nullable=True,
+        comment="Resolved external provider or package format when applicable.",
+    )
+    status: Mapped[str] = mapped_column(
+        String(30),
+        nullable=False,
+        server_default=JournalPostingStatus.COMPLETED.value,
+        default=JournalPostingStatus.COMPLETED.value,
+        comment="Posting lifecycle state for the journal outcome.",
+    )
+    artifact_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("artifacts.id", ondelete="SET NULL"),
+        nullable=True,
+        comment="Generated export artifact when the journal was packaged for an external ERP.",
+    )
+    artifact_type: Mapped[str | None] = mapped_column(
+        String(60),
+        nullable=True,
+        comment="Artifact type generated for the posting, when applicable.",
+    )
+    note: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+        comment="Optional operator note captured at posting time.",
+    )
+    posting_metadata: Mapped[JsonObject] = mapped_column(
+        JSONB,
+        nullable=False,
+        default=dict,
+        server_default=text("'{}'::jsonb"),
+        comment="Structured posting context including filenames, external refs, and row counts.",
+    )
+    posted_by_user_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("users.id"),
+        nullable=True,
+        comment="User who executed the posting action.",
+    )
+    posted_at: Mapped[datetime] = mapped_column(
+        nullable=False,
+        default=lambda: datetime.now(tz=UTC),
+        comment="UTC timestamp when the journal posting completed.",
+    )
+
+
 __all__ = [
     "JournalEntry",
     "JournalLine",
+    "JournalPosting",
+    "JournalPostingStatus",
+    "JournalPostingTarget",
 ]

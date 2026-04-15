@@ -60,6 +60,19 @@ export type CloseRunAttention = {
   tone: CloseRunAttentionTone;
 };
 
+export type CreateCloseRunRequest = {
+  allow_duplicate_period?: boolean;
+  duplicate_period_reason?: string;
+  period_end: string;
+  period_start: string;
+  reporting_currency?: string | null;
+};
+
+export type TransitionCloseRunRequest = {
+  reason?: string | null;
+  target_phase: WorkflowPhase;
+};
+
 export type CloseRunApiErrorCode =
   | "approval_blocked"
   | "archive_not_allowed"
@@ -113,6 +126,23 @@ export async function listCloseRuns(entityId: string): Promise<readonly CloseRun
 }
 
 /**
+ * Purpose: Create a close run for one entity from the hosted UI.
+ * Inputs: Entity UUID and period/create payload.
+ * Outputs: The created close-run summary.
+ * Behavior: Uses the same entity proxy path so session handling stays same-origin.
+ */
+export async function createCloseRun(
+  entityId: string,
+  payload: CreateCloseRunRequest,
+): Promise<CloseRunSummary> {
+  const response = await closeRunRequest<unknown>(buildEntityProxyPath(entityId, ["close-runs"]), {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+  return parseCloseRunSummary(response);
+}
+
+/**
  * Purpose: Read one close run in detail for dashboard or overview rendering.
  * Inputs: Entity UUID and close-run UUID.
  * Outputs: One normalized close-run summary.
@@ -126,6 +156,54 @@ export async function readCloseRun(entityId: string, closeRunId: string): Promis
     },
   );
   return parseCloseRunSummary(payload);
+}
+
+export async function transitionCloseRun(
+  entityId: string,
+  closeRunId: string,
+  payload: TransitionCloseRunRequest,
+): Promise<CloseRunSummary> {
+  const response = await closeRunRequest<unknown>(
+    buildEntityProxyPath(entityId, ["close-runs", closeRunId, "transition"]),
+    {
+      method: "POST",
+      body: JSON.stringify(payload),
+    },
+  );
+  if (!isRecord(response) || !isRecord(response.close_run)) {
+    throw new Error("Invalid close-run transition response payload.");
+  }
+  return parseCloseRunSummary(response.close_run);
+}
+
+export async function approveCloseRun(
+  entityId: string,
+  closeRunId: string,
+  reason?: string | null,
+): Promise<CloseRunSummary> {
+  const response = await closeRunRequest<unknown>(
+    buildEntityProxyPath(entityId, ["close-runs", closeRunId, "approve"]),
+    {
+      method: "POST",
+      body: JSON.stringify({ reason: reason ?? null }),
+    },
+  );
+  return parseCloseRunSummary(response);
+}
+
+export async function archiveCloseRun(
+  entityId: string,
+  closeRunId: string,
+  reason?: string | null,
+): Promise<CloseRunSummary> {
+  const response = await closeRunRequest<unknown>(
+    buildEntityProxyPath(entityId, ["close-runs", closeRunId, "archive"]),
+    {
+      method: "POST",
+      body: JSON.stringify({ reason: reason ?? null }),
+    },
+  );
+  return parseCloseRunSummary(response);
 }
 
 /**

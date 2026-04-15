@@ -14,7 +14,8 @@ from typing import Any
 from uuid import UUID
 
 from services.common.enums import ReviewStatus
-from services.db.models.journals import JournalEntry, JournalLine
+from services.db.models.exports import Artifact
+from services.db.models.journals import JournalEntry, JournalLine, JournalPosting
 from services.db.models.recommendations import Recommendation
 from sqlalchemy import desc, func, select
 from sqlalchemy.exc import IntegrityError
@@ -88,11 +89,36 @@ class JournalLineRecord:
 
 
 @dataclass(frozen=True, slots=True)
+class JournalPostingRecord:
+    """Describe one posted journal outcome and any linked artifact reference."""
+
+    id: UUID
+    journal_entry_id: UUID
+    entity_id: UUID
+    close_run_id: UUID
+    version_no: int
+    posting_target: str
+    provider: str | None
+    status: str
+    artifact_id: UUID | None
+    artifact_type: str | None
+    artifact_filename: str | None
+    artifact_storage_key: str | None
+    note: str | None
+    posting_metadata: dict[str, Any]
+    posted_by_user_id: UUID | None
+    posted_at: Any
+    created_at: Any
+    updated_at: Any
+
+
+@dataclass(frozen=True, slots=True)
 class JournalWithLinesResult:
     """Describe a journal entry with its attached lines for API response assembly."""
 
     entry: JournalEntryRecord
     lines: tuple[JournalLineRecord, ...]
+    postings: tuple[JournalPostingRecord, ...] = ()
 
 
 class RecommendationJournalRepository:
@@ -210,10 +236,12 @@ class RecommendationJournalRepository:
             .where(JournalLine.journal_entry_id == journal_id)
             .order_by(JournalLine.line_no),
         ).all()
+        postings = self.list_postings_for_journal(journal_entry_id=journal_id)
 
         return JournalWithLinesResult(
             entry=_map_journal_entry(entry),
             lines=tuple(_map_journal_line(line) for line in lines),
+            postings=postings,
         )
 
     def list_journals_for_close_run(
@@ -307,6 +335,83 @@ class RecommendationJournalRepository:
         return tuple(
             _map_journal_line(line) for line in self._db_session.scalars(statement)
         )
+
+    def create_journal_posting(
+        self,
+        *,
+        journal_entry_id: UUID,
+        entity_id: UUID,
+        close_run_id: UUID,
+        version_no: int,
+        posting_target: str,
+        provider: str | None,
+        status: str,
+        artifact_id: UUID | None,
+        artifact_type: str | None,
+        note: str | None,
+        posting_metadata: dict[str, Any],
+        posted_by_user_id: UUID | None,
+        posted_at: Any,
+    ) -> JournalPostingRecord:
+        """Persist the canonical posting record for one journal entry."""
+
+        posting = JournalPosting(
+            journal_entry_id=journal_entry_id,
+            entity_id=entity_id,
+            close_run_id=close_run_id,
+            version_no=version_no,
+            posting_target=posting_target,
+            provider=provider,
+            status=status,
+            artifact_id=artifact_id,
+            artifact_type=artifact_type,
+            note=note,
+            posting_metadata=posting_metadata,
+            posted_by_user_id=posted_by_user_id,
+            posted_at=posted_at,
+        )
+        self._db_session.add(posting)
+        self._db_session.flush()
+        artifact = self._db_session.get(Artifact, artifact_id) if artifact_id is not None else None
+        return _map_journal_posting(posting, artifact=artifact)
+
+    def list_postings_for_journal(
+        self,
+        *,
+        journal_entry_id: UUID,
+    ) -> tuple[JournalPostingRecord, ...]:
+        """Return posting records for one journal entry in newest-first order."""
+
+        rows = self._db_session.execute(
+            select(JournalPosting, Artifact)
+            .outerjoin(Artifact, Artifact.id == JournalPosting.artifact_id)
+            .where(JournalPosting.journal_entry_id == journal_entry_id)
+            .order_by(desc(JournalPosting.posted_at), desc(JournalPosting.created_at))
+        ).all()
+        return tuple(_map_journal_posting(posting, artifact=artifact) for posting, artifact in rows)
+
+    def list_postings_for_journal_ids(
+        self,
+        *,
+        journal_entry_ids: tuple[UUID, ...],
+    ) -> dict[UUID, tuple[JournalPostingRecord, ...]]:
+        """Return posting records grouped by journal entry for a batch of journals."""
+
+        if not journal_entry_ids:
+            return {}
+
+        grouped: dict[UUID, list[JournalPostingRecord]] = {}
+        rows = self._db_session.execute(
+            select(JournalPosting, Artifact)
+            .outerjoin(Artifact, Artifact.id == JournalPosting.artifact_id)
+            .where(JournalPosting.journal_entry_id.in_(journal_entry_ids))
+            .order_by(desc(JournalPosting.posted_at), desc(JournalPosting.created_at))
+        ).all()
+        for posting, artifact in rows:
+            grouped.setdefault(posting.journal_entry_id, []).append(
+                _map_journal_posting(posting, artifact=artifact)
+            )
+        return {journal_id: tuple(records) for journal_id, records in grouped.items()}
 
     # ------------------------------------------------------------------
     # Sequence number generation
@@ -447,9 +552,44 @@ def _map_journal_line(line: JournalLine) -> JournalLineRecord:
     )
 
 
+def _map_journal_posting(
+    posting: JournalPosting,
+    *,
+    artifact: Artifact | None,
+) -> JournalPostingRecord:
+    """Convert an ORM journal posting row into an immutable service record."""
+
+    artifact_metadata = dict(artifact.artifact_metadata) if artifact is not None else {}
+    return JournalPostingRecord(
+        id=posting.id,
+        journal_entry_id=posting.journal_entry_id,
+        entity_id=posting.entity_id,
+        close_run_id=posting.close_run_id,
+        version_no=posting.version_no,
+        posting_target=posting.posting_target,
+        provider=posting.provider,
+        status=posting.status,
+        artifact_id=posting.artifact_id,
+        artifact_type=posting.artifact_type,
+        artifact_filename=(
+            str(artifact_metadata.get("filename"))
+            if artifact_metadata.get("filename") is not None
+            else None
+        ),
+        artifact_storage_key=artifact.storage_key if artifact is not None else None,
+        note=posting.note,
+        posting_metadata=dict(posting.posting_metadata),
+        posted_by_user_id=posting.posted_by_user_id,
+        posted_at=posting.posted_at,
+        created_at=posting.created_at,
+        updated_at=posting.updated_at,
+    )
+
+
 __all__ = [
     "JournalEntryRecord",
     "JournalLineRecord",
+    "JournalPostingRecord",
     "JournalWithLinesResult",
     "RecommendationJournalRepository",
     "RecommendationRecord",
