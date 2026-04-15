@@ -508,6 +508,41 @@ def test_chat_workspace_endpoint_returns_memory_tools_and_traces(monkeypatch) ->
     assert executor.workspace.progress_summary in payload["progress_summary"]
 
 
+def test_chat_tool_manifest_route_authenticates_with_current_session_api(monkeypatch) -> None:
+    """Ensure the MCP manifest route uses authenticate_session for browser auth."""
+
+    executor = FakeChatActionExecutor()
+    captured_call: dict[str, object] = {}
+    request = Request(
+        {
+            "type": "http",
+            "app": SimpleNamespace(version="0.1.0"),
+            "method": "GET",
+            "path": "/api/chat/tools/mcp",
+            "headers": [],
+        }
+    )
+
+    monkeypatch.setattr(chat_routes, "_read_session_cookie", lambda **kwargs: "session-token")
+
+    class FakeAuthService:
+        def authenticate_session(self, **kwargs):
+            captured_call.update(kwargs)
+            return SimpleNamespace(user=TEST_USER, session_token=None, rotated=False)
+
+    manifest = chat_routes.read_chat_tool_manifest(
+        request=request,
+        response=Response(),
+        settings=SimpleNamespace(),
+        auth_service=FakeAuthService(),
+        action_executor=executor,
+    )
+
+    assert captured_call["session_token"] == "session-token"
+    assert manifest["version"] == "2025-11-25"
+    assert manifest["tools"][0]["name"] == "generate_reports"
+
+
 def test_chat_mcp_initialize_and_list_tools(monkeypatch) -> None:
     """Ensure the MCP endpoint serves initialize and tools/list responses."""
 
@@ -655,6 +690,7 @@ def test_chat_action_attachment_route_ingests_source_documents(monkeypatch) -> N
             thread_id=thread_id,
             entity_id=entity_id,
             request=request,
+            response=Response(),
             settings=SimpleNamespace(),
             auth_service=SimpleNamespace(),
             action_executor=executor,
@@ -704,6 +740,7 @@ def test_chat_action_attachment_route_reports_partial_success_when_follow_up_fai
             thread_id=thread_id,
             entity_id=entity_id,
             request=request,
+            response=Response(),
             settings=SimpleNamespace(),
             auth_service=SimpleNamespace(),
             action_executor=FailingChatActionExecutor(),

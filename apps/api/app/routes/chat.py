@@ -19,7 +19,10 @@ from apps.api.app.dependencies.db import DatabaseSessionDependency
 from apps.api.app.dependencies.tasks import TaskDispatcherDependency
 from apps.api.app.routes.auth import (
     _build_http_exception,
+    _clear_session_cookie,
     _read_session_cookie,
+    _resolve_ip_address,
+    _set_session_cookie,
     get_auth_service,
 )
 from apps.api.app.routes.request_auth import (
@@ -287,6 +290,7 @@ ProposedChangesServiceDependency = Annotated[
 def _require_authenticated_browser_session(
     *,
     request: Request,
+    response: Response | None,
     auth_service: AuthService,
     settings: AppSettings,
 ) -> AuthenticatedSessionResult:
@@ -297,15 +301,28 @@ def _require_authenticated_browser_session(
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=_error_payload(
-                code=AuthErrorCode.NOT_AUTHENTICATED.value,
+                code=AuthErrorCode.SESSION_REQUIRED.value,
                 message="Authentication is required to access chat threads.",
             ),
         )
 
     try:
-        session_result = auth_service.validate_session(session_token=cookie_value)
+        session_result = auth_service.authenticate_session(
+            session_token=cookie_value,
+            user_agent=request.headers.get("user-agent"),
+            ip_address=_resolve_ip_address(request),
+        )
     except AuthServiceError as error:
+        if response is not None:
+            _clear_session_cookie(response=response, settings=settings)
         raise _build_http_exception(error) from error
+
+    if response is not None and session_result.session_token is not None:
+        _set_session_cookie(
+            response=response,
+            settings=settings,
+            session_token=session_result.session_token,
+        )
 
     return session_result
 
@@ -568,6 +585,7 @@ def _persist_inline_attachment_partial_success(
 def create_chat_thread(
     payload: CreateChatThreadRequest,
     request: Request,
+    response: Response,
     settings: SettingsDependency,
     auth_service: AuthServiceDependency,
     chat_service: ChatServiceDependency,
@@ -576,6 +594,7 @@ def create_chat_thread(
 
     session_result = _require_authenticated_browser_session(
         request=request,
+        response=response,
         auth_service=auth_service,
         settings=settings,
     )
@@ -610,6 +629,7 @@ def list_chat_threads(
     close_run_id: CloseRunIdQuery = None,
     limit: ThreadLimitQuery = 50,
     request: Request = None,  # type: ignore[assignment]
+    response: Response = None,  # type: ignore[assignment]
     settings: SettingsDependency = None,  # type: ignore[assignment]
     auth_service: AuthServiceDependency = None,  # type: ignore[assignment]
     chat_service: ChatServiceDependency = None,  # type: ignore[assignment]
@@ -618,6 +638,7 @@ def list_chat_threads(
 
     session_result = _require_authenticated_browser_session(
         request=request,
+        response=response,
         auth_service=auth_service,
         settings=settings,
     )
@@ -640,6 +661,7 @@ def get_chat_thread(
     entity_id: EntityIdQuery,
     message_limit: MessageLimitQuery = 100,
     request: Request = None,  # type: ignore[assignment]
+    response: Response = None,  # type: ignore[assignment]
     settings: SettingsDependency = None,  # type: ignore[assignment]
     auth_service: AuthServiceDependency = None,  # type: ignore[assignment]
     chat_service: ChatServiceDependency = None,  # type: ignore[assignment]
@@ -648,6 +670,7 @@ def get_chat_thread(
 
     session_result = _require_authenticated_browser_session(
         request=request,
+        response=response,
         auth_service=auth_service,
         settings=settings,
     )
@@ -676,6 +699,7 @@ def send_chat_message(
     payload: SendChatMessageRequest,
     entity_id: EntityIdQuery,
     request: Request = None,  # type: ignore[assignment]
+    response: Response = None,  # type: ignore[assignment]
     settings: SettingsDependency = None,  # type: ignore[assignment]
     auth_service: AuthServiceDependency = None,  # type: ignore[assignment]
     chat_service: ChatServiceDependency = None,  # type: ignore[assignment]
@@ -684,6 +708,7 @@ def send_chat_message(
 
     session_result = _require_authenticated_browser_session(
         request=request,
+        response=response,
         auth_service=auth_service,
         settings=settings,
     )
@@ -720,6 +745,7 @@ def send_chat_action(
     payload: SendChatActionRequest,
     entity_id: EntityIdQuery,
     request: Request = None,  # type: ignore[assignment]
+    response: Response = None,  # type: ignore[assignment]
     settings: SettingsDependency = None,  # type: ignore[assignment]
     auth_service: AuthServiceDependency = None,  # type: ignore[assignment]
     action_executor: ChatActionExecutorDependency = None,  # type: ignore[assignment]
@@ -728,6 +754,7 @@ def send_chat_action(
 
     session_result = _require_authenticated_browser_session(
         request=request,
+        response=response,
         auth_service=auth_service,
         settings=settings,
     )
@@ -775,6 +802,7 @@ async def send_chat_action_with_attachments(
     thread_id: UUID,
     entity_id: EntityIdQuery,
     request: Request,
+    response: Response,
     settings: SettingsDependency,
     auth_service: AuthServiceDependency,
     action_executor: ChatActionExecutorDependency,
@@ -790,6 +818,7 @@ async def send_chat_action_with_attachments(
 
     session_result = _require_authenticated_browser_session(
         request=request,
+        response=response,
         auth_service=auth_service,
         settings=settings,
     )
@@ -874,6 +903,7 @@ def read_chat_thread_workspace(
     thread_id: UUID,
     entity_id: EntityIdQuery,
     request: Request = None,  # type: ignore[assignment]
+    response: Response = None,  # type: ignore[assignment]
     settings: SettingsDependency = None,  # type: ignore[assignment]
     auth_service: AuthServiceDependency = None,  # type: ignore[assignment]
     action_executor: ChatActionExecutorDependency = None,  # type: ignore[assignment]
@@ -882,6 +912,7 @@ def read_chat_thread_workspace(
 
     session_result = _require_authenticated_browser_session(
         request=request,
+        response=response,
         auth_service=auth_service,
         settings=settings,
     )
@@ -905,6 +936,7 @@ def read_chat_thread_workspace(
 )
 def read_chat_tool_manifest(
     request: Request = None,  # type: ignore[assignment]
+    response: Response = None,  # type: ignore[assignment]
     settings: SettingsDependency = None,  # type: ignore[assignment]
     auth_service: AuthServiceDependency = None,  # type: ignore[assignment]
     action_executor: ChatActionExecutorDependency = None,  # type: ignore[assignment]
@@ -913,6 +945,7 @@ def read_chat_tool_manifest(
 
     _require_authenticated_browser_session(
         request=request,
+        response=response,
         auth_service=auth_service,
         settings=settings,
     )
@@ -1096,6 +1129,7 @@ def list_thread_actions(
     entity_id: EntityIdQuery,
     limit: ThreadLimitQuery = 50,
     request: Request = None,  # type: ignore[assignment]
+    response: Response = None,  # type: ignore[assignment]
     settings: SettingsDependency = None,  # type: ignore[assignment]
     auth_service: AuthServiceDependency = None,  # type: ignore[assignment]
     action_router: ChatActionRouterDependency = None,  # type: ignore[assignment]
@@ -1104,6 +1138,7 @@ def list_thread_actions(
 
     session_result = _require_authenticated_browser_session(
         request=request,
+        response=response,
         auth_service=auth_service,
         settings=settings,
     )
@@ -1141,6 +1176,7 @@ def approve_chat_action(
     entity_id: EntityIdQuery = None,  # type: ignore[assignment]
     payload: ApproveChatActionRequest = None,  # type: ignore[assignment]
     request: Request = None,  # type: ignore[assignment]
+    response: Response = None,  # type: ignore[assignment]
     settings: SettingsDependency = None,  # type: ignore[assignment]
     auth_service: AuthServiceDependency = None,  # type: ignore[assignment]
     action_executor: ChatActionExecutorDependency = None,  # type: ignore[assignment]
@@ -1149,6 +1185,7 @@ def approve_chat_action(
 
     session_result = _require_authenticated_browser_session(
         request=request,
+        response=response,
         auth_service=auth_service,
         settings=settings,
     )
@@ -1184,6 +1221,7 @@ def reject_chat_action(
     entity_id: EntityIdQuery = None,  # type: ignore[assignment]
     payload: RejectChatActionRequest = None,  # type: ignore[assignment]
     request: Request = None,  # type: ignore[assignment]
+    response: Response = None,  # type: ignore[assignment]
     settings: SettingsDependency = None,  # type: ignore[assignment]
     auth_service: AuthServiceDependency = None,  # type: ignore[assignment]
     action_executor: ChatActionExecutorDependency = None,  # type: ignore[assignment]
@@ -1192,6 +1230,7 @@ def reject_chat_action(
 
     session_result = _require_authenticated_browser_session(
         request=request,
+        response=response,
         auth_service=auth_service,
         settings=settings,
     )
