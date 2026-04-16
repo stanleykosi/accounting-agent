@@ -12,7 +12,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 
 from services.common.logging import configure_logging, get_logger
-from services.common.runtime_checks import run_backend_dependency_healthcheck
+from services.common.runtime_checks import run_backend_dependency_healthcheck, verify_ocr_runtime
 from services.common.settings import AppSettings, get_settings
 from services.jobs.task_names import task_queue_names
 
@@ -99,6 +99,7 @@ def run_dependency_healthcheck(settings: AppSettings) -> None:
     """Verify that the worker can reach its canonical backing services and buckets."""
 
     run_backend_dependency_healthcheck(settings)
+    verify_ocr_runtime()
 
 
 if __name__ == "__main__":

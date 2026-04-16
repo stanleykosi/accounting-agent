@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from datetime import date as date_type
 from datetime import datetime
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from typing import Any, Literal, cast
 
 from services.extraction.evidence_refs import normalize_parser_output_to_evidence_ref
@@ -51,8 +51,8 @@ def parse_field_value(
 
     if field_type == "decimal":
         try:
-            return Decimal(str(raw_value))
-        except (ValueError, TypeError):
+            return Decimal(str(raw_value).replace(",", "").strip())
+        except (InvalidOperation, ValueError, TypeError):
             return None
 
     if field_type == "date":

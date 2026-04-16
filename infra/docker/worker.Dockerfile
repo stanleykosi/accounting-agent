@@ -28,6 +28,8 @@ RUN apt-get update \
         ocrmypdf \
         shared-mime-info \
         tesseract-ocr \
+        tesseract-ocr-eng \
+        tesseract-ocr-osd \
     && rm -rf /var/lib/apt/lists/*
 
 RUN python -m ensurepip --upgrade \

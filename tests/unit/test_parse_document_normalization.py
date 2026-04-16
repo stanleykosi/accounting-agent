@@ -108,3 +108,138 @@ def test_bank_statement_parser_output_normalizes_nested_statement_lines() -> Non
             "balance": "750.00",
         },
     ]
+
+
+def test_bank_statement_parser_output_normalizes_pdf_delimited_statement_lines() -> None:
+    """PDF-delimited statement tables should map their header row into canonical line keys."""
+
+    parser_output = _build_extraction_parser_output(
+        raw_parse_payload={
+            "text": (
+                "Bank Statement\n"
+                "Bank Name: Demo Bank\n"
+                "Account Name: Operating Account\n"
+                "Account Number: 1234567890\n"
+                "Statement Start Date: 2026-03-01\n"
+                "Statement End Date: 2026-03-31\n"
+                "Opening Balance: 5000.00\n"
+                "Closing Balance: 5750.00\n"
+                "Credits Total: 1000.00\n"
+                "Debits Total: 250.00\n"
+            ),
+            "tables": [
+                {
+                    "name": "pdf_delimited_text",
+                    "rows": [
+                        {
+                            "source_line_number": "5",
+                            "column_1": "Date",
+                            "column_2": "Description",
+                            "column_3": "Reference",
+                            "column_4": "Debit",
+                            "column_5": "Credit",
+                            "column_6": "Balance",
+                        },
+                        {
+                            "source_line_number": "6",
+                            "column_1": "2026-03-01",
+                            "column_2": "Opening balance",
+                            "column_3": "",
+                            "column_4": "0.00",
+                            "column_5": "1000.00",
+                            "column_6": "1000.00",
+                        },
+                        {
+                            "source_line_number": "7",
+                            "column_1": "2026-03-02",
+                            "column_2": "Vendor payment",
+                            "column_3": "INV-001",
+                            "column_4": "250.00",
+                            "column_5": "0.00",
+                            "column_6": "750.00",
+                        },
+                    ],
+                }
+            ],
+        },
+        document_type=DocumentType.BANK_STATEMENT,
+    )
+
+    assert parser_output["fields"]["bank_name"] == "Demo Bank"
+    assert parser_output["fields"]["account_name"] == "Operating Account"
+    assert parser_output["fields"]["account_number"] == "1234567890"
+    assert parser_output["fields"]["statement_start_date"] == "2026-03-01"
+    assert parser_output["fields"]["statement_end_date"] == "2026-03-31"
+    assert parser_output["fields"]["opening_balance"] == "5000.00"
+    assert parser_output["fields"]["closing_balance"] == "5750.00"
+    assert parser_output["fields"]["total_credits"] == "1000.00"
+    assert parser_output["fields"]["total_debits"] == "250.00"
+    assert parser_output["statement_lines"] == [
+        {
+            "line_no": 1,
+            "evidence_ref": {},
+            "date": "2026-03-01",
+            "description": "Opening balance",
+            "debit": "0.00",
+            "credit": "1000.00",
+            "balance": "1000.00",
+        },
+        {
+            "line_no": 2,
+            "evidence_ref": {},
+            "date": "2026-03-02",
+            "description": "Vendor payment",
+            "reference": "INV-001",
+            "debit": "250.00",
+            "credit": "0.00",
+            "balance": "750.00",
+        },
+    ]
+
+
+def test_bank_statement_parser_output_preserves_blank_pdf_header_columns() -> None:
+    """Blank spacer columns in PDF headers should not shift later statement fields."""
+
+    parser_output = _build_extraction_parser_output(
+        raw_parse_payload={
+            "text": "Bank Statement\nBank Name: Demo Bank\nAccount Number: 1234567890",
+            "tables": [
+                {
+                    "name": "pdf_delimited_text",
+                    "rows": [
+                        {
+                            "source_line_number": "5",
+                            "column_1": "Date",
+                            "column_2": "Description",
+                            "column_3": "",
+                            "column_4": "Debit",
+                            "column_5": "Credit",
+                            "column_6": "Balance",
+                        },
+                        {
+                            "source_line_number": "6",
+                            "column_1": "2026-03-02",
+                            "column_2": "Vendor payment",
+                            "column_3": "INV-001",
+                            "column_4": "250.00",
+                            "column_5": "0.00",
+                            "column_6": "750.00",
+                        },
+                    ],
+                }
+            ],
+        },
+        document_type=DocumentType.BANK_STATEMENT,
+    )
+
+    assert parser_output["statement_lines"] == [
+        {
+            "line_no": 1,
+            "evidence_ref": {},
+            "date": "2026-03-02",
+            "description": "Vendor payment",
+            "debit": "250.00",
+            "credit": "0.00",
+            "balance": "750.00",
+        }
+    ]

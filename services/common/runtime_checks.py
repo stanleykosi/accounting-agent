@@ -1,10 +1,14 @@
 """
 Purpose: Provide canonical dependency health checks shared by API and worker service startup.
-Scope: PostgreSQL, Redis, and S3-compatible object storage reachability plus required bucket validation.
+Scope: PostgreSQL, Redis, and S3-compatible object storage reachability plus
+required bucket validation.
 Dependencies: Shared settings, psycopg, redis-py, and the MinIO client.
 """
 
 from __future__ import annotations
+
+import shutil
+import subprocess
 
 import psycopg
 from minio import Minio
@@ -35,7 +39,7 @@ def verify_database_connectivity(settings: AppSettings) -> None:
 
 
 def verify_redis_connectivity(settings: AppSettings) -> None:
-    """Confirm that the configured Redis broker URL is reachable for task dispatch and cache usage."""
+    """Confirm that the configured Redis broker URL is reachable for tasks and cache usage."""
 
     client = Redis.from_url(
         settings.redis.broker_url,
@@ -71,4 +75,48 @@ def verify_object_storage_connectivity(settings: AppSettings) -> None:
         raise RuntimeError(
             "Object-storage validation failed. Missing required buckets: "
             f"{formatted_bucket_names}."
+        )
+
+
+def verify_ocr_runtime() -> None:
+    """Confirm that the worker host has the OCR binaries and language packs we rely on."""
+
+    for binary_name in ("ocrmypdf", "tesseract"):
+        if shutil.which(binary_name) is None:
+            raise RuntimeError(
+                "OCR runtime validation failed. Missing required binary: "
+                f"{binary_name}. Install OCRmyPDF and Tesseract in the worker image."
+            )
+
+    try:
+        completed = subprocess.run(
+            ["tesseract", "--list-langs"],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+    except subprocess.TimeoutExpired as error:
+        raise RuntimeError(
+            "OCR runtime validation failed. Tesseract language discovery timed out."
+        ) from error
+    except subprocess.CalledProcessError as error:
+        stderr = (error.stderr or error.stdout or "no process output").strip()
+        raise RuntimeError(
+            "OCR runtime validation failed. Could not enumerate Tesseract language packs: "
+            f"{stderr}"
+        ) from error
+
+    available_languages = {
+        line.strip()
+        for line in completed.stdout.splitlines()
+        if line.strip() and "available languages" not in line.lower()
+    }
+    required_languages = {"eng", "osd"}
+    missing_languages = sorted(required_languages - available_languages)
+    if missing_languages:
+        formatted_languages = ", ".join(missing_languages)
+        raise RuntimeError(
+            "OCR runtime validation failed. Missing required Tesseract language packs: "
+            f"{formatted_languages}."
         )

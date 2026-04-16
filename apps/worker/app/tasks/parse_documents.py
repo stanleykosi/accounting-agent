@@ -52,6 +52,7 @@ logger = get_logger(__name__)
 
 _DATE_PATTERN = re.compile(r"\b\d{4}-\d{2}-\d{2}\b|\b\d{2}[/-]\d{2}[/-]\d{4}\b")
 _CURRENCY_PATTERN = re.compile(r"\b(NGN|USD|GBP|EUR|CAD|AUD|ZAR)\b", re.IGNORECASE)
+_GENERIC_TABLE_COLUMN_PATTERN = re.compile(r"^column_(\d+)$")
 _TEXT_FIELD_PATTERNS: dict[str, tuple[re.Pattern[str], ...]] = {
     "invoice_number": (
         re.compile(r"\binvoice\s*(?:number|no\.?|#)\s*[:#-]?\s*([A-Z0-9./-]+)", re.IGNORECASE),
@@ -87,6 +88,44 @@ _TEXT_FIELD_PATTERNS: dict[str, tuple[re.Pattern[str], ...]] = {
     ),
     "account_number": (
         re.compile(r"\baccount\s*(?:number|no\.?)\s*[:#-]?\s*([A-Z0-9./-]+)", re.IGNORECASE),
+    ),
+    "statement_start_date": (
+        re.compile(
+            r"\b(?:statement\s+start\s+date|period\s+start|start\s+date|from)\s*[:#-]?\s*"
+            r"(\d{4}-\d{2}-\d{2}|\d{2}[/-]\d{2}[/-]\d{4})",
+            re.IGNORECASE,
+        ),
+    ),
+    "statement_end_date": (
+        re.compile(
+            r"\b(?:statement\s+end\s+date|period\s+end|end\s+date|to)\s*[:#-]?\s*"
+            r"(\d{4}-\d{2}-\d{2}|\d{2}[/-]\d{2}[/-]\d{4})",
+            re.IGNORECASE,
+        ),
+    ),
+    "opening_balance": (
+        re.compile(
+            r"\bopening\s+balance\s*[:#-]?\s*(-?\d[\d,]*\.?\d*)",
+            re.IGNORECASE,
+        ),
+    ),
+    "closing_balance": (
+        re.compile(
+            r"\bclosing\s+balance\s*[:#-]?\s*(-?\d[\d,]*\.?\d*)",
+            re.IGNORECASE,
+        ),
+    ),
+    "total_credits": (
+        re.compile(
+            r"\b(?:credits?\s+total|total\s+credits?)\s*[:#-]?\s*(-?\d[\d,]*\.?\d*)",
+            re.IGNORECASE,
+        ),
+    ),
+    "total_debits": (
+        re.compile(
+            r"\b(?:debits?\s+total|total\s+debits?)\s*[:#-]?\s*(-?\d[\d,]*\.?\d*)",
+            re.IGNORECASE,
+        ),
     ),
     "party_a_name": (
         re.compile(r"\bparty\s*a\s*[:#-]?\s*(.+)", re.IGNORECASE),
@@ -541,6 +580,10 @@ def _collect_table_rows(*, raw_parse_payload: JsonObject) -> list[dict[str, str]
         raw_rows = table.get("rows")
         if not isinstance(raw_rows, list):
             continue
+        normalized_pdf_rows = _normalize_pdf_delimited_table_rows(table=table, raw_rows=raw_rows)
+        if normalized_pdf_rows is not None:
+            rows.extend(normalized_pdf_rows)
+            continue
         for raw_row in raw_rows:
             if not isinstance(raw_row, dict):
                 continue
@@ -549,6 +592,80 @@ def _collect_table_rows(*, raw_parse_payload: JsonObject) -> list[dict[str, str]
                 normalized_row[_normalize_column_key(str(key))] = str(value).strip()
             rows.append(normalized_row)
     return rows
+
+
+def _normalize_pdf_delimited_table_rows(
+    *,
+    table: dict[str, Any],
+    raw_rows: list[Any],
+) -> list[dict[str, str]] | None:
+    """Project PDF pipe-delimited tables into header-based row dictionaries when possible."""
+
+    if str(table.get("name", "")).strip().lower() != "pdf_delimited_text":
+        return None
+    if not raw_rows or not isinstance(raw_rows[0], dict):
+        return None
+
+    ordered_headers = _extract_generic_pdf_columns(raw_row=raw_rows[0])
+    if not ordered_headers:
+        return None
+
+    header_names = tuple(
+        _normalize_column_key(header_value) if str(header_value).strip() else ""
+        for _, header_value in ordered_headers
+    )
+    if not _looks_like_pdf_header_row(header_names=header_names):
+        return None
+
+    projected_rows: list[dict[str, str]] = []
+    for raw_row in raw_rows[1:]:
+        if not isinstance(raw_row, dict):
+            continue
+        ordered_values = _extract_generic_pdf_columns(raw_row=raw_row)
+        if not ordered_values:
+            continue
+        normalized_row: dict[str, str] = {}
+        value_by_column_key = dict(ordered_values)
+        for (column_key, _), header_name in zip(ordered_headers, header_names):
+            if not header_name:
+                continue
+            cell_value = value_by_column_key.get(column_key, "")
+            if cell_value:
+                normalized_row[header_name] = cell_value
+        source_line_number = raw_row.get("source_line_number")
+        if isinstance(source_line_number, str) and source_line_number.strip():
+            normalized_row["source_line_number"] = source_line_number.strip()
+        if normalized_row:
+            projected_rows.append(normalized_row)
+
+    return projected_rows
+
+
+def _extract_generic_pdf_columns(*, raw_row: dict[str, Any]) -> list[tuple[str, str]]:
+    """Return ordered generic PDF table columns from one raw parsed row."""
+
+    ordered: list[tuple[int, str, str]] = []
+    for key, value in raw_row.items():
+        match = _GENERIC_TABLE_COLUMN_PATTERN.match(str(key))
+        if match is None:
+            continue
+        ordered.append((int(match.group(1)), str(key), str(value).strip()))
+    ordered.sort(key=lambda item: item[0])
+    return [(column_key, value) for _, column_key, value in ordered]
+
+
+def _looks_like_pdf_header_row(*, header_names: tuple[str, ...]) -> bool:
+    """Return whether one generic PDF table row looks like a recognizable header row."""
+
+    header_set = {header for header in header_names if header}
+    if "date" not in header_set:
+        return False
+
+    known_statement_headers = {"description", "reference", "debit", "credit", "amount", "balance"}
+    known_line_item_headers = {"description", "quantity", "unit_price", "amount", "tax_amount"}
+    return bool(header_set.intersection(known_statement_headers)) or bool(
+        header_set.intersection(known_line_item_headers)
+    )
 
 
 def _collect_parser_text(*, raw_parse_payload: JsonObject) -> str:

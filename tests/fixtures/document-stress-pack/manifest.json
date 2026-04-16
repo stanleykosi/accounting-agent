@@ -1,0 +1,83 @@
+{
+  "recommended_close_run_period": {
+    "period_start": "2026-03-01",
+    "period_end": "2026-03-31"
+  },
+  "source_documents": [
+    {
+      "filename": "invoice-acme-office-fitout-2026-03.xlsx",
+      "expected_type": "invoice",
+      "purpose": "High-coverage invoice extraction fixture.",
+      "amount": "2450.00",
+      "date": "2026-03-08",
+      "should_match_statement_reference": "INV-1048"
+    },
+    {
+      "filename": "invoice-acme-office-fitout-2026-03.pdf",
+      "expected_type": "invoice",
+      "purpose": "Realistic PDF invoice for upload and review stress."
+    },
+    {
+      "filename": "invoice-acme-office-fitout-2026-03-duplicate.pdf",
+      "expected_type": "invoice",
+      "purpose": "Exact byte-for-byte duplicate for duplicate-upload testing."
+    },
+    {
+      "filename": "invoice-out-of-period-2026-04.xlsx",
+      "expected_type": "invoice",
+      "purpose": "Outside the March close window to trigger period review.",
+      "date": "2026-04-04"
+    },
+    {
+      "filename": "bank-statement-operating-account-2026-03.xlsx",
+      "expected_type": "bank_statement",
+      "purpose": "Statement summary plus transaction detail for matching."
+    },
+    {
+      "filename": "bank-statement-operating-account-2026-03.pdf",
+      "expected_type": "bank_statement",
+      "purpose": "PDF bank statement with header fields and a delimited transaction table."
+    },
+    {
+      "filename": "bank-statement-operating-account-2026-03-scanned.pdf",
+      "expected_type": "bank_statement",
+      "purpose": "Image-only scanned bank statement fixture that requires OCR.",
+      "requires_ocr_runtime": true
+    },
+    {
+      "filename": "payslip-jordan-lee-2026-03.xlsx",
+      "expected_type": "payslip",
+      "purpose": "High-coverage payslip extraction fixture.",
+      "amount": "4165.00",
+      "date": "2026-03-15",
+      "should_match_statement_reference": "PR-2026-03-JL"
+    },
+    {
+      "filename": "payslip-jordan-lee-2026-03.pdf",
+      "expected_type": "payslip",
+      "purpose": "Realistic PDF payslip for upload and review stress."
+    },
+    {
+      "filename": "contract-cedar-ridge-msa-2026.xlsx",
+      "expected_type": "contract",
+      "purpose": "High-coverage contract extraction fixture."
+    },
+    {
+      "filename": "contract-cedar-ridge-msa-2026.pdf",
+      "expected_type": "contract",
+      "purpose": "Realistic multi-page contract for PDF handling stress."
+    },
+    {
+      "filename": "grouped-source-documents.csv",
+      "expected_type": "unknown",
+      "purpose": "Grouped CSV that should produce split candidates by document type."
+    }
+  ],
+  "coa_files": [
+    {
+      "filename": "sample-us-smb-coa.xlsx",
+      "purpose": "US small-business chart of accounts using human-friendly alias headers.",
+      "account_count": 40
+    }
+  ]
+}

@@ -1,0 +1,5 @@
+Document Type,Reference,Amount,Date,Notes
+Invoice,INV-1048,2450.00,2026-03-08,In-period invoice that should match the bank statement line.
+Invoice,INV-APR-2201,1500.00,2026-04-04,Out-of-period invoice to test close-window validation.
+Payslip,PR-2026-03-JL,4165.00,2026-03-15,Payroll item that should match a statement debit.
+Contract,MSA-2026-017,48000.00,2026-03-01,Contract row group for split-candidate testing.
