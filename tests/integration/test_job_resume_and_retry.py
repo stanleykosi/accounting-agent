@@ -226,6 +226,7 @@ def test_report_generation_re_raises_cancellation_after_marking_run_failed(
         "_gather_section_data",
         lambda **_: {"p_and_l": {}},
     )
+    monkeypatch.setattr(generate_reports_task, "ensure_close_run_active_phase", lambda **_: None)
 
     job_context = FakeCheckpointContext(cancel_on_call=2)
     with pytest.raises(JobCancellationRequestedError):
@@ -241,6 +242,62 @@ def test_report_generation_re_raises_cancellation_after_marking_run_failed(
 
     assert repo_holder["repo"].status_updates[-1]["status"] == "failed"
     assert "canceled by an operator" in repo_holder["repo"].status_updates[-1]["failure_reason"]
+
+
+def test_report_generation_marks_precreated_run_failed_when_phase_guard_cancels_early(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Phase-guard cancellation should still retire a pre-created report run."""
+
+    repo_holder: dict[str, FakeReportRepository] = {}
+
+    monkeypatch.setattr(
+        generate_reports_task,
+        "get_session_factory",
+        lambda: lambda: FakeSessionContext(),
+    )
+    monkeypatch.setattr(
+        generate_reports_task,
+        "ReportRepository",
+        lambda db_session: repo_holder.setdefault("repo", FakeReportRepository()),
+    )
+    monkeypatch.setattr(
+        generate_reports_task,
+        "_load_report_context",
+        lambda **_: SimpleNamespace(
+            entity_id=UUID("20000000-0000-0000-0000-000000000001"),
+            template_id=UUID("30000000-0000-0000-0000-000000000001"),
+            period_start=datetime(2026, 3, 1, tzinfo=UTC).date(),
+            period_end=datetime(2026, 3, 31, tzinfo=UTC).date(),
+            close_run_id=UUID("40000000-0000-0000-0000-000000000001"),
+            entity_name="Acme",
+            currency_code="NGN",
+        ),
+    )
+    monkeypatch.setattr(
+        generate_reports_task,
+        "ensure_close_run_active_phase",
+        lambda **_: (_ for _ in ()).throw(
+            JobCancellationRequestedError(
+                "Report generation was canceled because the close run is no longer in Reporting."
+            )
+        ),
+    )
+
+    with pytest.raises(JobCancellationRequestedError):
+        generate_reports_task._run_report_generation_task(
+            close_run_id="40000000-0000-0000-0000-000000000001",
+            report_run_id=str(FakeReportRepository.RUN_ID),
+            actor_user_id="10000000-0000-0000-0000-000000000001",
+            sections=None,
+            generate_commentary_flag=False,
+            use_llm_commentary=False,
+            job_context=FakeCheckpointContext(),
+        )
+
+    assert repo_holder["repo"].status_updates[-1]["report_run_id"] == FakeReportRepository.RUN_ID
+    assert repo_holder["repo"].status_updates[-1]["status"] == "failed"
+    assert "no longer in Reporting" in repo_holder["repo"].status_updates[-1]["failure_reason"]
 
 
 def test_parse_resume_skips_duplicate_parse_and_store_side_effects(
@@ -347,6 +404,7 @@ def test_report_resume_reuses_checkpointed_artifacts_without_rebuilding(
         "_build_pdf_report",
         lambda **_: (_ for _ in ()).throw(AssertionError("PDF build should not rerun")),
     )
+    monkeypatch.setattr(generate_reports_task, "ensure_close_run_active_phase", lambda **_: None)
 
     job_context = FakeCheckpointContext(
         completed_steps={"resolve_report_run", "build_excel_pack", "build_pdf_pack"},
@@ -454,6 +512,15 @@ class FakeTrackedTask(TrackedJobTask):
         """Route wrapper lifecycle calls into the in-memory controller."""
 
         return callback(self.controller)
+
+    def run_tracked_job(
+        self,
+        *,
+        runner: Callable[[JobRuntimeContext], dict[str, Any]],
+    ) -> dict[str, Any]:
+        """Forward explicitly into the shared tracked-job wrapper implementation."""
+
+        return super().run_tracked_job(runner=runner)
 
 
 class FakeRequest:

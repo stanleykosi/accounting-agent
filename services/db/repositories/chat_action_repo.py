@@ -214,6 +214,65 @@ class ChatActionRepository:
         self._db_session.flush()
         return _map_action_plan(plan)
 
+    def rebind_pending_actions_to_close_run(
+        self,
+        *,
+        thread_id: UUID,
+        from_close_run_id: UUID,
+        to_close_run_id: UUID,
+    ) -> int:
+        """Move pending thread-scoped actions onto a reopened close run.
+
+        The original close-run scope is retained in the payload so later approval
+        execution can still remap object identifiers from the source run into the
+        new working version when needed.
+        """
+
+        statement = (
+            select(ChatActionPlan)
+            .where(
+                ChatActionPlan.thread_id == thread_id,
+                ChatActionPlan.close_run_id == from_close_run_id,
+                ChatActionPlan.status == "pending",
+            )
+        )
+        plans = self._db_session.execute(statement).scalars().all()
+        count = 0
+        for plan in plans:
+            payload = dict(plan.payload)
+            payload.setdefault("source_close_run_id", str(from_close_run_id))
+            plan.close_run_id = to_close_run_id
+            plan.payload = payload
+            count += 1
+        if count > 0:
+            self._db_session.flush()
+        return count
+
+    def supersede_pending_actions_for_close_run_scope(
+        self,
+        *,
+        thread_id: UUID,
+        close_run_id: UUID,
+    ) -> int:
+        """Retire pending actions that belong to an earlier thread scope."""
+
+        statement = (
+            select(ChatActionPlan)
+            .where(
+                ChatActionPlan.thread_id == thread_id,
+                ChatActionPlan.close_run_id == close_run_id,
+                ChatActionPlan.status == "pending",
+            )
+        )
+        plans = self._db_session.execute(statement).scalars().all()
+        count = 0
+        for plan in plans:
+            plan.status = "superseded"
+            count += 1
+        if count > 0:
+            self._db_session.flush()
+        return count
+
     def supersede_pending_actions_for_target(
         self,
         *,

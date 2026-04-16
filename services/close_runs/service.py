@@ -24,6 +24,7 @@ from services.close_runs.gates import (
     build_reopened_phase_states,
     evaluate_phase_gates,
     evaluate_signoff_readiness,
+    rewind_to_phase,
     transition_to_next_phase,
 )
 from services.common.enums import (
@@ -35,6 +36,7 @@ from services.common.enums import (
 from services.common.types import JsonObject, utc_now
 from services.contracts.close_run_models import (
     CloseRunListResponse,
+    CloseRunRewindResponse,
     CloseRunReopenResponse,
     CloseRunSummary,
     CloseRunTransitionResponse,
@@ -47,6 +49,8 @@ from services.db.repositories.close_run_repo import (
     CloseRunEntityRecord,
     CloseRunPhaseStateRecord,
     CloseRunRecord,
+    CloseRunStateResetSummary,
+    ReopenedCloseRunCarryForwardSummary,
 )
 from services.db.repositories.entity_repo import EntityUserRecord
 
@@ -145,6 +149,23 @@ class CloseRunRepositoryProtocol(Protocol):
         phase_states: tuple[EvaluatedPhaseState, ...],
     ) -> tuple[CloseRunPhaseStateRecord, ...]:
         """Persist the five canonical phase states for a close run."""
+
+    def carry_forward_working_state_for_reopened_close_run(
+        self,
+        *,
+        source_close_run_id: UUID,
+        target_close_run_id: UUID,
+    ) -> ReopenedCloseRunCarryForwardSummary:
+        """Clone current-state workflow artifacts into a reopened close run."""
+
+    def clear_state_after_phase_rewind(
+        self,
+        *,
+        close_run_id: UUID,
+        target_phase: WorkflowPhase,
+        canceled_by_user_id: UUID | None = None,
+    ) -> CloseRunStateResetSummary:
+        """Delete later-phase derived state after rewinding workflow."""
 
     def list_phase_states(self, *, close_run_id: UUID) -> tuple[CloseRunPhaseStateRecord, ...]:
         """Return all phase-state rows for one close run."""
@@ -412,6 +433,78 @@ class CloseRunService:
             active_phase=transition.active_phase,
         )
 
+    def rewind_close_run(
+        self,
+        *,
+        actor_user: EntityUserRecord,
+        entity_id: UUID,
+        close_run_id: UUID,
+        target_phase: WorkflowPhase,
+        reason: str | None,
+        source_surface: AuditSourceSurface,
+        trace_id: str | None,
+    ) -> CloseRunRewindResponse:
+        """Reopen an earlier workflow phase on a mutable close run."""
+
+        access_record = self._require_close_run_access(
+            entity_id=entity_id,
+            close_run_id=close_run_id,
+            user_id=actor_user.id,
+        )
+        self._require_mutable_status(access_record.close_run)
+
+        try:
+            rewind = rewind_to_phase(
+                phase_states=self._existing_phase_states(close_run_id=close_run_id),
+                target_phase=target_phase,
+                signals=self._repository.get_phase_gate_signals(close_run_id=close_run_id),
+            )
+        except PhaseGateError as error:
+            raise CloseRunServiceError(
+                status_code=409,
+                code=CloseRunServiceErrorCode.INVALID_TRANSITION,
+                message=str(error),
+            ) from error
+
+        try:
+            self._repository.replace_phase_states(
+                close_run_id=close_run_id,
+                phase_states=rewind.phase_states,
+            )
+            reset_summary = self._repository.clear_state_after_phase_rewind(
+                close_run_id=close_run_id,
+                target_phase=target_phase,
+                canceled_by_user_id=actor_user.id,
+            )
+            self._repository.create_activity_event(
+                entity_id=entity_id,
+                close_run_id=close_run_id,
+                actor_user_id=actor_user.id,
+                event_type="close_run.phase_rewound",
+                source_surface=source_surface,
+                payload={
+                    "summary": (
+                        f"{actor_user.full_name} moved the close run from "
+                        f"{rewind.previous_active_phase.label} back to {rewind.active_phase.label}."
+                    ),
+                    "previous_active_phase": rewind.previous_active_phase.value,
+                    "active_phase": rewind.active_phase.value,
+                    "reset_summary": _build_reset_summary_payload(reset_summary),
+                    "reason": reason,
+                },
+                trace_id=trace_id,
+            )
+            self._repository.commit()
+        except Exception:
+            self._repository.rollback()
+            raise
+
+        return CloseRunRewindResponse(
+            close_run=self._build_close_run_summary(access_record.close_run),
+            previous_active_phase=rewind.previous_active_phase,
+            active_phase=rewind.active_phase,
+        )
+
     def approve_close_run(
         self,
         *,
@@ -640,6 +733,10 @@ class CloseRunService:
                 close_run_id=reopened_close_run.id,
                 phase_states=build_reopened_phase_states(),
             )
+            carry_forward_summary = self._repository.carry_forward_working_state_for_reopened_close_run(
+                source_close_run_id=close_run_id,
+                target_close_run_id=reopened_close_run.id,
+            )
             self._repository.create_review_action(
                 entity_id=entity_id,
                 close_run_id=close_run_id,
@@ -658,6 +755,9 @@ class CloseRunService:
                         f"{actor_user.full_name} reopened the close run as version {version_no}."
                     ),
                     "reopened_close_run_id": serialize_uuid(reopened_close_run.id),
+                    "carry_forward_summary": _build_carry_forward_summary_payload(
+                        carry_forward_summary
+                    ),
                 },
             )
             self._repository.create_activity_event(
@@ -670,9 +770,13 @@ class CloseRunService:
                     "summary": (
                         f"{actor_user.full_name} reopened close run "
                         f"version {access_record.close_run.current_version_no} "
-                        f"as version {version_no}."
+                        f"as version {version_no} and carried forward "
+                        f"{_describe_carry_forward_summary(carry_forward_summary)}."
                     ),
                     "source_close_run_id": serialize_uuid(close_run_id),
+                    "carry_forward_summary": _build_carry_forward_summary_payload(
+                        carry_forward_summary
+                    ),
                     "reason": reason,
                 },
                 trace_id=trace_id,
@@ -856,6 +960,52 @@ def _build_close_run_payload(close_run: CloseRunRecord) -> JsonObject:
             else None
         ),
     }
+
+
+def _build_carry_forward_summary_payload(
+    carry_forward_summary: ReopenedCloseRunCarryForwardSummary,
+) -> JsonObject:
+    """Return a stable audit payload for reopened close-run carry-forward state."""
+
+    return {
+        "document_count": carry_forward_summary.document_count,
+        "recommendation_count": carry_forward_summary.recommendation_count,
+        "journal_count": carry_forward_summary.journal_count,
+        "reconciliation_count": carry_forward_summary.reconciliation_count,
+        "supporting_schedule_count": carry_forward_summary.supporting_schedule_count,
+        "report_run_count": carry_forward_summary.report_run_count,
+    }
+
+
+def _build_reset_summary_payload(reset_summary: CloseRunStateResetSummary) -> JsonObject:
+    """Return a stable audit payload for later-phase state removed during rewind."""
+
+    return {
+        "recommendation_count": reset_summary.recommendation_count,
+        "journal_count": reset_summary.journal_count,
+        "reconciliation_count": reset_summary.reconciliation_count,
+        "supporting_schedule_count": reset_summary.supporting_schedule_count,
+        "report_run_count": reset_summary.report_run_count,
+        "export_run_count": reset_summary.export_run_count,
+        "evidence_pack_count": reset_summary.evidence_pack_count,
+        "canceled_job_count": reset_summary.canceled_job_count,
+    }
+
+
+def _describe_carry_forward_summary(
+    carry_forward_summary: ReopenedCloseRunCarryForwardSummary,
+) -> str:
+    """Render a compact operator-facing summary for reopen timeline events."""
+
+    parts = [
+        f"{carry_forward_summary.document_count} document(s)",
+        f"{carry_forward_summary.recommendation_count} recommendation(s)",
+        f"{carry_forward_summary.journal_count} journal(s)",
+        f"{carry_forward_summary.reconciliation_count} reconciliation run(s)",
+        f"{carry_forward_summary.supporting_schedule_count} supporting schedule(s)",
+        f"{carry_forward_summary.report_run_count} report run(s)",
+    ]
+    return ", ".join(parts)
 
 
 __all__ = [

@@ -144,6 +144,59 @@ def test_document_upload_rejects_unsupported_content_without_partial_commit() ->
     assert repository.rolled_back is True
 
 
+def test_document_upload_rejects_exact_duplicate_files_in_same_close_run() -> None:
+    """Exact duplicate uploads should fail fast instead of creating another document row."""
+
+    repository = InMemoryDocumentRepository()
+    storage = InMemoryStorageRepository()
+    service = DocumentUploadService(
+        repository=repository,
+        storage_repository=storage,
+        job_service=InMemoryJobService(),
+        task_dispatcher=InMemoryTaskDispatcher(),
+    )
+    duplicate_payload = b"%PDF-1.7\n1 0 obj\n<< /Type /Catalog /Font <<>> >>\n%%EOF"
+
+    first_response = service.upload_documents(
+        actor_user=repository.actor,
+        entity_id=repository.access_record.entity.id,
+        close_run_id=repository.access_record.close_run.id,
+        files=(
+            UploadFilePayload(
+                filename="Vendor Invoice.pdf",
+                payload=duplicate_payload,
+                declared_content_type="application/pdf",
+            ),
+        ),
+        source_surface=AuditSourceSurface.DESKTOP,
+        trace_id="req-doc-upload-first",
+    )
+
+    with pytest.raises(DocumentUploadServiceError) as error:
+        service.upload_documents(
+            actor_user=repository.actor,
+            entity_id=repository.access_record.entity.id,
+            close_run_id=repository.access_record.close_run.id,
+            files=(
+                UploadFilePayload(
+                    filename="Vendor Invoice copy.pdf",
+                    payload=duplicate_payload,
+                    declared_content_type="application/pdf",
+                ),
+            ),
+            source_surface=AuditSourceSurface.DESKTOP,
+            trace_id="req-doc-upload-duplicate",
+        )
+
+    assert len(first_response.uploaded_documents) == 1
+    assert error.value.status_code == 409
+    assert error.value.code is DocumentUploadServiceErrorCode.DUPLICATE_UPLOAD
+    assert "already attached to this close run" in error.value.message
+    assert len(repository.documents) == 1
+    assert len(storage.objects) == 1
+    assert repository.rolled_back is True
+
+
 class InMemoryDocumentRepository:
     """Provide a deterministic repository double for document upload integration tests."""
 

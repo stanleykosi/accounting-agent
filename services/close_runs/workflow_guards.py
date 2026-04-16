@@ -54,6 +54,11 @@ def require_active_phase(
             " Finish the current phase's required work or move into the correct phase before "
             "trying again."
         )
+    if required_phase is WorkflowPhase.COLLECTION:
+        message += (
+            " If you need to add or replace source documents, ask the agent to take the run "
+            "back to Collection or reopen it into a new working version first."
+        )
 
     raise WorkflowPhaseLockedError(
         action_label=action_label,

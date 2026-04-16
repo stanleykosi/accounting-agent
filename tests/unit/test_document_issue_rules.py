@@ -3,6 +3,7 @@ Unit tests for document issue rules and quality checks.
 """
 
 from datetime import date, datetime
+from decimal import Decimal
 from uuid import uuid4
 
 from services.documents.completeness import CompletenessCheckResult, CompletenessCheckService
@@ -26,6 +27,7 @@ class MockDocumentRepository:
 
     def __init__(self):
         self.documents = {}
+        self.documents_with_extractions = ()
 
     def get_close_run_for_user(self, *, entity_id, close_run_id, user_id):
         # Mock implementation
@@ -52,8 +54,10 @@ class MockDocumentRepository:
         )
 
     def list_documents_for_close_run(self, *, close_run_id):
-        # Return empty list for testing
-        return ()
+        return tuple(record.document for record in self.documents_with_extractions)
+
+    def list_documents_for_close_run_with_latest_extraction(self, *, close_run_id):
+        return self.documents_with_extractions
 
     def commit(self):
         pass
@@ -90,6 +94,81 @@ class MockStorageRepository:
         return MockMetadata()
 
 
+def _build_document_with_extraction(
+    *,
+    close_run_id,
+    document_id,
+    document_type: DocumentType,
+    original_filename: str,
+    sha256_hash: str,
+    created_at: datetime,
+    status: DocumentStatus,
+    field_values: dict[str, object] | None = None,
+):
+    from services.db.repositories.document_repo import (
+        DocumentExtractionRecord,
+        DocumentRecord,
+        DocumentWithExtractionRecord,
+        ExtractedFieldRecord,
+    )
+
+    extraction = None
+    if field_values is not None:
+        extraction = DocumentExtractionRecord(
+            id=document_id,
+            document_id=document_id,
+            version_no=1,
+            schema_name=document_type.value,
+            schema_version="1.0.0",
+            extracted_payload={"fields": []},
+            confidence_summary={},
+            needs_review=False,
+            approved_version=status is DocumentStatus.APPROVED,
+            created_at=created_at,
+            updated_at=created_at,
+            fields=tuple(
+                ExtractedFieldRecord(
+                    id=uuid4(),
+                    document_extraction_id=document_id,
+                    field_name=field_name,
+                    field_value=field_value,
+                    field_type="string",
+                    confidence=0.99,
+                    evidence_ref={},
+                    is_human_corrected=False,
+                    created_at=created_at,
+                    updated_at=created_at,
+                )
+                for field_name, field_value in field_values.items()
+            ),
+        )
+
+    return DocumentWithExtractionRecord(
+        document=DocumentRecord(
+            id=document_id,
+            close_run_id=close_run_id,
+            parent_document_id=None,
+            document_type=document_type,
+            source_channel=DocumentSourceChannel.UPLOAD,
+            storage_key=f"documents/source/{original_filename}",
+            original_filename=original_filename,
+            mime_type="application/pdf",
+            file_size_bytes=1024,
+            sha256_hash=sha256_hash,
+            period_start=None,
+            period_end=None,
+            classification_confidence=None,
+            ocr_required=False,
+            status=status,
+            owner_user_id=None,
+            last_touched_by_user_id=None,
+            created_at=created_at,
+            updated_at=created_at,
+        ),
+        latest_extraction=extraction,
+    )
+
+
 def test_duplicate_detection_service():
     """Test duplicate detection service."""
     doc_repo = MockDocumentRepository()
@@ -113,6 +192,218 @@ def test_duplicate_detection_service():
     assert result.similarity_score == 0.0
     assert result.detection_method == "sha256_exact"
     print("✓ Duplicate detection service test passed")
+
+
+def test_duplicate_detection_service_flags_existing_exact_match() -> None:
+    """The duplicate service should flag earlier exact matches in the same close run."""
+
+    close_run_id = uuid4()
+    duplicate_row = _build_document_with_extraction(
+        close_run_id=close_run_id,
+        document_id=uuid4(),
+        document_type=DocumentType.UNKNOWN,
+        original_filename="existing.pdf",
+        sha256_hash="abc123",
+        created_at=datetime(2024, 1, 1),
+        status=DocumentStatus.APPROVED,
+    )
+    doc_repo = MockDocumentRepository()
+    doc_repo.documents_with_extractions = (duplicate_row,)
+    service = DuplicateDetectionService(
+        document_repo=doc_repo,
+        storage_repo=MockStorageRepository(),
+    )
+
+    result = service.check_duplicate(
+        document_hash="abc123",
+        close_run_id=str(close_run_id),
+        entity_id=str(uuid4()),
+        current_document_id=str(uuid4()),
+    )
+
+    assert result.is_duplicate is True
+    assert result.existing_document_id == str(duplicate_row.document.id)
+    assert result.existing_document_filename == duplicate_row.document.original_filename
+    assert result.similarity_score == 1.0
+    assert result.matched_fields == ("sha256_hash",)
+
+
+def test_duplicate_detection_service_flags_semantic_invoice_match() -> None:
+    """Parsed invoices with different bytes but the same accounting facts should be flagged."""
+
+    close_run_id = uuid4()
+    existing_row = _build_document_with_extraction(
+        close_run_id=close_run_id,
+        document_id=uuid4(),
+        document_type=DocumentType.INVOICE,
+        original_filename="invoice-existing.pdf",
+        sha256_hash="existing-hash",
+        created_at=datetime(2024, 1, 1),
+        status=DocumentStatus.APPROVED,
+        field_values={
+            "invoice_number": "INV-1001",
+            "invoice_date": date(2024, 1, 15),
+            "total": Decimal("1250.00"),
+            "currency": "USD",
+            "vendor_name": "Acme Supplies Ltd",
+        },
+    )
+    current_row = _build_document_with_extraction(
+        close_run_id=close_run_id,
+        document_id=uuid4(),
+        document_type=DocumentType.INVOICE,
+        original_filename="invoice-scan.pdf",
+        sha256_hash="current-hash",
+        created_at=datetime(2024, 1, 2),
+        status=DocumentStatus.NEEDS_REVIEW,
+        field_values={
+            "invoice_number": "INV-1001",
+            "invoice_date": date(2024, 1, 15),
+            "total": Decimal("1250.00"),
+            "currency": "USD",
+            "vendor_name": "ACME SUPPLIES LIMITED",
+        },
+    )
+    doc_repo = MockDocumentRepository()
+    doc_repo.documents_with_extractions = (existing_row, current_row)
+    service = DuplicateDetectionService(
+        document_repo=doc_repo,
+        storage_repo=MockStorageRepository(),
+    )
+
+    result = service.check_duplicate(
+        document_hash=current_row.document.sha256_hash,
+        close_run_id=str(close_run_id),
+        entity_id=str(uuid4()),
+        current_document_id=str(current_row.document.id),
+    )
+
+    assert result.is_duplicate is True
+    assert result.existing_document_id == str(existing_row.document.id)
+    assert result.existing_document_filename == existing_row.document.original_filename
+    assert result.detection_method == "semantic_invoice_reference"
+    assert result.similarity_score >= 0.98
+    assert "invoice_number" in result.matched_fields
+    assert "total" in result.matched_fields
+    assert "invoice_date" in result.matched_fields
+
+
+def test_duplicate_detection_service_prefers_original_over_existing_duplicate_match() -> None:
+    """Semantic duplicates should point at the canonical source document first."""
+
+    close_run_id = uuid4()
+    original_row = _build_document_with_extraction(
+        close_run_id=close_run_id,
+        document_id=uuid4(),
+        document_type=DocumentType.INVOICE,
+        original_filename="invoice-original.pdf",
+        sha256_hash="original-hash",
+        created_at=datetime(2024, 1, 1),
+        status=DocumentStatus.APPROVED,
+        field_values={
+            "invoice_number": "INV-1001",
+            "invoice_date": date(2024, 1, 15),
+            "total": Decimal("1250.00"),
+            "currency": "USD",
+            "vendor_name": "Acme Supplies Ltd",
+        },
+    )
+    duplicate_row = _build_document_with_extraction(
+        close_run_id=close_run_id,
+        document_id=uuid4(),
+        document_type=DocumentType.INVOICE,
+        original_filename="invoice-duplicate.pdf",
+        sha256_hash="duplicate-hash",
+        created_at=datetime(2024, 1, 2),
+        status=DocumentStatus.DUPLICATE,
+        field_values={
+            "invoice_number": "INV-1001",
+            "invoice_date": date(2024, 1, 15),
+            "total": Decimal("1250.00"),
+            "currency": "USD",
+            "vendor_name": "Acme Supplies Ltd",
+        },
+    )
+    current_row = _build_document_with_extraction(
+        close_run_id=close_run_id,
+        document_id=uuid4(),
+        document_type=DocumentType.INVOICE,
+        original_filename="invoice-current.pdf",
+        sha256_hash="current-hash",
+        created_at=datetime(2024, 1, 3),
+        status=DocumentStatus.NEEDS_REVIEW,
+        field_values={
+            "invoice_number": "INV-1001",
+            "invoice_date": date(2024, 1, 15),
+            "total": Decimal("1250.00"),
+            "currency": "USD",
+            "vendor_name": "Acme Supplies Ltd",
+        },
+    )
+    doc_repo = MockDocumentRepository()
+    doc_repo.documents_with_extractions = (original_row, duplicate_row, current_row)
+    service = DuplicateDetectionService(
+        document_repo=doc_repo,
+        storage_repo=MockStorageRepository(),
+    )
+
+    result = service.check_duplicate(
+        document_hash=current_row.document.sha256_hash,
+        close_run_id=str(close_run_id),
+        entity_id=str(uuid4()),
+        current_document_id=str(current_row.document.id),
+    )
+
+    assert result.is_duplicate is True
+    assert result.existing_document_id == str(original_row.document.id)
+    assert result.existing_document_filename == original_row.document.original_filename
+
+
+def test_duplicate_detection_service_requires_strong_semantic_evidence() -> None:
+    """Documents should not be flagged as duplicates when only weak overlapping facts exist."""
+
+    close_run_id = uuid4()
+    existing_row = _build_document_with_extraction(
+        close_run_id=close_run_id,
+        document_id=uuid4(),
+        document_type=DocumentType.INVOICE,
+        original_filename="invoice-existing.pdf",
+        sha256_hash="existing-hash",
+        created_at=datetime(2024, 1, 1),
+        status=DocumentStatus.APPROVED,
+        field_values={
+            "vendor_name": "Acme Supplies Ltd",
+            "currency": "USD",
+        },
+    )
+    current_row = _build_document_with_extraction(
+        close_run_id=close_run_id,
+        document_id=uuid4(),
+        document_type=DocumentType.INVOICE,
+        original_filename="invoice-incomplete.pdf",
+        sha256_hash="current-hash",
+        created_at=datetime(2024, 1, 2),
+        status=DocumentStatus.NEEDS_REVIEW,
+        field_values={
+            "vendor_name": "Acme Supplies Ltd",
+            "currency": "USD",
+        },
+    )
+    doc_repo = MockDocumentRepository()
+    doc_repo.documents_with_extractions = (existing_row, current_row)
+    service = DuplicateDetectionService(
+        document_repo=doc_repo,
+        storage_repo=MockStorageRepository(),
+    )
+
+    result = service.check_duplicate(
+        document_hash=current_row.document.sha256_hash,
+        close_run_id=str(close_run_id),
+        entity_id=str(uuid4()),
+        current_document_id=str(current_row.document.id),
+    )
+
+    assert result.is_duplicate is False
 
 
 def test_period_validation_service():

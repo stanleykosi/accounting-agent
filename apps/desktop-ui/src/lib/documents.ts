@@ -149,6 +149,7 @@ export type DocumentReviewWorkspaceData = {
 export type DocumentReviewApiErrorCode =
   | "close_run_not_found"
   | "document_not_found"
+  | "duplicate_upload"
   | "empty_batch"
   | "entity_archived"
   | "extraction_not_found"
@@ -467,6 +468,7 @@ function asDocumentReviewApiErrorCode(value: unknown): DocumentReviewApiErrorCod
   switch (value) {
     case "close_run_not_found":
     case "document_not_found":
+    case "duplicate_upload":
     case "empty_batch":
     case "entity_archived":
     case "extraction_not_found":

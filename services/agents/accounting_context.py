@@ -332,8 +332,13 @@ class AccountingWorkspaceContextBuilder(WorkspaceContextBuilder):
             recent_actions = self._action_repo.list_actions_for_thread(
                 thread_id=thread_id,
                 entity_id=entity_id,
-                limit=20,
+                limit=50,
             )
+            recent_actions = tuple(
+                action
+                for action in recent_actions
+                if _action_matches_close_run_scope(action=action, close_run_id=close_run_id)
+            )[:20]
         else:
             recent_actions = ()
         snapshot["recent_actions"] = [
@@ -591,6 +596,21 @@ def _build_progress_summary(
     if blocked_phases:
         parts.append(f"Blocked phases: {' | '.join(blocked_phases)}.")
     return " ".join(parts)
+
+
+def _action_matches_close_run_scope(*, action: Any, close_run_id: UUID | None) -> bool:
+    """Return whether one thread action belongs to the active close-run scope."""
+
+    if getattr(action, "close_run_id", None) == close_run_id:
+        return True
+    if close_run_id is None:
+        return False
+    applied_result = getattr(action, "applied_result", None)
+    if not isinstance(applied_result, dict):
+        return False
+    return applied_result.get("reopened_close_run_id") == str(close_run_id) or applied_result.get(
+        "created_close_run_id"
+    ) == str(close_run_id)
 
 
 def _build_readiness_summary(

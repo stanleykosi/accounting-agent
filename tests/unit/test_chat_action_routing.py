@@ -18,6 +18,7 @@ Test categories:
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
@@ -57,6 +58,7 @@ class FakeGroundingContext:
     entity_name: str
     autonomy_mode: str
     base_currency: str
+    close_run: Any | None = None
     close_run_id: str | None = None
     period_label: str | None = None
 
@@ -277,6 +279,10 @@ class FakeModelGateway:
     def complete(self, *, messages: list[dict[str, str]]) -> str:
         self.calls.append({"messages": messages})
         return self.response
+
+    def complete_structured(self, *, messages: list[dict[str, str]], response_model):
+        self.calls.append({"messages": messages, "response_model": response_model})
+        return response_model.model_validate(json.loads(self.response))
 
 
 class FakeEntityRepo:
@@ -869,6 +875,258 @@ class TestMembershipGuards:
 
         assert exc_info.value.code == ChatActionRouterErrorCode.THREAD_ACCESS_DENIED
         assert exc_info.value.status_code == 403
+
+
+class TestIntentClassification:
+    """Validate that the router uses structured classification for dynamic chat routing."""
+
+    def test_prompt_includes_natural_language_action_examples(self) -> None:
+        """The classifier prompt should explicitly support normal operator phrasing."""
+
+        router = ChatActionRouter(
+            action_repository=FakeActionRepository(),
+            chat_repository=FakeChatRepository(),
+            model_gateway=FakeModelGateway(),
+            grounding_service=MagicMock(),
+            entity_repo=FakeEntityRepo(allow_access=True),
+        )
+
+        prompt = router._build_classification_prompt(
+            context_lines=["Entity: Test Entity"],
+            user_message="I need the reports",
+        )
+
+        assert "I need the reports" in prompt
+        assert "get this ready for sign-off?" in prompt
+        assert "reopen this close run so we can make changes" in prompt
+        assert "take this back to reconciliation" in prompt
+        assert "take this back to collection so I can upload more files" in prompt
+        assert "start over from document intake" in prompt
+        assert "start a new April close run" in prompt
+        assert "open a fresh run for this month" in prompt
+        assert "create another run for this period" in prompt
+        assert "archive this run" in prompt
+        assert "ignore the PDF I uploaded by mistake" in prompt
+        assert "asking the system to make progress" in prompt
+
+    def test_explanation_intent_returns_none(self, entity_id: UUID, user_id: UUID) -> None:
+        """Purely informational messages should stay on the read-only path."""
+
+        thread_id = uuid4()
+        chat_repo = FakeChatRepository()
+        chat_repo._threads = {
+            thread_id: {
+                "id": thread_id,
+                "entity_id": entity_id,
+                "close_run_id": None,
+                "context_payload": {},
+                "title": "General thread",
+            }
+        }
+        router = ChatActionRouter(
+            action_repository=FakeActionRepository(),
+            chat_repository=chat_repo,
+            model_gateway=FakeModelGateway(
+                response='{"intent": "explanation", "confidence": 0.92, "reasoning": "Question only"}'
+            ),
+            grounding_service=MagicMock(),
+            entity_repo=FakeEntityRepo(allow_access=True),
+        )
+        grounding = FakeGroundingContext(
+            entity_id=str(entity_id),
+            entity_name="Test Entity",
+            autonomy_mode=AutonomyMode.HUMAN_REVIEW.value,
+            base_currency="NGN",
+        )
+
+        result = router.classify_action_intent(
+            thread_id=thread_id,
+            entity_id=entity_id,
+            user_id=user_id,
+            content="What can you do next in this close run?",
+            grounding=grounding,  # type: ignore[arg-type]
+        )
+
+        assert result is None
+
+    def test_workflow_intent_returns_action(self, entity_id: UUID, user_id: UUID) -> None:
+        """Workflow requests should produce a structured action intent."""
+
+        thread_id = uuid4()
+        chat_repo = FakeChatRepository()
+        chat_repo._threads = {
+            thread_id: {
+                "id": thread_id,
+                "entity_id": entity_id,
+                "close_run_id": None,
+                "context_payload": {},
+                "title": "Workflow thread",
+            }
+        }
+        router = ChatActionRouter(
+            action_repository=FakeActionRepository(),
+            chat_repository=chat_repo,
+            model_gateway=FakeModelGateway(
+                response=(
+                    '{"intent": "workflow_action", "confidence": 0.94, '
+                    '"target_phase": "reconciliation", "requires_review": true, '
+                    '"reasoning": "Operator requested a workflow advance"}'
+                )
+            ),
+            grounding_service=MagicMock(),
+            entity_repo=FakeEntityRepo(allow_access=True),
+        )
+        grounding = FakeGroundingContext(
+            entity_id=str(entity_id),
+            entity_name="Test Entity",
+            autonomy_mode=AutonomyMode.HUMAN_REVIEW.value,
+            base_currency="NGN",
+        )
+
+        result = router.classify_action_intent(
+            thread_id=thread_id,
+            entity_id=entity_id,
+            user_id=user_id,
+            content="Advance the close run into reconciliation.",
+            grounding=grounding,  # type: ignore[arg-type]
+        )
+
+        assert result is not None
+        assert result.intent == "workflow_action"
+        assert result.target_phase == WorkflowPhase.RECONCILIATION
+        assert result.requires_review is True
+
+    def test_invalid_structured_intent_returns_router_error(
+        self,
+        entity_id: UUID,
+        user_id: UUID,
+    ) -> None:
+        """Unsupported structured intent labels should fail as classification errors."""
+
+        thread_id = uuid4()
+        chat_repo = FakeChatRepository()
+        chat_repo._threads = {
+            thread_id: {
+                "id": thread_id,
+                "entity_id": entity_id,
+                "close_run_id": None,
+                "context_payload": {},
+                "title": "Workflow thread",
+            }
+        }
+        router = ChatActionRouter(
+            action_repository=FakeActionRepository(),
+            chat_repository=chat_repo,
+            model_gateway=FakeModelGateway(
+                response='{"intent": "workflow", "confidence": 0.94, "reasoning": "Near miss"}'
+            ),
+            grounding_service=MagicMock(),
+            entity_repo=FakeEntityRepo(allow_access=True),
+        )
+        grounding = FakeGroundingContext(
+            entity_id=str(entity_id),
+            entity_name="Test Entity",
+            autonomy_mode=AutonomyMode.HUMAN_REVIEW.value,
+            base_currency="NGN",
+        )
+
+        with pytest.raises(ChatActionRouterError) as exc_info:
+            router.classify_action_intent(
+                thread_id=thread_id,
+                entity_id=entity_id,
+                user_id=user_id,
+                content="Advance the close run into reconciliation.",
+                grounding=grounding,  # type: ignore[arg-type]
+            )
+
+        assert exc_info.value.code == ChatActionRouterErrorCode.INTENT_CLASSIFICATION_FAILED
+        assert exc_info.value.status_code == 422
+
+    def test_list_pending_actions_scopes_to_current_close_run_after_thread_handoff(
+        self,
+        entity_id: UUID,
+        user_id: UUID,
+    ) -> None:
+        """Pending approvals from an older run should not leak into a thread's current run scope."""
+
+        thread_id = uuid4()
+        current_close_run_id = uuid4()
+        previous_close_run_id = uuid4()
+        action_repo = FakeActionRepository()
+        chat_repo = FakeChatRepository()
+        chat_repo._threads = {
+            thread_id: {
+                "id": thread_id,
+                "entity_id": entity_id,
+                "close_run_id": current_close_run_id,
+                "context_payload": {},
+                "title": "Close Run Thread",
+            }
+        }
+        now = datetime.now(timezone.utc)
+        current_plan = FakeActionPlanRecord(
+            id=uuid4(),
+            thread_id=thread_id,
+            message_id=None,
+            entity_id=entity_id,
+            close_run_id=current_close_run_id,
+            actor_user_id=user_id,
+            intent="workflow_action",
+            target_type=None,
+            target_id=None,
+            payload={},
+            confidence=0.9,
+            autonomy_mode=AutonomyMode.HUMAN_REVIEW.value,
+            status="pending",
+            requires_human_approval=True,
+            reasoning="current",
+            applied_result=None,
+            rejected_reason=None,
+            superseded_by_id=None,
+            created_at=now,
+            updated_at=now,
+        )
+        previous_plan = FakeActionPlanRecord(
+            id=uuid4(),
+            thread_id=thread_id,
+            message_id=None,
+            entity_id=entity_id,
+            close_run_id=previous_close_run_id,
+            actor_user_id=user_id,
+            intent="workflow_action",
+            target_type=None,
+            target_id=None,
+            payload={},
+            confidence=0.9,
+            autonomy_mode=AutonomyMode.HUMAN_REVIEW.value,
+            status="pending",
+            requires_human_approval=True,
+            reasoning="previous",
+            applied_result=None,
+            rejected_reason=None,
+            superseded_by_id=None,
+            created_at=now,
+            updated_at=now,
+        )
+        action_repo._plans = {
+            current_plan.id: current_plan,
+            previous_plan.id: previous_plan,
+        }
+        router = ChatActionRouter(
+            action_repository=action_repo,
+            chat_repository=chat_repo,
+            model_gateway=FakeModelGateway(),
+            grounding_service=MagicMock(),
+            entity_repo=FakeEntityRepo(allow_access=True),
+        )
+
+        plans = router.list_pending_actions(
+            thread_id=thread_id,
+            entity_id=entity_id,
+            user_id=user_id,
+        )
+
+        assert plans == (current_plan,)
 
     def test_approve_requires_entity_membership(
         self,

@@ -146,11 +146,14 @@ class ModelGateway:
         self,
         *,
         messages: list[dict[str, str]],
+        request_body_overrides: dict[str, Any] | None = None,
     ) -> httpx.Response:
         """Send one chat completion request to the provider with retry semantics.
 
         Args:
             messages: OpenAI-format message list with role/content.
+            request_body_overrides: Optional request-shape overrides for
+                structured outputs or provider routing requirements.
 
         Returns:
             Raw httpx response for downstream parsing.
@@ -172,6 +175,8 @@ class ModelGateway:
             "max_tokens": self._config.max_tokens,
             "top_p": self._config.top_p,
         }
+        if request_body_overrides:
+            body.update(request_body_overrides)
 
         logger.debug(
             "model_request_start",
@@ -274,7 +279,36 @@ class ModelGateway:
             ModelResponseValidationError: When the response does not match the schema.
             ModelGatewayError: On provider failures or JSON parse errors.
         """
-        raw_content = self.complete(messages=messages)
+        try:
+            response = self._post_completion_request(
+                messages=messages,
+                request_body_overrides=_build_structured_output_request(response_model),
+            )
+        except httpx.ConnectError as error:
+            raise ModelGatewayError(
+                f"Failed to connect to model provider at {self.base_url}. "
+                "Check network connectivity and the provider endpoint."
+            ) from error
+        except httpx.HTTPStatusError as error:
+            raise ModelGatewayError(
+                f"Model provider returned HTTP {error.response.status_code}. "
+                f"Response body: {error.response.text[:300]}"
+            ) from error
+
+        payload = response.json()
+        choices = payload.get("choices", [])
+        if not choices:
+            raise ModelGatewayError(
+                "Model provider returned no choices in the completion response. "
+                "This can happen when the model is unavailable or the request is malformed."
+            )
+
+        raw_content: str = choices[0].get("message", {}).get("content", "")
+        if not raw_content:
+            raise ModelGatewayError(
+                "Model provider returned an empty assistant message. "
+                "Check the prompt and model configuration."
+            )
 
         # Strip markdown code fences if the model wrapped JSON in them
         parsed_content = _strip_markdown_fences(raw_content)
@@ -295,6 +329,30 @@ class ModelGateway:
                 errors=list(error.errors()),  # type: ignore[arg-type]
                 raw_response=raw_content,
             ) from error
+
+
+def _build_structured_output_request(response_model: type[BaseModel]) -> dict[str, Any]:
+    """Build the canonical request overrides for schema-enforced completions.
+
+    Structured planning is the single current-state path for agent outputs that
+    drive workflow behavior. We require providers that honor every parameter so
+    OpenRouter does not route a planning request to a provider that silently
+    ignores the JSON schema contract.
+    """
+
+    return {
+        "provider": {
+            "require_parameters": True,
+        },
+        "response_format": {
+            "type": "json_schema",
+            "json_schema": {
+                "name": response_model.__name__,
+                "strict": True,
+                "schema": response_model.model_json_schema(),
+            },
+        },
+    }
 
 
 def _strip_markdown_fences(content: str) -> str:

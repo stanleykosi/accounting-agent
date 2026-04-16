@@ -33,10 +33,12 @@ from services.common.settings import AppSettings, get_settings
 from services.contracts.close_run_models import (
     CloseRunDecisionRequest,
     CloseRunListResponse,
+    CloseRunRewindResponse,
     CloseRunReopenResponse,
     CloseRunSummary,
     CloseRunTransitionResponse,
     CreateCloseRunRequest,
+    RewindCloseRunRequest,
     TransitionCloseRunRequest,
 )
 from services.db.models.audit import AuditSourceSurface
@@ -176,6 +178,43 @@ def transition_close_run(
     )
     try:
         return close_run_service.transition_close_run(
+            actor_user=_to_entity_user(session_result),
+            entity_id=entity_id,
+            close_run_id=close_run_id,
+            target_phase=payload.target_phase,
+            reason=payload.reason,
+            source_surface=AuditSourceSurface.DESKTOP,
+            trace_id=_resolve_trace_id(request),
+        )
+    except CloseRunServiceError as error:
+        raise _build_close_run_http_exception(error) from error
+
+
+@router.post(
+    "/{close_run_id}/rewind",
+    response_model=CloseRunRewindResponse,
+    summary="Reopen an earlier workflow phase on a mutable close run",
+)
+def rewind_close_run(
+    entity_id: UUID,
+    close_run_id: UUID,
+    payload: RewindCloseRunRequest,
+    request: Request,
+    response: Response,
+    settings: SettingsDependency,
+    auth_service: AuthServiceDependency,
+    close_run_service: CloseRunServiceDependency,
+) -> CloseRunRewindResponse:
+    """Move a mutable close run back into an earlier canonical phase."""
+
+    session_result = _require_authenticated_browser_session(
+        request=request,
+        response=response,
+        settings=settings,
+        auth_service=auth_service,
+    )
+    try:
+        return close_run_service.rewind_close_run(
             actor_user=_to_entity_user(session_result),
             entity_id=entity_id,
             close_run_id=close_run_id,

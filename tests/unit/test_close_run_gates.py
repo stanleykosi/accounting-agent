@@ -17,6 +17,7 @@ from services.close_runs.gates import (
     build_reopened_phase_states,
     evaluate_phase_gates,
     evaluate_signoff_readiness,
+    rewind_to_phase,
     transition_to_next_phase,
 )
 from services.common.enums import (
@@ -182,6 +183,50 @@ def test_reopened_phase_states_preserve_work_and_reopen_signoff() -> None:
         phase_state.status is CloseRunPhaseStatus.COMPLETED for phase_state in phase_states[:-1]
     )
     assert all(phase_state.completed_at == reopened_at for phase_state in phase_states[:-1])
+
+
+def test_rewind_to_phase_reopens_earlier_phase_and_clears_later_progress() -> None:
+    """Rewinding should reopen the target phase and reset downstream phases."""
+
+    phase_states = _existing_states(
+        completed=(
+            WorkflowPhase.COLLECTION,
+            WorkflowPhase.PROCESSING,
+        ),
+        active=WorkflowPhase.RECONCILIATION,
+    )
+
+    result = rewind_to_phase(
+        phase_states=phase_states,
+        target_phase=WorkflowPhase.PROCESSING,
+        signals=PhaseGateSignals(),
+    )
+
+    assert result.previous_active_phase is WorkflowPhase.RECONCILIATION
+    assert result.active_phase is WorkflowPhase.PROCESSING
+    assert result.phase_states[0].status is CloseRunPhaseStatus.COMPLETED
+    assert result.phase_states[1].status is CloseRunPhaseStatus.IN_PROGRESS
+    assert result.phase_states[1].completed_at is None
+    assert all(
+        phase_state.status is CloseRunPhaseStatus.NOT_STARTED
+        for phase_state in result.phase_states[2:]
+    )
+
+
+def test_rewind_to_phase_rejects_same_or_later_target() -> None:
+    """Rewinding only allows moving back into an earlier phase."""
+
+    phase_states = _existing_states(
+        completed=(WorkflowPhase.COLLECTION,),
+        active=WorkflowPhase.PROCESSING,
+    )
+
+    with pytest.raises(PhaseGateError, match="rewind target must be earlier"):
+        rewind_to_phase(
+            phase_states=phase_states,
+            target_phase=WorkflowPhase.PROCESSING,
+            signals=PhaseGateSignals(),
+        )
 
 
 def _existing_states_from_initial() -> tuple[ExistingPhaseState, ...]:

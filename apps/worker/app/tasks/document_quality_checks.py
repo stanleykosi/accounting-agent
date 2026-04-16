@@ -98,6 +98,7 @@ def run_document_quality_checks(
             document_hash=document_hash,
             close_run_id=str(close_run_id),
             entity_id=str(entity_id),
+            current_document_id=str(document_id),
         )
         results["checks_performed"].append(
             {
@@ -114,8 +115,14 @@ def run_document_quality_checks(
                 severity=DocumentIssueSeverity.BLOCKING,
                 details={
                     "existing_document_id": duplicate_result.existing_document_id,
+                    "existing_document_filename": getattr(
+                        duplicate_result,
+                        "existing_document_filename",
+                        None,
+                    ),
                     "similarity_score": duplicate_result.similarity_score,
                     "detection_method": duplicate_result.detection_method,
+                    "matched_fields": list(getattr(duplicate_result, "matched_fields", ())),
                     "document_hash": document_hash,
                 },
                 actor_user_id=actor_user_id,

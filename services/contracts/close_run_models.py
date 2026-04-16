@@ -114,6 +114,27 @@ class TransitionCloseRunRequest(ContractModel):
         return _normalize_optional_reason(value)
 
 
+class RewindCloseRunRequest(ContractModel):
+    """Capture an explicit request to reopen an earlier canonical workflow phase."""
+
+    target_phase: WorkflowPhase = Field(
+        description="Earlier workflow phase to reopen and resume work from.",
+    )
+    reason: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=500,
+        description="Optional operator note explaining why the workflow is moving backward.",
+    )
+
+    @field_validator("reason")
+    @classmethod
+    def normalize_reason(cls, value: str | None) -> str | None:
+        """Normalize optional rewind reasons."""
+
+        return _normalize_optional_reason(value)
+
+
 class CloseRunDecisionRequest(ContractModel):
     """Capture an approval, archive, or reopen decision note."""
 
@@ -190,6 +211,16 @@ class CloseRunTransitionResponse(ContractModel):
     active_phase: WorkflowPhase = Field(description="Phase that is now active.")
 
 
+class CloseRunRewindResponse(ContractModel):
+    """Return the refreshed close run after reopening an earlier workflow phase."""
+
+    close_run: CloseRunSummary = Field(description="Refreshed close-run detail.")
+    previous_active_phase: WorkflowPhase = Field(
+        description="Phase that was active before the rewind.",
+    )
+    active_phase: WorkflowPhase = Field(description="Phase that is now active again.")
+
+
 class CloseRunReopenResponse(ContractModel):
     """Return the new working close-run version created by reopening a released run."""
 
@@ -201,9 +232,11 @@ class CloseRunReopenResponse(ContractModel):
 __all__ = [
     "CloseRunDecisionRequest",
     "CloseRunListResponse",
+    "CloseRunRewindResponse",
     "CloseRunReopenResponse",
     "CloseRunSummary",
     "CloseRunTransitionResponse",
     "CreateCloseRunRequest",
+    "RewindCloseRunRequest",
     "TransitionCloseRunRequest",
 ]

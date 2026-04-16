@@ -65,6 +65,15 @@ class PhaseTransitionResult:
     phase_states: tuple[EvaluatedPhaseState, ...]
 
 
+@dataclass(frozen=True, slots=True)
+class PhaseRewindResult:
+    """Describe the recalculated phase states after reopening an earlier phase."""
+
+    previous_active_phase: WorkflowPhase
+    active_phase: WorkflowPhase
+    phase_states: tuple[EvaluatedPhaseState, ...]
+
+
 class PhaseGateError(ValueError):
     """Represent an invalid or blocked phase-gate operation."""
 
@@ -251,6 +260,59 @@ def evaluate_signoff_readiness(
     return review_state
 
 
+def rewind_to_phase(
+    *,
+    phase_states: tuple[ExistingPhaseState, ...],
+    target_phase: WorkflowPhase,
+    signals: PhaseGateSignals,
+) -> PhaseRewindResult:
+    """Reopen an earlier canonical phase and clear all later phase progress."""
+
+    evaluated_states = evaluate_phase_gates(phase_states=phase_states, signals=signals)
+    active_index = _find_active_phase_index(phase_states=evaluated_states)
+    target_index = CANONICAL_WORKFLOW_PHASES.index(target_phase)
+
+    if active_index == 0:
+        raise PhaseGateError("Collection is already the active phase and cannot rewind further.")
+    if target_index >= active_index:
+        current_phase = evaluated_states[active_index].phase
+        raise PhaseGateError(
+            f"The rewind target must be earlier than the current active phase "
+            f"{current_phase.value}; received {target_phase.value}."
+        )
+
+    rewound_states: list[EvaluatedPhaseState] = []
+    for index, phase_state in enumerate(evaluated_states):
+        if index < target_index:
+            rewound_states.append(phase_state)
+            continue
+        if index == target_index:
+            rewound_states.append(
+                EvaluatedPhaseState(
+                    phase=phase_state.phase,
+                    status=CloseRunPhaseStatus.IN_PROGRESS,
+                    blocking_reason=None,
+                    completed_at=None,
+                )
+            )
+            continue
+
+        rewound_states.append(
+            EvaluatedPhaseState(
+                phase=phase_state.phase,
+                status=CloseRunPhaseStatus.NOT_STARTED,
+                blocking_reason=None,
+                completed_at=None,
+            )
+        )
+
+    return PhaseRewindResult(
+        previous_active_phase=evaluated_states[active_index].phase,
+        active_phase=target_phase,
+        phase_states=tuple(rewound_states),
+    )
+
+
 def _find_active_phase_index(*, phase_states: tuple[EvaluatedPhaseState, ...]) -> int:
     """Return the first incomplete phase index, failing fast when no active phase exists."""
 
@@ -361,11 +423,13 @@ __all__ = [
     "EvaluatedPhaseState",
     "ExistingPhaseState",
     "PhaseGateError",
+    "PhaseRewindResult",
     "PhaseGateSignals",
     "PhaseTransitionResult",
     "build_initial_phase_states",
     "build_reopened_phase_states",
     "evaluate_phase_gates",
     "evaluate_signoff_readiness",
+    "rewind_to_phase",
     "transition_to_next_phase",
 ]

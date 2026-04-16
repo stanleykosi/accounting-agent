@@ -27,7 +27,8 @@ from uuid import UUID
 
 from apps.worker.app.celery_app import celery_app
 from apps.worker.app.tasks.base import JobRuntimeContext, TrackedJobTask
-from services.common.enums import ReconciliationType
+from apps.worker.app.tasks.close_run_phase_guard import ensure_close_run_active_phase
+from services.common.enums import ReconciliationType, WorkflowPhase
 from services.common.logging import get_logger
 from services.db.models.close_run import CloseRun
 from services.db.models.coa import CoaAccount, CoaSet
@@ -37,6 +38,7 @@ from services.db.models.journals import JournalEntry, JournalLine
 from services.db.repositories.reconciliation_repo import ReconciliationRepository
 from services.db.repositories.supporting_schedule_repo import SupportingScheduleRepository
 from services.db.session import get_session_factory
+from services.jobs.retry_policy import JobCancellationRequestedError
 from services.jobs.task_names import TaskName, resolve_task_route
 from services.reconciliation.matchers import DEFAULT_MATCHING_CONFIG, MatchingConfig
 from services.reconciliation.service import ReconciliationService
@@ -773,8 +775,17 @@ def _run_reconciliation_task(
         repo = ReconciliationRepository(session)
         svc = ReconciliationService(repository=repo, matching_config=config)
 
+        def ensure_reconciliation_phase() -> None:
+            job_context.ensure_not_canceled()
+            ensure_close_run_active_phase(
+                session=session,
+                close_run_id=parsed_close_run_id,
+                required_phase=WorkflowPhase.RECONCILIATION,
+            )
+
         # Build source data
         try:
+            ensure_reconciliation_phase()
             source_data = _build_reconciliation_source_data(
                 session, parsed_close_run_id, parsed_types
             )
@@ -785,7 +796,10 @@ def _run_reconciliation_task(
                     "reconciliation_types": reconciliation_types,
                 },
             )
-            job_context.ensure_not_canceled()
+            ensure_reconciliation_phase()
+        except JobCancellationRequestedError:
+            session.rollback()
+            raise
         except Exception as exc:
             msg = f"Failed to load reconciliation source data: {exc}"
             logger.exception(msg)
@@ -813,6 +827,7 @@ def _run_reconciliation_task(
                 source_data=source_data,
                 created_by_user_id=parsed_actor_user_id,
                 matching_config=config,
+                progress_guard=ensure_reconciliation_phase,
             )
             job_context.checkpoint(
                 step="run_reconciliation_matching",
@@ -823,7 +838,10 @@ def _run_reconciliation_task(
                     "unmatched_items": output.unmatched_items,
                 },
             )
-            job_context.ensure_not_canceled()
+            ensure_reconciliation_phase()
+        except JobCancellationRequestedError:
+            session.rollback()
+            raise
         except Exception as exc:
             msg = f"Reconciliation matching failed: {exc}"
             logger.exception(msg)
@@ -849,6 +867,7 @@ def _run_reconciliation_task(
 
         if ReconciliationType.TRIAL_BALANCE in parsed_types:
             try:
+                ensure_reconciliation_phase()
                 account_balances = _compute_account_balances(session, parsed_close_run_id)
                 coa_accounts = _load_coa_accounts(session, parsed_close_run_id)
 
@@ -857,6 +876,7 @@ def _run_reconciliation_task(
                     account_balances=account_balances,
                     expected_account_codes=set(coa_accounts.keys()),
                     generated_by_user_id=parsed_actor_user_id,
+                    progress_guard=ensure_reconciliation_phase,
                 )
 
                 trial_balance_computed = True
@@ -868,7 +888,7 @@ def _run_reconciliation_task(
                         "trial_balance_balanced": trial_balance_balanced,
                     },
                 )
-                job_context.ensure_not_canceled()
+                ensure_reconciliation_phase()
 
                 logger.info(
                     "Trial balance computed for close run %s: balanced=%s, debits=%s, credits=%s",
@@ -877,6 +897,9 @@ def _run_reconciliation_task(
                     snapshot.total_debits,
                     snapshot.total_credits,
                 )
+            except JobCancellationRequestedError:
+                session.rollback()
+                raise
             except Exception as exc:
                 msg = f"Trial balance computation failed: {exc}"
                 logger.exception(msg)
@@ -885,6 +908,7 @@ def _run_reconciliation_task(
         # Commit all successful mutations before closing the session
         if not errors or output.total_items > 0:
             try:
+                ensure_reconciliation_phase()
                 session.commit()
                 job_context.checkpoint(
                     step="persist_reconciliation_results",
@@ -893,6 +917,9 @@ def _run_reconciliation_task(
                         "matched_items": output.matched_items,
                     },
                 )
+            except JobCancellationRequestedError:
+                session.rollback()
+                raise
             except Exception as exc:
                 msg = f"Failed to commit reconciliation results: {exc}"
                 logger.exception(msg)

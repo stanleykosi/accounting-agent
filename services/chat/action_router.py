@@ -18,9 +18,10 @@ Design notes:
 from __future__ import annotations
 
 from enum import StrEnum
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
 from uuid import UUID
 
+from pydantic import Field, ValidationError
 from services.auth.service import serialize_uuid
 from services.chat.action_models import (
     CHAT_ACTION_INTENTS,
@@ -34,7 +35,9 @@ from services.chat.action_models import (
     ProposedJournalEdit,
 )
 from services.chat.grounding import ChatGroundingService, GroundingContextRecord
-from services.common.enums import AutonomyMode
+from services.common.enums import AutonomyMode, WorkflowPhase
+from services.common.types import utc_now
+from services.contracts.api_models import ContractModel
 from services.contracts.chat_models import ChatMessageRecord
 from services.db.models.audit import AuditSourceSurface
 from services.db.repositories.chat_action_repo import (
@@ -42,6 +45,7 @@ from services.db.repositories.chat_action_repo import (
     ChatActionRepository,
 )
 from services.db.repositories.chat_repo import ChatRepository
+from services.model_gateway.client import ModelResponseValidationError
 
 
 class ChatActionRouterErrorCode(StrEnum):
@@ -78,6 +82,54 @@ class ModelGatewayProtocol(Protocol):
 
     def complete(self, *, messages: list[dict[str, str]]) -> str:
         """Send a chat-completion request and return the assistant content string."""
+
+    def complete_structured(
+        self,
+        *,
+        messages: list[dict[str, str]],
+        response_model: type[ContractModel],
+    ) -> ContractModel:
+        """Send a schema-enforced completion and return the validated result."""
+
+
+class _ActionIntentClassificationResponse(ContractModel):
+    """Capture the structured intent-classification result returned by the model."""
+
+    intent: Literal[
+        "proposed_edit",
+        "approval_request",
+        "document_request",
+        "explanation",
+        "workflow_action",
+        "reconciliation_query",
+        "report_action",
+    ] = Field(description="Classified intent label or 'explanation' for read-only chat.")
+    confidence: float = Field(
+        ge=0.0,
+        le=1.0,
+        description="Classifier confidence for the detected intent.",
+    )
+    target_phase: WorkflowPhase | None = Field(
+        default=None,
+        description="Workflow phase related to the request when detectable.",
+    )
+    target_type: str | None = Field(
+        default=None,
+        description="Business object type referenced by the operator, if any.",
+    )
+    target_id: UUID | None = Field(
+        default=None,
+        description="Business object identifier referenced by the operator, if any.",
+    )
+    requires_review: bool = Field(
+        default=True,
+        description="Whether the requested action should route through review.",
+    )
+    reasoning: str = Field(
+        min_length=1,
+        max_length=200,
+        description="Short explanation of why the message was classified this way.",
+    )
 
 
 class ChatActionRepositoryProtocol(Protocol):
@@ -266,9 +318,16 @@ class ChatActionRouter:
         )
 
         try:
-            response_text = self._model_gateway.complete(
-                messages=[{"role": "system", "content": classification_prompt}]
+            classification = self._model_gateway.complete_structured(
+                messages=[{"role": "system", "content": classification_prompt}],
+                response_model=_ActionIntentClassificationResponse,
             )
+        except (ModelResponseValidationError, ValidationError) as error:
+            raise ChatActionRouterError(
+                status_code=422,
+                code=ChatActionRouterErrorCode.INTENT_CLASSIFICATION_FAILED,
+                message="The intent classification response was invalid.",
+            ) from error
         except Exception as error:
             raise ChatActionRouterError(
                 status_code=503,
@@ -276,12 +335,24 @@ class ChatActionRouter:
                 message="The intent classification service is unavailable.",
             ) from error
 
-        # Parse the classification response
-        intent = self._parse_classification_response(response_text)
-        if intent is None:
+        if classification.intent == "explanation" or classification.confidence < 0.3:
             return None
 
-        return intent
+        try:
+            return ChatActionIntent(
+                intent=classification.intent,
+                confidence=classification.confidence,
+                target_phase=classification.target_phase,
+                target_type=classification.target_type,
+                target_id=classification.target_id,
+                requires_review=classification.requires_review,
+            )
+        except ValidationError as error:
+            raise ChatActionRouterError(
+                status_code=422,
+                code=ChatActionRouterErrorCode.INTENT_CLASSIFICATION_FAILED,
+                message="The intent classification response was invalid.",
+            ) from error
 
     def build_execution_plan(
         self,
@@ -517,11 +588,25 @@ class ChatActionRouter:
         through even if the caller supplies a valid thread_id from elsewhere.
         """
         self._require_entity_membership(entity_id=entity_id, user_id=user_id)
-        return self._action_repo.list_pending_actions_for_thread(
+        thread = self._chat_repo.get_thread_for_entity(
             thread_id=thread_id,
             entity_id=entity_id,
-            limit=limit,
         )
+        if thread is None:
+            raise ChatActionRouterError(
+                status_code=404,
+                code=ChatActionRouterErrorCode.THREAD_NOT_FOUND,
+                message="That chat thread does not exist or is not in this workspace.",
+            )
+        plans = self._action_repo.list_pending_actions_for_thread(
+            thread_id=thread_id,
+            entity_id=entity_id,
+            limit=max(limit * 3, limit),
+        )
+        thread_close_run_id = _thread_close_run_id(thread)
+        return tuple(
+            plan for plan in plans if plan.close_run_id == thread_close_run_id
+        )[:limit]
 
     def _build_classification_context(
         self,
@@ -532,6 +617,7 @@ class ChatActionRouter:
             f"Entity: {grounding.entity_name}",
             f"Autonomy mode: {grounding.autonomy_mode}",
             f"Base currency: {grounding.base_currency}",
+            f"Current UTC date: {utc_now().date().isoformat()}",
         ]
         if grounding.close_run and grounding.period_label:
             lines.append(f"Close run period: {grounding.period_label}")
@@ -581,79 +667,17 @@ Rules:
 3. Always set requires_review=true for proposed edits and approval requests.
 4. If the message references a specific business object by ID, include it as target_id.
 5. Keep reasoning concise (max 200 characters).
+6. Natural operator phrasing still counts as action intent when it implies a supported workflow step.
+7. Examples of action phrasing include: "I need the reports", "can you get this ready for sign-off?", "we need to finish reconciliation", "please prepare the export pack", "reopen this close run so we can make changes", "take this back to reconciliation", "take this back to collection so I can upload more files", "start over from document intake", "start a new April close run", "open a fresh run for this month", "create another run for this period", "archive this run", and "ignore the PDF I uploaded by mistake".
+8. Requests to continue, resume, finish, reopen, archive, create a new run, move the workflow forward, or move it backward should be treated as action intent when the message is outcome-seeking.
+9. Only use intent "explanation" when the operator is asking to understand or inspect state, not when they are asking the system to make progress.
+10. Relative periods like "this month", "next month", or named months should still count as workflow_action when the operator is asking to start a new run.
 
 Respond with a JSON object only. Do not include markdown code blocks or extra text.
 
 User message: "{user_message}"
 
 JSON response:"""
-
-    def _parse_classification_response(self, response_text: str) -> ChatActionIntent | None:
-        """Parse the LLM classification response into a ChatActionIntent.
-
-        Returns None when the response indicates no action intent (pure analysis).
-        Raises ChatActionRouterError when the response is malformed.
-        """
-        import json
-
-        # Try to extract JSON from the response
-        text = response_text.strip()
-
-        # Handle markdown code blocks
-        if text.startswith("```"):
-            lines = text.split("\n")
-            json_lines = []
-            in_block = False
-            for line in lines:
-                if line.startswith("```"):
-                    in_block = not in_block
-                    continue
-                if in_block:
-                    json_lines.append(line)
-            text = "\n".join(json_lines)
-
-        try:
-            data = json.loads(text)
-        except json.JSONDecodeError as error:
-            raise ChatActionRouterError(
-                status_code=422,
-                code=ChatActionRouterErrorCode.INTENT_CLASSIFICATION_FAILED,
-                message=f"Could not parse intent classification response: {error}",
-            ) from error
-
-        # Validate required fields
-        intent_value = data.get("intent")
-        if not intent_value or intent_value not in CHAT_ACTION_INTENTS:
-            raise ChatActionRouterError(
-                status_code=422,
-                code=ChatActionRouterErrorCode.INTENT_CLASSIFICATION_FAILED,
-                message=f"Invalid intent value: {intent_value}. Must be one of: {CHAT_ACTION_INTENTS}",
-            )
-
-        confidence = data.get("confidence", 0.5)
-        if not isinstance(confidence, (int, float)) or confidence < 0.0 or confidence > 1.0:
-            confidence = 0.5
-
-        # If confidence is too low, treat as no action intent
-        if confidence < 0.3:
-            return None
-
-        target_id_raw = data.get("target_id")
-        target_id = None
-        if target_id_raw:
-            try:
-                target_id = UUID(str(target_id_raw))
-            except (ValueError, TypeError):
-                target_id = None
-
-        return ChatActionIntent(
-            intent=intent_value,  # type: ignore[arg-type]
-            confidence=confidence,
-            target_phase=data.get("target_phase"),
-            target_type=data.get("target_type"),
-            target_id=target_id,
-            requires_review=data.get("requires_review", True),
-        )
 
     def _determine_approval_requirement(
         self,
@@ -743,6 +767,14 @@ JSON response:"""
                 code=ChatActionRouterErrorCode.THREAD_ACCESS_DENIED,
                 message="You are not a member of this workspace.",
             )
+
+
+def _thread_close_run_id(thread: Any) -> UUID | None:
+    """Return a thread's active close-run scope from either a record or dict."""
+
+    if isinstance(thread, dict):
+        return thread.get("close_run_id")
+    return getattr(thread, "close_run_id", None)
 
 
 __all__ = [

@@ -59,6 +59,7 @@ class AgentExecutionContext:
     actor: Any
     entity_id: UUID
     close_run_id: UUID | None
+    source_close_run_id: UUID | None
     thread_id: UUID | None
     trace_id: str | None
     source_surface: Any

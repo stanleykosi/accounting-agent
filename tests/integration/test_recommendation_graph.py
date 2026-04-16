@@ -23,6 +23,7 @@ from typing import Any
 from uuid import uuid4
 
 import pytest
+from pydantic import Field
 from services.common.enums import (
     AccountType,
     AutonomyMode,
@@ -30,6 +31,8 @@ from services.common.enums import (
     ReviewStatus,
     RiskLevel,
 )
+from services.common.settings import reset_settings_cache
+from services.contracts.api_models import ContractModel
 from services.contracts.recommendation_models import (
     CoaAccountRef,
     ConfidenceMetrics,
@@ -473,6 +476,53 @@ class TestModelGatewayHelpers:
 
         with pytest.raises(ModelGatewayError, match="API key is not configured"):
             ModelGateway()
+
+    def test_complete_structured_requires_schema_capable_provider(self, monkeypatch) -> None:
+        """Structured completions should require providers that honor the schema contract."""
+
+        class StructuredReply(ContractModel):
+            answer: str = Field(min_length=1)
+
+        class FakeResponse:
+            def json(self) -> dict[str, object]:
+                return {"choices": [{"message": {"content": '{"answer":"ok"}'}}]}
+
+        monkeypatch.setenv("MODEL_GATEWAY_API_KEY", "test-key")
+        reset_settings_cache()
+        captured: dict[str, object] = {}
+
+        try:
+            gateway = ModelGateway()
+
+            def fake_post_completion_request(
+                *,
+                messages: list[dict[str, str]],
+                request_body_overrides: dict[str, Any] | None = None,
+            ) -> FakeResponse:
+                captured["messages"] = messages
+                captured["request_body_overrides"] = request_body_overrides
+                return FakeResponse()
+
+            monkeypatch.setattr(
+                gateway,
+                "_post_completion_request",
+                fake_post_completion_request,
+            )
+
+            result = gateway.complete_structured(
+                messages=[{"role": "system", "content": "Return structured JSON."}],
+                response_model=StructuredReply,
+            )
+        finally:
+            reset_settings_cache()
+
+        assert result.answer == "ok"
+        request_body_overrides = captured["request_body_overrides"]
+        assert isinstance(request_body_overrides, dict)
+        assert request_body_overrides["provider"]["require_parameters"] is True
+        assert request_body_overrides["response_format"]["type"] == "json_schema"
+        assert request_body_overrides["response_format"]["json_schema"]["strict"] is True
+        assert request_body_overrides["response_format"]["json_schema"]["name"] == "StructuredReply"
 
 
 # ---------------------------------------------------------------------------

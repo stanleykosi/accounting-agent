@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Callable
 from uuid import UUID
 
 from services.common.enums import (
@@ -123,6 +123,7 @@ class ReconciliationService:
         source_data: dict[ReconciliationType, dict[str, list[dict[str, Any]]]],
         created_by_user_id: UUID | None = None,
         matching_config: MatchingConfig | None = None,
+        progress_guard: Callable[[], None] | None = None,
     ) -> ReconciliationRunOutput:
         """Run reconciliation matching for one or more reconciliation types.
 
@@ -170,6 +171,8 @@ class ReconciliationService:
                 continue
 
             # Create reconciliation run
+            if progress_guard is not None:
+                progress_guard()
             rec_record = self._repo.create_reconciliation(
                 close_run_id=close_run_id,
                 reconciliation_type=rec_type,
@@ -195,6 +198,8 @@ class ReconciliationService:
             item_dicts = self._match_results_to_item_dicts(match_results)
 
             # Persist items
+            if progress_guard is not None:
+                progress_guard()
             item_records = self._repo.bulk_create_items(
                 reconciliation_id=rec_record.id,
                 items=item_dicts,
@@ -254,6 +259,7 @@ class ReconciliationService:
         prior_balances: list[dict[str, Any]] | None = None,
         variance_threshold_pct: float = 20.0,
         generated_by_user_id: UUID | None = None,
+        progress_guard: Callable[[], None] | None = None,
     ) -> TrialBalanceSnapshotRecord:
         """Compute and validate a trial balance snapshot for a close run.
 
@@ -300,6 +306,8 @@ class ReconciliationService:
             )
 
         # Persist trial balance snapshot
+        if progress_guard is not None:
+            progress_guard()
         snapshot = self._repo.create_trial_balance_snapshot(
             close_run_id=close_run_id,
             total_debits=total_debits,
@@ -319,6 +327,8 @@ class ReconciliationService:
         # Persist anomalies
         anomaly_records: list[ReconciliationAnomalyRecord] = []
         for anomaly in anomalies:
+            if progress_guard is not None:
+                progress_guard()
             record = self._repo.create_anomaly(
                 close_run_id=close_run_id,
                 anomaly_type=anomaly.anomaly_type,

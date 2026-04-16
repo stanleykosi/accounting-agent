@@ -15,6 +15,7 @@ from typing import Any, Protocol
 from uuid import UUID, uuid4
 
 from services.auth.service import serialize_uuid
+from services.common.enums import DocumentStatus
 from services.common.types import JsonObject
 from services.contracts.document_models import (
     AutoTransactionMatchSummary,
@@ -74,6 +75,7 @@ class DocumentUploadServiceErrorCode(StrEnum):
     """Enumerate stable error codes surfaced by document upload workflows."""
 
     CLOSE_RUN_NOT_FOUND = "close_run_not_found"
+    DUPLICATE_UPLOAD = "duplicate_upload"
     ENTITY_ARCHIVED = "entity_archived"
     EMPTY_BATCH = "empty_batch"
     FILE_TOO_LARGE = "file_too_large"
@@ -386,6 +388,19 @@ class DocumentUploadService:
 
         document_id = uuid4()
         sha256_hash = compute_sha256_bytes(file_payload.payload)
+        existing_duplicate = self._find_existing_exact_duplicate(
+            close_run_id=access_record.close_run.id,
+            sha256_hash=sha256_hash,
+        )
+        if existing_duplicate is not None:
+            raise DocumentUploadServiceError(
+                status_code=409,
+                code=DocumentUploadServiceErrorCode.DUPLICATE_UPLOAD,
+                message=_build_duplicate_upload_message(
+                    filename=filename,
+                    existing_document=existing_duplicate,
+                ),
+            )
         storage_metadata = self._storage_repository.store_source_document(
             scope=CloseRunStorageScope(
                 entity_id=access_record.close_run.entity_id,
@@ -506,6 +521,22 @@ class DocumentUploadService:
 
         return access_record
 
+    def _find_existing_exact_duplicate(
+        self,
+        *,
+        close_run_id: UUID,
+        sha256_hash: str,
+    ) -> DocumentRecord | None:
+        """Return an existing exact-match document when the close run already contains the file."""
+
+        for document in self._repository.list_documents_for_close_run(close_run_id=close_run_id):
+            if document.sha256_hash != sha256_hash:
+                continue
+            if document.status in {DocumentStatus.REJECTED, DocumentStatus.FAILED}:
+                continue
+            return document
+        return None
+
 
 def _build_document_summary(
     document: DocumentRecord,
@@ -546,6 +577,20 @@ def _build_document_summary(
         open_issues=tuple(_build_document_issue_summary(issue) for issue in open_issues),
         created_at=document.created_at,
         updated_at=document.updated_at,
+    )
+
+
+def _build_duplicate_upload_message(
+    *,
+    filename: str,
+    existing_document: DocumentRecord,
+) -> str:
+    """Render an operator-facing error when the same file is uploaded twice."""
+
+    return (
+        f"{filename} matches a source document that is already attached to this close run "
+        f"(status: {existing_document.status.label}). Use the existing document, or ask the "
+        "agent to ignore the earlier upload first if it was a mistake."
     )
 
 

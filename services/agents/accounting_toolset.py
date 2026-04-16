@@ -8,6 +8,8 @@ Dependencies: Accounting workflow services, repositories, and durable job dispat
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+import json
 from typing import Any, cast
 from uuid import UUID
 
@@ -17,6 +19,8 @@ from services.agents.registry import ToolRegistry
 from services.close_runs.service import CloseRunService
 from services.close_runs.workflow_guards import require_active_phase
 from services.common.enums import (
+    CANONICAL_WORKFLOW_PHASES,
+    CloseRunStatus,
     DEFAULT_RECONCILIATION_EXECUTION_TYPES,
     ReconciliationType,
     ReviewStatus,
@@ -24,6 +28,7 @@ from services.common.enums import (
     SupportingScheduleType,
     WorkflowPhase,
 )
+from services.contracts.close_run_models import CreateCloseRunRequest
 from services.contracts.export_models import (
     EXPORT_DELIVERY_CHANNELS,
     CreateExportRequest,
@@ -32,7 +37,7 @@ from services.contracts.export_models import (
 from services.contracts.journal_models import JOURNAL_POSTING_TARGETS
 from services.db.models.audit import AuditSourceSurface
 from services.db.models.documents import Document
-from services.db.models.extractions import DocumentExtraction
+from services.db.models.extractions import DocumentExtraction, ExtractedField
 from services.db.models.recommendations import Recommendation
 from services.db.models.reporting import ReportRunStatus as ReportRunStatusModel
 from services.db.repositories.document_repo import DocumentRepository
@@ -48,6 +53,34 @@ from services.reconciliation.service import ReconciliationService
 from services.reporting.service import ReportService
 from services.supporting_schedules.service import SupportingScheduleService
 from sqlalchemy.orm import Session
+
+
+@dataclass(frozen=True, slots=True)
+class PreparedMutationScope:
+    """Describe the working close-run scope selected for a mutation."""
+
+    close_run_id: UUID
+    metadata: dict[str, Any]
+
+
+_RELEASED_CLOSE_RUN_STATUSES = frozenset(
+    {
+        CloseRunStatus.APPROVED,
+        CloseRunStatus.EXPORTED,
+        CloseRunStatus.ARCHIVED,
+    }
+)
+
+_AUTO_SCOPE_MUTATION_PHASES: dict[str, WorkflowPhase] = {
+    "generate_recommendations": WorkflowPhase.PROCESSING,
+    "run_reconciliation": WorkflowPhase.RECONCILIATION,
+    "upsert_supporting_schedule_row": WorkflowPhase.RECONCILIATION,
+    "delete_supporting_schedule_row": WorkflowPhase.RECONCILIATION,
+    "generate_reports": WorkflowPhase.REPORTING,
+    "update_commentary": WorkflowPhase.REPORTING,
+    "generate_export": WorkflowPhase.REVIEW_SIGNOFF,
+    "assemble_evidence_pack": WorkflowPhase.REVIEW_SIGNOFF,
+}
 
 
 class AccountingToolset:
@@ -85,6 +118,24 @@ class AccountingToolset:
         self._report_repo = report_repository
         self._supporting_schedule_service = supporting_schedule_service
         self._task_dispatcher = task_dispatcher
+
+    def requires_human_approval_for_invocation(
+        self,
+        *,
+        tool_name: str,
+        tool_arguments: dict[str, Any],
+        context: AgentExecutionContext,
+    ) -> bool:
+        """Resolve whether one concrete tool invocation must stage for approval."""
+
+        del tool_arguments
+        required_phase = _AUTO_SCOPE_MUTATION_PHASES.get(tool_name)
+        if required_phase is None:
+            return True
+        return self._scope_adjustment_requires_human_approval(
+            context=context,
+            required_phase=required_phase,
+        )
 
     def build_registry(self) -> ToolRegistry:
         """Return the registered accounting tool registry."""
@@ -126,6 +177,30 @@ class AccountingToolset:
         )
         self._register(
             registry=registry,
+            name="ignore_document",
+            prompt_signature="ignore_document(document_id, reason?)",
+            description=(
+                "Mark a mistaken upload as ignored for this close run. If source-document "
+                "intake is already complete, this rewinds the run back to Collection first "
+                "so the document can be excluded canonically."
+            ),
+            intent="proposed_edit",
+            requires_human_approval=True,
+            executor=self._ignore_document,
+            target_type="document",
+            target_id_field="document_id",
+            input_schema=_schema_object(
+                properties={
+                    "document_id": _uuid_property("Document UUID to ignore for this close run."),
+                    "reason": _optional_string_property(
+                        "Optional operator rationale for ignoring the uploaded document."
+                    ),
+                },
+                required=("document_id",),
+            ),
+        )
+        self._register(
+            registry=registry,
             name="correct_extracted_field",
             prompt_signature="correct_extracted_field(field_id, corrected_value, corrected_type, reason?)",
             description="Correct one extracted field and return the document to review with audit history.",
@@ -142,6 +217,41 @@ class AccountingToolset:
                     "reason": _optional_string_property("Optional reviewer rationale."),
                 },
                 required=("field_id", "corrected_value", "corrected_type"),
+            ),
+        )
+        self._register(
+            registry=registry,
+            name="create_close_run",
+            prompt_signature=(
+                "create_close_run(period_start, period_end, reporting_currency?, "
+                "allow_duplicate_period?, duplicate_period_reason?)"
+            ),
+            description=(
+                "Create a fresh close run for an entity period. Use this when the operator "
+                "asks to start a new run, a fresh monthly close, or another run for a period."
+            ),
+            intent="workflow_action",
+            requires_human_approval=True,
+            executor=self._create_close_run,
+            input_schema=_schema_object(
+                properties={
+                    "period_start": _date_property(
+                        "First day of the close-run period in YYYY-MM-DD format."
+                    ),
+                    "period_end": _date_property(
+                        "Last day of the close-run period in YYYY-MM-DD format."
+                    ),
+                    "reporting_currency": _optional_string_property(
+                        "Optional three-letter reporting currency code."
+                    ),
+                    "allow_duplicate_period": _boolean_property(
+                        "Set true only when the operator explicitly wants another open run for the same period."
+                    ),
+                    "duplicate_period_reason": _optional_string_property(
+                        "Required rationale when allow_duplicate_period is true."
+                    ),
+                },
+                required=("period_start", "period_end"),
             ),
         )
         self._register(
@@ -165,6 +275,28 @@ class AccountingToolset:
         )
         self._register(
             registry=registry,
+            name="rewind_close_run",
+            prompt_signature="rewind_close_run(target_phase, reason?)",
+            description=(
+                "Move a mutable close run back into an earlier workflow phase so the "
+                "operator can resume or correct upstream work."
+            ),
+            intent="workflow_action",
+            requires_human_approval=True,
+            executor=self._rewind_close_run,
+            input_schema=_schema_object(
+                properties={
+                    "target_phase": _enum_string_property(
+                        values=tuple(phase.value for phase in WorkflowPhase),
+                        description="Earlier workflow phase to reopen.",
+                    ),
+                    "reason": _optional_string_property("Optional operator reason for the rewind."),
+                },
+                required=("target_phase",),
+            ),
+        )
+        self._register(
+            registry=registry,
             name="approve_close_run",
             prompt_signature="approve_close_run(reason?)",
             description="Sign off the close run when the final review gate is ready.",
@@ -174,6 +306,39 @@ class AccountingToolset:
             input_schema=_schema_object(
                 properties={
                     "reason": _optional_string_property("Optional approver rationale."),
+                },
+            ),
+        )
+        self._register(
+            registry=registry,
+            name="archive_close_run",
+            prompt_signature="archive_close_run(reason?)",
+            description="Archive an approved or exported close run while preserving its history.",
+            intent="approval_request",
+            requires_human_approval=True,
+            executor=self._archive_close_run,
+            input_schema=_schema_object(
+                properties={
+                    "reason": _optional_string_property("Optional operator rationale for archiving."),
+                },
+            ),
+        )
+        self._register(
+            registry=registry,
+            name="reopen_close_run",
+            prompt_signature="reopen_close_run(reason?)",
+            description=(
+                "Create a reopened working version of an approved, exported, or archived close run "
+                "so the operator can continue making changes."
+            ),
+            intent="workflow_action",
+            requires_human_approval=True,
+            executor=self._reopen_close_run,
+            input_schema=_schema_object(
+                properties={
+                    "reason": _optional_string_property(
+                        "Optional operator rationale for reopening the close run."
+                    ),
                 },
             ),
         )
@@ -547,21 +712,38 @@ class AccountingToolset:
         context: AgentExecutionContext,
     ) -> dict[str, Any]:
         actor_user = self._require_actor(context)
-        close_run_id = self._require_close_run_id(context, "Document review requires a close-run-scoped thread.")
-        self._require_active_phase_for_mutation(
+        close_run_id = self._require_close_run_id(
+            context,
+            "Document review requires a close-run-scoped thread.",
+        )
+        source_close_run_id = self._source_close_run_id(
+            context=context,
+            current_close_run_id=close_run_id,
+        )
+        reason = _optional_string(arguments, "reason")
+        prepared = self._prepare_phase_mutation_scope(
             actor_user=actor_user,
             entity_id=context.entity_id,
             close_run_id=close_run_id,
             required_phase=WorkflowPhase.COLLECTION,
             action_label="Document review",
+            source_surface=cast(AuditSourceSurface, context.source_surface),
+            trace_id=context.trace_id,
+        )
+        document_id = self._resolve_document_id_for_scope(
+            actor_user=actor_user,
+            entity_id=context.entity_id,
+            source_close_run_id=source_close_run_id,
+            target_close_run_id=prepared.close_run_id,
+            document_id=UUID(_require_string(arguments, "document_id")),
         )
         result = self._document_review_service.review_document(
             actor_user=actor_user,
             entity_id=context.entity_id,
-            close_run_id=close_run_id,
-            document_id=UUID(_require_string(arguments, "document_id")),
+            close_run_id=prepared.close_run_id,
+            document_id=document_id,
             decision=_require_string(arguments, "decision"),
-            reason=_optional_string(arguments, "reason"),
+            reason=reason,
             verified_complete=_optional_bool(arguments, "verified_complete"),
             verified_authorized=_optional_bool(arguments, "verified_authorized"),
             verified_period=_optional_bool(arguments, "verified_period"),
@@ -569,12 +751,72 @@ class AccountingToolset:
             source_surface=cast(AuditSourceSurface, context.source_surface),
             trace_id=context.trace_id,
         )
-        return {
-            "tool": "review_document",
-            "document_id": result.document.id,
-            "status": result.document.status.value,
-            "decision": result.decision,
-        }
+        return self._with_scope_metadata(
+            prepared=prepared,
+            result={
+                "tool": "review_document",
+                "document_id": result.document.id,
+                "status": result.document.status.value,
+                "decision": result.decision,
+            },
+        )
+
+    def _ignore_document(
+        self,
+        arguments: dict[str, Any],
+        context: AgentExecutionContext,
+    ) -> dict[str, Any]:
+        actor_user = self._require_actor(context)
+        close_run_id = self._require_close_run_id(
+            context,
+            "Ignoring a document requires a close-run-scoped thread.",
+        )
+        source_close_run_id = self._source_close_run_id(
+            context=context,
+            current_close_run_id=close_run_id,
+        )
+        reason = _optional_string(arguments, "reason")
+        source_document_id = UUID(_require_string(arguments, "document_id"))
+        prepared = self._prepare_phase_mutation_scope(
+            actor_user=actor_user,
+            entity_id=context.entity_id,
+            close_run_id=close_run_id,
+            required_phase=WorkflowPhase.COLLECTION,
+            action_label="Ignoring a mistaken upload",
+            workflow_reason=reason,
+            source_surface=cast(AuditSourceSurface, context.source_surface),
+            trace_id=context.trace_id,
+        )
+        document_id = self._resolve_document_id_for_scope(
+            actor_user=actor_user,
+            entity_id=context.entity_id,
+            source_close_run_id=source_close_run_id,
+            target_close_run_id=prepared.close_run_id,
+            document_id=source_document_id,
+        )
+        result = self._document_review_service.review_document(
+            actor_user=actor_user,
+            entity_id=context.entity_id,
+            close_run_id=prepared.close_run_id,
+            document_id=document_id,
+            decision="rejected",
+            reason=reason or "Ignored as a mistaken upload.",
+            verified_complete=None,
+            verified_authorized=None,
+            verified_period=None,
+            verified_transaction_match=None,
+            source_surface=cast(AuditSourceSurface, context.source_surface),
+            trace_id=context.trace_id,
+        )
+        return self._with_scope_metadata(
+            prepared=prepared,
+            result={
+                "tool": "ignore_document",
+                "document_id": result.document.id,
+                "status": result.document.status.value,
+                "decision": result.decision,
+            },
+        )
 
     def _correct_extracted_field(
         self,
@@ -582,30 +824,84 @@ class AccountingToolset:
         context: AgentExecutionContext,
     ) -> dict[str, Any]:
         actor_user = self._require_actor(context)
-        close_run_id = self._require_close_run_id(context, "Field correction requires a close-run-scoped thread.")
-        self._require_active_phase_for_mutation(
+        close_run_id = self._require_close_run_id(
+            context,
+            "Field correction requires a close-run-scoped thread.",
+        )
+        source_close_run_id = self._source_close_run_id(
+            context=context,
+            current_close_run_id=close_run_id,
+        )
+        reason = _optional_string(arguments, "reason")
+        prepared = self._prepare_phase_mutation_scope(
             actor_user=actor_user,
             entity_id=context.entity_id,
             close_run_id=close_run_id,
             required_phase=WorkflowPhase.COLLECTION,
             action_label="Extracted-field correction",
+            source_surface=cast(AuditSourceSurface, context.source_surface),
+            trace_id=context.trace_id,
+        )
+        field_id = self._resolve_field_id_for_scope(
+            actor_user=actor_user,
+            entity_id=context.entity_id,
+            source_close_run_id=source_close_run_id,
+            target_close_run_id=prepared.close_run_id,
+            field_id=UUID(_require_string(arguments, "field_id")),
         )
         result = self._document_review_service.correct_extracted_field(
             actor_user=actor_user,
             entity_id=context.entity_id,
-            close_run_id=close_run_id,
-            field_id=UUID(_require_string(arguments, "field_id")),
+            close_run_id=prepared.close_run_id,
+            field_id=field_id,
             corrected_value=_require_string(arguments, "corrected_value"),
             corrected_type=_require_string(arguments, "corrected_type"),
-            reason=_optional_string(arguments, "reason"),
+            reason=reason,
+            source_surface=cast(AuditSourceSurface, context.source_surface),
+            trace_id=context.trace_id,
+        )
+        return self._with_scope_metadata(
+            prepared=prepared,
+            result={
+                "tool": "correct_extracted_field",
+                "field_id": result.field.id,
+                "document_id": result.document.id,
+                "document_status": result.document.status.value,
+            },
+        )
+
+    def _create_close_run(
+        self,
+        arguments: dict[str, Any],
+        context: AgentExecutionContext,
+    ) -> dict[str, Any]:
+        actor_user = self._require_actor(context)
+        payload = CreateCloseRunRequest.model_validate(arguments)
+        result = self._close_run_service.create_close_run(
+            actor_user=actor_user,
+            entity_id=context.entity_id,
+            period_start=payload.period_start,
+            period_end=payload.period_end,
+            reporting_currency=payload.reporting_currency,
+            allow_duplicate_period=payload.allow_duplicate_period,
+            duplicate_period_reason=payload.duplicate_period_reason,
             source_surface=cast(AuditSourceSurface, context.source_surface),
             trace_id=context.trace_id,
         )
         return {
-            "tool": "correct_extracted_field",
-            "field_id": result.field.id,
-            "document_id": result.document.id,
-            "document_status": result.document.status.value,
+            "tool": "create_close_run",
+            "created_close_run_id": result.id,
+            "close_run_id": result.id,
+            "period_start": result.period_start.isoformat(),
+            "period_end": result.period_end.isoformat(),
+            "reporting_currency": result.reporting_currency,
+            "active_phase": (
+                result.workflow_state.active_phase.value
+                if result.workflow_state.active_phase is not None
+                else None
+            ),
+            "status": result.status.value,
+            "version_no": result.current_version_no,
         }
 
     def _advance_close_run(
@@ -635,6 +931,44 @@ class AccountingToolset:
             "status": result.close_run.status.value,
         }
 
+    def _rewind_close_run(
+        self,
+        arguments: dict[str, Any],
+        context: AgentExecutionContext,
+    ) -> dict[str, Any]:
+        actor_user = self._require_actor(context)
+        close_run_id = self._require_close_run_id(
+            context,
+            "Rewinding a close run requires a close-run-scoped thread.",
+        )
+        target_phase = WorkflowPhase(_require_string(arguments, "target_phase"))
+        reason = _optional_string(arguments, "reason")
+        prepared = self._prepare_phase_mutation_scope(
+            actor_user=actor_user,
+            entity_id=context.entity_id,
+            close_run_id=close_run_id,
+            required_phase=target_phase,
+            action_label="Close-run resume",
+            workflow_reason=reason,
+            source_surface=cast(AuditSourceSurface, context.source_surface),
+            trace_id=context.trace_id,
+        )
+        return self._with_scope_metadata(
+            prepared=prepared,
+            result={
+                "tool": "rewind_close_run",
+                "close_run_id": str(prepared.close_run_id),
+                "active_phase": target_phase.value,
+                "status": CloseRunStatus.REOPENED.value
+                if "reopened_close_run_id" in prepared.metadata
+                else self._close_run_service.get_close_run(
+                    actor_user=actor_user,
+                    entity_id=context.entity_id,
+                    close_run_id=prepared.close_run_id,
+                ).status.value,
+            },
+        )
+
     def _approve_close_run(
         self,
         arguments: dict[str, Any],
@@ -656,6 +990,56 @@ class AccountingToolset:
             "status": result.status.value,
         }
 
+    def _archive_close_run(
+        self,
+        arguments: dict[str, Any],
+        context: AgentExecutionContext,
+    ) -> dict[str, Any]:
+        actor_user = self._require_actor(context)
+        close_run_id = self._require_close_run_id(
+            context,
+            "Archiving a close run requires a close-run-scoped thread.",
+        )
+        result = self._close_run_service.archive_close_run(
+            actor_user=actor_user,
+            entity_id=context.entity_id,
+            close_run_id=close_run_id,
+            reason=_optional_string(arguments, "reason"),
+            source_surface=cast(AuditSourceSurface, context.source_surface),
+            trace_id=context.trace_id,
+        )
+        return {
+            "tool": "archive_close_run",
+            "close_run_id": result.id,
+            "status": result.status.value,
+        }
+
+    def _reopen_close_run(
+        self,
+        arguments: dict[str, Any],
+        context: AgentExecutionContext,
+    ) -> dict[str, Any]:
+        actor_user = self._require_actor(context)
+        close_run_id = self._require_close_run_id(
+            context,
+            "Reopening a close run requires a close-run-scoped thread.",
+        )
+        result = self._close_run_service.reopen_close_run(
+            actor_user=actor_user,
+            entity_id=context.entity_id,
+            close_run_id=close_run_id,
+            reason=_optional_string(arguments, "reason"),
+            source_surface=cast(AuditSourceSurface, context.source_surface),
+            trace_id=context.trace_id,
+        )
+        return {
+            "tool": "reopen_close_run",
+            "source_close_run_id": result.source_close_run_id,
+            "reopened_close_run_id": result.close_run.id,
+            "status": result.close_run.status.value,
+            "version_no": result.close_run.current_version_no,
+        }
+
     def _generate_recommendations(
         self,
         arguments: dict[str, Any],
@@ -666,27 +1050,48 @@ class AccountingToolset:
             context,
             "Recommendation generation requires a close-run-scoped thread.",
         )
-        document_ids = [UUID(document_id) for document_id in _optional_string_list(arguments, "document_ids")]
-        self._require_active_phase_for_mutation(
+        source_close_run_id = self._source_close_run_id(
+            context=context,
+            current_close_run_id=close_run_id,
+        )
+        source_document_ids = [
+            UUID(document_id) for document_id in _optional_string_list(arguments, "document_ids")
+        ]
+        prepared = self._prepare_phase_mutation_scope(
             actor_user=actor_user,
             entity_id=context.entity_id,
             close_run_id=close_run_id,
             required_phase=WorkflowPhase.PROCESSING,
             action_label="Recommendation generation",
+            source_surface=cast(AuditSourceSurface, context.source_surface),
+            trace_id=context.trace_id,
         )
+        document_ids = [
+            self._resolve_document_id_for_scope(
+                actor_user=actor_user,
+                entity_id=context.entity_id,
+                source_close_run_id=source_close_run_id,
+                target_close_run_id=prepared.close_run_id,
+                document_id=document_id,
+            )
+            for document_id in source_document_ids
+        ]
         queued_jobs = self._queue_recommendation_jobs(
             entity_id=context.entity_id,
-            close_run_id=close_run_id,
+            close_run_id=prepared.close_run_id,
             actor_user=actor_user,
             document_ids=document_ids or None,
             force=bool(arguments.get("force", False)),
             trace_id=context.trace_id,
         )
-        return {
-            "tool": "generate_recommendations",
-            "queued_jobs": queued_jobs,
-            "queued_count": len(queued_jobs),
-        }
+        return self._with_scope_metadata(
+            prepared=prepared,
+            result={
+                "tool": "generate_recommendations",
+                "queued_jobs": queued_jobs,
+                "queued_count": len(queued_jobs),
+            },
+        )
 
     def _approve_recommendation(
         self,
@@ -698,36 +1103,54 @@ class AccountingToolset:
             context,
             "Recommendation approval requires a close-run-scoped thread.",
         )
-        self._require_active_phase_for_mutation(
+        source_close_run_id = self._source_close_run_id(
+            context=context,
+            current_close_run_id=close_run_id,
+        )
+        reason = _optional_string(arguments, "reason")
+        prepared = self._prepare_phase_mutation_scope(
             actor_user=actor_user,
             entity_id=context.entity_id,
             close_run_id=close_run_id,
             required_phase=WorkflowPhase.PROCESSING,
             action_label="Recommendation approval",
+            workflow_reason=reason,
+            source_surface=cast(AuditSourceSurface, context.source_surface),
+            trace_id=context.trace_id,
+        )
+        recommendation_id = self._resolve_recommendation_id_for_scope(
+            actor_user=actor_user,
+            entity_id=context.entity_id,
+            source_close_run_id=source_close_run_id,
+            target_close_run_id=prepared.close_run_id,
+            recommendation_id=UUID(_require_string(arguments, "recommendation_id")),
         )
         result = self._recommendation_service.approve_recommendation(
-            recommendation_id=UUID(_require_string(arguments, "recommendation_id")),
+            recommendation_id=recommendation_id,
             entity_id=context.entity_id,
-            close_run_id=close_run_id,
+            close_run_id=prepared.close_run_id,
             actor=ActorContext(
                 user_id=actor_user.id,
                 full_name=actor_user.full_name,
                 email=actor_user.email,
             ),
-            reason=_optional_string(arguments, "reason"),
+            reason=reason,
             trace_id=context.trace_id,
             source_surface=cast(AuditSourceSurface, context.source_surface),
         )
-        return {
-            "tool": "approve_recommendation",
-            "recommendation_id": str(result.recommendation_id),
-            "final_status": result.final_status.value,
-            "journal_id": (
-                str(result.journal_draft_result.journal_id)
-                if result.journal_draft_result is not None
-                else None
-            ),
-        }
+        return self._with_scope_metadata(
+            prepared=prepared,
+            result={
+                "tool": "approve_recommendation",
+                "recommendation_id": str(result.recommendation_id),
+                "final_status": result.final_status.value,
+                "journal_id": (
+                    str(result.journal_draft_result.journal_id)
+                    if result.journal_draft_result is not None
+                    else None
+                ),
+            },
+        )
 
     def _reject_recommendation(
         self,
@@ -739,32 +1162,49 @@ class AccountingToolset:
             context,
             "Recommendation rejection requires a close-run-scoped thread.",
         )
-        self._require_active_phase_for_mutation(
+        source_close_run_id = self._source_close_run_id(
+            context=context,
+            current_close_run_id=close_run_id,
+        )
+        reason = _require_string(arguments, "reason")
+        prepared = self._prepare_phase_mutation_scope(
             actor_user=actor_user,
             entity_id=context.entity_id,
             close_run_id=close_run_id,
             required_phase=WorkflowPhase.PROCESSING,
             action_label="Recommendation rejection",
+            workflow_reason=reason,
+            source_surface=cast(AuditSourceSurface, context.source_surface),
+            trace_id=context.trace_id,
         )
-        recommendation_id = UUID(_require_string(arguments, "recommendation_id"))
+        recommendation_id = self._resolve_recommendation_id_for_scope(
+            actor_user=actor_user,
+            entity_id=context.entity_id,
+            source_close_run_id=source_close_run_id,
+            target_close_run_id=prepared.close_run_id,
+            recommendation_id=UUID(_require_string(arguments, "recommendation_id")),
+        )
         self._recommendation_service.reject_recommendation(
             recommendation_id=recommendation_id,
             entity_id=context.entity_id,
-            close_run_id=close_run_id,
+            close_run_id=prepared.close_run_id,
             actor=ActorContext(
                 user_id=actor_user.id,
                 full_name=actor_user.full_name,
                 email=actor_user.email,
             ),
-            reason=_require_string(arguments, "reason"),
+            reason=reason,
             trace_id=context.trace_id,
             source_surface=cast(AuditSourceSurface, context.source_surface),
         )
-        return {
-            "tool": "reject_recommendation",
-            "recommendation_id": str(recommendation_id),
-            "status": ReviewStatus.REJECTED.value,
-        }
+        return self._with_scope_metadata(
+            prepared=prepared,
+            result={
+                "tool": "reject_recommendation",
+                "recommendation_id": str(recommendation_id),
+                "status": ReviewStatus.REJECTED.value,
+            },
+        )
 
     def _approve_journal(
         self,
@@ -797,12 +1237,15 @@ class AccountingToolset:
             context,
             "Reconciliation execution requires a close-run-scoped thread.",
         )
-        self._require_active_phase_for_mutation(
+        prepared = self._prepare_phase_mutation_scope(
             actor_user=actor_user,
             entity_id=context.entity_id,
             close_run_id=close_run_id,
             required_phase=WorkflowPhase.RECONCILIATION,
             action_label="Reconciliation execution",
+            workflow_reason=_optional_string(arguments, "reason"),
+            source_surface=cast(AuditSourceSurface, context.source_surface),
+            trace_id=context.trace_id,
         )
         reconciliation_types = [
             ReconciliationType(reconciliation_type)
@@ -812,7 +1255,7 @@ class AccountingToolset:
             dispatcher=self._task_dispatcher,
             task_name=TaskName.RECONCILIATION_EXECUTE_CLOSE_RUN,
             payload={
-                "close_run_id": str(close_run_id),
+                "close_run_id": str(prepared.close_run_id),
                 "reconciliation_types": [
                     reconciliation_type.value
                     for reconciliation_type in (
@@ -822,16 +1265,19 @@ class AccountingToolset:
                 "actor_user_id": str(actor_user.id),
             },
             entity_id=context.entity_id,
-            close_run_id=close_run_id,
+            close_run_id=prepared.close_run_id,
             document_id=None,
             actor_user_id=actor_user.id,
             trace_id=context.trace_id,
         )
-        return {
-            "tool": "run_reconciliation",
-            "job_id": str(job.id),
-            "status": job.status.value,
-        }
+        return self._with_scope_metadata(
+            prepared=prepared,
+            result={
+                "tool": "run_reconciliation",
+                "job_id": str(job.id),
+                "status": job.status.value,
+            },
+        )
 
     def _upsert_supporting_schedule_row(
         self,
@@ -843,33 +1289,48 @@ class AccountingToolset:
             context,
             "Supporting schedule maintenance requires a close-run-scoped thread.",
         )
-        self._require_active_phase_for_mutation(
+        source_close_run_id = self._source_close_run_id(
+            context=context,
+            current_close_run_id=close_run_id,
+        )
+        schedule_type = SupportingScheduleType(_require_string(arguments, "schedule_type"))
+        prepared = self._prepare_phase_mutation_scope(
             actor_user=actor_user,
             entity_id=context.entity_id,
             close_run_id=close_run_id,
             required_phase=WorkflowPhase.RECONCILIATION,
             action_label="Supporting schedule maintenance",
+            workflow_reason=_optional_string(arguments, "reason"),
+            source_surface=cast(AuditSourceSurface, context.source_surface),
+            trace_id=context.trace_id,
         )
-        schedule_type = SupportingScheduleType(_require_string(arguments, "schedule_type"))
         row_payload = arguments.get("row_payload")
         if not isinstance(row_payload, dict):
             raise ValueError("row_payload must be a structured object.")
         snapshot = self._supporting_schedule_service.save_row(
-            close_run_id=close_run_id,
+            close_run_id=prepared.close_run_id,
             schedule_type=schedule_type,
             row_id=(
-                UUID(_require_string(arguments, "row_id"))
+                self._resolve_supporting_schedule_row_id_for_scope(
+                    source_close_run_id=source_close_run_id,
+                    target_close_run_id=prepared.close_run_id,
+                    schedule_type=schedule_type,
+                    row_id=UUID(_require_string(arguments, "row_id")),
+                )
                 if isinstance(arguments.get("row_id"), str)
                 else None
             ),
             payload=row_payload,
         )
-        return {
-            "tool": "upsert_supporting_schedule_row",
-            "schedule_type": schedule_type.value,
-            "schedule_status": snapshot.schedule.status.value,
-            "row_count": len(snapshot.rows),
-        }
+        return self._with_scope_metadata(
+            prepared=prepared,
+            result={
+                "tool": "upsert_supporting_schedule_row",
+                "schedule_type": schedule_type.value,
+                "schedule_status": snapshot.schedule.status.value,
+                "row_count": len(snapshot.rows),
+            },
+        )
 
     def _delete_supporting_schedule_row(
         self,
@@ -881,25 +1342,40 @@ class AccountingToolset:
             context,
             "Supporting schedule maintenance requires a close-run-scoped thread.",
         )
-        self._require_active_phase_for_mutation(
+        source_close_run_id = self._source_close_run_id(
+            context=context,
+            current_close_run_id=close_run_id,
+        )
+        schedule_type = SupportingScheduleType(_require_string(arguments, "schedule_type"))
+        prepared = self._prepare_phase_mutation_scope(
             actor_user=actor_user,
             entity_id=context.entity_id,
             close_run_id=close_run_id,
             required_phase=WorkflowPhase.RECONCILIATION,
             action_label="Supporting schedule maintenance",
+            workflow_reason=_optional_string(arguments, "reason"),
+            source_surface=cast(AuditSourceSurface, context.source_surface),
+            trace_id=context.trace_id,
         )
-        schedule_type = SupportingScheduleType(_require_string(arguments, "schedule_type"))
         snapshot = self._supporting_schedule_service.delete_row(
-            close_run_id=close_run_id,
+            close_run_id=prepared.close_run_id,
             schedule_type=schedule_type,
-            row_id=UUID(_require_string(arguments, "row_id")),
+            row_id=self._resolve_supporting_schedule_row_id_for_scope(
+                source_close_run_id=source_close_run_id,
+                target_close_run_id=prepared.close_run_id,
+                schedule_type=schedule_type,
+                row_id=UUID(_require_string(arguments, "row_id")),
+            ),
         )
-        return {
-            "tool": "delete_supporting_schedule_row",
-            "schedule_type": schedule_type.value,
-            "schedule_status": snapshot.schedule.status.value,
-            "row_count": len(snapshot.rows),
-        }
+        return self._with_scope_metadata(
+            prepared=prepared,
+            result={
+                "tool": "delete_supporting_schedule_row",
+                "schedule_type": schedule_type.value,
+                "schedule_status": snapshot.schedule.status.value,
+                "row_count": len(snapshot.rows),
+            },
+        )
 
     def _set_supporting_schedule_status(
         self,
@@ -911,28 +1387,34 @@ class AccountingToolset:
             context,
             "Supporting schedule review requires a close-run-scoped thread.",
         )
-        self._require_active_phase_for_mutation(
+        schedule_type = SupportingScheduleType(_require_string(arguments, "schedule_type"))
+        prepared = self._prepare_phase_mutation_scope(
             actor_user=actor_user,
             entity_id=context.entity_id,
             close_run_id=close_run_id,
             required_phase=WorkflowPhase.RECONCILIATION,
             action_label="Supporting schedule review",
+            workflow_reason=_optional_string(arguments, "note"),
+            source_surface=cast(AuditSourceSurface, context.source_surface),
+            trace_id=context.trace_id,
         )
-        schedule_type = SupportingScheduleType(_require_string(arguments, "schedule_type"))
         snapshot = self._supporting_schedule_service.update_status(
-            close_run_id=close_run_id,
+            close_run_id=prepared.close_run_id,
             schedule_type=schedule_type,
             status=SupportingScheduleStatus(_require_string(arguments, "status")),
             note=_optional_string(arguments, "note"),
             actor_user_id=actor_user.id,
         )
-        return {
-            "tool": "set_supporting_schedule_status",
-            "schedule_type": schedule_type.value,
-            "schedule_status": snapshot.schedule.status.value,
-            "row_count": len(snapshot.rows),
-            "reviewed_at": snapshot.schedule.reviewed_at,
-        }
+        return self._with_scope_metadata(
+            prepared=prepared,
+            result={
+                "tool": "set_supporting_schedule_status",
+                "schedule_type": schedule_type.value,
+                "schedule_status": snapshot.schedule.status.value,
+                "row_count": len(snapshot.rows),
+                "reviewed_at": snapshot.schedule.reviewed_at,
+            },
+        )
 
     def _approve_reconciliation(
         self,
@@ -944,27 +1426,42 @@ class AccountingToolset:
             context,
             "Reconciliation approval requires a close-run-scoped thread.",
         )
-        self._require_active_phase_for_mutation(
+        source_close_run_id = self._source_close_run_id(
+            context=context,
+            current_close_run_id=close_run_id,
+        )
+        reason = _optional_string(arguments, "reason")
+        prepared = self._prepare_phase_mutation_scope(
             actor_user=actor_user,
             entity_id=context.entity_id,
             close_run_id=close_run_id,
             required_phase=WorkflowPhase.RECONCILIATION,
             action_label="Reconciliation approval",
+            workflow_reason=reason,
+            source_surface=cast(AuditSourceSurface, context.source_surface),
+            trace_id=context.trace_id,
         )
-        reconciliation_id = UUID(_require_string(arguments, "reconciliation_id"))
+        reconciliation_id = self._resolve_reconciliation_id_for_scope(
+            source_close_run_id=source_close_run_id,
+            target_close_run_id=prepared.close_run_id,
+            reconciliation_id=UUID(_require_string(arguments, "reconciliation_id")),
+        )
         result = self._reconciliation_service.approve_reconciliation(
             reconciliation_id=reconciliation_id,
-            close_run_id=close_run_id,
-            reason=_optional_string(arguments, "reason"),
+            close_run_id=prepared.close_run_id,
+            reason=reason,
             user_id=actor_user.id,
         )
         if result is None:
             raise ValueError("The reconciliation was not found for this close run.")
-        return {
-            "tool": "approve_reconciliation",
-            "reconciliation_id": str(reconciliation_id),
-            "status": result.status.value,
-        }
+        return self._with_scope_metadata(
+            prepared=prepared,
+            result={
+                "tool": "approve_reconciliation",
+                "reconciliation_id": str(reconciliation_id),
+                "status": result.status.value,
+            },
+        )
 
     def _generate_reports(
         self,
@@ -976,28 +1473,34 @@ class AccountingToolset:
             context,
             "Report generation requires a close-run-scoped thread.",
         )
-        self._require_active_phase_for_mutation(
+        prepared = self._prepare_phase_mutation_scope(
             actor_user=actor_user,
             entity_id=context.entity_id,
             close_run_id=close_run_id,
             required_phase=WorkflowPhase.REPORTING,
             action_label="Report generation",
+            workflow_reason=_optional_string(arguments, "reason"),
+            source_surface=cast(AuditSourceSurface, context.source_surface),
+            trace_id=context.trace_id,
         )
         run_record = self._queue_report_generation(
             entity_id=context.entity_id,
-            close_run_id=close_run_id,
+            close_run_id=prepared.close_run_id,
             actor_user=actor_user,
             template_id=_optional_string(arguments, "template_id"),
             generate_commentary=bool(arguments.get("generate_commentary", True)),
             use_llm_commentary=bool(arguments.get("use_llm_commentary", False)),
             trace_id=context.trace_id,
         )
-        return {
-            "tool": "generate_reports",
-            "report_run_id": str(run_record.id),
-            "status": run_record.status.value,
-            "version_no": run_record.version_no,
-        }
+        return self._with_scope_metadata(
+            prepared=prepared,
+            result={
+                "tool": "generate_reports",
+                "report_run_id": str(run_record.id),
+                "status": run_record.status.value,
+                "version_no": run_record.version_no,
+            },
+        )
 
     def _generate_export(
         self,
@@ -1009,30 +1512,36 @@ class AccountingToolset:
             context,
             "Export generation requires a close-run-scoped thread.",
         )
-        self._require_active_phase_for_mutation(
+        prepared = self._prepare_phase_mutation_scope(
             actor_user=actor_user,
             entity_id=context.entity_id,
             close_run_id=close_run_id,
             required_phase=WorkflowPhase.REVIEW_SIGNOFF,
             action_label="Export generation",
+            workflow_reason=_optional_string(arguments, "reason"),
+            source_surface=cast(AuditSourceSurface, context.source_surface),
+            trace_id=context.trace_id,
         )
         export_detail = self._export_service.trigger_export(
             actor_user=actor_user,
             entity_id=context.entity_id,
-            close_run_id=close_run_id,
+            close_run_id=prepared.close_run_id,
             request=CreateExportRequest(
                 include_evidence_pack=bool(arguments.get("include_evidence_pack", True)),
                 include_audit_trail=bool(arguments.get("include_audit_trail", True)),
                 action_qualifier=_optional_string(arguments, "action_qualifier"),
             ),
         )
-        return {
-            "tool": "generate_export",
-            "export_id": export_detail.id,
-            "status": export_detail.status,
-            "artifact_count": export_detail.artifact_count,
-            "has_evidence_pack": export_detail.evidence_pack is not None,
-        }
+        return self._with_scope_metadata(
+            prepared=prepared,
+            result={
+                "tool": "generate_export",
+                "export_id": export_detail.id,
+                "status": export_detail.status,
+                "artifact_count": export_detail.artifact_count,
+                "has_evidence_pack": export_detail.evidence_pack is not None,
+            },
+        )
 
     def _assemble_evidence_pack(
         self,
@@ -1045,25 +1554,30 @@ class AccountingToolset:
             context,
             "Evidence-pack assembly requires a close-run-scoped thread.",
         )
-        self._require_active_phase_for_mutation(
+        prepared = self._prepare_phase_mutation_scope(
             actor_user=actor_user,
             entity_id=context.entity_id,
             close_run_id=close_run_id,
             required_phase=WorkflowPhase.REVIEW_SIGNOFF,
             action_label="Evidence-pack assembly",
+            source_surface=cast(AuditSourceSurface, context.source_surface),
+            trace_id=context.trace_id,
         )
         evidence_pack = self._export_service.assemble_evidence_pack(
             actor_user=actor_user,
             entity_id=context.entity_id,
-            close_run_id=close_run_id,
+            close_run_id=prepared.close_run_id,
         )
-        return {
-            "tool": "assemble_evidence_pack",
-            "version_no": evidence_pack.version_no,
-            "generated_at": evidence_pack.generated_at,
-            "storage_key": evidence_pack.storage_key,
-            "size_bytes": evidence_pack.size_bytes,
-        }
+        return self._with_scope_metadata(
+            prepared=prepared,
+            result={
+                "tool": "assemble_evidence_pack",
+                "version_no": evidence_pack.version_no,
+                "generated_at": evidence_pack.generated_at,
+                "storage_key": evidence_pack.storage_key,
+                "size_bytes": evidence_pack.size_bytes,
+            },
+        )
 
     def _distribute_export(
         self,
@@ -1075,17 +1589,25 @@ class AccountingToolset:
             context,
             "Management distribution requires a close-run-scoped thread.",
         )
-        self._require_active_phase_for_mutation(
+        prepared = self._prepare_phase_mutation_scope(
             actor_user=actor_user,
             entity_id=context.entity_id,
             close_run_id=close_run_id,
             required_phase=WorkflowPhase.REVIEW_SIGNOFF,
             action_label="Management distribution",
+            workflow_reason=_optional_string(arguments, "note"),
+            source_surface=cast(AuditSourceSurface, context.source_surface),
+            trace_id=context.trace_id,
         )
+        if close_run_id != prepared.close_run_id:
+            raise ValueError(
+                "The close run was reopened into a new working version. Generate a fresh export "
+                "package there before recording stakeholder distribution."
+            )
         export_detail = self._export_service.distribute_export(
             actor_user=actor_user,
             entity_id=context.entity_id,
-            close_run_id=close_run_id,
+            close_run_id=prepared.close_run_id,
             export_id=UUID(_require_string(arguments, "export_id")),
             request=DistributeExportRequest(
                 recipient_name=_require_string(arguments, "recipient_name"),
@@ -1098,14 +1620,17 @@ class AccountingToolset:
             trace_id=context.trace_id,
         )
         latest_record = export_detail.distribution_records[0] if export_detail.distribution_records else None
-        return {
-            "tool": "distribute_export",
-            "export_id": export_detail.id,
-            "distribution_count": export_detail.distribution_count,
-            "recipient_name": latest_record.recipient_name if latest_record is not None else None,
-            "delivery_channel": latest_record.delivery_channel if latest_record is not None else None,
-            "distributed_at": latest_record.distributed_at if latest_record is not None else None,
-        }
+        return self._with_scope_metadata(
+            prepared=prepared,
+            result={
+                "tool": "distribute_export",
+                "export_id": export_detail.id,
+                "distribution_count": export_detail.distribution_count,
+                "recipient_name": latest_record.recipient_name if latest_record is not None else None,
+                "delivery_channel": latest_record.delivery_channel if latest_record is not None else None,
+                "distributed_at": latest_record.distributed_at if latest_record is not None else None,
+            },
+        )
 
     def _update_commentary(
         self,
@@ -1117,28 +1642,41 @@ class AccountingToolset:
             context,
             "Commentary updates require a close-run-scoped thread.",
         )
-        self._require_active_phase_for_mutation(
+        source_close_run_id = self._source_close_run_id(
+            context=context,
+            current_close_run_id=close_run_id,
+        )
+        prepared = self._prepare_phase_mutation_scope(
             actor_user=actor_user,
             entity_id=context.entity_id,
             close_run_id=close_run_id,
             required_phase=WorkflowPhase.REPORTING,
             action_label="Commentary update",
+            source_surface=cast(AuditSourceSurface, context.source_surface),
+            trace_id=context.trace_id,
         )
         commentary = self._report_service.update_commentary(
             actor_user=actor_user,
             entity_id=context.entity_id,
-            close_run_id=close_run_id,
-            report_run_id=UUID(_require_string(arguments, "report_run_id")),
+            close_run_id=prepared.close_run_id,
+            report_run_id=self._resolve_report_run_id_for_scope(
+                source_close_run_id=source_close_run_id,
+                target_close_run_id=prepared.close_run_id,
+                report_run_id=UUID(_require_string(arguments, "report_run_id")),
+            ),
             section_key=_require_string(arguments, "section_key"),
             body=_require_string(arguments, "body"),
             source_surface=cast(AuditSourceSurface, context.source_surface),
             trace_id=context.trace_id,
         )
-        return {
-            "tool": "update_commentary",
-            "commentary_id": commentary.id,
-            "status": commentary.status,
-        }
+        return self._with_scope_metadata(
+            prepared=prepared,
+            result={
+                "tool": "update_commentary",
+                "commentary_id": commentary.id,
+                "status": commentary.status,
+            },
+        )
 
     def _approve_commentary(
         self,
@@ -1150,29 +1688,43 @@ class AccountingToolset:
             context,
             "Commentary approval requires a close-run-scoped thread.",
         )
-        self._require_active_phase_for_mutation(
+        source_close_run_id = self._source_close_run_id(
+            context=context,
+            current_close_run_id=close_run_id,
+        )
+        prepared = self._prepare_phase_mutation_scope(
             actor_user=actor_user,
             entity_id=context.entity_id,
             close_run_id=close_run_id,
             required_phase=WorkflowPhase.REPORTING,
             action_label="Commentary approval",
+            workflow_reason=_optional_string(arguments, "reason"),
+            source_surface=cast(AuditSourceSurface, context.source_surface),
+            trace_id=context.trace_id,
         )
         commentary = self._report_service.approve_commentary(
             actor_user=actor_user,
             entity_id=context.entity_id,
-            close_run_id=close_run_id,
-            report_run_id=UUID(_require_string(arguments, "report_run_id")),
+            close_run_id=prepared.close_run_id,
+            report_run_id=self._resolve_report_run_id_for_scope(
+                source_close_run_id=source_close_run_id,
+                target_close_run_id=prepared.close_run_id,
+                report_run_id=UUID(_require_string(arguments, "report_run_id")),
+            ),
             section_key=_require_string(arguments, "section_key"),
             body=_optional_string(arguments, "body"),
             reason=_optional_string(arguments, "reason"),
             source_surface=cast(AuditSourceSurface, context.source_surface),
             trace_id=context.trace_id,
         )
-        return {
-            "tool": "approve_commentary",
-            "commentary_id": commentary.id,
-            "status": commentary.status,
-        }
+        return self._with_scope_metadata(
+            prepared=prepared,
+            result={
+                "tool": "approve_commentary",
+                "commentary_id": commentary.id,
+                "status": commentary.status,
+            },
+        )
 
     def _run_journal_action(
         self,
@@ -1183,14 +1735,32 @@ class AccountingToolset:
     ) -> dict[str, Any]:
         actor_user = self._require_actor(context)
         close_run_id = self._require_close_run_id(context, "Journal actions require a close-run-scoped thread.")
-        self._require_active_phase_for_mutation(
+        source_close_run_id = self._source_close_run_id(
+            context=context,
+            current_close_run_id=close_run_id,
+        )
+        reason = (
+            _require_string(arguments, "reason")
+            if action == "reject"
+            else _optional_string(arguments, "reason")
+        )
+        prepared = self._prepare_phase_mutation_scope(
             actor_user=actor_user,
             entity_id=context.entity_id,
             close_run_id=close_run_id,
             required_phase=WorkflowPhase.PROCESSING,
             action_label=f"Journal {action}",
+            workflow_reason=reason,
+            source_surface=cast(AuditSourceSurface, context.source_surface),
+            trace_id=context.trace_id,
         )
-        journal_id = UUID(_require_string(arguments, "journal_id"))
+        journal_id = self._resolve_journal_id_for_scope(
+            actor_user=actor_user,
+            entity_id=context.entity_id,
+            source_close_run_id=source_close_run_id,
+            target_close_run_id=prepared.close_run_id,
+            journal_id=UUID(_require_string(arguments, "journal_id")),
+        )
         actor = ActorContext(
             user_id=actor_user.id,
             full_name=actor_user.full_name,
@@ -1200,9 +1770,9 @@ class AccountingToolset:
             result = self._recommendation_service.approve_journal(
                 journal_id=journal_id,
                 entity_id=context.entity_id,
-                close_run_id=close_run_id,
+                close_run_id=prepared.close_run_id,
                 actor=actor,
-                reason=_optional_string(arguments, "reason"),
+                reason=reason,
                 trace_id=context.trace_id,
                 source_surface=cast(AuditSourceSurface, context.source_surface),
             )
@@ -1211,10 +1781,10 @@ class AccountingToolset:
             result = self._recommendation_service.apply_journal(
                 journal_id=journal_id,
                 entity_id=context.entity_id,
-                close_run_id=close_run_id,
+                close_run_id=prepared.close_run_id,
                 actor=actor,
                 posting_target=_require_string(arguments, "posting_target"),
-                reason=_optional_string(arguments, "reason"),
+                reason=reason,
                 trace_id=context.trace_id,
                 source_surface=cast(AuditSourceSurface, context.source_surface),
             )
@@ -1223,18 +1793,21 @@ class AccountingToolset:
             result = self._recommendation_service.reject_journal(
                 journal_id=journal_id,
                 entity_id=context.entity_id,
-                close_run_id=close_run_id,
+                close_run_id=prepared.close_run_id,
                 actor=actor,
-                reason=_require_string(arguments, "reason"),
+                reason=reason,
                 trace_id=context.trace_id,
                 source_surface=cast(AuditSourceSurface, context.source_surface),
             )
             tool_name = "reject_journal"
-        return {
-            "tool": tool_name,
-            "journal_id": str(journal_id),
-            "status": result.final_status.value,
-        }
+        return self._with_scope_metadata(
+            prepared=prepared,
+            result={
+                "tool": tool_name,
+                "journal_id": str(journal_id),
+                "status": result.final_status.value,
+            },
+        )
 
     def _queue_recommendation_jobs(
         self,
@@ -1373,6 +1946,582 @@ class AccountingToolset:
             raise ValueError(message)
         return context.close_run_id
 
+    def _source_close_run_id(
+        self,
+        *,
+        context: AgentExecutionContext,
+        current_close_run_id: UUID,
+    ) -> UUID:
+        """Return the original scope used for ID remapping across reopened versions."""
+
+        return context.source_close_run_id or current_close_run_id
+
+    def _scope_adjustment_requires_human_approval(
+        self,
+        *,
+        context: AgentExecutionContext,
+        required_phase: WorkflowPhase,
+    ) -> bool:
+        """Return whether invoking one auto tool would reopen or rewind workflow scope."""
+
+        if context.close_run_id is None or not isinstance(context.actor, EntityUserRecord):
+            return False
+
+        close_run = self._close_run_service.get_close_run(
+            actor_user=context.actor,
+            entity_id=context.entity_id,
+            close_run_id=context.close_run_id,
+        )
+        if close_run.status in _RELEASED_CLOSE_RUN_STATUSES:
+            return True
+
+        active_phase = close_run.workflow_state.active_phase
+        if active_phase is None or active_phase is required_phase:
+            return False
+        return _workflow_phase_index(required_phase) < _workflow_phase_index(active_phase)
+
+    def _prepare_phase_mutation_scope(
+        self,
+        *,
+        actor_user: EntityUserRecord,
+        entity_id: UUID,
+        close_run_id: UUID,
+        required_phase: WorkflowPhase,
+        action_label: str,
+        workflow_reason: str | None = None,
+        source_surface: AuditSourceSurface,
+        trace_id: str | None,
+    ) -> PreparedMutationScope:
+        """Ensure the requested mutation has a working close run in the correct phase."""
+
+        close_run = self._close_run_service.get_close_run(
+            actor_user=actor_user,
+            entity_id=entity_id,
+            close_run_id=close_run_id,
+        )
+        resolved_close_run_id = close_run_id
+        metadata: dict[str, Any] = {}
+
+        if close_run.status in _RELEASED_CLOSE_RUN_STATUSES:
+            released_status = close_run.status
+            reopened = self._close_run_service.reopen_close_run(
+                actor_user=actor_user,
+                entity_id=entity_id,
+                close_run_id=close_run_id,
+                reason=workflow_reason
+                or f"Reopen the released close run so {action_label.lower()} can continue.",
+                source_surface=source_surface,
+                trace_id=trace_id,
+            )
+            close_run = reopened.close_run
+            resolved_close_run_id = UUID(reopened.close_run.id)
+            metadata.update(
+                {
+                    "source_close_run_id": reopened.source_close_run_id,
+                    "reopened_close_run_id": reopened.close_run.id,
+                    "version_no": reopened.close_run.current_version_no,
+                    "reopened_from_status": released_status.value,
+                }
+            )
+
+        active_phase = close_run.workflow_state.active_phase
+        if (
+            active_phase is not None
+            and active_phase is not required_phase
+            and _workflow_phase_index(required_phase) < _workflow_phase_index(active_phase)
+        ):
+            rewound = self._close_run_service.rewind_close_run(
+                actor_user=actor_user,
+                entity_id=entity_id,
+                close_run_id=resolved_close_run_id,
+                target_phase=required_phase,
+                reason=workflow_reason
+                or (
+                    f"Move the close run back to {required_phase.label} so "
+                    f"{action_label.lower()} can continue."
+                ),
+                source_surface=source_surface,
+                trace_id=trace_id,
+            )
+            close_run = rewound.close_run
+            resolved_close_run_id = UUID(rewound.close_run.id)
+            metadata.update(
+                {
+                    "rewound_from_phase": rewound.previous_active_phase.value,
+                    "active_phase": rewound.active_phase.value,
+                }
+            )
+
+        require_active_phase(
+            close_run,
+            required_phase=required_phase,
+            action_label=action_label,
+        )
+        if "active_phase" not in metadata and close_run.workflow_state.active_phase is not None:
+            metadata["active_phase"] = close_run.workflow_state.active_phase.value
+        return PreparedMutationScope(close_run_id=resolved_close_run_id, metadata=metadata)
+
+    def _resolve_document_id_for_scope(
+        self,
+        *,
+        actor_user: EntityUserRecord,
+        entity_id: UUID,
+        source_close_run_id: UUID,
+        target_close_run_id: UUID,
+        document_id: UUID,
+    ) -> UUID:
+        """Resolve the document id within the active mutation scope after a reopen."""
+
+        if source_close_run_id == target_close_run_id:
+            return document_id
+
+        source_document = self._document_repo.get_document_for_user(
+            entity_id=entity_id,
+            close_run_id=source_close_run_id,
+            document_id=document_id,
+            user_id=actor_user.id,
+        )
+        if source_document is None:
+            raise ValueError("That document does not exist in the current close run.")
+
+        source_documents = list(
+            self._document_repo.list_documents_for_close_run(close_run_id=source_close_run_id)
+        )
+        source_fingerprint = _build_document_fingerprint(source_document.document)
+        source_peer_ids = [
+            document.id
+            for document in source_documents
+            if _build_document_fingerprint(document) == source_fingerprint
+        ]
+        if document_id not in source_peer_ids:
+            raise ValueError("That document does not map cleanly onto the reopened version.")
+
+        source_index = source_peer_ids.index(document_id)
+        target_candidates = [
+            document
+            for document in self._document_repo.list_documents_for_close_run(
+                close_run_id=target_close_run_id
+            )
+            if _build_document_fingerprint(document) == source_fingerprint
+        ]
+        if len(target_candidates) > source_index:
+            return target_candidates[source_index].id
+        if not target_candidates:
+            raise ValueError(
+                "The reopened working version does not contain a carried-forward copy of that document."
+            )
+        raise ValueError(
+            "The reopened working version does not contain a usable copy of that document."
+        )
+
+    def _resolve_field_id_for_scope(
+        self,
+        *,
+        actor_user: EntityUserRecord,
+        entity_id: UUID,
+        source_close_run_id: UUID,
+        target_close_run_id: UUID,
+        field_id: UUID,
+    ) -> UUID:
+        """Resolve an extracted-field id within the active mutation scope after a reopen."""
+
+        if source_close_run_id == target_close_run_id:
+            return field_id
+
+        source_row = (
+            self._db_session.query(ExtractedField, DocumentExtraction, Document)
+            .join(DocumentExtraction, DocumentExtraction.id == ExtractedField.document_extraction_id)
+            .join(Document, Document.id == DocumentExtraction.document_id)
+            .filter(
+                ExtractedField.id == field_id,
+                Document.close_run_id == source_close_run_id,
+            )
+            .one_or_none()
+        )
+        if source_row is None:
+            raise ValueError("That extracted field does not exist in the current close run.")
+
+        source_field, source_extraction, source_document = source_row
+        target_document_id = self._resolve_document_id_for_scope(
+            actor_user=actor_user,
+            entity_id=entity_id,
+            source_close_run_id=source_close_run_id,
+            target_close_run_id=target_close_run_id,
+            document_id=source_document.id,
+        )
+        candidate_rows = (
+            self._db_session.query(ExtractedField)
+            .join(DocumentExtraction, DocumentExtraction.id == ExtractedField.document_extraction_id)
+            .filter(
+                DocumentExtraction.document_id == target_document_id,
+                DocumentExtraction.version_no == source_extraction.version_no,
+                ExtractedField.field_name == source_field.field_name,
+                ExtractedField.field_type == source_field.field_type,
+            )
+            .order_by(ExtractedField.created_at.asc(), ExtractedField.id.asc())
+            .all()
+        )
+        for candidate in candidate_rows:
+            if (
+                candidate.evidence_ref == source_field.evidence_ref
+                and candidate.field_value == source_field.field_value
+            ):
+                return candidate.id
+        if len(candidate_rows) == 1:
+            return candidate_rows[0].id
+        if not candidate_rows:
+            raise ValueError(
+                "The reopened working version does not contain a carried-forward copy of that extracted field."
+            )
+        raise ValueError(
+            "The reopened working version contains more than one matching extracted field. "
+            "Please restate the request with the document and field name."
+        )
+
+    def _resolve_recommendation_id_for_scope(
+        self,
+        *,
+        actor_user: EntityUserRecord,
+        entity_id: UUID,
+        source_close_run_id: UUID,
+        target_close_run_id: UUID,
+        recommendation_id: UUID,
+    ) -> UUID:
+        """Resolve a recommendation id within the active mutation scope after a reopen."""
+
+        if source_close_run_id == target_close_run_id:
+            return recommendation_id
+
+        source_recommendation = self._recommendation_repo.get_recommendation(
+            recommendation_id=recommendation_id
+        )
+        if (
+            source_recommendation is None
+            or source_recommendation.close_run_id != source_close_run_id
+        ):
+            raise ValueError("That recommendation does not exist in the current close run.")
+
+        source_recommendations = sorted(
+            self._recommendation_repo.list_recommendations_for_close_run(
+                close_run_id=source_close_run_id
+            ),
+            key=_created_at_and_id_sort_key,
+        )
+        target_recommendations = sorted(
+            self._recommendation_repo.list_recommendations_for_close_run(
+                close_run_id=target_close_run_id
+            ),
+            key=_created_at_and_id_sort_key,
+        )
+        source_fingerprint = self._build_recommendation_fingerprint(
+            recommendation=source_recommendation,
+            resolved_document_id=(
+                self._resolve_document_id_for_scope(
+                    actor_user=actor_user,
+                    entity_id=entity_id,
+                    source_close_run_id=source_close_run_id,
+                    target_close_run_id=target_close_run_id,
+                    document_id=source_recommendation.document_id,
+                )
+                if source_recommendation.document_id is not None
+                else None
+            ),
+        )
+        source_peer_ids = [
+            record.id
+            for record in source_recommendations
+            if self._build_recommendation_fingerprint(
+                recommendation=record,
+                resolved_document_id=(
+                    self._resolve_document_id_for_scope(
+                        actor_user=actor_user,
+                        entity_id=entity_id,
+                        source_close_run_id=source_close_run_id,
+                        target_close_run_id=target_close_run_id,
+                        document_id=record.document_id,
+                    )
+                    if record.document_id is not None
+                    else None
+                ),
+            )
+            == source_fingerprint
+        ]
+        if recommendation_id not in source_peer_ids:
+            raise ValueError("That recommendation does not map cleanly onto the reopened version.")
+        source_index = source_peer_ids.index(recommendation_id)
+        target_candidates = [
+            record
+            for record in target_recommendations
+            if self._build_recommendation_fingerprint(
+                recommendation=record,
+                resolved_document_id=record.document_id,
+            )
+            == source_fingerprint
+        ]
+        if len(target_candidates) > source_index:
+            return target_candidates[source_index].id
+        if not target_candidates:
+            raise ValueError(
+                "The reopened working version does not contain a carried-forward copy of that recommendation."
+            )
+        raise ValueError(
+            "The reopened working version does not contain a usable copy of that recommendation. "
+            "Ask the agent to regenerate recommendations first."
+        )
+
+    def _resolve_journal_id_for_scope(
+        self,
+        *,
+        actor_user: EntityUserRecord,
+        entity_id: UUID,
+        source_close_run_id: UUID,
+        target_close_run_id: UUID,
+        journal_id: UUID,
+    ) -> UUID:
+        """Resolve a journal id within the active mutation scope after a reopen."""
+
+        del actor_user, entity_id
+        if source_close_run_id == target_close_run_id:
+            return journal_id
+
+        source_journal = self._recommendation_repo.get_journal_entry(journal_id=journal_id)
+        if source_journal is None or source_journal.entry.close_run_id != source_close_run_id:
+            raise ValueError("That journal does not exist in the current close run.")
+
+        source_journals = [
+            journal_result
+            for journal_result in (
+                self._recommendation_repo.get_journal_entry(journal_id=journal.id)
+                for journal in sorted(
+                    self._recommendation_repo.list_journals_for_close_run(
+                        close_run_id=source_close_run_id
+                    ),
+                    key=_created_at_and_id_sort_key,
+                )
+            )
+            if journal_result is not None
+        ]
+        target_journals = [
+            journal_result
+            for journal_result in (
+                self._recommendation_repo.get_journal_entry(journal_id=journal.id)
+                for journal in sorted(
+                    self._recommendation_repo.list_journals_for_close_run(
+                        close_run_id=target_close_run_id
+                    ),
+                    key=_created_at_and_id_sort_key,
+                )
+            )
+            if journal_result is not None
+        ]
+        source_fingerprint = _build_journal_fingerprint(source_journal)
+        source_peer_ids = [
+            journal_result.entry.id
+            for journal_result in source_journals
+            if _build_journal_fingerprint(journal_result) == source_fingerprint
+        ]
+        if journal_id not in source_peer_ids:
+            raise ValueError("That journal does not map cleanly onto the reopened version.")
+        source_index = source_peer_ids.index(journal_id)
+        target_candidates = [
+            journal_result
+            for journal_result in target_journals
+            if _build_journal_fingerprint(journal_result) == source_fingerprint
+        ]
+        if len(target_candidates) > source_index:
+            return target_candidates[source_index].entry.id
+        if not target_candidates:
+            raise ValueError(
+                "The reopened working version does not contain a carried-forward copy of that journal."
+            )
+        raise ValueError(
+            "The reopened working version does not contain a usable copy of that journal. "
+            "Approve the related recommendation again to regenerate it."
+        )
+
+    def _resolve_reconciliation_id_for_scope(
+        self,
+        *,
+        source_close_run_id: UUID,
+        target_close_run_id: UUID,
+        reconciliation_id: UUID,
+    ) -> UUID:
+        """Resolve a reconciliation id within the active mutation scope after a reopen."""
+
+        if source_close_run_id == target_close_run_id:
+            return reconciliation_id
+
+        source_reconciliation = self._reconciliation_repo.get_reconciliation_for_close_run(
+            reconciliation_id=reconciliation_id,
+            close_run_id=source_close_run_id,
+        )
+        if source_reconciliation is None:
+            raise ValueError("That reconciliation does not exist in the current close run.")
+
+        source_reconciliations = sorted(
+            self._reconciliation_repo.list_reconciliations(source_close_run_id),
+            key=_created_at_and_id_sort_key,
+        )
+        target_reconciliations = sorted(
+            self._reconciliation_repo.list_reconciliations(target_close_run_id),
+            key=_created_at_and_id_sort_key,
+        )
+        source_fingerprint = _build_reconciliation_fingerprint(source_reconciliation)
+        source_peer_ids = [
+            record.id
+            for record in source_reconciliations
+            if _build_reconciliation_fingerprint(record) == source_fingerprint
+        ]
+        if reconciliation_id not in source_peer_ids:
+            raise ValueError("That reconciliation does not map cleanly onto the reopened version.")
+        source_index = source_peer_ids.index(reconciliation_id)
+        target_candidates = [
+            record
+            for record in target_reconciliations
+            if _build_reconciliation_fingerprint(record) == source_fingerprint
+        ]
+        if len(target_candidates) > source_index:
+            return target_candidates[source_index].id
+        if not target_candidates:
+            raise ValueError(
+                "The reopened working version does not contain a carried-forward copy of that reconciliation."
+            )
+        raise ValueError(
+            "The reopened working version does not contain a usable copy of that reconciliation."
+        )
+
+    def _resolve_report_run_id_for_scope(
+        self,
+        *,
+        source_close_run_id: UUID,
+        target_close_run_id: UUID,
+        report_run_id: UUID,
+    ) -> UUID:
+        """Resolve a report-run id within the active mutation scope after a reopen."""
+
+        if source_close_run_id == target_close_run_id:
+            return report_run_id
+
+        source_report_run = self._report_repo.get_report_run(
+            report_run_id=report_run_id,
+            close_run_id=source_close_run_id,
+        )
+        if source_report_run is None:
+            raise ValueError("That report run does not exist in the current close run.")
+
+        target_candidates = [
+            run
+            for run in self._report_repo.list_report_runs_for_close_run(
+                close_run_id=target_close_run_id
+            )
+            if run.version_no == source_report_run.version_no
+        ]
+        if len(target_candidates) == 1:
+            return target_candidates[0].id
+        if not target_candidates:
+            raise ValueError(
+                "The reopened working version does not contain a carried-forward copy of that report run."
+            )
+        raise ValueError(
+            "The reopened working version contains more than one matching report run. "
+            "Ask the agent to use the latest report run version."
+        )
+
+    def _resolve_supporting_schedule_row_id_for_scope(
+        self,
+        *,
+        source_close_run_id: UUID,
+        target_close_run_id: UUID,
+        schedule_type: SupportingScheduleType,
+        row_id: UUID,
+    ) -> UUID:
+        """Resolve a supporting-schedule row id within the active mutation scope."""
+
+        if source_close_run_id == target_close_run_id:
+            return row_id
+
+        source_workspace = self._supporting_schedule_service.list_workspace(
+            close_run_id=source_close_run_id
+        )
+        source_schedule = next(
+            (
+                snapshot
+                for snapshot in source_workspace
+                if snapshot.schedule.schedule_type is schedule_type
+            ),
+            None,
+        )
+        if source_schedule is None:
+            raise ValueError("That supporting schedule does not exist in the current close run.")
+        source_row = next((row for row in source_schedule.rows if row.id == row_id), None)
+        if source_row is None:
+            raise ValueError("That supporting-schedule row does not exist in the current close run.")
+
+        target_workspace = self._supporting_schedule_service.list_workspace(
+            close_run_id=target_close_run_id
+        )
+        target_schedule = next(
+            (
+                snapshot
+                for snapshot in target_workspace
+                if snapshot.schedule.schedule_type is schedule_type
+            ),
+            None,
+        )
+        if target_schedule is None:
+            raise ValueError(
+                "The reopened working version does not contain a carried-forward copy of that supporting schedule."
+            )
+        candidates = [
+            row
+            for row in target_schedule.rows
+            if row.row_ref == source_row.row_ref and row.line_no == source_row.line_no
+        ]
+        if len(candidates) == 1:
+            return candidates[0].id
+        if not candidates:
+            raise ValueError(
+                "The reopened working version does not contain a carried-forward copy of that supporting-schedule row."
+            )
+        raise ValueError(
+            "The reopened working version contains more than one matching supporting-schedule row. "
+            "Please restate the request with the row reference."
+        )
+
+    def _build_recommendation_fingerprint(
+        self,
+        *,
+        recommendation: Any,
+        resolved_document_id: UUID | None,
+    ) -> tuple[Any, ...]:
+        """Return a stable fingerprint for matching recommendations across reopened versions."""
+
+        return (
+            str(resolved_document_id) if resolved_document_id is not None else None,
+            recommendation.recommendation_type,
+            recommendation.status,
+            recommendation.reasoning_summary,
+            _stable_json_string(recommendation.payload),
+            str(recommendation.confidence),
+            recommendation.created_by_system,
+            recommendation.autonomy_mode,
+        )
+
+    def _with_scope_metadata(
+        self,
+        *,
+        prepared: PreparedMutationScope,
+        result: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Attach any reopen or rewind metadata to a tool result."""
+
+        if not prepared.metadata:
+            return result
+        return {
+            **prepared.metadata,
+            **result,
+        }
+
     def _require_active_phase_for_mutation(
         self,
         *,
@@ -1409,6 +2558,74 @@ def _build_target_deriver(*, target_type: str, field_name: str):
             return target_type, None
 
     return derive
+
+
+def _created_at_and_id_sort_key(record: Any) -> tuple[Any, str]:
+    """Return a stable ordering key for repository records with created_at/id fields."""
+
+    return getattr(record, "created_at"), str(getattr(record, "id"))
+
+
+def _stable_json_string(value: object) -> str:
+    """Return a deterministic JSON string for fingerprint comparisons."""
+
+    return json.dumps(value, sort_keys=True, default=str)
+
+
+def _build_document_fingerprint(document: Any) -> tuple[str, str, str, int]:
+    """Return a stable fingerprint for matching copied documents across reopen."""
+
+    return (
+        document.original_filename,
+        document.storage_key,
+        document.sha256_hash,
+        document.file_size_bytes,
+    )
+
+
+def _build_journal_fingerprint(journal_result: Any) -> tuple[Any, ...]:
+    """Return a stable fingerprint for matching journals across reopened versions."""
+
+    entry = journal_result.entry
+    return (
+        entry.posting_date.isoformat(),
+        entry.status,
+        entry.description,
+        str(entry.total_debits),
+        str(entry.total_credits),
+        entry.line_count,
+        entry.source_surface,
+        entry.autonomy_mode,
+        entry.reasoning_summary,
+        tuple(
+            (
+                line.line_no,
+                line.account_code,
+                line.line_type,
+                str(line.amount),
+                line.description,
+                _stable_json_string(line.dimensions),
+                line.reference,
+            )
+            for line in journal_result.lines
+        ),
+    )
+
+
+def _build_reconciliation_fingerprint(reconciliation: Any) -> tuple[str, str, str]:
+    """Return a stable fingerprint for matching reconciliations across reopened versions."""
+
+    return (
+        reconciliation.reconciliation_type.value,
+        reconciliation.status.value,
+        _stable_json_string(reconciliation.summary),
+    )
+
+
+def _workflow_phase_index(phase: WorkflowPhase) -> int:
+    """Return the canonical order index for one workflow phase."""
+
+    return CANONICAL_WORKFLOW_PHASES.index(phase)
 
 
 def _require_string(arguments: dict[str, Any], key: str) -> str:
@@ -1506,6 +2723,16 @@ def _uuid_property(description: str) -> dict[str, Any]:
     return {
         "type": "string",
         "format": "uuid",
+        "description": description,
+    }
+
+
+def _date_property(description: str) -> dict[str, Any]:
+    """Build an ISO date string property schema."""
+
+    return {
+        "type": "string",
+        "format": "date",
         "description": description,
     }
 

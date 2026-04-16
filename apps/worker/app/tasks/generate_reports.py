@@ -26,9 +26,11 @@ from uuid import UUID
 
 from apps.worker.app.celery_app import celery_app
 from apps.worker.app.tasks.base import JobRuntimeContext, TrackedJobTask
+from apps.worker.app.tasks.close_run_phase_guard import ensure_close_run_active_phase
 from services.common.enums import (
     ArtifactType,
     ReportSectionKey,
+    WorkflowPhase,
 )
 from services.common.logging import get_logger
 from services.common.types import utc_now
@@ -119,6 +121,35 @@ def _run_report_generation_task(
         repo = ReportRepository(db_session=db)
         run_record: Any | None = None
 
+        def fail_known_report_run(failure_reason: str) -> None:
+            """Mark a pre-created report run failed when cancellation happens before resolution."""
+
+            if run_record is not None or parsed_report_run_id is None:
+                return
+            try:
+                repo.rollback()
+                repo.update_report_run_status(
+                    report_run_id=parsed_report_run_id,
+                    status=ReportRunStatus.FAILED,
+                    failure_reason=failure_reason,
+                    completed_at=utc_now(),
+                )
+                repo.commit()
+            except Exception:
+                repo.rollback()
+
+        def ensure_reporting_phase() -> None:
+            try:
+                job_context.ensure_not_canceled()
+                ensure_close_run_active_phase(
+                    session=db,
+                    close_run_id=parsed_close_run_id,
+                    required_phase=WorkflowPhase.REPORTING,
+                )
+            except JobCancellationRequestedError as error:
+                fail_known_report_run(error.message)
+                raise
+
         # Phase 1: Load close run and entity context
         context = _load_report_context(
             db=db,
@@ -128,7 +159,7 @@ def _run_report_generation_task(
             step="load_report_context",
             state={"close_run_id": close_run_id, "report_run_id": report_run_id or ""},
         )
-        job_context.ensure_not_canceled()
+        ensure_reporting_phase()
         if context is None:
             error_msg = f"Close run {close_run_id} or associated data not found."
             logger.error("report_context_load_failed", close_run_id=close_run_id)
@@ -216,7 +247,7 @@ def _run_report_generation_task(
                 step="gather_report_sections",
                 state={"section_count": len(section_data)},
             )
-            job_context.ensure_not_canceled()
+            ensure_reporting_phase()
 
             # Phase 4: Generate commentary if requested
             commentary: dict[str, str] = {}
@@ -235,6 +266,7 @@ def _run_report_generation_task(
                     errors.extend(commentary_result.errors)
 
                     # Persist commentary drafts to the database
+                    ensure_reporting_phase()
                     _persist_commentary_drafts(
                         repo=repo,
                         report_run_id=run_record.id,
@@ -245,7 +277,7 @@ def _run_report_generation_task(
                         step="generate_commentary",
                         state={"commentary": commentary},
                     )
-                    job_context.ensure_not_canceled()
+                    ensure_reporting_phase()
 
             # Phase 5: Build Excel report pack
             scope = CloseRunStorageScope(
@@ -273,6 +305,7 @@ def _run_report_generation_task(
                 excel_generated = True
 
                 # Phase 6: Upload Excel artifact to MinIO
+                ensure_reporting_phase()
                 excel_artifact = storage_repo.store_artifact(
                     scope=scope,
                     artifact_type=ArtifactType.REPORT_EXCEL,
@@ -294,7 +327,7 @@ def _run_report_generation_task(
                     step="build_excel_pack",
                     state={"artifact_ref": excel_artifact_ref},
                 )
-                job_context.ensure_not_canceled()
+                ensure_reporting_phase()
 
             # Phase 7: Build PDF report pack
             if job_context.step_completed("build_pdf_pack"):
@@ -314,6 +347,7 @@ def _run_report_generation_task(
                 pdf_generated = True
 
                 # Phase 8: Upload PDF artifact to MinIO
+                ensure_reporting_phase()
                 pdf_artifact = storage_repo.store_artifact(
                     scope=scope,
                     artifact_type=ArtifactType.REPORT_PDF,
@@ -335,11 +369,12 @@ def _run_report_generation_task(
                     step="build_pdf_pack",
                     state={"artifact_ref": pdf_artifact_ref},
                 )
-                job_context.ensure_not_canceled()
+                ensure_reporting_phase()
 
             # Phase 9: Update report run status to completed.
             # artifact_refs is a JSON array — persist it as-is via JSONB.
             if not job_context.step_completed("finalize_report_run"):
+                ensure_reporting_phase()
                 repo.update_report_run_status(
                     report_run_id=run_record.id,
                     status=ReportRunStatus.COMPLETED,
@@ -352,13 +387,13 @@ def _run_report_generation_task(
                     state={"artifact_count": len(artifact_refs)},
                 )
 
-        except JobCancellationRequestedError:
+        except JobCancellationRequestedError as error:
             repo.rollback()
             try:
                 repo.update_report_run_status(
                     report_run_id=run_record.id,
                     status=ReportRunStatus.FAILED,
-                    failure_reason="Report generation was canceled by an operator.",
+                    failure_reason=error.message,
                     artifact_refs=artifact_refs if artifact_refs else None,
                     completed_at=utc_now(),
                 )

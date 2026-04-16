@@ -715,6 +715,40 @@ def test_chat_action_attachment_route_ingests_source_documents(monkeypatch) -> N
     assert "queued for parsing" in executor.sent_action_message["content"]
 
 
+def test_chat_action_route_uses_shared_agent_lane_for_plain_conversation(monkeypatch) -> None:
+    """Ensure the browser action route stays the single canonical chat entrypoint."""
+
+    _install_browser_auth_stub(monkeypatch)
+    executor = FakeChatActionExecutor()
+    thread_id = uuid4()
+    entity_id = uuid4()
+    request = Request(
+        {
+            "type": "http",
+            "app": SimpleNamespace(version="0.1.0"),
+            "method": "POST",
+            "path": f"/api/chat/threads/{thread_id}/actions",
+            "headers": [],
+        }
+    )
+
+    result = chat_routes.send_chat_action(
+        thread_id=thread_id,
+        payload=chat_routes.SendChatActionRequest(content="hello"),
+        entity_id=entity_id,
+        request=request,
+        response=Response(),
+        settings=SimpleNamespace(),
+        auth_service=SimpleNamespace(),
+        action_executor=executor,
+    )
+
+    assert result.is_read_only is True
+    assert executor.sent_action_message is not None
+    assert executor.sent_action_message["content"] == "hello"
+    assert executor.sent_action_message["source_surface"] == "desktop"
+
+
 def test_chat_action_attachment_route_reports_partial_success_when_follow_up_fails(monkeypatch) -> None:
     """Ensure successful attachment ingestion is not reported as a hard failure."""
 

@@ -23,11 +23,13 @@ from uuid import UUID
 
 from apps.worker.app.celery_app import celery_app
 from apps.worker.app.tasks.base import JobRuntimeContext, TrackedJobTask
+from apps.worker.app.tasks.close_run_phase_guard import ensure_close_run_active_phase
 from services.common.enums import (
     AccountType,
     AutonomyMode,
     DocumentType,
     ReviewStatus,
+    WorkflowPhase,
 )
 from services.common.logging import get_logger
 from services.contracts.recommendation_models import (
@@ -392,6 +394,11 @@ def _persist_recommendation(
     ]
 
     with get_session_factory()() as db:
+        ensure_close_run_active_phase(
+            session=db,
+            close_run_id=context.close_run_id,
+            required_phase=WorkflowPhase.PROCESSING,
+        )
         recommendation = Recommendation(
             close_run_id=context.close_run_id,
             document_id=context.document_id,

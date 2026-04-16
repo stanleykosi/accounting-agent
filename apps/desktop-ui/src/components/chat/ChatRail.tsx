@@ -174,6 +174,7 @@ export function ChatRail({
             void refreshSelectedThread();
           }}
           threadId={selectedThread?.id ?? ""}
+          workspace={workspace}
         />
         <div ref={messagesEndRef} />
       </section>
@@ -209,6 +210,7 @@ export function ChatRail({
       selectedThread={selectedThread}
       threads={threads}
       threadId={selectedThread?.id ?? ""}
+      workspace={workspace}
     />
   );
 
@@ -231,6 +233,7 @@ type CompactRailProps = {
   selectedThread: ChatThreadSummary | null;
   threadId: string;
   threads: ChatThreadSummary[];
+  workspace: ChatThreadWorkspace | null;
 };
 
 function CompactRail({
@@ -249,6 +252,7 @@ function CompactRail({
   selectedThread,
   threadId,
   threads,
+  workspace,
 }: Readonly<CompactRailProps>) {
   if (!isExpanded) {
     return (
@@ -302,6 +306,7 @@ function CompactRail({
               void onRefresh();
             }}
             threadId={threadId}
+            workspace={workspace}
           />
         </>
       )}
@@ -387,7 +392,7 @@ function ConversationHeader({
         <h2 style={panelTitleStyle}>Agent workspace</h2>
         <p style={conversationBodyStyle}>
           {memorySummary ??
-            "Use natural language to inspect workflow state, trigger deterministic actions, and review staged approvals."}
+            "Use natural language to inspect workflow state, upload files, trigger actions, review approvals, and continue the close from here."}
         </p>
       </div>
       {grounding ? (
@@ -414,7 +419,7 @@ function MessageList({ isLoading, messages }: Readonly<MessageListProps>) {
         <div style={emptyStateCardStyle}>
           <p style={emptyTitleStyle}>Start with an instruction</p>
           <p style={emptyBodyStyle}>
-            Ask about close status, extracted values, recommendations, reconciliations, reporting, or exports.
+            Ask about status, approvals, reporting, exports, or next steps. You can also attach files and continue the workflow from chat.
           </p>
         </div>
       ) : null}

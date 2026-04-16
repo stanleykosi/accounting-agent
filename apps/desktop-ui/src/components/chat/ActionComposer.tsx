@@ -1,15 +1,15 @@
 /*
 Purpose: Provide an action-capable chat composer that extends the basic message
-input with action intent detection, approval buttons, and proposed-edit controls.
-Scope: Used within the ChatRail component to replace the basic MessageComposer
-when the chat thread supports action routing (Step 35).
+input with automatic agent routing, approval buttons, and proposed-edit controls.
+Scope: Used within the ChatRail component as the single operator entrypoint for
+grounded chat, workflow actions, and inline attachments.
 Dependencies: React, existing chat API client, enterprise design tokens.
 
 Behavior:
-- Renders the standard message input with an enhanced action mode toggle
-- When action mode is enabled, messages route through the action endpoint
+- Renders one unified message input for questions, explanations, and actions
+- Messages route through the shared action endpoint so the backend chooses
+  between read-only responses and deterministic tools
 - Displays pending action badges and quick-approve/reject controls
-- Surfaces confidence indicators for detected action intents
 */
 
 "use client";
@@ -20,12 +20,12 @@ import {
   type ChatAttachmentIntent,
   type ChatActionResponse,
   type ChatActionSummary,
+  type ChatThreadWorkspace,
   ChatApiError,
   listThreadActions,
   rejectChatAction,
   sendChatAction,
   sendChatActionWithAttachments,
-  sendChatMessage,
 } from "../../lib/chat";
 
 /** Describe the props for the ActionComposer component. */
@@ -36,6 +36,8 @@ export type ActionComposerProps = {
   entityId: string;
   /** Optional close run scope; attachments use this to default routing intent. */
   closeRunId?: string | undefined;
+  /** Live workspace state used to suggest natural next prompts. */
+  workspace?: ChatThreadWorkspace | null;
   /** Called when a message is successfully sent. */
   onMessageSent: (response: ChatActionResponse) => void;
   /** Called when an action is approved, rejected, or errored. */
@@ -70,19 +72,19 @@ const ACTION_INTENT_COLORS: Record<string, string> = {
  * Purpose: Render a chat composer with action mode, pending action badges,
  * and inline approve/reject controls.
  * Inputs: Thread ID, entity ID, and callbacks for message/action events.
- * Outputs: Interactive composer with input, action toggle, and pending actions.
+ * Outputs: Interactive composer with one input lane and pending action controls.
  */
 export function ActionComposer({
   threadId,
   entityId,
   closeRunId,
+  workspace = null,
   onMessageSent,
   onActionStateChange,
   disabled = false,
 }: ActionComposerProps) {
   const [inputValue, setInputValue] = useState("");
   const [isLoading, setIsLoading] = useState(false);
-  const [actionMode, setActionMode] = useState(true);
   const [attachmentIntent, setAttachmentIntent] = useState<ChatAttachmentIntent>(
     closeRunId ? "source_documents" : "chart_of_accounts",
   );
@@ -103,6 +105,10 @@ export function ActionComposer({
             value: ChatAttachmentIntent;
           }>),
     [closeRunId],
+  );
+  const starterPrompts = useMemo(
+    () => buildStarterPrompts({ closeRunId, workspace }),
+    [closeRunId, workspace],
   );
 
   const loadPendingActions = useCallback(async () => {
@@ -139,8 +145,6 @@ export function ActionComposer({
       setError(null);
 
       try {
-        // Route through action endpoint when action mode is enabled,
-        // otherwise fall back to standard read-only message endpoint
         let actionResponse: ChatActionResponse;
         if (attachments.length > 0) {
           const attachmentRequest: {
@@ -159,16 +163,8 @@ export function ActionComposer({
             entityId,
             attachmentRequest,
           );
-        } else if (actionMode) {
-          actionResponse = await sendChatAction(threadId, entityId, trimmed);
         } else {
-          const standardResponse = await sendChatMessage(threadId, entityId, trimmed);
-          actionResponse = {
-            message_id: standardResponse.message.id,
-            content: standardResponse.message.content,
-            action_plan: null,
-            is_read_only: true,
-          };
+          actionResponse = await sendChatAction(threadId, entityId, trimmed);
         }
 
         setInputValue("");
@@ -192,7 +188,6 @@ export function ActionComposer({
       isLoading,
       disabled,
       attachmentIntent,
-      actionMode,
       threadId,
       entityId,
       loadPendingActions,
@@ -407,72 +402,86 @@ export function ActionComposer({
         </div>
       )}
 
-      {/* Action mode toggle */}
       <div
         style={{
           display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
+          alignItems: "flex-start",
+          gap: 10,
           marginBottom: 8,
         }}
       >
-        <button
-          type="button"
-          onClick={() => setActionMode((prev) => !prev)}
+        <div
           style={{
-            display: "flex",
+            display: "inline-flex",
             alignItems: "center",
             gap: 6,
             fontSize: 11,
-            fontWeight: 500,
-            color: actionMode ? "#4C8BF5" : "#B7C3D6",
-            background: actionMode ? "rgba(76, 139, 245, 0.1)" : "transparent",
-            border: "none",
-            borderRadius: 6,
-            padding: "3px 8px",
-            cursor: "pointer",
+            fontWeight: 600,
+            color: "#4C8BF5",
+            background: "rgba(76, 139, 245, 0.1)",
+            borderRadius: 999,
+            padding: "4px 9px",
           }}
         >
           <span
             style={{
-              width: 14,
-              height: 14,
-              borderRadius: 4,
-              border: `1.5px solid ${actionMode ? "#4C8BF5" : "#B7C3D6"}`,
-              display: "inline-flex",
-              alignItems: "center",
-              justifyContent: "center",
-              background: actionMode ? "#4C8BF5" : "transparent",
+              width: 8,
+              height: 8,
+              borderRadius: "50%",
+              background: "#4C8BF5",
             }}
-          >
-            {actionMode && (
-              <svg width="8" height="8" viewBox="0 0 8 8" fill="none">
-                <path
-                  d="M1 4L3 6L7 2"
-                  stroke="white"
-                  strokeWidth="1.5"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                />
-              </svg>
-            )}
-          </span>
-          Agent mode
-        </button>
-        {actionMode && (
-          <span
-            style={{
-              fontSize: 10,
-              color: "#E7A93B",
-              background: "rgba(231, 169, 59, 0.1)",
-              padding: "2px 6px",
-              borderRadius: 4,
-            }}
-          >
-            Tools, approvals, and audit aware
-          </span>
-        )}
+          />
+          Context-aware agent
+        </div>
+        <p
+          style={{
+            margin: 0,
+            color: "#8FA2BF",
+            fontSize: 11,
+            lineHeight: "17px",
+          }}
+        >
+          Questions, workflow actions, approvals, and attachments all use one message lane. The
+          agent decides when to answer directly and when to stage or apply a tool.
+        </p>
       </div>
+
+      {!disabled &&
+      inputValue.trim().length === 0 &&
+      attachments.length === 0 &&
+      starterPrompts.length > 0 ? (
+        <div
+          style={{
+            display: "flex",
+            flexWrap: "wrap",
+            gap: 8,
+            marginBottom: 10,
+          }}
+        >
+          {starterPrompts.map((prompt) => (
+            <button
+              key={prompt}
+              onClick={() => {
+                setInputValue(prompt);
+                setError(null);
+              }}
+              style={{
+                background: "rgba(24, 35, 56, 0.9)",
+                border: "1px solid #24324A",
+                borderRadius: 999,
+                color: "#D7E0ED",
+                cursor: "pointer",
+                fontSize: 11,
+                lineHeight: "16px",
+                padding: "5px 10px",
+              }}
+              type="button"
+            >
+              {prompt}
+            </button>
+          ))}
+        </div>
+      ) : null}
 
       <div
         style={{
@@ -507,9 +516,6 @@ export function ActionComposer({
               const nextFiles = Array.from(event.target.files ?? []);
               setAttachments(nextFiles);
               setError(null);
-              if (nextFiles.length > 0) {
-                setActionMode(true);
-              }
             }}
             ref={fileInputRef}
             style={{ display: "none" }}
@@ -628,11 +634,9 @@ export function ActionComposer({
               }
             }}
             placeholder={
-              actionMode
-                ? attachments.length > 0
-                  ? "Tell the agent what to do with the attached files..."
-                  : "Ask the agent to review, correct, approve, run workflow steps, or explain the current state..."
-                : "Ask about this close run..."
+              attachments.length > 0
+                ? "Tell the agent what to do with the attached files..."
+                : "Ask normally, e.g. 'I need the reports', request a workflow step, approve work, or tell the agent what to change..."
             }
             disabled={isSubmitting}
             rows={1}
@@ -686,4 +690,39 @@ function formatByteSize(value: number): string {
     return `${(value / 1024).toFixed(1)} KB`;
   }
   return `${(value / (1024 * 1024)).toFixed(2)} MB`;
+}
+
+function buildStarterPrompts(options: {
+  closeRunId: string | undefined;
+  workspace: ChatThreadWorkspace | null;
+}): string[] {
+  const prompts: string[] = [];
+  const { closeRunId, workspace } = options;
+  const activePhase = workspace?.readiness.phase_states.find((phaseState) => phaseState.status !== "completed");
+
+  if (workspace?.readiness.blockers.length) {
+    prompts.push("What's blocking this run right now?");
+  }
+  if ((workspace?.memory.pending_action_count ?? 0) > 0) {
+    prompts.push("What approvals are pending?");
+  }
+  if (closeRunId && (workspace?.readiness.document_count ?? 0) > 0) {
+    prompts.push("I uploaded the wrong document by mistake.");
+  }
+  if (closeRunId && activePhase && activePhase.phase !== "collection") {
+    prompts.push("Take this back one step.");
+    prompts.push("Take this back to Collection so I can upload more files.");
+  }
+  if ((workspace?.readiness.next_actions.length ?? 0) > 0) {
+    prompts.push("Continue from where we left off.");
+  }
+  if (closeRunId) {
+    prompts.push("I need the reports.");
+    prompts.push("What can you do next from here?");
+  } else {
+    prompts.push("Start a new run for this month.");
+    prompts.push("What can you do in this workspace?");
+  }
+
+  return Array.from(new Set(prompts)).slice(0, 5);
 }

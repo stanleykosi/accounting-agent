@@ -127,6 +127,24 @@ class ChatRepository:
         self._db_session.flush()
         return _map_thread(thread)
 
+    def update_thread_scope(
+        self,
+        *,
+        thread_id: UUID,
+        close_run_id: UUID | None,
+        context_payload: dict[str, Any],
+    ) -> ChatThreadRecord | None:
+        """Replace one thread's close-run scope and context payload together."""
+
+        statement = select(ChatThread).where(ChatThread.id == thread_id)
+        thread = self._db_session.execute(statement).scalar_one_or_none()
+        if thread is None:
+            return None
+        thread.close_run_id = close_run_id
+        thread.context_payload = dict(context_payload)
+        self._db_session.flush()
+        return _map_thread(thread)
+
     def list_threads_for_entity(
         self,
         *,
