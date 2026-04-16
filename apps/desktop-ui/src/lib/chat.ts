@@ -217,11 +217,10 @@ async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
 
   if (!response.ok) {
     const body = await parseJsonResponse(response);
-    const bodyRecord = isRecord(body) ? body : null;
     throw new ChatApiError(
       response.status,
-      typeof bodyRecord?.message === "string" ? bodyRecord.message : undefined,
-      typeof bodyRecord?.code === "string" ? bodyRecord.code : undefined,
+      extractChatApiErrorMessage(body),
+      extractChatApiErrorCode(body),
     );
   }
 
@@ -427,11 +426,10 @@ export async function sendChatActionWithAttachments(
 
   if (!response.ok) {
     const body = await parseJsonResponse(response);
-    const bodyRecord = isRecord(body) ? body : null;
     throw new ChatApiError(
       response.status,
-      typeof bodyRecord?.message === "string" ? bodyRecord.message : undefined,
-      typeof bodyRecord?.code === "string" ? bodyRecord.code : undefined,
+      extractChatApiErrorMessage(body),
+      extractChatApiErrorCode(body),
     );
   }
 
@@ -661,6 +659,34 @@ function normalizeToolSchemaItems(value: unknown): ToolSchemaNode | undefined {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
+}
+
+function extractChatApiErrorMessage(body: unknown): string | undefined {
+  const bodyRecord = isRecord(body) ? body : null;
+  if (typeof bodyRecord?.message === "string") {
+    return bodyRecord.message;
+  }
+
+  const detail = isRecord(bodyRecord?.detail) ? bodyRecord.detail : null;
+  if (typeof detail?.message === "string") {
+    return detail.message;
+  }
+
+  return undefined;
+}
+
+function extractChatApiErrorCode(body: unknown): string | undefined {
+  const bodyRecord = isRecord(body) ? body : null;
+  if (typeof bodyRecord?.code === "string") {
+    return bodyRecord.code;
+  }
+
+  const detail = isRecord(bodyRecord?.detail) ? bodyRecord.detail : null;
+  if (typeof detail?.code === "string") {
+    return detail.code;
+  }
+
+  return undefined;
 }
 
 async function parseJsonResponse(response: Response): Promise<unknown> {
