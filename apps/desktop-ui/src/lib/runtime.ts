@@ -34,3 +34,25 @@ export function resolveFrontendRuntimeMode(): FrontendRuntimeMode {
 export function isHostedFrontendRuntime(): boolean {
   return resolveFrontendRuntimeMode() === "hosted";
 }
+
+/**
+ * Purpose: Resolve the canonical backend API base URL for server-side proxying and session checks.
+ * Inputs: Process environment only.
+ * Outputs: A normalized backend API base URL without trailing slashes.
+ * Behavior: Requires explicit configuration for hosted deployments and only falls back to loopback
+ * in desktop-local mode.
+ */
+export function resolveBackendApiBaseUrl(): string {
+  const configuredUrl = process.env.ACCOUNTING_AGENT_API_URL?.trim();
+  if (configuredUrl && configuredUrl.length > 0) {
+    return configuredUrl.replace(/\/+$/u, "");
+  }
+
+  if (resolveFrontendRuntimeMode() === "hosted") {
+    throw new Error(
+      "ACCOUNTING_AGENT_API_URL must be set for hosted frontend deployments.",
+    );
+  }
+
+  return "http://127.0.0.1:8000/api";
+}

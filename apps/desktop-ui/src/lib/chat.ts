@@ -6,6 +6,8 @@ Dependencies: Browser Fetch APIs, existing `/api/**` proxy routes, and strict
 runtime response guards.
 */
 
+import { resolveBackendApiBaseUrl } from "./runtime";
+
 export type ChatMessageRole = "user" | "assistant" | "system";
 export type ChatMessageType = "analysis" | "workflow" | "action" | "warning";
 
@@ -193,9 +195,7 @@ const API_BASE = "/api/chat";
  * Behavior: Uses one canonical backend base URL and strips duplicate slashes.
  */
 export function buildBackendChatUrl(path: string): string {
-  const normalizedBaseUrl = (
-    process.env.ACCOUNTING_AGENT_API_URL ?? "http://127.0.0.1:8000/api"
-  ).replace(/\/+$/u, "");
+  const normalizedBaseUrl = resolveBackendApiBaseUrl();
   const normalizedPath = path.startsWith("/") ? path : `/${path}`;
   return `${normalizedBaseUrl}/chat${normalizedPath}`;
 }

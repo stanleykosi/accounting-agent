@@ -10,7 +10,7 @@ import type {
   LocalServiceHealthCheck,
   LocalServiceHealthStatus,
 } from "./types";
-import { resolveFrontendRuntimeMode } from "../runtime";
+import { resolveBackendApiBaseUrl, resolveFrontendRuntimeMode } from "../runtime";
 
 const HEALTHCHECK_TIMEOUT_MS = 2_500;
 const RECOVERY_COMMANDS = [
@@ -201,10 +201,7 @@ function buildServiceHealth(input: {
 }
 
 function resolveApiHealthUrl(): string {
-  const apiBaseUrl = (process.env.ACCOUNTING_AGENT_API_URL ?? "http://127.0.0.1:8000/api").replace(
-    /\/+$/u,
-    "",
-  );
+  const apiBaseUrl = resolveBackendApiBaseUrl();
   return `${apiBaseUrl}/health`;
 }
 

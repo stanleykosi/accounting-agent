@@ -5,6 +5,7 @@ Dependencies: The generated TS SDK schema types and the Next.js same-origin enti
 */
 
 import type { components } from "@accounting-ai-agent/ts-sdk";
+import { resolveBackendApiBaseUrl } from "../runtime";
 
 export type CreateEntityRequest = components["schemas"]["CreateEntityRequest"];
 export type CreateEntityMembershipRequest = components["schemas"]["CreateEntityMembershipRequest"];
@@ -55,9 +56,7 @@ const ENTITY_PROXY_BASE_PATH = "/api/entities";
  * Behavior: Uses one canonical API base URL and avoids duplicate slashes during composition.
  */
 export function buildBackendEntitiesUrl(path: string, search = ""): string {
-  const normalizedBaseUrl = (
-    process.env.ACCOUNTING_AGENT_API_URL ?? "http://127.0.0.1:8000/api"
-  ).replace(/\/+$/u, "");
+  const normalizedBaseUrl = resolveBackendApiBaseUrl();
   const normalizedPath = path.startsWith("/") ? path : `/${path}`;
   const normalizedSearch = search.startsWith("?") || search.length === 0 ? search : `?${search}`;
   const entityPathSuffix = normalizedPath === "/" ? "" : normalizedPath;

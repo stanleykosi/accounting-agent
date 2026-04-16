@@ -5,6 +5,8 @@ and structured error handling for ownership collisions.
 Dependencies: Standard Fetch APIs and the Next.js same-origin ownership proxy route.
 */
 
+import { resolveBackendApiBaseUrl } from "./runtime";
+
 export type OwnershipTargetType =
   | "entity"
   | "close_run"
@@ -90,9 +92,7 @@ const OWNERSHIP_PROXY_BASE_PATH = "/api/ownership";
  * Behavior: Uses one canonical backend API base URL and avoids duplicate slash composition.
  */
 export function buildBackendOwnershipUrl(entityId: string, path: string, search = ""): string {
-  const normalizedBaseUrl = (
-    process.env.ACCOUNTING_AGENT_API_URL ?? "http://127.0.0.1:8000/api"
-  ).replace(/\/+$/u, "");
+  const normalizedBaseUrl = resolveBackendApiBaseUrl();
   const normalizedPath = path.startsWith("/") ? path : `/${path}`;
   const normalizedSearch = search.startsWith("?") || search.length === 0 ? search : `?${search}`;
   const ownershipPathSuffix = normalizedPath === "/" ? "" : normalizedPath;

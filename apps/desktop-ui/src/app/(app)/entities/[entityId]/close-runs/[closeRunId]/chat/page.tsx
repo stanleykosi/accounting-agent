@@ -11,10 +11,10 @@ import { notFound } from "next/navigation";
 import { ChatRail } from "../../../../../../../components/chat/ChatRail";
 
 interface ChatPageProps {
-  params: {
+  params: Promise<{
     closeRunId: string;
     entityId: string;
-  };
+  }>;
 }
 
 /**
@@ -25,8 +25,8 @@ interface ChatPageProps {
  * Behavior: Validates that the close run exists and passes grounding
  * context to the ChatRail. Falls back to 404 when parameters are invalid.
  */
-export default function ChatPage({ params }: Readonly<ChatPageProps>) {
-  const { closeRunId, entityId } = params;
+export default async function ChatPage({ params }: Readonly<ChatPageProps>) {
+  const { closeRunId, entityId } = await params;
 
   if (!entityId || !closeRunId) {
     notFound();
