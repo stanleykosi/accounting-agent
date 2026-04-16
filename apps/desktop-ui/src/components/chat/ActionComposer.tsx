@@ -106,6 +106,10 @@ export function ActionComposer({
   );
 
   const loadPendingActions = useCallback(async () => {
+    if (threadId.trim().length === 0) {
+      setPendingActions([]);
+      return;
+    }
     try {
       const actions = await listThreadActions(threadId, entityId);
       setPendingActions(actions);
@@ -126,6 +130,10 @@ export function ActionComposer({
       e.preventDefault();
       const trimmed = inputValue.trim();
       if ((trimmed.length === 0 && attachments.length === 0) || isLoading || disabled) return;
+      if (threadId.trim().length === 0) {
+        setError("Create or select a chat thread before sending a message.");
+        return;
+      }
 
       setIsLoading(true);
       setError(null);
@@ -195,6 +203,10 @@ export function ActionComposer({
   const handleActionApproval = useCallback(
     async (actionId: string) => {
       if (loadingActions.has(actionId)) return;
+      if (threadId.trim().length === 0) {
+        setError("Select a chat thread before approving an action.");
+        return;
+      }
 
       setLoadingActions((prev) => new Set(prev).add(actionId));
       try {
@@ -219,6 +231,10 @@ export function ActionComposer({
   const handleActionRejection = useCallback(
     async (actionId: string) => {
       if (loadingActions.has(actionId)) return;
+      if (threadId.trim().length === 0) {
+        setError("Select a chat thread before rejecting an action.");
+        return;
+      }
 
       setLoadingActions((prev) => new Set(prev).add(actionId));
       try {

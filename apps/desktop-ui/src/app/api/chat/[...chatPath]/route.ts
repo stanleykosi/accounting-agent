@@ -44,14 +44,18 @@ async function proxyChatRequest(
   context: ChatProxyRouteContext,
 ): Promise<Response> {
   const { chatPath } = await context.params;
+  const requestUrl = new URL(request.url);
   const requestBody = request.method === "GET" ? null : await request.text();
-  const backendResponse = await fetch(buildBackendChatUrl(`/${chatPath.join("/")}`), {
-    cache: "no-store",
-    headers: buildProxyHeaders(request),
-    method: request.method,
-    redirect: "manual",
-    ...(requestBody === null ? {} : { body: requestBody }),
-  });
+  const backendResponse = await fetch(
+    buildBackendChatUrl(`/${chatPath.join("/")}${requestUrl.search}`),
+    {
+      cache: "no-store",
+      headers: buildProxyHeaders(request),
+      method: request.method,
+      redirect: "manual",
+      ...(requestBody === null ? {} : { body: requestBody }),
+    },
+  );
 
   const responseHeaders = new Headers();
   const contentType = backendResponse.headers.get("content-type");
