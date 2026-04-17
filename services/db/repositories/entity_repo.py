@@ -16,12 +16,27 @@ from typing import cast
 from uuid import UUID
 
 from services.audit.service import AuditService
-from services.common.enums import AutonomyMode
+from services.common.enums import AutonomyMode, JobStatus
 from services.common.types import JsonObject
-from services.db.models.audit import AuditEvent, AuditSourceSurface
+from services.db.models.audit import AuditEvent, AuditSourceSurface, ReviewAction
 from services.db.models.auth import User
+from services.db.models.chat import ChatThread
+from services.db.models.close_run import CloseRun, CloseRunPhaseState
+from services.db.models.coa import CoaAccount, CoaMappingRule, CoaSet
+from services.db.models.documents import Document, DocumentIssue, DocumentVersion
 from services.db.models.entity import Entity, EntityMembership, EntityStatus
-from sqlalchemy import desc, select
+from services.db.models.exports import Artifact, ExportDistribution, ExportRun
+from services.db.models.extractions import DocumentExtraction, DocumentLineItem, ExtractedField
+from services.db.models.integration import IntegrationConnection
+from services.db.models.jobs import Job
+from services.db.models.ownership import OwnershipTarget
+from services.db.models.reporting import (
+    ReportCommentary,
+    ReportRun,
+    ReportTemplate,
+    ReportTemplateSection,
+)
+from sqlalchemy import delete, desc, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -87,6 +102,20 @@ class EntityActivityEventRecord:
     trace_id: str | None
     created_at: datetime
     actor: EntityUserRecord | None
+
+
+@dataclass(frozen=True, slots=True)
+class EntityDeletionPlan:
+    """Describe the data and storage footprint tied to one entity workspace delete."""
+
+    entity: EntityRecord
+    close_run_count: int
+    document_count: int
+    thread_count: int
+    active_job_ids: tuple[UUID, ...]
+    source_storage_keys: tuple[str, ...]
+    derivative_storage_keys: tuple[str, ...]
+    artifact_storage_keys: tuple[str, ...]
 
 
 class EntityRepository:
@@ -402,6 +431,234 @@ class EntityRepository:
 
         return latest_events
 
+    def get_entity_deletion_plan_for_user(
+        self,
+        *,
+        entity_id: UUID,
+        user_id: UUID,
+    ) -> EntityDeletionPlan | None:
+        """Return the workspace footprint that will be removed by an entity delete."""
+
+        access_record = self.get_entity_for_user(entity_id=entity_id, user_id=user_id)
+        if access_record is None:
+            return None
+
+        close_run_ids = tuple(
+            self._db_session.scalars(
+                select(CloseRun.id).where(CloseRun.entity_id == entity_id)
+            ).all()
+        )
+        document_rows = (
+            self._db_session.execute(
+                select(Document.id, Document.storage_key).where(
+                    Document.close_run_id.in_(close_run_ids)
+                )
+            ).all()
+            if close_run_ids
+            else []
+        )
+        document_ids = tuple(document_id for document_id, _storage_key in document_rows)
+        source_storage_keys = tuple(
+            dict.fromkeys(
+                storage_key.strip()
+                for _document_id, storage_key in document_rows
+                if isinstance(storage_key, str) and storage_key.strip()
+            )
+        )
+
+        derivative_keys: list[str] = []
+        if document_ids:
+            version_rows = self._db_session.scalars(
+                select(DocumentVersion)
+                .where(DocumentVersion.document_id.in_(document_ids))
+                .order_by(
+                    DocumentVersion.document_id.asc(),
+                    DocumentVersion.version_no.asc(),
+                    DocumentVersion.created_at.asc(),
+                )
+            ).all()
+            for version in version_rows:
+                if (
+                    version.normalized_storage_key is not None
+                    and version.normalized_storage_key.strip()
+                ):
+                    derivative_keys.append(version.normalized_storage_key.strip())
+                if (
+                    version.ocr_text_storage_key is not None
+                    and version.ocr_text_storage_key.strip()
+                ):
+                    derivative_keys.append(version.ocr_text_storage_key.strip())
+                derivative_keys.extend(
+                    _collect_raw_parse_derivative_keys(raw_parse_payload=version.raw_parse_payload)
+                )
+
+        artifact_keys = self._collect_entity_artifact_storage_keys(
+            entity_id=entity_id,
+            close_run_ids=close_run_ids,
+        )
+        thread_ids = tuple(
+            self._db_session.scalars(
+                select(ChatThread.id).where(ChatThread.entity_id == entity_id)
+            ).all()
+        )
+        active_job_ids = tuple(
+            self._db_session.scalars(
+                select(Job.id)
+                .where(
+                    Job.entity_id == entity_id,
+                    Job.status.in_(
+                        (
+                            JobStatus.QUEUED.value,
+                            JobStatus.RUNNING.value,
+                            JobStatus.BLOCKED.value,
+                        )
+                    ),
+                )
+                .order_by(Job.created_at.asc(), Job.id.asc())
+            ).all()
+        )
+        return EntityDeletionPlan(
+            entity=access_record.entity,
+            close_run_count=len(close_run_ids),
+            document_count=len(document_ids),
+            thread_count=len(thread_ids),
+            active_job_ids=active_job_ids,
+            source_storage_keys=source_storage_keys,
+            derivative_storage_keys=tuple(dict.fromkeys(derivative_keys)),
+            artifact_storage_keys=artifact_keys,
+        )
+
+    def delete_entity_workspace(self, *, entity_id: UUID) -> None:
+        """Delete one entity workspace and its owned graph from the database."""
+
+        close_run_ids = tuple(
+            self._db_session.scalars(
+                select(CloseRun.id).where(CloseRun.entity_id == entity_id)
+            ).all()
+        )
+        coa_set_ids = tuple(
+            self._db_session.scalars(select(CoaSet.id).where(CoaSet.entity_id == entity_id)).all()
+        )
+        report_template_ids = tuple(
+            self._db_session.scalars(
+                select(ReportTemplate.id).where(ReportTemplate.entity_id == entity_id)
+            ).all()
+        )
+        report_run_ids = (
+            tuple(
+                self._db_session.scalars(
+                    select(ReportRun.id).where(ReportRun.close_run_id.in_(close_run_ids))
+                ).all()
+            )
+            if close_run_ids
+            else ()
+        )
+        document_ids = (
+            tuple(
+                self._db_session.scalars(
+                    select(Document.id).where(Document.close_run_id.in_(close_run_ids))
+                ).all()
+            )
+            if close_run_ids
+            else ()
+        )
+        extraction_ids = (
+            tuple(
+                self._db_session.scalars(
+                    select(DocumentExtraction.id).where(
+                        DocumentExtraction.document_id.in_(document_ids)
+                    )
+                ).all()
+            )
+            if document_ids
+            else ()
+        )
+
+        self._db_session.execute(
+            update(Job)
+            .where(Job.entity_id == entity_id)
+            .values(entity_id=None, close_run_id=None, document_id=None)
+        )
+        self._db_session.execute(
+            delete(OwnershipTarget).where(OwnershipTarget.entity_id == entity_id)
+        )
+        if close_run_ids:
+            self._db_session.execute(
+                delete(ReviewAction).where(ReviewAction.close_run_id.in_(close_run_ids))
+            )
+        self._db_session.execute(delete(AuditEvent).where(AuditEvent.entity_id == entity_id))
+        self._db_session.execute(
+            delete(ExportDistribution).where(ExportDistribution.entity_id == entity_id)
+        )
+        if close_run_ids:
+            self._db_session.execute(delete(Artifact).where(Artifact.close_run_id.in_(close_run_ids)))
+            if report_run_ids:
+                self._db_session.execute(
+                    update(ReportCommentary)
+                    .where(ReportCommentary.report_run_id.in_(report_run_ids))
+                    .values(superseded_by_id=None)
+                )
+                self._db_session.execute(
+                    delete(ReportCommentary).where(ReportCommentary.report_run_id.in_(report_run_ids))
+                )
+            self._db_session.execute(delete(ExportRun).where(ExportRun.close_run_id.in_(close_run_ids)))
+            self._db_session.execute(delete(ReportRun).where(ReportRun.close_run_id.in_(close_run_ids)))
+        if report_template_ids:
+            self._db_session.execute(
+                delete(ReportTemplateSection).where(
+                    ReportTemplateSection.template_id.in_(report_template_ids)
+                )
+            )
+        self._db_session.execute(
+            delete(ReportTemplate).where(ReportTemplate.entity_id == entity_id)
+        )
+        self._db_session.execute(
+            delete(IntegrationConnection).where(IntegrationConnection.entity_id == entity_id)
+        )
+        self._db_session.execute(
+            delete(CoaMappingRule).where(CoaMappingRule.entity_id == entity_id)
+        )
+        if coa_set_ids:
+            self._db_session.execute(delete(CoaAccount).where(CoaAccount.coa_set_id.in_(coa_set_ids)))
+        self._db_session.execute(delete(CoaSet).where(CoaSet.entity_id == entity_id))
+        if extraction_ids:
+            self._db_session.execute(
+                delete(DocumentLineItem).where(DocumentLineItem.document_extraction_id.in_(extraction_ids))
+            )
+            self._db_session.execute(
+                delete(ExtractedField).where(ExtractedField.document_extraction_id.in_(extraction_ids))
+            )
+            self._db_session.execute(
+                delete(DocumentExtraction).where(DocumentExtraction.id.in_(extraction_ids))
+            )
+        if document_ids:
+            self._db_session.execute(delete(DocumentIssue).where(DocumentIssue.document_id.in_(document_ids)))
+            self._db_session.execute(
+                delete(DocumentVersion).where(DocumentVersion.document_id.in_(document_ids))
+            )
+            self._db_session.execute(
+                update(Document).where(Document.id.in_(document_ids)).values(parent_document_id=None)
+            )
+            self._db_session.execute(delete(Document).where(Document.id.in_(document_ids)))
+        if close_run_ids:
+            self._db_session.execute(
+                delete(CloseRunPhaseState).where(CloseRunPhaseState.close_run_id.in_(close_run_ids))
+            )
+            self._db_session.execute(
+                update(CloseRun)
+                .where(
+                    CloseRun.entity_id == entity_id,
+                    CloseRun.reopened_from_close_run_id.in_(close_run_ids),
+                )
+                .values(reopened_from_close_run_id=None)
+            )
+            self._db_session.execute(delete(CloseRun).where(CloseRun.entity_id == entity_id))
+        self._db_session.execute(
+            delete(EntityMembership).where(EntityMembership.entity_id == entity_id)
+        )
+        self._db_session.execute(delete(Entity).where(Entity.id == entity_id))
+        self._db_session.flush()
+
     def commit(self) -> None:
         """Commit the current entity transaction after a successful mutation."""
 
@@ -457,6 +714,37 @@ class EntityRepository:
             raise LookupError(f"Audit event {audit_event_id} does not exist.")
 
         return event
+
+    def _collect_entity_artifact_storage_keys(
+        self,
+        *,
+        entity_id: UUID,
+        close_run_ids: tuple[UUID, ...],
+    ) -> tuple[str, ...]:
+        """Return canonical artifact storage keys attached to one entity workspace."""
+
+        artifact_keys: list[str] = [
+            storage_key
+            for storage_key in self._db_session.scalars(
+                select(Artifact.storage_key).where(Artifact.close_run_id.in_(close_run_ids))
+            ).all()
+            if isinstance(storage_key, str) and storage_key.strip()
+        ] if close_run_ids else []
+
+        if close_run_ids:
+            report_artifact_payloads = self._db_session.scalars(
+                select(ReportRun.artifact_refs).where(ReportRun.close_run_id.in_(close_run_ids))
+            ).all()
+            for payload in report_artifact_payloads:
+                artifact_keys.extend(_collect_storage_keys_from_json_list(payload))
+
+            export_manifest_payloads = self._db_session.scalars(
+                select(ExportRun.artifact_manifest).where(ExportRun.close_run_id.in_(close_run_ids))
+            ).all()
+            for payload in export_manifest_payloads:
+                artifact_keys.extend(_collect_storage_keys_from_json_list(payload))
+
+        return tuple(dict.fromkeys(artifact_keys))
 
 
 def _map_user(user: User) -> EntityUserRecord:
@@ -531,9 +819,44 @@ def _resolve_autonomy_mode(value: str) -> AutonomyMode:
     raise ValueError(f"Unsupported autonomy mode value: {value}")
 
 
+def _collect_raw_parse_derivative_keys(*, raw_parse_payload: JsonObject) -> tuple[str, ...]:
+    """Return derivative storage keys persisted inside one raw parse payload."""
+
+    raw_derivatives = raw_parse_payload.get("derivatives")
+    if not isinstance(raw_derivatives, dict):
+        return ()
+
+    extracted_tables_storage_key = raw_derivatives.get("extracted_tables_storage_key")
+    if not isinstance(extracted_tables_storage_key, str):
+        return ()
+    normalized = extracted_tables_storage_key.strip()
+    if not normalized:
+        return ()
+    return (normalized,)
+
+
+def _collect_storage_keys_from_json_list(payload: object) -> tuple[str, ...]:
+    """Return storage keys from JSON arrays of artifact reference dictionaries."""
+
+    if not isinstance(payload, list):
+        return ()
+
+    storage_keys: list[str] = []
+    for item in payload:
+        if not isinstance(item, dict):
+            continue
+        for key_name in ("storage_key", "object_key"):
+            value = item.get(key_name)
+            if isinstance(value, str) and value.strip():
+                storage_keys.append(value.strip())
+
+    return tuple(storage_keys)
+
+
 __all__ = [
     "EntityAccessRecord",
     "EntityActivityEventRecord",
+    "EntityDeletionPlan",
     "EntityMembershipRecord",
     "EntityRecord",
     "EntityRepository",

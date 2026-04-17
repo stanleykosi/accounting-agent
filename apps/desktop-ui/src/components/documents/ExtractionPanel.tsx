@@ -18,8 +18,10 @@ import {
 
 export type ExtractionPanelProps = {
   actionNote: string;
+  deleteMutationDocumentId: string | null;
   fieldMutationId: string | null;
   checklist: DocumentVerificationChecklist | null;
+  onDeleteDocument: (documentId: string) => Promise<void> | void;
   onFieldCorrection: (input: {
     correctedType: string;
     correctedValue: string;
@@ -45,8 +47,10 @@ export type ExtractionPanelProps = {
 
 export function ExtractionPanel({
   actionNote,
+  deleteMutationDocumentId,
   fieldMutationId,
   checklist,
+  onDeleteDocument,
   onFieldCorrection,
   onChecklistChange,
   onNoteChange,
@@ -68,6 +72,7 @@ export function ExtractionPanel({
   }
 
   const isReviewMutating = reviewMutationDocumentId === selectedDocument.id;
+  const isDeleteMutating = deleteMutationDocumentId === selectedDocument.id;
   const approvalReady =
     checklist !== null &&
     checklist.complete &&
@@ -86,7 +91,7 @@ export function ExtractionPanel({
             {selectedDocument.mimeType}
           </p>
         </div>
-      <div className="review-pane-badge-row">
+        <div className="review-pane-badge-row">
           <ConfidenceBadge
             score={selectedDocument.classificationConfidence}
             tone={selectedDocument.confidenceBand}
@@ -123,7 +128,7 @@ export function ExtractionPanel({
         </button>
         <button
           className="secondary-button compact-action"
-          disabled={isReviewMutating || !approvalReady}
+          disabled={isReviewMutating || isDeleteMutating || !approvalReady}
           onClick={() => {
             void onReviewAction(selectedDocument.id, "approved");
           }}
@@ -133,7 +138,7 @@ export function ExtractionPanel({
         </button>
         <button
           className="secondary-button compact-action"
-          disabled={isReviewMutating}
+          disabled={isReviewMutating || isDeleteMutating}
           onClick={() => {
             void onReviewAction(selectedDocument.id, "rejected");
           }}
@@ -143,13 +148,23 @@ export function ExtractionPanel({
         </button>
         <button
           className="secondary-button compact-action"
-          disabled={isReviewMutating}
+          disabled={isReviewMutating || isDeleteMutating}
           onClick={() => {
             void onReviewAction(selectedDocument.id, "needs_info");
           }}
           type="button"
         >
           Request info
+        </button>
+        <button
+          className="secondary-button compact-action"
+          disabled={isReviewMutating || isDeleteMutating}
+          onClick={() => {
+            void onDeleteDocument(selectedDocument.id);
+          }}
+          type="button"
+        >
+          {isDeleteMutating ? "Deleting..." : "Delete document"}
         </button>
       </div>
 

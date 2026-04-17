@@ -49,6 +49,12 @@ export type ChatThreadWithMessages = {
   thread: ChatThreadSummary;
 };
 
+export type ChatThreadDeleteResponse = {
+  deleted_message_count: number;
+  deleted_thread_id: string;
+  deleted_thread_title: string | null;
+};
+
 export type ChatAttachmentIntent = "chart_of_accounts" | "source_documents";
 
 export type AgentMemorySummary = {
@@ -298,6 +304,18 @@ export async function getChatThread(
   }
 
   return fetchJson<ChatThreadWithMessages>(`${API_BASE}/threads/${threadId}?${params.toString()}`);
+}
+
+export async function deleteChatThread(
+  threadId: string,
+  entityId: string,
+): Promise<ChatThreadDeleteResponse> {
+  return fetchJson<ChatThreadDeleteResponse>(
+    `${API_BASE}/threads/${threadId}?entity_id=${encodeURIComponent(entityId)}`,
+    {
+      method: "DELETE",
+    },
+  );
 }
 
 export async function getChatThreadWorkspace(

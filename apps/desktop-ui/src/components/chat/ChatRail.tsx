@@ -31,6 +31,7 @@ import {
   type ToolSchemaField,
   ChatApiError,
   createChatThread,
+  deleteChatThread,
   getChatThread,
   getChatThreadWorkspace,
   listChatThreads,
@@ -54,6 +55,7 @@ export function ChatRail({
   const [workspace, setWorkspace] = useState<ChatThreadWorkspace | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isExpanded, setIsExpanded] = useState(true);
+  const [deletingThreadId, setDeletingThreadId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -143,11 +145,55 @@ export function ChatRail({
     }
   }, [closeRunId, entityId, loadThreadWorkspace]);
 
+  const handleDeleteThread = useCallback(
+    async (thread: ChatThreadSummary) => {
+      const confirmed = window.confirm(
+        `Delete "${thread.title ?? "Untitled thread"}"? This removes the full conversation history.`,
+      );
+      if (!confirmed) {
+        return;
+      }
+
+      setDeletingThreadId(thread.id);
+      try {
+        await deleteChatThread(thread.id, entityId);
+        const remainingThreads = threads.filter((candidate) => candidate.id !== thread.id);
+        setThreads(remainingThreads);
+        setError(null);
+
+        if (selectedThread?.id !== thread.id) {
+          return;
+        }
+
+        const nextThread = remainingThreads[0] ?? null;
+        if (nextThread === null) {
+          setSelectedThread(null);
+          setMessages([]);
+          setWorkspace(null);
+          return;
+        }
+        await loadThreadWorkspace(nextThread);
+      } catch (err: unknown) {
+        const apiError = err instanceof ChatApiError ? err : null;
+        if (apiError && apiError.status !== 401) {
+          setError("Failed to delete the selected chat thread.");
+        }
+      } finally {
+        setDeletingThreadId(null);
+      }
+    },
+    [entityId, loadThreadWorkspace, selectedThread, threads],
+  );
+
   const grounding = selectedThread?.grounding ?? workspace?.grounding ?? null;
   const panel = presentation === "workspace" ? (
     <div style={workbenchShellStyle}>
       <ThreadSidebar
+        deletingThreadId={deletingThreadId}
         threads={threads}
+        onDeleteThread={(thread) => {
+          void handleDeleteThread(thread);
+        }}
         selectedThreadId={selectedThread?.id ?? null}
         onCreateThread={() => {
           void handleCreateThread();
@@ -196,9 +242,13 @@ export function ChatRail({
       isExpanded={isExpanded}
       isLoading={isLoading}
       messages={messages}
+      deletingThreadId={deletingThreadId}
       onCollapse={() => setIsExpanded(false)}
       onCreateThread={() => {
         void handleCreateThread();
+      }}
+      onDeleteThread={(thread) => {
+        void handleDeleteThread(thread);
       }}
       onExpand={() => setIsExpanded(true)}
       onRefresh={() => {
@@ -219,6 +269,7 @@ export function ChatRail({
 
 type CompactRailProps = {
   closeRunId: string | undefined;
+  deletingThreadId: string | null;
   entityId: string;
   error: string | null;
   grounding: GroundingContext | null;
@@ -227,6 +278,7 @@ type CompactRailProps = {
   messages: ChatMessageRecord[];
   onCollapse: () => void;
   onCreateThread: () => void;
+  onDeleteThread: (thread: ChatThreadSummary) => void;
   onExpand: () => void;
   onRefresh: () => void;
   onSelectThread: (thread: ChatThreadSummary) => void;
@@ -238,6 +290,7 @@ type CompactRailProps = {
 
 function CompactRail({
   closeRunId,
+  deletingThreadId,
   entityId,
   error,
   grounding,
@@ -246,6 +299,7 @@ function CompactRail({
   messages,
   onCollapse,
   onCreateThread,
+  onDeleteThread,
   onExpand,
   onRefresh,
   onSelectThread,
@@ -286,7 +340,9 @@ function CompactRail({
 
       {selectedThread === null ? (
         <ThreadSidebar
+          deletingThreadId={deletingThreadId}
           threads={threads}
+          onDeleteThread={onDeleteThread}
           selectedThreadId={null}
           onCreateThread={onCreateThread}
           onSelectThread={onSelectThread}
@@ -315,14 +371,18 @@ function CompactRail({
 }
 
 type ThreadSidebarProps = {
+  deletingThreadId: string | null;
   onCreateThread: () => void;
+  onDeleteThread: (thread: ChatThreadSummary) => void;
   onSelectThread: (thread: ChatThreadSummary) => void;
   selectedThreadId: string | null;
   threads: ChatThreadSummary[];
 };
 
 function ThreadSidebar({
+  deletingThreadId,
   onCreateThread,
+  onDeleteThread,
   onSelectThread,
   selectedThreadId,
   threads,
@@ -350,22 +410,34 @@ function ThreadSidebar({
         <ul style={threadListStyle}>
           {threads.map((thread) => (
             <li key={thread.id}>
-              <button
-                onClick={() => onSelectThread(thread)}
-                style={
-                  thread.id === selectedThreadId
-                    ? { ...threadItemStyle, ...threadItemActiveStyle }
-                    : threadItemStyle
-                }
-                type="button"
-              >
-                <div style={{ display: "grid", gap: 4 }}>
-                  <span style={threadTitleStyle}>{thread.title ?? "Untitled thread"}</span>
-                  <span style={threadMetaStyle}>
-                    {thread.grounding.period_label ?? "Workspace scope"} · {thread.message_count} messages
-                  </span>
-                </div>
-              </button>
+              <div style={threadRowStyle}>
+                <button
+                  onClick={() => onSelectThread(thread)}
+                  style={
+                    thread.id === selectedThreadId
+                      ? { ...threadItemStyle, ...threadItemActiveStyle }
+                      : threadItemStyle
+                  }
+                  type="button"
+                >
+                  <div style={{ display: "grid", gap: 4 }}>
+                    <span style={threadTitleStyle}>{thread.title ?? "Untitled thread"}</span>
+                    <span style={threadMetaStyle}>
+                      {thread.grounding.period_label ?? "Workspace scope"} · {thread.message_count} messages
+                    </span>
+                  </div>
+                </button>
+                <button
+                  aria-label={`Delete ${thread.title ?? "thread"}`}
+                  disabled={deletingThreadId === thread.id}
+                  onClick={() => onDeleteThread(thread)}
+                  style={threadDeleteButtonStyle}
+                  title="Delete thread"
+                  type="button"
+                >
+                  x
+                </button>
+              </div>
             </li>
           ))}
         </ul>
@@ -992,6 +1064,13 @@ const threadListStyle: CSSProperties = {
   padding: 0,
 };
 
+const threadRowStyle: CSSProperties = {
+  alignItems: "stretch",
+  display: "grid",
+  gap: 8,
+  gridTemplateColumns: "minmax(0, 1fr) auto",
+};
+
 const threadItemStyle: CSSProperties = {
   background: "#172133",
   border: "1px solid #24324A",
@@ -1018,6 +1097,22 @@ const threadTitleStyle: CSSProperties = {
 const threadMetaStyle: CSSProperties = {
   color: "#94A4BD",
   fontSize: 12,
+};
+
+const threadDeleteButtonStyle: CSSProperties = {
+  alignItems: "center",
+  alignSelf: "stretch",
+  background: "rgba(242, 139, 130, 0.08)",
+  border: "1px solid rgba(242, 139, 130, 0.18)",
+  borderRadius: 12,
+  color: "#F28B82",
+  cursor: "pointer",
+  display: "inline-flex",
+  fontSize: 14,
+  fontWeight: 700,
+  justifyContent: "center",
+  minWidth: 40,
+  padding: "0 12px",
 };
 
 const messageListStyle: CSSProperties = {

@@ -11,15 +11,18 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date
 from enum import StrEnum
+from time import monotonic, sleep
 from typing import Any, Protocol
 from uuid import UUID, uuid4
 
 from services.auth.service import serialize_uuid
-from services.common.enums import DocumentStatus
+from services.common.enums import DocumentStatus, JobStatus
+from services.common.logging import get_logger
 from services.common.types import JsonObject
 from services.contracts.document_models import (
     AutoTransactionMatchSummary,
     BatchUploadDocumentsResponse,
+    DocumentDeleteResponse,
     DocumentExtractionSummary,
     DocumentIssueSummary,
     DocumentListResponse,
@@ -33,6 +36,7 @@ from services.db.models.audit import AuditSourceSurface
 from services.db.models.entity import EntityStatus
 from services.db.repositories.document_repo import (
     DocumentCloseRunAccessRecord,
+    DocumentDeletionPlan,
     DocumentExtractionRecord,
     DocumentIssueRecord,
     DocumentRecord,
@@ -45,10 +49,12 @@ from services.documents.transaction_matching import (
     extract_auto_review_metadata,
     extract_auto_transaction_match_metadata,
 )
-from services.jobs.service import JobRecord
+from services.jobs.service import JobRecord, JobServiceError, JobServiceErrorCode
 from services.jobs.task_names import TaskName
 from services.storage.checksums import compute_sha256_bytes
 from services.storage.repository import StorageRepository
+
+logger = get_logger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -75,12 +81,14 @@ class DocumentUploadServiceErrorCode(StrEnum):
     """Enumerate stable error codes surfaced by document upload workflows."""
 
     CLOSE_RUN_NOT_FOUND = "close_run_not_found"
+    DOCUMENT_NOT_FOUND = "document_not_found"
     DUPLICATE_UPLOAD = "duplicate_upload"
     ENTITY_ARCHIVED = "entity_archived"
     EMPTY_BATCH = "empty_batch"
     FILE_TOO_LARGE = "file_too_large"
     INTEGRITY_CONFLICT = "integrity_conflict"
     INVALID_FILENAME = "invalid_filename"
+    PROCESSING_IN_PROGRESS = "processing_in_progress"
     UNSUPPORTED_CONTENT = "unsupported_content"
 
 
@@ -152,6 +160,19 @@ class DocumentRepositoryProtocol(Protocol):
     ) -> None:
         """Persist one activity event."""
 
+    def get_document_deletion_plan_for_user(
+        self,
+        *,
+        entity_id: UUID,
+        close_run_id: UUID,
+        document_id: UUID,
+        user_id: UUID,
+    ) -> DocumentDeletionPlan | None:
+        """Return the delete plan for one accessible document subtree."""
+
+    def delete_document_tree(self, *, document_ids: tuple[UUID, ...]) -> None:
+        """Delete one document subtree after linked references are detached."""
+
     def commit(self) -> None:
         """Commit the current unit of work."""
 
@@ -176,6 +197,12 @@ class StorageRepositoryProtocol(Protocol):
         expected_sha256: str | None = None,
     ) -> SourceStorageMetadataProtocol:
         """Store one uploaded source document and return metadata with a storage reference."""
+
+    def delete_source_document(self, *, storage_key: str) -> None:
+        """Delete one uploaded source document from the canonical document bucket."""
+
+    def delete_derivative_object(self, *, object_key: str) -> None:
+        """Delete one derivative object from the canonical derivative bucket."""
 
 
 class SourceStorageReferenceProtocol(Protocol):
@@ -229,6 +256,19 @@ class JobServiceProtocol(Protocol):
     ) -> JobRecord:
         """Persist and dispatch one background job."""
 
+    def request_cancellation(
+        self,
+        *,
+        entity_id: UUID,
+        job_id: UUID,
+        actor_user_id: UUID,
+        reason: str,
+    ) -> JobRecord:
+        """Request cancellation for one queued, running, or blocked job."""
+
+    def get_job(self, *, job_id: UUID) -> JobRecord:
+        """Return one durable job record by UUID for post-cancel polling."""
+
 
 class TaskReceiptProtocol(Protocol):
     """Describe task-dispatch receipt fields consumed by upload responses."""
@@ -258,6 +298,8 @@ class DocumentUploadService:
     """Provide the canonical batch document upload workflow used by API routes."""
 
     max_file_size_bytes = 50 * 1024 * 1024
+    active_job_settle_timeout_seconds = 5.0
+    active_job_poll_interval_seconds = 0.1
 
     def __init__(
         self,
@@ -357,6 +399,91 @@ class DocumentUploadService:
             raise
 
         return BatchUploadDocumentsResponse(uploaded_documents=tuple(uploaded_documents))
+
+    def delete_document(
+        self,
+        *,
+        actor_user: EntityUserRecord,
+        entity_id: UUID,
+        close_run_id: UUID,
+        document_id: UUID,
+        source_surface: AuditSourceSurface,
+        trace_id: str | None,
+    ) -> DocumentDeleteResponse:
+        """Delete one accessible document subtree and clean its linked storage objects."""
+
+        access_record = self._require_close_run_access(
+            actor_user=actor_user,
+            entity_id=entity_id,
+            close_run_id=close_run_id,
+        )
+        deletion_plan = self._repository.get_document_deletion_plan_for_user(
+            entity_id=entity_id,
+            close_run_id=close_run_id,
+            document_id=document_id,
+            user_id=actor_user.id,
+        )
+        if deletion_plan is None:
+            raise DocumentUploadServiceError(
+                status_code=404,
+                code=DocumentUploadServiceErrorCode.DOCUMENT_NOT_FOUND,
+                message="The requested document was not found for this close run.",
+            )
+
+        canceled_job_count = self._cancel_document_jobs(
+            actor_user=actor_user,
+            access_record=access_record,
+            deletion_plan=deletion_plan,
+        )
+        self._wait_for_document_jobs_to_settle(
+            actor_user=actor_user,
+            access_record=access_record,
+            deletion_plan=deletion_plan,
+        )
+        try:
+            self._repository.delete_document_tree(
+                document_ids=tuple(document.id for document in deletion_plan.documents)
+            )
+            self._repository.create_activity_event(
+                entity_id=access_record.close_run.entity_id,
+                close_run_id=access_record.close_run.id,
+                actor_user_id=actor_user.id,
+                event_type="document.deleted",
+                source_surface=source_surface,
+                payload={
+                    "summary": (
+                        f"{actor_user.full_name} deleted "
+                        f"{deletion_plan.root_document.original_filename}."
+                    ),
+                    "deleted_document_id": serialize_uuid(deletion_plan.root_document.id),
+                    "deleted_document_filename": deletion_plan.root_document.original_filename,
+                    "deleted_document_count": len(deletion_plan.documents),
+                    "canceled_job_count": canceled_job_count,
+                },
+                trace_id=trace_id,
+            )
+            self._repository.commit()
+        except Exception as error:
+            self._repository.rollback()
+            if self._repository.is_integrity_error(error):
+                raise DocumentUploadServiceError(
+                    status_code=409,
+                    code=DocumentUploadServiceErrorCode.INTEGRITY_CONFLICT,
+                    message="The document could not be deleted because linked state changed.",
+                ) from error
+            raise
+
+        self._delete_document_storage_objects(
+            root_document_id=deletion_plan.root_document.id,
+            source_storage_keys=deletion_plan.source_storage_keys,
+            derivative_storage_keys=deletion_plan.derivative_storage_keys,
+        )
+        return DocumentDeleteResponse(
+            deleted_document_id=serialize_uuid(deletion_plan.root_document.id),
+            deleted_document_filename=deletion_plan.root_document.original_filename,
+            deleted_document_count=len(deletion_plan.documents),
+            canceled_job_count=canceled_job_count,
+        )
 
     def _upload_one_document(
         self,
@@ -536,6 +663,133 @@ class DocumentUploadService:
                 continue
             return document
         return None
+
+    def _cancel_document_jobs(
+        self,
+        *,
+        actor_user: EntityUserRecord,
+        access_record: DocumentCloseRunAccessRecord,
+        deletion_plan: DocumentDeletionPlan,
+    ) -> int:
+        """Cancel active linked jobs before their source documents are deleted."""
+
+        canceled_job_count = 0
+        for job_id in deletion_plan.active_job_ids:
+            try:
+                self._job_service.request_cancellation(
+                    entity_id=access_record.entity.id,
+                    job_id=job_id,
+                    actor_user_id=actor_user.id,
+                    reason=(
+                        "Execution stopped because the linked source document was deleted by an "
+                        "operator."
+                    ),
+                )
+                canceled_job_count += 1
+            except JobServiceError as error:
+                if error.code in {
+                    JobServiceErrorCode.CANCEL_NOT_ALLOWED,
+                    JobServiceErrorCode.JOB_NOT_FOUND,
+                }:
+                    logger.warning(
+                        "Document deletion skipped job cancellation because the job state changed.",
+                        job_id=serialize_uuid(job_id),
+                        document_id=serialize_uuid(deletion_plan.root_document.id),
+                        error_code=str(error.code),
+                    )
+                    continue
+                raise
+
+        return canceled_job_count
+
+    def _wait_for_document_jobs_to_settle(
+        self,
+        *,
+        actor_user: EntityUserRecord,
+        access_record: DocumentCloseRunAccessRecord,
+        deletion_plan: DocumentDeletionPlan,
+    ) -> None:
+        """Block deletion until linked active jobs become terminal or timeout explicitly."""
+
+        if not deletion_plan.active_job_ids:
+            return
+
+        deadline = monotonic() + self.active_job_settle_timeout_seconds
+        pending_job_ids = set(deletion_plan.active_job_ids)
+        active_statuses = {
+            JobStatus.QUEUED,
+            JobStatus.RUNNING,
+            JobStatus.BLOCKED,
+        }
+
+        while pending_job_ids:
+            completed_job_ids: list[UUID] = []
+            for job_id in pending_job_ids:
+                try:
+                    job = self._job_service.get_job(job_id=job_id)
+                except JobServiceError as error:
+                    if error.code is JobServiceErrorCode.JOB_NOT_FOUND:
+                        completed_job_ids.append(job_id)
+                        continue
+                    raise
+
+                if job.status not in active_statuses:
+                    completed_job_ids.append(job_id)
+
+            for job_id in completed_job_ids:
+                pending_job_ids.discard(job_id)
+
+            if not pending_job_ids:
+                return
+
+            if monotonic() >= deadline:
+                raise DocumentUploadServiceError(
+                    status_code=409,
+                    code=DocumentUploadServiceErrorCode.PROCESSING_IN_PROGRESS,
+                    message=(
+                        "The document is still finishing background processing. "
+                        "Retry deletion after processing stops."
+                    ),
+                )
+
+            logger.info(
+                "Document deletion is waiting for linked jobs to stop before removing rows.",
+                document_id=serialize_uuid(deletion_plan.root_document.id),
+                entity_id=serialize_uuid(access_record.entity.id),
+                actor_user_id=serialize_uuid(actor_user.id),
+                pending_job_ids=[
+                    serialize_uuid(job_id) for job_id in sorted(pending_job_ids, key=str)
+                ],
+            )
+            sleep(self.active_job_poll_interval_seconds)
+
+    def _delete_document_storage_objects(
+        self,
+        *,
+        root_document_id: UUID,
+        source_storage_keys: tuple[str, ...],
+        derivative_storage_keys: tuple[str, ...],
+    ) -> None:
+        """Delete storage objects after the DB transaction commits successfully."""
+
+        for storage_key in source_storage_keys:
+            try:
+                self._storage_repository.delete_source_document(storage_key=storage_key)
+            except Exception:
+                logger.exception(
+                    "Document deletion left a source object behind in storage.",
+                    document_id=serialize_uuid(root_document_id),
+                    storage_key=storage_key,
+                )
+        for object_key in derivative_storage_keys:
+            try:
+                self._storage_repository.delete_derivative_object(object_key=object_key)
+            except Exception:
+                logger.exception(
+                    "Document deletion left a derivative object behind in storage.",
+                    document_id=serialize_uuid(root_document_id),
+                    object_key=object_key,
+                )
 
 
 def _build_document_summary(

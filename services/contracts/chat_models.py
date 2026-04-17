@@ -202,6 +202,20 @@ class ChatThreadListResponse(ContractModel):
     )
 
 
+class ChatThreadDeleteResponse(ContractModel):
+    """Return the canonical result after deleting one chat thread."""
+
+    deleted_thread_id: str = Field(description="Stable UUID of the deleted thread.")
+    deleted_thread_title: str | None = Field(
+        default=None,
+        description="Human-readable title of the deleted thread, when present.",
+    )
+    deleted_message_count: int = Field(
+        ge=0,
+        description="Number of persisted messages deleted with the thread.",
+    )
+
+
 class AgentMemorySummary(ContractModel):
     """Describe the persisted working memory for one agent-scoped chat thread."""
 
@@ -432,6 +446,7 @@ __all__ = [
     "AgentTraceRecord",
     "ChatMessageRecord",
     "ChatMessageResponse",
+    "ChatThreadDeleteResponse",
     "ChatThreadListResponse",
     "ChatThreadSummary",
     "ChatThreadWithMessages",

@@ -23,6 +23,7 @@ from apps.worker.app.tasks.document_quality_checks import run_document_quality_c
 from services.common.enums import AutonomyMode, DocumentStatus, DocumentType
 from services.common.logging import get_logger
 from services.common.types import JsonObject
+from services.contracts.document_ai_models import DocumentParseAssistOutput
 from services.contracts.storage_models import CloseRunStorageScope, DerivativeKind
 from services.db.models.audit import AuditSourceSurface
 from services.db.models.documents import Document
@@ -30,6 +31,7 @@ from services.db.models.extractions import DocumentExtraction, DocumentLineItem,
 from services.db.repositories.document_repo import DocumentRepository, ParseDocumentRecord
 from services.db.repositories.entity_repo import EntityRepository
 from services.db.session import get_session_factory
+from services.documents.ai_assist import run_document_parse_assist
 from services.documents.transaction_matching import update_extraction_auto_review_payload
 from services.extraction.field_extractors import (
     compute_confidence_summary,
@@ -51,8 +53,14 @@ from services.storage.repository import StorageRepository
 logger = get_logger(__name__)
 
 _DATE_PATTERN = re.compile(r"\b\d{4}-\d{2}-\d{2}\b|\b\d{2}[/-]\d{2}[/-]\d{4}\b")
+_DATE_CAPTURE_PATTERN = r"(\d{4}-\d{2}-\d{2}|\d{2}[/-]\d{2}[/-]\d{4})"
+_AMOUNT_CAPTURE_PATTERN = r"(-?\d[\d,]*\.?\d*)"
 _CURRENCY_PATTERN = re.compile(r"\b(NGN|USD|GBP|EUR|CAD|AUD|ZAR)\b", re.IGNORECASE)
 _GENERIC_TABLE_COLUMN_PATTERN = re.compile(r"^column_(\d+)$")
+_EXPLICIT_DOCUMENT_TYPE_PATTERN = re.compile(
+    r"\bdocument\s+type\s*[:#-]?\s*(invoice|bank\s+statement|pay\s*slip|payslip|receipt|contract)\b",
+    re.IGNORECASE,
+)
 _TEXT_FIELD_PATTERNS: dict[str, tuple[re.Pattern[str], ...]] = {
     "invoice_number": (
         re.compile(r"\binvoice\s*(?:number|no\.?|#)\s*[:#-]?\s*([A-Z0-9./-]+)", re.IGNORECASE),
@@ -66,25 +74,100 @@ _TEXT_FIELD_PATTERNS: dict[str, tuple[re.Pattern[str], ...]] = {
         re.compile(r"\bcontract\s*(?:number|no\.?|#)\s*[:#-]?\s*([A-Z0-9./-]+)", re.IGNORECASE),
     ),
     "vendor_name": (
-        re.compile(r"\b(?:vendor|supplier|payee)\s*[:#-]?\s*(.+)", re.IGNORECASE),
+        re.compile(r"\b(?:vendor|supplier|payee)\s*[:#-]?\s*([^\n]+)", re.IGNORECASE),
+    ),
+    "vendor_address": (
+        re.compile(r"\bvendor\s+address\s*[:#-]?\s*([^\n]+)", re.IGNORECASE),
+    ),
+    "vendor_tax_id": (
+        re.compile(r"\bvendor\s+tax\s+id\s*[:#-]?\s*([^\n]+)", re.IGNORECASE),
     ),
     "customer_name": (
-        re.compile(r"\bcustomer\s*[:#-]?\s*(.+)", re.IGNORECASE),
+        re.compile(r"\bcustomer\s*[:#-]?\s*([^\n]+)", re.IGNORECASE),
+    ),
+    "customer_tax_id": (
+        re.compile(r"\bcustomer\s+tax\s+id\s*[:#-]?\s*([^\n]+)", re.IGNORECASE),
+    ),
+    "invoice_date": (
+        re.compile(rf"\binvoice\s+date\s*[:#-]?\s*{_DATE_CAPTURE_PATTERN}", re.IGNORECASE),
+    ),
+    "due_date": (
+        re.compile(rf"\bdue\s+date\s*[:#-]?\s*{_DATE_CAPTURE_PATTERN}", re.IGNORECASE),
+    ),
+    "subtotal": (
+        re.compile(rf"\bsubtotal\s*[:#-]?\s*{_AMOUNT_CAPTURE_PATTERN}", re.IGNORECASE),
+    ),
+    "tax_amount": (
+        re.compile(rf"\b(?:tax|vat)\s+amount\s*[:#-]?\s*{_AMOUNT_CAPTURE_PATTERN}", re.IGNORECASE),
+    ),
+    "tax_rate": (
+        re.compile(rf"\b(?:tax|vat)\s+rate\s*[:#-]?\s*{_AMOUNT_CAPTURE_PATTERN}", re.IGNORECASE),
+    ),
+    "discount_amount": (
+        re.compile(rf"\bdiscount\s+amount\s*[:#-]?\s*{_AMOUNT_CAPTURE_PATTERN}", re.IGNORECASE),
+    ),
+    "total": (
+        re.compile(rf"\btotal\s*[:#-]?\s*{_AMOUNT_CAPTURE_PATTERN}", re.IGNORECASE),
+    ),
+    "payment_terms": (
+        re.compile(r"\bpayment\s+terms\s*[:#-]?\s*([^\n]+)", re.IGNORECASE),
+    ),
+    "notes": (
+        re.compile(r"\bnotes?\s*[:#-]?\s*([^\n]+)", re.IGNORECASE),
     ),
     "employee_name": (
-        re.compile(r"\bemployee\s*(?:name)?\s*[:#-]?\s*(.+)", re.IGNORECASE),
+        re.compile(r"\bemployee\s*(?:name)?\s*[:#-]?\s*([^\n]+)", re.IGNORECASE),
     ),
     "employee_id": (
         re.compile(r"\bemployee\s*(?:id|number|no\.?)\s*[:#-]?\s*([A-Z0-9./-]+)", re.IGNORECASE),
     ),
     "employer_name": (
-        re.compile(r"\bemployer\s*(?:name)?\s*[:#-]?\s*(.+)", re.IGNORECASE),
+        re.compile(r"\bemployer\s*(?:name)?\s*[:#-]?\s*([^\n]+)", re.IGNORECASE),
+    ),
+    "pay_period_start": (
+        re.compile(
+            rf"\b(?:pay\s+period\s+start|pay\s+period\s+from|period\s+start)\s*[:#-]?\s*{_DATE_CAPTURE_PATTERN}",
+            re.IGNORECASE,
+        ),
+    ),
+    "pay_period_end": (
+        re.compile(
+            rf"\b(?:pay\s+period\s+end|pay\s+period\s+to|period\s+end)\s*[:#-]?\s*{_DATE_CAPTURE_PATTERN}",
+            re.IGNORECASE,
+        ),
+    ),
+    "pay_date": (
+        re.compile(rf"\bpay\s+date\s*[:#-]?\s*{_DATE_CAPTURE_PATTERN}", re.IGNORECASE),
+    ),
+    "basic_salary": (
+        re.compile(rf"\bbasic\s+salary\s*[:#-]?\s*{_AMOUNT_CAPTURE_PATTERN}", re.IGNORECASE),
+    ),
+    "allowances": (
+        re.compile(rf"\ballowances?\s*[:#-]?\s*{_AMOUNT_CAPTURE_PATTERN}", re.IGNORECASE),
+    ),
+    "deductions": (
+        re.compile(rf"\bdeductions?\s*[:#-]?\s*{_AMOUNT_CAPTURE_PATTERN}", re.IGNORECASE),
+    ),
+    "gross_pay": (
+        re.compile(rf"\bgross\s+pay\s*[:#-]?\s*{_AMOUNT_CAPTURE_PATTERN}", re.IGNORECASE),
+    ),
+    "net_pay": (
+        re.compile(rf"\bnet\s+pay\s*[:#-]?\s*{_AMOUNT_CAPTURE_PATTERN}", re.IGNORECASE),
+    ),
+    "paye_tax": (
+        re.compile(rf"\bpaye\s+tax\s*[:#-]?\s*{_AMOUNT_CAPTURE_PATTERN}", re.IGNORECASE),
+    ),
+    "pension_contribution": (
+        re.compile(
+            rf"\bpension\s+contribution\s*[:#-]?\s*{_AMOUNT_CAPTURE_PATTERN}",
+            re.IGNORECASE,
+        ),
     ),
     "bank_name": (
-        re.compile(r"\bbank\s+name\s*[:#-]?\s*(.+)", re.IGNORECASE),
+        re.compile(r"\bbank\s+name\s*[:#-]?\s*([^\n]+)", re.IGNORECASE),
     ),
     "account_name": (
-        re.compile(r"\baccount\s*name\s*[:#-]?\s*(.+)", re.IGNORECASE),
+        re.compile(r"\baccount\s*name\s*[:#-]?\s*([^\n]+)", re.IGNORECASE),
     ),
     "account_number": (
         re.compile(r"\baccount\s*(?:number|no\.?)\s*[:#-]?\s*([A-Z0-9./-]+)", re.IGNORECASE),
@@ -128,10 +211,43 @@ _TEXT_FIELD_PATTERNS: dict[str, tuple[re.Pattern[str], ...]] = {
         ),
     ),
     "party_a_name": (
-        re.compile(r"\bparty\s*a\s*[:#-]?\s*(.+)", re.IGNORECASE),
+        re.compile(r"\bparty\s*a\s*[:#-]?\s*([^\n]+)", re.IGNORECASE),
     ),
     "party_b_name": (
-        re.compile(r"\bparty\s*b\s*[:#-]?\s*(.+)", re.IGNORECASE),
+        re.compile(r"\bparty\s*b\s*[:#-]?\s*([^\n]+)", re.IGNORECASE),
+    ),
+    "receipt_date": (
+        re.compile(rf"\breceipt\s+date\s*[:#-]?\s*{_DATE_CAPTURE_PATTERN}", re.IGNORECASE),
+    ),
+    "payment_method": (
+        re.compile(r"\bpayment\s+method\s*[:#-]?\s*([^\n]+)", re.IGNORECASE),
+    ),
+    "contract_date": (
+        re.compile(rf"\bcontract\s+date\s*[:#-]?\s*{_DATE_CAPTURE_PATTERN}", re.IGNORECASE),
+    ),
+    "effective_date": (
+        re.compile(rf"\beffective\s+date\s*[:#-]?\s*{_DATE_CAPTURE_PATTERN}", re.IGNORECASE),
+    ),
+    "expiration_date": (
+        re.compile(
+            rf"\b(?:expiration|expiry)\s+date\s*[:#-]?\s*{_DATE_CAPTURE_PATTERN}",
+            re.IGNORECASE,
+        ),
+    ),
+    "contract_value": (
+        re.compile(rf"\bcontract\s+value\s*[:#-]?\s*{_AMOUNT_CAPTURE_PATTERN}", re.IGNORECASE),
+    ),
+    "contract_type": (
+        re.compile(r"\bcontract\s+type\s*[:#-]?\s*([^\n]+)", re.IGNORECASE),
+    ),
+    "terms": (
+        re.compile(r"(?mi)^terms\s*[:#-]?\s*([^\n]+)"),
+    ),
+    "renewal_terms": (
+        re.compile(r"(?mi)^renewal\s+terms\s*[:#-]?\s*([^\n]+)"),
+    ),
+    "termination_terms": (
+        re.compile(r"(?mi)^termination\s+terms\s*[:#-]?\s*([^\n]+)"),
     ),
 }
 _COLUMN_ALIASES_BY_FIELD: dict[str, tuple[str, ...]] = {
@@ -210,6 +326,122 @@ _RECONCILIATION_RECOMMENDATION_ELIGIBLE_TYPES = frozenset(
         DocumentType.BANK_STATEMENT,
         DocumentType.PAYSLIP,
         DocumentType.RECEIPT,
+    }
+)
+_AI_ASSIST_ELIGIBLE_FIELDS_BY_DOCUMENT_TYPE: dict[DocumentType, frozenset[str]] = {
+    DocumentType.INVOICE: frozenset(
+        {
+            "vendor_name",
+            "vendor_address",
+            "vendor_tax_id",
+            "customer_name",
+            "customer_tax_id",
+            "invoice_number",
+            "invoice_date",
+            "due_date",
+            "currency",
+            "subtotal",
+            "tax_amount",
+            "tax_rate",
+            "discount_amount",
+            "total",
+            "payment_terms",
+            "notes",
+        }
+    ),
+    DocumentType.BANK_STATEMENT: frozenset(
+        {
+            "bank_name",
+            "account_number",
+            "account_name",
+            "statement_start_date",
+            "statement_end_date",
+            "opening_balance",
+            "closing_balance",
+            "total_credits",
+            "total_debits",
+            "currency",
+        }
+    ),
+    DocumentType.PAYSLIP: frozenset(
+        {
+            "employee_name",
+            "employee_id",
+            "employer_name",
+            "pay_period_start",
+            "pay_period_end",
+            "pay_date",
+            "basic_salary",
+            "allowances",
+            "deductions",
+            "gross_pay",
+            "net_pay",
+            "currency",
+            "paye_tax",
+            "pension_contribution",
+        }
+    ),
+    DocumentType.RECEIPT: frozenset(
+        {
+            "receipt_number",
+            "receipt_date",
+            "vendor_name",
+            "vendor_tax_id",
+            "customer_name",
+            "currency",
+            "subtotal",
+            "tax_amount",
+            "total",
+            "payment_method",
+        }
+    ),
+    DocumentType.CONTRACT: frozenset(
+        {
+            "contract_number",
+            "contract_date",
+            "effective_date",
+            "expiration_date",
+            "party_a_name",
+            "party_b_name",
+            "contract_value",
+            "currency",
+            "contract_type",
+            "terms",
+            "renewal_terms",
+            "termination_terms",
+        }
+    ),
+}
+_AI_ASSIST_REPLACEABLE_FIELDS = frozenset(
+    {
+        "invoice_date",
+        "due_date",
+        "subtotal",
+        "tax_amount",
+        "tax_rate",
+        "discount_amount",
+        "total",
+        "statement_start_date",
+        "statement_end_date",
+        "opening_balance",
+        "closing_balance",
+        "total_credits",
+        "total_debits",
+        "pay_period_start",
+        "pay_period_end",
+        "pay_date",
+        "basic_salary",
+        "allowances",
+        "deductions",
+        "gross_pay",
+        "net_pay",
+        "paye_tax",
+        "pension_contribution",
+        "receipt_date",
+        "contract_date",
+        "effective_date",
+        "expiration_date",
+        "contract_value",
     }
 )
 
@@ -306,6 +538,7 @@ def _derive_document_classification(
 ) -> tuple[DocumentType, float | None]:
     """Infer the best-effort document type and confidence from parser output."""
 
+    explicit_type = _extract_explicit_document_type_hint(raw_parse_payload=raw_parse_payload)
     split_candidates = raw_parse_payload.get("split_candidates")
     if isinstance(split_candidates, list) and split_candidates:
         ranked_candidates = sorted(
@@ -318,14 +551,33 @@ def _derive_document_classification(
             key=lambda candidate: float(candidate.get("confidence") or 0.0),
             reverse=True,
         )
+        candidate_types = []
+        for candidate in ranked_candidates:
+            try:
+                candidate_type = DocumentType(str(candidate["document_type_hint"]))
+            except ValueError:
+                continue
+            candidate_types.append(candidate_type)
+
         for candidate in ranked_candidates:
             try:
                 candidate_type = DocumentType(str(candidate["document_type_hint"]))
             except ValueError:
                 continue
             if candidate_type is not DocumentType.UNKNOWN:
+                if (
+                    explicit_type is not None
+                    and all(
+                        inferred_type in {DocumentType.UNKNOWN, explicit_type}
+                        for inferred_type in candidate_types
+                    )
+                ):
+                    return explicit_type, 0.96
                 confidence = float(candidate.get("confidence") or 0.0)
                 return candidate_type, confidence
+
+    if explicit_type is not None:
+        return explicit_type, 0.96
 
     raw_text = raw_parse_payload.get("text")
     if isinstance(raw_text, str) and raw_text.strip():
@@ -346,6 +598,142 @@ def _derive_document_classification(
                 return inferred_type, 0.55
 
     return DocumentType.UNKNOWN, None
+
+
+def _extract_explicit_document_type_hint(*, raw_parse_payload: JsonObject) -> DocumentType | None:
+    """Read one explicit document-type label from parser text when present."""
+
+    tables = raw_parse_payload.get("tables")
+    if isinstance(tables, list):
+        for table in tables:
+            if not isinstance(table, dict):
+                continue
+            raw_rows = table.get("rows")
+            if not isinstance(raw_rows, list):
+                continue
+            for raw_row in raw_rows[:3]:
+                if not isinstance(raw_row, dict):
+                    continue
+                for key, value in raw_row.items():
+                    if _normalize_column_key(str(key)) not in {
+                        "document_type",
+                        "doc_type",
+                        "doctype",
+                    }:
+                        continue
+                    explicit_type = _document_type_from_explicit_label(str(value))
+                    if explicit_type is not None:
+                        return explicit_type
+
+    parser_text = _collect_parser_text(raw_parse_payload=raw_parse_payload)
+    if not parser_text:
+        return None
+
+    match = _EXPLICIT_DOCUMENT_TYPE_PATTERN.search(parser_text)
+    if match is None:
+        return None
+
+    return _document_type_from_explicit_label(match.group(1))
+
+
+def _document_type_from_explicit_label(value: str) -> DocumentType | None:
+    """Map one explicit document-type label into the canonical enum."""
+
+    normalized_label = re.sub(r"\s+", " ", value.strip().lower())
+    if normalized_label == "invoice":
+        return DocumentType.INVOICE
+    if normalized_label == "bank statement":
+        return DocumentType.BANK_STATEMENT
+    if normalized_label in {"payslip", "pay slip"}:
+        return DocumentType.PAYSLIP
+    if normalized_label == "receipt":
+        return DocumentType.RECEIPT
+    if normalized_label == "contract":
+        return DocumentType.CONTRACT
+    return None
+
+
+def _merge_document_ai_classification(
+    *,
+    deterministic_document_type: DocumentType,
+    deterministic_classification_confidence: float | None,
+    assist_output: DocumentParseAssistOutput | None,
+) -> tuple[DocumentType, float | None, bool]:
+    """Choose the canonical document type after optional LLM assistance."""
+
+    if assist_output is None:
+        return deterministic_document_type, deterministic_classification_confidence, False
+
+    if assist_output.predicted_type is deterministic_document_type:
+        if deterministic_classification_confidence is None:
+            return assist_output.predicted_type, assist_output.classification_confidence, True
+        return (
+            deterministic_document_type,
+            max(deterministic_classification_confidence, assist_output.classification_confidence),
+            assist_output.classification_confidence > deterministic_classification_confidence,
+        )
+
+    if deterministic_document_type is DocumentType.UNKNOWN:
+        return assist_output.predicted_type, assist_output.classification_confidence, True
+
+    if (
+        assist_output.classification_confidence >= 0.9
+        and (
+            deterministic_classification_confidence is None
+            or deterministic_classification_confidence < 0.85
+        )
+    ):
+        return assist_output.predicted_type, assist_output.classification_confidence, True
+
+    return deterministic_document_type, deterministic_classification_confidence, False
+
+
+def _apply_document_ai_assist_to_parser_output(
+    *,
+    parser_output: dict[str, Any],
+    document_type: DocumentType,
+    assist_output: DocumentParseAssistOutput | None,
+) -> list[str]:
+    """Merge safe model-provided field candidates into one parser output payload."""
+
+    if assist_output is None:
+        return []
+
+    allowed_fields = _AI_ASSIST_ELIGIBLE_FIELDS_BY_DOCUMENT_TYPE.get(document_type)
+    if not allowed_fields:
+        return []
+
+    raw_fields = parser_output.setdefault("fields", {})
+    if not isinstance(raw_fields, dict):
+        return []
+    field_locations = parser_output.setdefault("field_locations", {})
+    if not isinstance(field_locations, dict):
+        return []
+
+    applied_fields: list[str] = []
+    for candidate in assist_output.field_candidates:
+        field_name = candidate.field_name
+        if field_name not in allowed_fields:
+            continue
+
+        candidate_value = str(candidate.value).strip()
+        if not candidate_value:
+            continue
+
+        existing_value = raw_fields.get(field_name)
+        should_replace = existing_value in {None, ""} or (
+            field_name in _AI_ASSIST_REPLACEABLE_FIELDS and candidate.confidence >= 0.85
+        )
+        if not should_replace:
+            continue
+
+        raw_fields[field_name] = candidate_value
+        raw_fields[f"{field_name}_confidence"] = round(candidate.confidence, 4)
+        if candidate.evidence_quote:
+            field_locations[field_name] = {"snippet": candidate.evidence_quote}
+        applied_fields.append(field_name)
+
+    return applied_fields
 
 
 def _derive_document_period(
@@ -626,7 +1014,7 @@ def _normalize_pdf_delimited_table_rows(
             continue
         normalized_row: dict[str, str] = {}
         value_by_column_key = dict(ordered_values)
-        for (column_key, _), header_name in zip(ordered_headers, header_names):
+        for (column_key, _), header_name in zip(ordered_headers, header_names, strict=False):
             if not header_name:
                 continue
             cell_value = value_by_column_key.get(column_key, "")
@@ -710,20 +1098,10 @@ def _resolve_field_value(
                 if value:
                     return value
 
-    if field_name.endswith("_date"):
-        match = _DATE_PATTERN.search(text)
-        if match:
-            return match.group(0)
-
     if field_name == "currency":
         match = _CURRENCY_PATTERN.search(text)
         if match:
             return match.group(1).upper()
-
-    if field_name in {"total", "subtotal", "tax_amount", "gross_pay", "net_pay", "contract_value"}:
-        amount = _extract_amount_from_text(text)
-        if amount is not None:
-            return amount
 
     return None
 
@@ -874,7 +1252,37 @@ def _post_process_parsed_document(
 ) -> dict[str, object]:
     """Complete classification, extraction, and collection-phase quality checks."""
 
-    document_type, classification_confidence = _derive_document_classification(raw_parse_payload)
+    deterministic_document_type, deterministic_classification_confidence = (
+        _derive_document_classification(raw_parse_payload)
+    )
+    provisional_parser_output: dict[str, Any] | None = None
+    if deterministic_document_type is not DocumentType.UNKNOWN:
+        provisional_parser_output = _build_extraction_parser_output(
+            raw_parse_payload=raw_parse_payload,
+            document_type=deterministic_document_type,
+        )
+
+    assist_output = run_document_parse_assist(
+        filename=parse_record.document.original_filename,
+        raw_parse_payload=raw_parse_payload,
+        deterministic_document_type=deterministic_document_type,
+        deterministic_classification_confidence=deterministic_classification_confidence,
+        close_run_period_start=parse_record.close_run.period_start.isoformat(),
+        close_run_period_end=parse_record.close_run.period_end.isoformat(),
+        current_field_hints=(
+            provisional_parser_output.get("fields")
+            if isinstance(provisional_parser_output, dict)
+            else None
+        ),
+    )
+    document_type, classification_confidence, ai_assist_applied_classification = (
+        _merge_document_ai_classification(
+            deterministic_document_type=deterministic_document_type,
+            deterministic_classification_confidence=deterministic_classification_confidence,
+            assist_output=assist_output,
+        )
+    )
+    ai_assist_field_count = 0
     extraction_created = False
     needs_review = False
     quality_issue_count = 0
@@ -921,20 +1329,33 @@ def _post_process_parsed_document(
                         raw_parse_payload=raw_parse_payload,
                         document_type=document_type,
                     )
+                    ai_assist_fields_applied = _apply_document_ai_assist_to_parser_output(
+                        parser_output=parser_output,
+                        document_type=document_type,
+                        assist_output=assist_output,
+                    )
+                    ai_assist_field_count = len(ai_assist_fields_applied)
                     fields = extract_fields_by_document_type(document_type, parser_output)
                     confidence_summary = compute_confidence_summary(fields)
                     needs_review = confidence_summary.low_confidence_fields > 0
+                    extracted_payload: dict[str, Any] = {
+                        "fields": [field.model_dump(mode="json") for field in fields],
+                        "parser_output": parser_output,
+                        "raw_parse_payload": raw_parse_payload,
+                    }
+                    if assist_output is not None:
+                        extracted_payload["ai_assist"] = {
+                            "result": assist_output.model_dump(mode="json"),
+                            "classification_applied": ai_assist_applied_classification,
+                            "field_candidates_applied": ai_assist_fields_applied,
+                        }
                     extraction = DocumentExtraction(
                         id=parse_record.document.id,
                         document_id=parse_record.document.id,
                         version_no=1,
                         schema_name=document_type.value,
                         schema_version="1.0.0",
-                        extracted_payload={
-                            "fields": [field.model_dump(mode="json") for field in fields],
-                            "parser_output": parser_output,
-                            "raw_parse_payload": raw_parse_payload,
-                        },
+                        extracted_payload=extracted_payload,
                         confidence_summary=confidence_summary.model_dump(mode="json"),
                         needs_review=needs_review,
                     )
@@ -1090,6 +1511,8 @@ def _post_process_parsed_document(
                     "document_id": str(parse_record.document.id),
                     "document_type": document.document_type,
                     "classification_confidence": classification_confidence,
+                    "ai_assist_applied_classification": ai_assist_applied_classification,
+                    "ai_assist_field_count": ai_assist_field_count,
                     "auto_approved": auto_approved,
                     "extraction_created": extraction_created,
                     "issue_count": quality_issue_count,
@@ -1254,6 +1677,7 @@ def _run_parse_document_task(
             repository.rollback()
             raise
 
+    job_context.ensure_not_canceled()
     post_processing_result = _post_process_parsed_document(
         parse_record=parse_record,
         raw_parse_payload=result.raw_parse_payload,

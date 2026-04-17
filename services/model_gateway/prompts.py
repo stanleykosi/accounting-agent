@@ -94,6 +94,20 @@ _ACCOUNTING_REASONING_SYSTEM_PROMPT = (
     "- Always respond with ONLY valid JSON. No prose, no markdown fences."
 )
 
+_DOCUMENT_EXTRACTION_ASSIST_SYSTEM_PROMPT = (
+    "You are a document parsing assistant embedded in an enterprise-grade Accounting AI Agent. "
+    "You help classify accounting documents and recover top-level fields from parser text and "
+    "OCR output, but you do not replace the deterministic parser.\n\n"
+    "IMPORTANT CONSTRAINTS:\n"
+    "- Use only the provided parser text, OCR text, and table preview.\n"
+    "- Prefer explicitly labeled values over inferred values.\n"
+    "- Never derive amounts or dates from document IDs, reference numbers, or unrelated digits.\n"
+    "- If a field is ambiguous, omit it instead of guessing.\n"
+    "- Return only supported canonical field names.\n"
+    "- Your output must be valid JSON that exactly matches the provided schema.\n"
+    "- Always respond with ONLY valid JSON. No prose, no markdown fences."
+)
+
 # ---------------------------------------------------------------------------
 # Prompt templates
 # ---------------------------------------------------------------------------
@@ -264,6 +278,51 @@ COMMENTARY_ENHANCE_PROMPT = PromptTemplate(
     ),
 )
 
+DOCUMENT_PARSE_ASSIST_PROMPT = PromptTemplate(
+    template_id="document_parse_assist",
+    version="1.0.0",
+    system_prompt=_DOCUMENT_EXTRACTION_ASSIST_SYSTEM_PROMPT,
+    user_prompt_template=(
+        "Review the parsed accounting document below and return bounded classification plus "
+        "top-level field candidates.\n\n"
+        "Document context:\n"
+        "- Filename: {filename}\n"
+        "- OCR required: {ocr_required}\n"
+        "- Deterministic document type: {deterministic_type}\n"
+        "- Deterministic classification confidence: {deterministic_confidence}\n"
+        "- Close run period: {period_start} to {period_end}\n"
+        "- Current deterministic field hints: {current_field_hints}\n\n"
+        "Available document types: {available_types}\n"
+        "Canonical field names by document type: {field_name_reference}\n\n"
+        "Parsed text excerpt:\n{text_excerpt}\n\n"
+        "Parsed table preview:\n{table_preview}\n\n"
+        "Return a JSON object with:\n"
+        "- 'predicted_type': one available document type\n"
+        "- 'classification_confidence': float 0.0-1.0\n"
+        "- 'classification_reasoning': brief explanation grounded in the evidence\n"
+        "- 'field_candidates': list of field candidates with canonical field_name, value, "
+        "confidence, and evidence_quote\n\n"
+        "Only include field candidates that are directly supported by the evidence."
+    ),
+    description=(
+        "Assist document parsing by improving classification confidence and recovering "
+        "top-level fields from low-structure parser text."
+    ),
+    required_variables=(
+        "filename",
+        "ocr_required",
+        "deterministic_type",
+        "deterministic_confidence",
+        "period_start",
+        "period_end",
+        "current_field_hints",
+        "available_types",
+        "field_name_reference",
+        "text_excerpt",
+        "table_preview",
+    ),
+)
+
 
 # ---------------------------------------------------------------------------
 # Registry lookup
@@ -273,6 +332,7 @@ _PROMPT_REGISTRY: dict[str, PromptTemplate] = {
     template.template_id: template
     for template in (
         DOCUMENT_CLASSIFICATION_PROMPT,
+        DOCUMENT_PARSE_ASSIST_PROMPT,
         GL_CODING_EXPLANATION_PROMPT,
         AMBIGUOUS_MAPPING_RANKING_PROMPT,
         JOURNAL_NARRATIVE_PROMPT,
@@ -311,6 +371,7 @@ __all__ = [
     "AMBIGUOUS_MAPPING_RANKING_PROMPT",
     "COMMENTARY_ENHANCE_PROMPT",
     "DOCUMENT_CLASSIFICATION_PROMPT",
+    "DOCUMENT_PARSE_ASSIST_PROMPT",
     "GL_CODING_EXPLANATION_PROMPT",
     "JOURNAL_NARRATIVE_PROMPT",
     "PromptRegistryError",

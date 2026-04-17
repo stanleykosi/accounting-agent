@@ -23,6 +23,7 @@ from services.chat.grounding import (
 from services.contracts.chat_models import (
     ChatMessageRecord,
     ChatMessageResponse,
+    ChatThreadDeleteResponse,
     ChatThreadListResponse,
     ChatThreadSummary,
     ChatThreadWithMessages,
@@ -134,6 +135,14 @@ class ChatRepositoryProtocol(Protocol):
 
     def get_last_message_time_for_thread(self, *, thread_id: UUID) -> Any:
         """Return the timestamp of the most recent message in a thread."""
+
+    def delete_thread(
+        self,
+        *,
+        thread_id: UUID,
+        entity_id: UUID,
+    ) -> bool:
+        """Delete one thread when it belongs to the specified entity."""
 
     def commit(self) -> None:
         """Commit the current transaction."""
@@ -291,6 +300,50 @@ class ChatService:
         return ChatThreadWithMessages(
             thread=thread_summary,
             messages=message_records,
+        )
+
+    def delete_thread(
+        self,
+        *,
+        thread_id: UUID,
+        entity_id: UUID,
+        user_id: UUID,
+    ) -> ChatThreadDeleteResponse:
+        """Delete one accessible chat thread and its message history."""
+
+        self._require_entity_membership(entity_id=entity_id, user_id=user_id)
+        thread = self._repository.get_thread_for_entity(
+            thread_id=thread_id,
+            entity_id=entity_id,
+        )
+        if thread is None:
+            raise ChatServiceError(
+                status_code=404,
+                code=ChatServiceErrorCode.THREAD_NOT_FOUND,
+                message="That chat thread does not exist or is not in this workspace.",
+            )
+
+        message_count = self._repository.get_message_count_for_thread(thread_id=thread_id)
+        try:
+            deleted = self._repository.delete_thread(thread_id=thread_id, entity_id=entity_id)
+            if not deleted:
+                raise ChatServiceError(
+                    status_code=404,
+                    code=ChatServiceErrorCode.THREAD_NOT_FOUND,
+                    message="That chat thread does not exist or is not in this workspace.",
+                )
+            self._repository.commit()
+        except ChatServiceError:
+            self._repository.rollback()
+            raise
+        except Exception:
+            self._repository.rollback()
+            raise
+
+        return ChatThreadDeleteResponse(
+            deleted_thread_id=serialize_uuid(thread.id),
+            deleted_thread_title=thread.title,
+            deleted_message_count=message_count,
         )
 
     def send_message(

@@ -111,6 +111,26 @@ class ChatRepository:
 
         return _map_thread(thread)
 
+    def delete_thread(
+        self,
+        *,
+        thread_id: UUID,
+        entity_id: UUID,
+    ) -> bool:
+        """Delete one thread when it belongs to the specified entity."""
+
+        statement = select(ChatThread).where(
+            ChatThread.id == thread_id,
+            ChatThread.entity_id == entity_id,
+        )
+        thread = self._db_session.execute(statement).scalar_one_or_none()
+        if thread is None:
+            return False
+
+        self._db_session.delete(thread)
+        self._db_session.flush()
+        return True
+
     def update_thread_context(
         self,
         *,

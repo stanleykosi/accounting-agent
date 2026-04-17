@@ -39,6 +39,19 @@ export async function POST(
   return proxyChatRequest(request, context);
 }
 
+/**
+ * Purpose: Proxy DELETE chat requests such as thread deletion to the FastAPI chat API.
+ * Inputs: The incoming Next.js request and the requested chat route segments.
+ * Outputs: The backend chat response with cookies and JSON forwarded to the browser.
+ * Behavior: Keeps destructive chat actions same-origin while using the canonical backend routes.
+ */
+export async function DELETE(
+  request: Request,
+  context: ChatProxyRouteContext,
+): Promise<Response> {
+  return proxyChatRequest(request, context);
+}
+
 async function proxyChatRequest(
   request: Request,
   context: ChatProxyRouteContext,

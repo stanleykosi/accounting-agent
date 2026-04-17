@@ -32,6 +32,7 @@ import {
 import {
   EntityApiError,
   createEntityMembership,
+  deleteEntityWorkspace,
   readEntityWorkspace,
   updateEntity,
   updateEntityMembership,
@@ -265,6 +266,30 @@ export default function EntityWorkspacePage({
     });
   };
 
+  const handleDeleteWorkspace = (): void => {
+    if (entity === null) {
+      return;
+    }
+    const confirmed = window.confirm(
+      `Delete ${entity.name}? This permanently removes the workspace, its close runs, documents, chat threads, and generated outputs.`,
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    setEntityErrorMessage(null);
+    startTransition(() => {
+      void deleteEntityWorkspace(entity.id)
+        .then(() => {
+          router.push("/entities");
+          router.refresh();
+        })
+        .catch((error: unknown) => {
+          setEntityErrorMessage(resolveEntityErrorMessage(error));
+        });
+    });
+  };
+
   if (isLoading) {
     return (
       <div className="app-shell entity-workspace-loading">
@@ -301,6 +326,16 @@ export default function EntityWorkspacePage({
             <Link className="secondary-button" href={`/entities/${entity.id}/coa`}>
               Open chart of accounts
             </Link>
+            {entity.current_user_membership.role === "owner" ? (
+              <button
+                className="secondary-button"
+                disabled={isPending}
+                onClick={handleDeleteWorkspace}
+                type="button"
+              >
+                {isPending ? "Working..." : "Delete workspace"}
+              </button>
+            ) : null}
           </div>
         </div>
 

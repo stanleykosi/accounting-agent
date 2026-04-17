@@ -33,6 +33,7 @@ from services.common.settings import AppSettings, get_settings
 from services.contracts.entity_models import (
     CreateEntityMembershipRequest,
     CreateEntityRequest,
+    EntityDeleteResponse,
     EntityListResponse,
     EntityWorkspace,
     UpdateEntityMembershipRequest,
@@ -40,7 +41,10 @@ from services.contracts.entity_models import (
 )
 from services.db.models.audit import AuditSourceSurface
 from services.db.repositories.entity_repo import EntityRepository, EntityUserRecord
+from services.entity.delete_service import EntityDeleteService, EntityDeleteServiceError
 from services.entity.service import EntityService, EntityServiceError
+from services.jobs.service import JobService
+from services.storage.repository import StorageRepository
 
 router = APIRouter(prefix="/entities", tags=["entities"])
 
@@ -55,6 +59,24 @@ def get_entity_service(db_session: DatabaseSessionDependency) -> EntityService:
 
 
 EntityServiceDependency = Annotated[EntityService, Depends(get_entity_service)]
+
+
+def get_entity_delete_service(
+    db_session: DatabaseSessionDependency,
+) -> EntityDeleteService:
+    """Construct the canonical destructive workspace-delete service."""
+
+    return EntityDeleteService(
+        repository=EntityRepository(db_session=db_session),
+        storage_repository=StorageRepository(),
+        job_service=JobService(db_session=db_session),
+    )
+
+
+EntityDeleteServiceDependency = Annotated[
+    EntityDeleteService,
+    Depends(get_entity_delete_service),
+]
 
 
 @router.get(
@@ -184,6 +206,36 @@ def update_entity(
         )
     except EntityServiceError as error:
         raise _build_entity_http_exception(error) from error
+
+
+@router.delete(
+    "/{entity_id}",
+    response_model=EntityDeleteResponse,
+    summary="Delete one entity workspace",
+)
+def delete_entity(
+    entity_id: UUID,
+    request: Request,
+    response: Response,
+    settings: SettingsDependency,
+    auth_service: AuthServiceDependency,
+    entity_delete_service: EntityDeleteServiceDependency,
+) -> EntityDeleteResponse:
+    """Delete one accessible entity workspace when the caller is an owner."""
+
+    session_result = _require_authenticated_browser_session(
+        request=request,
+        response=response,
+        settings=settings,
+        auth_service=auth_service,
+    )
+    try:
+        return entity_delete_service.delete_entity(
+            actor_user=_to_entity_user(session_result),
+            entity_id=entity_id,
+        )
+    except EntityDeleteServiceError as error:
+        raise _build_entity_delete_http_exception(error) from error
 
 
 @router.post(
@@ -318,6 +370,18 @@ def _resolve_trace_id(request: Request) -> str | None:
 
 def _build_entity_http_exception(error: EntityServiceError) -> HTTPException:
     """Convert an entity-domain error into the structured HTTP shape used by the API."""
+
+    return HTTPException(
+        status_code=error.status_code,
+        detail={
+            "code": str(error.code),
+            "message": error.message,
+        },
+    )
+
+
+def _build_entity_delete_http_exception(error: EntityDeleteServiceError) -> HTTPException:
+    """Convert an entity-delete-domain error into the structured HTTP shape used by the API."""
 
     return HTTPException(
         status_code=error.status_code,

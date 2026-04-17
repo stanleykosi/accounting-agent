@@ -27,6 +27,7 @@ from services.common.enums import WorkflowPhase
 from services.common.settings import AppSettings, get_settings
 from services.contracts.document_models import (
     BatchUploadDocumentsResponse,
+    DocumentDeleteResponse,
     DocumentListResponse,
     DocumentReviewActionResponse,
     DocumentReviewDecisionRequest,
@@ -172,6 +173,51 @@ def review_document(
         )
     except DocumentReviewServiceError as error:
         raise _build_document_review_http_exception(error) from error
+
+
+@router.delete(
+    "/{document_id}",
+    response_model=DocumentDeleteResponse,
+    summary="Delete one uploaded source document",
+)
+def delete_document(
+    entity_id: UUID,
+    close_run_id: UUID,
+    document_id: UUID,
+    request: Request,
+    response: Response,
+    settings: SettingsDependency,
+    auth_service: AuthServiceDependency,
+    document_upload_service: DocumentUploadServiceDependency,
+    db_session: DbSessionDep,
+) -> DocumentDeleteResponse:
+    """Delete one document subtree from the current close-run collection queue."""
+
+    session_result = _require_authenticated_browser_session(
+        request=request,
+        response=response,
+        settings=settings,
+        auth_service=auth_service,
+    )
+    require_active_close_run_phase(
+        actor_user=_to_entity_user(session_result),
+        entity_id=entity_id,
+        close_run_id=close_run_id,
+        required_phase=WorkflowPhase.COLLECTION,
+        action_label="Source-document deletion",
+        db_session=db_session,
+    )
+    try:
+        return document_upload_service.delete_document(
+            actor_user=_to_entity_user(session_result),
+            entity_id=entity_id,
+            close_run_id=close_run_id,
+            document_id=document_id,
+            source_surface=AuditSourceSurface.DESKTOP,
+            trace_id=_resolve_trace_id(request),
+        )
+    except DocumentUploadServiceError as error:
+        raise _build_document_http_exception(error) from error
 
 
 @router.put(

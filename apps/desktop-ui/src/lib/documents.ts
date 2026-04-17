@@ -159,6 +159,7 @@ export type DocumentReviewApiErrorCode =
   | "integrity_conflict"
   | "invalid_action"
   | "invalid_filename"
+  | "processing_in_progress"
   | "session_expired"
   | "session_required"
   | "unsupported_content"
@@ -202,6 +203,13 @@ export type DocumentReviewActionResult = {
 export type ExtractedFieldCorrectionResult = {
   document: DocumentReviewQueueItem;
   field: ExtractionFieldSummary;
+};
+
+export type DocumentDeleteResult = {
+  canceledJobCount: number;
+  deletedDocumentCount: number;
+  deletedDocumentFilename: string;
+  deletedDocumentId: string;
 };
 
 /**
@@ -336,6 +344,21 @@ export async function persistExtractedFieldCorrection(
   );
 
   return parseFieldCorrectionResult(payload);
+}
+
+export async function deleteSourceDocument(
+  entityId: string,
+  closeRunId: string,
+  documentId: string,
+): Promise<DocumentDeleteResult> {
+  const payload = await documentReviewRequest<unknown>(
+    buildEntityProxyPath(entityId, ["close-runs", closeRunId, "documents", documentId]),
+    {
+      method: "DELETE",
+    },
+  );
+
+  return parseDocumentDeleteResult(payload);
 }
 
 /**
@@ -478,6 +501,7 @@ function asDocumentReviewApiErrorCode(value: unknown): DocumentReviewApiErrorCod
     case "integrity_conflict":
     case "invalid_action":
     case "invalid_filename":
+    case "processing_in_progress":
     case "session_expired":
     case "session_required":
     case "unsupported_content":
@@ -591,6 +615,25 @@ function parseFieldCorrectionResult(payload: unknown): ExtractedFieldCorrectionR
     document,
     field:
       document.latestExtraction?.fields.find((candidate) => candidate.id === field.id) ?? field,
+  };
+}
+
+function parseDocumentDeleteResult(payload: unknown): DocumentDeleteResult {
+  if (!isRecord(payload)) {
+    throw new Error("Document delete response was not an object.");
+  }
+
+  return {
+    canceledJobCount: requireNumber(payload.canceled_job_count, "documentDelete.canceled_job_count"),
+    deletedDocumentCount: requireNumber(
+      payload.deleted_document_count,
+      "documentDelete.deleted_document_count",
+    ),
+    deletedDocumentFilename: requireString(
+      payload.deleted_document_filename,
+      "documentDelete.deleted_document_filename",
+    ),
+    deletedDocumentId: requireString(payload.deleted_document_id, "documentDelete.deleted_document_id"),
   };
 }
 

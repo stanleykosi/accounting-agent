@@ -14,12 +14,22 @@ export type EntitySummary = components["schemas"]["EntitySummary"];
 export type EntityWorkspace = components["schemas"]["EntityWorkspace"];
 export type UpdateEntityMembershipRequest = components["schemas"]["UpdateEntityMembershipRequest"];
 export type UpdateEntityRequest = components["schemas"]["UpdateEntityRequest"];
+export type EntityDeleteResponse = {
+  canceled_job_count: number;
+  deleted_close_run_count: number;
+  deleted_document_count: number;
+  deleted_entity_id: string;
+  deleted_entity_name: string;
+  deleted_thread_count: number;
+};
 
 export type EntityApiErrorCode =
   | "default_actor_required"
   | "duplicate_membership"
   | "entity_not_found"
+  | "integrity_conflict"
   | "membership_not_found"
+  | "owner_required"
   | "session_expired"
   | "session_required"
   | "unknown_error"
@@ -120,6 +130,23 @@ export async function updateEntity(
     {
       body: JSON.stringify(payload),
       method: "PATCH",
+    },
+  );
+}
+
+/**
+ * Purpose: Delete one entity workspace through the same-origin proxy.
+ * Inputs: The workspace UUID that should be deleted irreversibly.
+ * Outputs: Structured delete outcome including deleted close-run and document counts.
+ * Behavior: Uses DELETE so the backend can run the canonical owner-only destructive workflow.
+ */
+export async function deleteEntityWorkspace(
+  entityId: string,
+): Promise<EntityDeleteResponse> {
+  return entityRequest<EntityDeleteResponse>(
+    `${ENTITY_PROXY_BASE_PATH}/${encodeURIComponent(entityId)}`,
+    {
+      method: "DELETE",
     },
   );
 }
@@ -232,7 +259,9 @@ function asEntityApiErrorCode(value: unknown): EntityApiErrorCode {
     case "default_actor_required":
     case "duplicate_membership":
     case "entity_not_found":
+    case "integrity_conflict":
     case "membership_not_found":
+    case "owner_required":
     case "session_expired":
     case "session_required":
     case "user_disabled":

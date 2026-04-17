@@ -7,6 +7,7 @@ Dependencies: Document upload service, document repository record contracts, and
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, date, datetime
 from uuid import UUID, uuid4
 
@@ -30,6 +31,7 @@ from services.db.models.entity import EntityStatus
 from services.db.repositories.document_repo import (
     DocumentCloseRunAccessRecord,
     DocumentCloseRunRecord,
+    DocumentDeletionPlan,
     DocumentEntityRecord,
     DocumentRecord,
     DocumentWithExtractionRecord,
@@ -197,6 +199,137 @@ def test_document_upload_rejects_exact_duplicate_files_in_same_close_run() -> No
     assert repository.rolled_back is True
 
 
+def test_document_delete_removes_document_records_jobs_and_storage_objects() -> None:
+    """Deleting one uploaded document should remove its row, cancel work, and clear storage."""
+
+    repository = InMemoryDocumentRepository()
+    storage = InMemoryStorageRepository()
+    job_service = InMemoryJobService()
+    service = DocumentUploadService(
+        repository=repository,
+        storage_repository=storage,
+        job_service=job_service,
+        task_dispatcher=InMemoryTaskDispatcher(),
+    )
+
+    upload_response = service.upload_documents(
+        actor_user=repository.actor,
+        entity_id=repository.access_record.entity.id,
+        close_run_id=repository.access_record.close_run.id,
+        files=(
+            UploadFilePayload(
+                filename="Vendor Invoice.pdf",
+                payload=b"%PDF-1.7\n1 0 obj\n<< /Type /Catalog /Font <<>> >>\n%%EOF",
+                declared_content_type="application/pdf",
+            ),
+        ),
+        source_surface=AuditSourceSurface.DESKTOP,
+        trace_id="req-doc-upload",
+    )
+    uploaded_document = upload_response.uploaded_documents[0].document
+    dispatched_job_id = next(iter(job_service.dispatched_jobs))
+    repository.active_job_ids_by_document[UUID(uploaded_document.id)] = (dispatched_job_id,)
+    repository.derivative_storage_keys_by_document[UUID(uploaded_document.id)] = (
+        "documents/derivatives/test-version/tables.json",
+    )
+    storage.objects["documents/derivatives/test-version/tables.json"] = b"{}"
+
+    delete_response = service.delete_document(
+        actor_user=repository.actor,
+        entity_id=repository.access_record.entity.id,
+        close_run_id=repository.access_record.close_run.id,
+        document_id=UUID(uploaded_document.id),
+        source_surface=AuditSourceSurface.DESKTOP,
+        trace_id="req-doc-delete",
+    )
+
+    assert delete_response.deleted_document_id == uploaded_document.id
+    assert delete_response.deleted_document_count == 1
+    assert delete_response.canceled_job_count == 1
+    assert UUID(uploaded_document.id) not in repository.documents
+    assert dispatched_job_id in job_service.canceled_job_ids
+    assert uploaded_document.storage_key not in storage.objects
+    assert "documents/derivatives/test-version/tables.json" not in storage.objects
+    assert repository.activity_events[-1]["event_type"] == "document.deleted"
+
+
+def test_document_delete_waits_for_running_jobs_to_stop_before_removing_document_tree() -> None:
+    """Deleting a document should wait for running linked jobs to become terminal first."""
+
+    repository = InMemoryDocumentRepository()
+    storage = InMemoryStorageRepository()
+    job_service = InMemoryJobService()
+    service = DocumentUploadService(
+        repository=repository,
+        storage_repository=storage,
+        job_service=job_service,
+        task_dispatcher=InMemoryTaskDispatcher(),
+    )
+
+    upload_response = service.upload_documents(
+        actor_user=repository.actor,
+        entity_id=repository.access_record.entity.id,
+        close_run_id=repository.access_record.close_run.id,
+        files=(
+            UploadFilePayload(
+                filename="Vendor Invoice.pdf",
+                payload=b"%PDF-1.7\n1 0 obj\n<< /Type /Catalog /Font <<>> >>\n%%EOF",
+                declared_content_type="application/pdf",
+            ),
+        ),
+        source_surface=AuditSourceSurface.DESKTOP,
+        trace_id="req-doc-upload",
+    )
+    uploaded_document = upload_response.uploaded_documents[0].document
+    dispatched_job_id = next(iter(job_service.dispatched_jobs))
+    job_service.dispatched_jobs[dispatched_job_id] = replace(
+        job_service.dispatched_jobs[dispatched_job_id],
+        status=JobStatus.RUNNING,
+        started_at=datetime.now(tz=UTC),
+    )
+    repository.active_job_ids_by_document[UUID(uploaded_document.id)] = (dispatched_job_id,)
+
+    delete_response = service.delete_document(
+        actor_user=repository.actor,
+        entity_id=repository.access_record.entity.id,
+        close_run_id=repository.access_record.close_run.id,
+        document_id=UUID(uploaded_document.id),
+        source_surface=AuditSourceSurface.DESKTOP,
+        trace_id="req-doc-delete-running",
+    )
+
+    assert delete_response.deleted_document_id == uploaded_document.id
+    assert dispatched_job_id in job_service.canceled_job_ids
+    assert job_service.job_poll_counts[dispatched_job_id] >= 1
+    assert job_service.dispatched_jobs[dispatched_job_id].status is JobStatus.CANCELED
+    assert UUID(uploaded_document.id) not in repository.documents
+
+
+def test_document_delete_rejects_missing_documents() -> None:
+    """Deleting a missing document should surface a structured not-found error."""
+
+    repository = InMemoryDocumentRepository()
+    service = DocumentUploadService(
+        repository=repository,
+        storage_repository=InMemoryStorageRepository(),
+        job_service=InMemoryJobService(),
+        task_dispatcher=InMemoryTaskDispatcher(),
+    )
+
+    with pytest.raises(DocumentUploadServiceError) as error:
+        service.delete_document(
+            actor_user=repository.actor,
+            entity_id=repository.access_record.entity.id,
+            close_run_id=repository.access_record.close_run.id,
+            document_id=uuid4(),
+            source_surface=AuditSourceSurface.DESKTOP,
+            trace_id="req-doc-delete-missing",
+        )
+
+    assert error.value.status_code == 404
+    assert error.value.code is DocumentUploadServiceErrorCode.DOCUMENT_NOT_FOUND
+
+
 class InMemoryDocumentRepository:
     """Provide a deterministic repository double for document upload integration tests."""
 
@@ -223,6 +356,8 @@ class InMemoryDocumentRepository:
             ),
         )
         self.documents: dict[UUID, DocumentRecord] = {}
+        self.active_job_ids_by_document: dict[UUID, tuple[UUID, ...]] = {}
+        self.derivative_storage_keys_by_document: dict[UUID, tuple[str, ...]] = {}
         self.activity_events: list[dict[str, object]] = []
         self.committed = False
         self.rolled_back = False
@@ -330,6 +465,52 @@ class InMemoryDocumentRepository:
             }
         )
 
+    def get_document_deletion_plan_for_user(
+        self,
+        *,
+        entity_id: UUID,
+        close_run_id: UUID,
+        document_id: UUID,
+        user_id: UUID,
+    ) -> DocumentDeletionPlan | None:
+        """Return one synthetic delete plan when the actor can access the document."""
+
+        if (
+            entity_id != self.access_record.entity.id
+            or close_run_id != self.access_record.close_run.id
+            or user_id != self.actor.id
+        ):
+            return None
+
+        root_document = self.documents.get(document_id)
+        if root_document is None:
+            return None
+
+        document_tree = self._collect_document_tree(document_id=document_id)
+        derivative_storage_keys: list[str] = []
+        active_job_ids: list[UUID] = []
+        for document in document_tree:
+            derivative_storage_keys.extend(
+                self.derivative_storage_keys_by_document.get(document.id, ())
+            )
+            active_job_ids.extend(self.active_job_ids_by_document.get(document.id, ()))
+
+        return DocumentDeletionPlan(
+            root_document=root_document,
+            documents=document_tree,
+            source_storage_keys=tuple(document.storage_key for document in document_tree),
+            derivative_storage_keys=tuple(dict.fromkeys(derivative_storage_keys)),
+            active_job_ids=tuple(dict.fromkeys(active_job_ids)),
+        )
+
+    def delete_document_tree(self, *, document_ids: tuple[UUID, ...]) -> None:
+        """Delete one in-memory document subtree and clear its synthetic linked state."""
+
+        for document_id in document_ids:
+            self.documents.pop(document_id, None)
+            self.active_job_ids_by_document.pop(document_id, None)
+            self.derivative_storage_keys_by_document.pop(document_id, None)
+
     def commit(self) -> None:
         """Mark the in-memory unit of work as committed."""
 
@@ -345,6 +526,30 @@ class InMemoryDocumentRepository:
         """The in-memory repository never emits database integrity errors."""
 
         return False
+
+    def _collect_document_tree(self, *, document_id: UUID) -> tuple[DocumentRecord, ...]:
+        """Return the root document and any descendants in parent-first order."""
+
+        root_document = self.documents[document_id]
+        documents = [root_document]
+        frontier_ids = (root_document.id,)
+        seen_document_ids = {root_document.id}
+        while frontier_ids:
+            children = tuple(
+                document
+                for document in self.documents.values()
+                if document.parent_document_id in frontier_ids
+            )
+            frontier_ids = tuple(
+                child.id for child in children if child.id not in seen_document_ids
+            )
+            for child in children:
+                if child.id in seen_document_ids:
+                    continue
+                seen_document_ids.add(child.id)
+                documents.append(child)
+
+        return tuple(documents)
 
 
 class InMemoryStorageRepository:
@@ -387,6 +592,16 @@ class InMemoryStorageRepository:
             original_filename=original_filename,
         )
 
+    def delete_source_document(self, *, storage_key: str) -> None:
+        """Delete one source object from the in-memory object map."""
+
+        self.objects.pop(storage_key, None)
+
+    def delete_derivative_object(self, *, object_key: str) -> None:
+        """Delete one derivative object from the in-memory object map."""
+
+        self.objects.pop(object_key, None)
+
 
 class InMemoryTaskDispatcher:
     """Capture parser task dispatches without requiring Celery."""
@@ -421,6 +636,13 @@ class InMemoryTaskDispatcher:
 class InMemoryJobService:
     """Persist synthetic job rows around dispatches for upload-service tests."""
 
+    def __init__(self) -> None:
+        """Initialize the in-memory job capture state."""
+
+        self.canceled_job_ids: list[UUID] = []
+        self.dispatched_jobs: dict[UUID, JobRecord] = {}
+        self.job_poll_counts: dict[UUID, int] = {}
+
     def dispatch_job(
         self,
         *,
@@ -446,7 +668,7 @@ class InMemoryJobService:
             task_id=task_id,
         )
         now = datetime.now(tz=UTC)
-        return JobRecord(
+        job = JobRecord(
             id=UUID(task_id),
             entity_id=entity_id,
             close_run_id=close_run_id,
@@ -476,3 +698,57 @@ class InMemoryJobService:
             created_at=now,
             updated_at=now,
         )
+        self.dispatched_jobs[job.id] = job
+        return job
+
+    def request_cancellation(
+        self,
+        *,
+        entity_id: UUID,
+        job_id: UUID,
+        actor_user_id: UUID,
+        reason: str,
+    ) -> JobRecord:
+        """Mark one synthetic job as canceled for delete-workflow coverage."""
+
+        del entity_id, actor_user_id, reason
+        job = self.dispatched_jobs[job_id]
+        self.canceled_job_ids.append(job_id)
+        now = datetime.now(tz=UTC)
+        if job.status is JobStatus.RUNNING:
+            running_job = replace(
+                job,
+                cancellation_requested_at=now,
+            )
+            self.dispatched_jobs[job_id] = running_job
+            return running_job
+
+        canceled_job = replace(
+            job,
+            status=JobStatus.CANCELED,
+            cancellation_requested_at=now,
+            canceled_at=now,
+            completed_at=now,
+        )
+        self.dispatched_jobs[job_id] = canceled_job
+        return canceled_job
+
+    def get_job(self, *, job_id: UUID) -> JobRecord:
+        """Return one synthetic job and resolve pending running cancellations on poll."""
+
+        poll_count = self.job_poll_counts.get(job_id, 0) + 1
+        self.job_poll_counts[job_id] = poll_count
+        job = self.dispatched_jobs[job_id]
+        if (
+            job.status is JobStatus.RUNNING
+            and job.cancellation_requested_at is not None
+        ):
+            now = datetime.now(tz=UTC)
+            job = replace(
+                job,
+                status=JobStatus.CANCELED,
+                canceled_at=now,
+                completed_at=now,
+            )
+            self.dispatched_jobs[job_id] = job
+        return job

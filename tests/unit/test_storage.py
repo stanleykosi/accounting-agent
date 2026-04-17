@@ -176,6 +176,23 @@ def test_storage_repository_routes_documents_derivatives_and_artifacts_to_expect
     assert downloaded_text == "Invoice total NGN 10,000"
     assert len(fake_minio.objects) == 4
 
+    repository.delete_source_document(storage_key=source_metadata.reference.object_key)
+    repository.delete_derivative_object(object_key=ocr_metadata.reference.object_key)
+    repository.delete_artifact_object(object_key=artifact_metadata.reference.object_key)
+
+    assert (
+        source_metadata.reference.bucket_name,
+        source_metadata.reference.object_key,
+    ) not in fake_minio.objects
+    assert (
+        ocr_metadata.reference.bucket_name,
+        ocr_metadata.reference.object_key,
+    ) not in fake_minio.objects
+    assert (
+        artifact_metadata.reference.bucket_name,
+        artifact_metadata.reference.object_key,
+    ) not in fake_minio.objects
+
 
 @dataclass
 class FakeStoredObject:

@@ -269,6 +269,39 @@ class StorageRepository:
             object_key=storage_key,
         )
 
+    def delete_source_document(self, *, storage_key: str) -> None:
+        """Delete one original source document from the canonical document bucket."""
+
+        if not storage_key.strip():
+            raise ValueError("storage_key must be a non-empty object key.")
+
+        self._client.delete_object(
+            bucket_kind=StorageBucketKind.DOCUMENTS,
+            object_key=storage_key,
+        )
+
+    def delete_derivative_object(self, *, object_key: str) -> None:
+        """Delete one derivative object from the canonical derivative bucket."""
+
+        if not object_key.strip():
+            raise ValueError("object_key must be a non-empty object key.")
+
+        self._client.delete_object(
+            bucket_kind=StorageBucketKind.DERIVATIVES,
+            object_key=object_key,
+        )
+
+    def delete_artifact_object(self, *, object_key: str) -> None:
+        """Delete one released artifact from the canonical artifact bucket."""
+
+        if not object_key.strip():
+            raise ValueError("object_key must be a non-empty object key.")
+
+        self._client.delete_object(
+            bucket_kind=StorageBucketKind.ARTIFACTS,
+            object_key=object_key,
+        )
+
     def download_text(
         self,
         *,

@@ -12,6 +12,7 @@ import { DocumentUploadPanel } from "../../../../../../../components/documents/D
 import { DocumentReviewTable } from "../../../../../../../components/documents/DocumentReviewTable";
 import { ExtractionPanel } from "../../../../../../../components/documents/ExtractionPanel";
 import {
+  deleteSourceDocument,
   type DocumentVerificationChecklist,
   DocumentReviewApiError,
   filterDocumentReviewItems,
@@ -66,6 +67,7 @@ export default function CloseRunDocumentsPage({
   const [activeFilter, setActiveFilter] = useState<DocumentReviewFilter>("all");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [deleteMutationDocumentId, setDeleteMutationDocumentId] = useState<string | null>(null);
   const [fieldMutationId, setFieldMutationId] = useState<string | null>(null);
   const [noteDraft, setNoteDraft] = useState("");
   const [operationMessage, setOperationMessage] = useState<string | null>(null);
@@ -230,6 +232,47 @@ export default function CloseRunDocumentsPage({
     [closeRunId, entityId, noteDraft, refreshWorkspace],
   );
 
+  const handleDeleteDocument = useCallback(
+    async (documentId: string): Promise<void> => {
+      const document =
+        workspaceData?.items.find((candidate) => candidate.id === documentId) ?? null;
+      if (document === null) {
+        setErrorMessage("Select a document from the queue before deleting it.");
+        return;
+      }
+
+      const confirmed = window.confirm(
+        `Delete ${document.originalFilename} from this close run? This removes the uploaded file and linked extraction data.`,
+      );
+      if (!confirmed) {
+        return;
+      }
+
+      setDeleteMutationDocumentId(documentId);
+      setOperationMessage(null);
+      try {
+        const result = await deleteSourceDocument(entityId, closeRunId, documentId);
+        setOperationMessage(
+          result.deletedDocumentCount === 1
+            ? `${result.deletedDocumentFilename} was deleted from the close run.`
+            : `${result.deletedDocumentFilename} and ${result.deletedDocumentCount - 1} linked document(s) were deleted.`,
+        );
+        setNoteDraft("");
+        setVerificationDrafts((current) => {
+          const nextDrafts = { ...current };
+          delete nextDrafts[documentId];
+          return nextDrafts;
+        });
+        await refreshWorkspace();
+      } catch (error) {
+        setErrorMessage(resolveDocumentReviewErrorMessage(error));
+      } finally {
+        setDeleteMutationDocumentId(null);
+      }
+    },
+    [closeRunId, entityId, refreshWorkspace, workspaceData],
+  );
+
   const handleOpenEvidenceForDocument = (documentId: string): void => {
     if (workspaceData === null) {
       return;
@@ -387,8 +430,10 @@ export default function CloseRunDocumentsPage({
                 key={selectedDocument?.id ?? "no-document-selected"}
                 actionNote={noteDraft}
                 checklist={selectedChecklist}
+                deleteMutationDocumentId={deleteMutationDocumentId}
                 fieldMutationId={fieldMutationId}
                 onChecklistChange={handleChecklistChange}
+                onDeleteDocument={handleDeleteDocument}
                 onOpenEvidence={handleOpenEvidence}
                 onFieldCorrection={handleFieldCorrection}
                 onNoteChange={setNoteDraft}

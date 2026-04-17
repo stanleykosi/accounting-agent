@@ -17,14 +17,19 @@ from services.common.enums import (
     DocumentSourceChannel,
     DocumentStatus,
     DocumentType,
+    JobStatus,
+    OwnershipTargetType,
 )
 from services.common.types import JsonObject
 from services.db.models.audit import AuditSourceSurface
 from services.db.models.close_run import CloseRun
 from services.db.models.documents import Document, DocumentIssue, DocumentVersion
-from services.db.models.extractions import DocumentExtraction, ExtractedField
 from services.db.models.entity import Entity, EntityMembership, EntityStatus
-from sqlalchemy import asc, func, select
+from services.db.models.extractions import DocumentExtraction, DocumentLineItem, ExtractedField
+from services.db.models.jobs import Job
+from services.db.models.ownership import OwnershipTarget
+from services.db.models.recommendations import Recommendation
+from sqlalchemy import asc, delete, func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -155,6 +160,17 @@ class ParseDocumentRecord:
     document: DocumentRecord
     close_run: DocumentCloseRunRecord
     entity: DocumentEntityRecord
+
+
+@dataclass(frozen=True, slots=True)
+class DocumentDeletionPlan:
+    """Describe the document rows, storage keys, and active jobs tied to one delete request."""
+
+    root_document: DocumentRecord
+    documents: tuple[DocumentRecord, ...]
+    source_storage_keys: tuple[str, ...]
+    derivative_storage_keys: tuple[str, ...]
+    active_job_ids: tuple[UUID, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -334,7 +350,9 @@ class DocumentRepository:
             document_id: [] for document_id in document_ids
         }
         for issue in open_issue_rows:
-            issues_by_document_id.setdefault(issue.document_id, []).append(_map_document_issue(issue))
+            issues_by_document_id.setdefault(issue.document_id, []).append(
+                _map_document_issue(issue)
+            )
 
         results: list[DocumentWithExtractionRecord] = []
         for document in documents:
@@ -438,6 +456,92 @@ class DocumentRepository:
                 autonomy_mode=_resolve_autonomy_mode(entity.autonomy_mode),
                 status=EntityStatus(entity.status),
             ),
+        )
+
+    def get_document_deletion_plan_for_user(
+        self,
+        *,
+        entity_id: UUID,
+        close_run_id: UUID,
+        document_id: UUID,
+        user_id: UUID,
+    ) -> DocumentDeletionPlan | None:
+        """Return the full delete plan for one accessible document subtree."""
+
+        statement = (
+            select(Document, CloseRun, Entity)
+            .join(CloseRun, CloseRun.id == Document.close_run_id)
+            .join(Entity, Entity.id == CloseRun.entity_id)
+            .join(EntityMembership, EntityMembership.entity_id == Entity.id)
+            .where(
+                Document.id == document_id,
+                Document.close_run_id == close_run_id,
+                CloseRun.entity_id == entity_id,
+                EntityMembership.user_id == user_id,
+            )
+        )
+        row = self._db_session.execute(statement).one_or_none()
+        if row is None:
+            return None
+
+        root_document, close_run, _entity = row
+        document_models = self._collect_document_tree(
+            root_document=root_document,
+            close_run_id=close_run.id,
+        )
+        document_ids = tuple(document.id for document in document_models)
+        source_storage_keys = tuple(
+            dict.fromkeys(
+                document.storage_key.strip()
+                for document in document_models
+                if document.storage_key.strip()
+            )
+        )
+
+        derivative_keys: list[str] = []
+        version_rows = self._db_session.scalars(
+            select(DocumentVersion)
+            .where(DocumentVersion.document_id.in_(document_ids))
+            .order_by(
+                DocumentVersion.document_id.asc(),
+                DocumentVersion.version_no.asc(),
+                DocumentVersion.created_at.asc(),
+            )
+        ).all()
+        for version in version_rows:
+            if (
+                version.normalized_storage_key is not None
+                and version.normalized_storage_key.strip()
+            ):
+                derivative_keys.append(version.normalized_storage_key.strip())
+            if version.ocr_text_storage_key is not None and version.ocr_text_storage_key.strip():
+                derivative_keys.append(version.ocr_text_storage_key.strip())
+            derivative_keys.extend(
+                _collect_raw_parse_derivative_keys(raw_parse_payload=version.raw_parse_payload)
+            )
+
+        active_job_ids = tuple(
+            self._db_session.scalars(
+                select(Job.id)
+                .where(
+                    Job.document_id.in_(document_ids),
+                    Job.status.in_(
+                        (
+                            JobStatus.QUEUED.value,
+                            JobStatus.RUNNING.value,
+                            JobStatus.BLOCKED.value,
+                        )
+                    ),
+                )
+                .order_by(Job.created_at.asc(), Job.id.asc())
+            ).all()
+        )
+        return DocumentDeletionPlan(
+            root_document=_map_document(root_document),
+            documents=tuple(_map_document(document) for document in document_models),
+            source_storage_keys=source_storage_keys,
+            derivative_storage_keys=tuple(dict.fromkeys(derivative_keys)),
+            active_job_ids=active_job_ids,
         )
 
     def next_document_version_no(self, *, document_id: UUID) -> int:
@@ -551,6 +655,55 @@ class DocumentRepository:
             trace_id=trace_id,
         )
 
+    def delete_document_tree(self, *, document_ids: tuple[UUID, ...]) -> None:
+        """Delete one document subtree after linked jobs and references are detached."""
+
+        if not document_ids:
+            raise ValueError("document_ids must contain at least one UUID.")
+
+        extraction_ids = tuple(
+            self._db_session.scalars(
+                select(DocumentExtraction.id).where(DocumentExtraction.document_id.in_(document_ids))
+            ).all()
+        )
+        self._db_session.execute(
+            update(Recommendation)
+            .where(Recommendation.document_id.in_(document_ids))
+            .values(document_id=None)
+        )
+        self._db_session.execute(
+            update(Job).where(Job.document_id.in_(document_ids)).values(document_id=None)
+        )
+        self._db_session.execute(
+            delete(OwnershipTarget).where(
+                OwnershipTarget.target_type == OwnershipTargetType.DOCUMENT.value,
+                OwnershipTarget.target_id.in_(document_ids),
+            )
+        )
+        if extraction_ids:
+            self._db_session.execute(
+                delete(DocumentLineItem).where(
+                    DocumentLineItem.document_extraction_id.in_(extraction_ids)
+                )
+            )
+            self._db_session.execute(
+                delete(ExtractedField).where(ExtractedField.document_extraction_id.in_(extraction_ids))
+            )
+            self._db_session.execute(
+                delete(DocumentExtraction).where(DocumentExtraction.id.in_(extraction_ids))
+            )
+        self._db_session.execute(
+            delete(DocumentIssue).where(DocumentIssue.document_id.in_(document_ids))
+        )
+        self._db_session.execute(
+            delete(DocumentVersion).where(DocumentVersion.document_id.in_(document_ids))
+        )
+        self._db_session.execute(
+            update(Document).where(Document.id.in_(document_ids)).values(parent_document_id=None)
+        )
+        self._db_session.execute(delete(Document).where(Document.id.in_(document_ids)))
+        self._db_session.flush()
+
     def commit(self) -> None:
         """Commit the current document transaction after a successful mutation."""
 
@@ -576,6 +729,41 @@ class DocumentRepository:
             raise LookupError(f"Document {document_id} does not exist.")
 
         return document
+
+    def _collect_document_tree(
+        self,
+        *,
+        root_document: Document,
+        close_run_id: UUID,
+    ) -> list[Document]:
+        """Return one document and every descendant row in deterministic parent-first order."""
+
+        documents = [root_document]
+        seen_document_ids = {root_document.id}
+        frontier_ids = (root_document.id,)
+        while frontier_ids:
+            child_rows = self._db_session.scalars(
+                select(Document)
+                .where(
+                    Document.close_run_id == close_run_id,
+                    Document.parent_document_id.in_(frontier_ids),
+                )
+                .order_by(
+                    asc(Document.created_at),
+                    asc(Document.original_filename),
+                    asc(Document.id),
+                )
+            ).all()
+            frontier_ids = tuple(
+                child.id for child in child_rows if child.id not in seen_document_ids
+            )
+            for child in child_rows:
+                if child.id in seen_document_ids:
+                    continue
+                seen_document_ids.add(child.id)
+                documents.append(child)
+
+        return documents
 
 
 def _map_document(document: Document) -> DocumentRecord:
@@ -722,12 +910,29 @@ def _resolve_document_status(value: str) -> DocumentStatus:
     raise ValueError(f"Unsupported document status value: {value}")
 
 
+def _collect_raw_parse_derivative_keys(*, raw_parse_payload: JsonObject) -> tuple[str, ...]:
+    """Return derivative storage keys persisted inside one raw parse payload."""
+
+    raw_derivatives = raw_parse_payload.get("derivatives")
+    if not isinstance(raw_derivatives, dict):
+        return ()
+
+    extracted_tables_storage_key = raw_derivatives.get("extracted_tables_storage_key")
+    if not isinstance(extracted_tables_storage_key, str):
+        return ()
+    normalized = extracted_tables_storage_key.strip()
+    if not normalized:
+        return ()
+    return (normalized,)
+
+
 __all__ = [
     "DocumentAccessRecord",
     "DocumentCloseRunAccessRecord",
     "DocumentCloseRunRecord",
-    "DocumentExtractionRecord",
+    "DocumentDeletionPlan",
     "DocumentEntityRecord",
+    "DocumentExtractionRecord",
     "DocumentIssueRecord",
     "DocumentRecord",
     "DocumentRepository",

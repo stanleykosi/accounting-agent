@@ -7,8 +7,16 @@ Dependencies: parse_documents helpers and canonical document enums only.
 
 from __future__ import annotations
 
-from apps.worker.app.tasks.parse_documents import _build_extraction_parser_output
+from apps.worker.app.tasks.parse_documents import (
+    _apply_document_ai_assist_to_parser_output,
+    _build_extraction_parser_output,
+    _derive_document_classification,
+)
 from services.common.enums import DocumentType
+from services.contracts.document_ai_models import (
+    DocumentFieldAssistCandidate,
+    DocumentParseAssistOutput,
+)
 
 
 def test_invoice_parser_output_normalizes_fields_and_line_items() -> None:
@@ -243,3 +251,172 @@ def test_bank_statement_parser_output_preserves_blank_pdf_header_columns() -> No
             "balance": "750.00",
         }
     ]
+
+
+def test_explicit_document_type_label_boosts_classification_confidence() -> None:
+    """Explicit document-type labels should yield strong deterministic confidence."""
+
+    document_type, confidence = _derive_document_classification(
+        {
+            "text": (
+                "Master Service Agreement\n"
+                "Document Type: Contract\n"
+                "Contract Number: MSA-2026-017\n"
+            )
+        }
+    )
+
+    assert document_type is DocumentType.CONTRACT
+    assert confidence == 0.96
+
+
+def test_tabular_document_type_label_boosts_classification_confidence() -> None:
+    """Spreadsheet summary rows with a document-type column should classify strongly."""
+
+    document_type, confidence = _derive_document_classification(
+        {
+            "tables": [
+                {
+                    "name": "Bank Statement Summary",
+                    "rows": [
+                        {
+                            "Document Type": "Bank Statement",
+                            "Bank Name": "First Citizens Bank",
+                        }
+                    ],
+                }
+            ]
+        }
+    )
+
+    assert document_type is DocumentType.BANK_STATEMENT
+    assert confidence == 0.96
+
+
+def test_invoice_pdf_like_text_extracts_labeled_amounts_without_invoice_number_leakage() -> None:
+    """Labeled PDF text should populate scalar invoice fields without using the invoice number."""
+
+    parser_output = _build_extraction_parser_output(
+        raw_parse_payload={
+            "text": (
+                "Tax Invoice\n"
+                "Document Type: Invoice\n"
+                "Vendor: ACME Industrial Supplies\n"
+                "Customer: Northwind Traders LLC\n"
+                "Invoice Number: INV-1048\n"
+                "Invoice Date: 2026-03-08\n"
+                "Due Date: 2026-03-15\n"
+                "Currency: USD\n"
+                "Total: 2450.00\n"
+                "Subtotal: 2250.00\n"
+                "Tax Amount: 200.00\n"
+                "Payment Terms: Net 7\n"
+                "Vendor Address: 455 Harbor Point, Newark, NJ 07102\n"
+                "Vendor Tax ID: US-TAX-ACME-8450\n"
+                "Customer Tax ID: US-TAX-NWT-9023\n"
+                "Discount Amount: 0.00\n"
+                "Tax Rate: 0.0889\n"
+                "Notes: Office chairs and monitor arms for the finance team expansion.\n"
+            )
+        },
+        document_type=DocumentType.INVOICE,
+    )
+
+    assert parser_output["fields"]["invoice_number"] == "INV-1048"
+    assert parser_output["fields"]["invoice_date"] == "2026-03-08"
+    assert parser_output["fields"]["due_date"] == "2026-03-15"
+    assert parser_output["fields"]["subtotal"] == "2250.00"
+    assert parser_output["fields"]["tax_amount"] == "200.00"
+    assert parser_output["fields"]["total"] == "2450.00"
+    assert parser_output["fields"]["vendor_tax_id"] == "US-TAX-ACME-8450"
+    assert parser_output["fields"]["customer_tax_id"] == "US-TAX-NWT-9023"
+
+
+def test_contract_pdf_like_text_extracts_labeled_period_dates() -> None:
+    """Contracts should use labeled dates rather than the first date in the document."""
+
+    parser_output = _build_extraction_parser_output(
+        raw_parse_payload={
+            "text": (
+                "Master Service Agreement\n"
+                "Document Type: Contract\n"
+                "Contract Number: MSA-2026-017\n"
+                "Contract Date: 2026-02-20\n"
+                "Effective Date: 2026-03-01\n"
+                "Expiration Date: 2027-02-28\n"
+                "Party A: Northwind Traders LLC\n"
+                "Party B: Cedar Ridge Analytics Inc.\n"
+                "Contract Value: 48000.00\n"
+                "Currency: USD\n"
+                "Contract Type: Software Implementation\n"
+                "Terms: Fixed fee billed monthly in arrears.\n"
+                "Renewal Terms: Renews automatically for 12-month periods.\n"
+                "Termination Terms: Either party may terminate for material breach.\n"
+            )
+        },
+        document_type=DocumentType.CONTRACT,
+    )
+
+    assert parser_output["fields"]["contract_date"] == "2026-02-20"
+    assert parser_output["fields"]["effective_date"] == "2026-03-01"
+    assert parser_output["fields"]["expiration_date"] == "2027-02-28"
+    assert parser_output["fields"]["contract_value"] == "48000.00"
+
+
+def test_document_ai_assist_can_replace_replaceable_scalar_fields() -> None:
+    """High-confidence assist candidates may override scalar fields prone to PDF token leakage."""
+
+    parser_output = {
+        "fields": {
+            "invoice_number": "INV-1048",
+            "invoice_date": "2026-03-08",
+            "due_date": "2026-03-08",
+            "subtotal": "-1048.00",
+            "tax_amount": "-1048.00",
+            "total": "-1048.00",
+        },
+        "field_locations": {},
+    }
+    assist_output = DocumentParseAssistOutput(
+        predicted_type=DocumentType.INVOICE,
+        classification_confidence=0.97,
+        classification_reasoning="Explicit invoice labels identify the document and totals.",
+        field_candidates=(
+            DocumentFieldAssistCandidate(
+                field_name="due_date",
+                value="2026-03-15",
+                confidence=0.95,
+                evidence_quote="Due Date: 2026-03-15",
+            ),
+            DocumentFieldAssistCandidate(
+                field_name="subtotal",
+                value="2250.00",
+                confidence=0.96,
+                evidence_quote="Subtotal: 2250.00",
+            ),
+            DocumentFieldAssistCandidate(
+                field_name="tax_amount",
+                value="200.00",
+                confidence=0.96,
+                evidence_quote="Tax Amount: 200.00",
+            ),
+            DocumentFieldAssistCandidate(
+                field_name="total",
+                value="2450.00",
+                confidence=0.96,
+                evidence_quote="Total: 2450.00",
+            ),
+        ),
+    )
+
+    applied_fields = _apply_document_ai_assist_to_parser_output(
+        parser_output=parser_output,
+        document_type=DocumentType.INVOICE,
+        assist_output=assist_output,
+    )
+
+    assert applied_fields == ["due_date", "subtotal", "tax_amount", "total"]
+    assert parser_output["fields"]["due_date"] == "2026-03-15"
+    assert parser_output["fields"]["subtotal"] == "2250.00"
+    assert parser_output["fields"]["tax_amount"] == "200.00"
+    assert parser_output["fields"]["total"] == "2450.00"

@@ -72,6 +72,7 @@ from services.common.enums import WorkflowPhase
 from services.common.settings import AppSettings, get_settings
 from services.contracts.chat_models import (
     ChatMessageResponse,
+    ChatThreadDeleteResponse,
     ChatThreadListResponse,
     ChatThreadWithMessages,
     ChatThreadWorkspaceResponse,
@@ -110,6 +111,8 @@ EntityIdQuery = Annotated[UUID, Query(description="Entity workspace UUID.")]
 CloseRunIdQuery = Annotated[UUID | None, Query(description="Optional close run UUID.")]
 ThreadLimitQuery = Annotated[int, Query(ge=1, le=200, description="Maximum items.")]
 MessageLimitQuery = Annotated[int, Query(ge=1, le=500, description="Maximum messages.")]
+ActionPlanIdPath = Annotated[UUID, Path(description="Action plan UUID to approve or reject.")]
+ThreadAccessQuery = Annotated[UUID, Query(description="Thread UUID for access verification.")]
 INLINE_ATTACHMENT_INTENTS = ("source_documents", "chart_of_accounts")
 
 
@@ -689,6 +692,42 @@ def get_chat_thread(
         ) from error
 
 
+@router.delete(
+    "/threads/{thread_id}",
+    response_model=ChatThreadDeleteResponse,
+    summary="Delete one chat thread",
+)
+def delete_chat_thread(
+    thread_id: UUID,
+    entity_id: EntityIdQuery,
+    request: Request = None,  # type: ignore[assignment]
+    response: Response = None,  # type: ignore[assignment]
+    settings: SettingsDependency = None,  # type: ignore[assignment]
+    auth_service: AuthServiceDependency = None,  # type: ignore[assignment]
+    chat_service: ChatServiceDependency = None,  # type: ignore[assignment]
+) -> ChatThreadDeleteResponse:
+    """Delete one chat thread together with its persisted message history."""
+
+    session_result = _require_authenticated_browser_session(
+        request=request,
+        response=response,
+        auth_service=auth_service,
+        settings=settings,
+    )
+
+    try:
+        return chat_service.delete_thread(
+            thread_id=thread_id,
+            entity_id=entity_id,
+            user_id=session_result.user.id,
+        )
+    except ChatServiceError as error:
+        raise HTTPException(
+            status_code=error.status_code,
+            detail=_error_payload(code=error.code.value, message=error.message),
+        ) from error
+
+
 @router.post(
     "/threads/{thread_id}/messages",
     response_model=ChatMessageResponse,
@@ -1171,8 +1210,8 @@ def list_thread_actions(
     summary="Approve a pending chat action plan",
 )
 def approve_chat_action(
-    action_plan_id: UUID = Path(description="Action plan UUID to approve."),
-    thread_id: UUID = Query(description="Thread UUID for access verification."),
+    action_plan_id: ActionPlanIdPath,
+    thread_id: ThreadAccessQuery,
     entity_id: EntityIdQuery = None,  # type: ignore[assignment]
     payload: ApproveChatActionRequest = None,  # type: ignore[assignment]
     request: Request = None,  # type: ignore[assignment]
@@ -1216,8 +1255,8 @@ def approve_chat_action(
     summary="Reject a pending chat action plan",
 )
 def reject_chat_action(
-    action_plan_id: UUID = Path(description="Action plan UUID to reject."),
-    thread_id: UUID = Query(description="Thread UUID for access verification."),
+    action_plan_id: ActionPlanIdPath,
+    thread_id: ThreadAccessQuery,
     entity_id: EntityIdQuery = None,  # type: ignore[assignment]
     payload: RejectChatActionRequest = None,  # type: ignore[assignment]
     request: Request = None,  # type: ignore[assignment]

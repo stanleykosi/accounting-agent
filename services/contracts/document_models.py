@@ -219,6 +219,24 @@ class DocumentListResponse(ContractModel):
     )
 
 
+class DocumentDeleteResponse(ContractModel):
+    """Return the canonical outcome after deleting one document subtree."""
+
+    deleted_document_id: str = Field(description="The root document UUID that was deleted.")
+    deleted_document_filename: str = Field(
+        min_length=1,
+        description="Original filename of the deleted root document.",
+    )
+    deleted_document_count: int = Field(
+        ge=1,
+        description="Total number of document rows deleted, including descendants.",
+    )
+    canceled_job_count: int = Field(
+        ge=0,
+        description="Number of active linked jobs that were canceled before deletion.",
+    )
+
+
 class DocumentReviewDecisionRequest(ContractModel):
     """Capture a reviewer decision for one document queue item."""
 
@@ -291,6 +309,7 @@ class FieldCorrectionResponse(ContractModel):
 __all__ = [
     "AutoTransactionMatchSummary",
     "BatchUploadDocumentsResponse",
+    "DocumentDeleteResponse",
     "DocumentExtractionSummary",
     "DocumentIssueSummary",
     "DocumentListResponse",

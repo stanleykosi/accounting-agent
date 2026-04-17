@@ -207,6 +207,32 @@ class EntityListResponse(ContractModel):
     )
 
 
+class EntityDeleteResponse(ContractModel):
+    """Return the canonical result after deleting one entity workspace."""
+
+    deleted_entity_id: str = Field(description="Stable UUID of the deleted workspace.")
+    deleted_entity_name: str = Field(
+        min_length=1,
+        description="Display name of the deleted workspace.",
+    )
+    deleted_close_run_count: int = Field(
+        ge=0,
+        description="Number of close runs deleted with the workspace.",
+    )
+    deleted_document_count: int = Field(
+        ge=0,
+        description="Number of source documents deleted with the workspace.",
+    )
+    deleted_thread_count: int = Field(
+        ge=0,
+        description="Number of chat threads deleted with the workspace.",
+    )
+    canceled_job_count: int = Field(
+        ge=0,
+        description="Number of active jobs canceled before the workspace was deleted.",
+    )
+
+
 class CreateEntityRequest(ContractModel):
     """Capture the fields required to create a new entity workspace."""
 
@@ -458,6 +484,7 @@ __all__ = [
     "CreateEntityMembershipRequest",
     "CreateEntityRequest",
     "EntityActivityEvent",
+    "EntityDeleteResponse",
     "EntityListResponse",
     "EntityMembershipSummary",
     "EntityOperatorSummary",

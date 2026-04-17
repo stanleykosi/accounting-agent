@@ -140,6 +140,11 @@ _install_service_stub(
     "services.jobs.service",
     JobService=_dummy_class("JobService"),
     JobRecord=_dummy_class("JobRecord"),
+    JobServiceError=_dummy_error("JobServiceError"),
+    JobServiceErrorCode=SimpleNamespace(
+        JOB_NOT_FOUND="job_not_found",
+        CANCEL_NOT_ALLOWED="cancel_not_allowed",
+    ),
 )
 _install_service_stub(
     "services.model_gateway.client",
