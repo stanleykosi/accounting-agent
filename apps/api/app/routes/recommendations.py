@@ -46,7 +46,7 @@ from services.auth.service import (
     AuthService,
     AuthServiceError,
 )
-from services.common.enums import DocumentStatus, DocumentType, ReviewStatus, WorkflowPhase
+from services.common.enums import DocumentStatus, ReviewStatus, WorkflowPhase
 from services.common.settings import AppSettings, get_settings
 from services.contracts.journal_models import (
     ApplyJournalRequest,
@@ -67,6 +67,9 @@ from services.db.repositories.entity_repo import EntityUserRecord
 from services.db.repositories.integration_repo import IntegrationRepository
 from services.db.repositories.recommendation_journal_repo import (
     RecommendationJournalRepository,
+)
+from services.documents.recommendation_eligibility import (
+    GL_CODING_RECOMMENDATION_ELIGIBLE_TYPE_VALUES,
 )
 from services.jobs.service import JobService, JobServiceError
 from services.jobs.task_names import TaskName
@@ -248,8 +251,8 @@ def generate_recommendations_for_close_run(
         .join(DocumentExtraction, DocumentExtraction.document_id == Document.id)
         .filter(
             Document.close_run_id == close_run_id,
-            Document.document_type != DocumentType.UNKNOWN.value,
             Document.status == DocumentStatus.APPROVED.value,
+            Document.document_type.in_(GL_CODING_RECOMMENDATION_ELIGIBLE_TYPE_VALUES),
         )
         .order_by(Document.created_at.asc(), Document.id.asc())
     )

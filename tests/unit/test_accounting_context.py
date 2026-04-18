@@ -29,6 +29,7 @@ def test_readiness_summary_treats_fallback_coa_as_warning_and_prompts_phase_adva
         document_summary={
             "approved": 1,
         },
+        gl_coding_document_count=1,
         recommendation_summary={},
         journal_summary={},
         reconciliation_summary={},
@@ -44,6 +45,42 @@ def test_readiness_summary_treats_fallback_coa_as_warning_and_prompts_phase_adva
     assert any("fallback chart of accounts" in warning.lower() for warning in readiness["warnings"])
     assert any(
         "Advance the close run to Processing" in action
+        for action in readiness["next_actions"]
+    )
+
+
+def test_readiness_summary_prompts_reconciliation_when_no_gl_coding_documents_exist() -> None:
+    """Processing should not demand recommendations when only support documents are present."""
+
+    readiness = _build_readiness_summary(
+        close_run={
+            "active_phase": "processing",
+            "phase_states": [],
+        },
+        coa_summary={
+            "is_available": True,
+            "requires_operator_upload": False,
+        },
+        document_summary={
+            "approved": 1,
+        },
+        gl_coding_document_count=0,
+        recommendation_summary={},
+        journal_summary={},
+        reconciliation_summary={},
+        schedule_summary={},
+        report_summary={},
+        export_summary={},
+        distribution_summary={},
+        pending_action_count=0,
+    )
+
+    assert not any(
+        "Generate accounting recommendations" in action
+        for action in readiness["next_actions"]
+    )
+    assert any(
+        "Advance the close run to Reconciliation" in action
         for action in readiness["next_actions"]
     )
 

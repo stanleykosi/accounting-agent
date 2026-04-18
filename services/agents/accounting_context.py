@@ -21,6 +21,9 @@ from services.db.repositories.entity_repo import EntityUserRecord
 from services.db.repositories.recommendation_journal_repo import RecommendationJournalRepository
 from services.db.repositories.reconciliation_repo import ReconciliationRepository
 from services.db.repositories.report_repo import ReportRepository
+from services.documents.recommendation_eligibility import (
+    is_gl_coding_recommendation_eligible,
+)
 from services.documents.transaction_matching import (
     extract_auto_review_metadata,
     extract_auto_transaction_match_metadata,
@@ -82,6 +85,7 @@ class AccountingWorkspaceContextBuilder(WorkspaceContextBuilder):
                 close_run=None,
                 coa_summary=snapshot["coa"],
                 document_summary={},
+                gl_coding_document_count=0,
                 recommendation_summary={},
                 journal_summary={},
                 reconciliation_summary={},
@@ -159,6 +163,12 @@ class AccountingWorkspaceContextBuilder(WorkspaceContextBuilder):
             for row in documents[:20]
         ]
         snapshot["document_summary"] = document_summary
+        gl_coding_document_count = sum(
+            1
+            for row in documents
+            if is_gl_coding_recommendation_eligible(row.document.document_type)
+            and row.document.status.value in {"parsed", "needs_review", "approved", "rejected"}
+        )
 
         recommendations = self._recommendation_repo.list_recommendations_for_close_run(
             close_run_id=close_run_id
@@ -378,6 +388,7 @@ class AccountingWorkspaceContextBuilder(WorkspaceContextBuilder):
             close_run=snapshot["close_run"],
             coa_summary=snapshot["coa"],
             document_summary=document_summary,
+            gl_coding_document_count=gl_coding_document_count,
             recommendation_summary=snapshot["recommendation_summary"],
             journal_summary=snapshot["journal_summary"],
             reconciliation_summary=snapshot["reconciliation_summary"],
@@ -620,6 +631,7 @@ def _build_readiness_summary(
     close_run: dict[str, Any] | None,
     coa_summary: dict[str, Any],
     document_summary: dict[str, int],
+    gl_coding_document_count: int,
     recommendation_summary: dict[str, int],
     journal_summary: dict[str, int],
     reconciliation_summary: dict[str, int],
@@ -638,7 +650,7 @@ def _build_readiness_summary(
             "blockers": [],
             "warnings": [],
             "next_actions": [
-                "Create or open a close run to let the agent execute close-run workflows."
+            "Create or open a close run to let the agent execute close-run workflows."
             ],
             "document_count": 0,
             "has_source_documents": False,
@@ -678,7 +690,7 @@ def _build_readiness_summary(
             "Allow current parsing jobs to finish, then review extracted documents."
         )
 
-    if recommendation_summary == {} and parsed_document_count > 0:
+    if recommendation_summary == {} and gl_coding_document_count > 0:
         next_actions.append("Generate accounting recommendations for the parsed document set.")
     if recommendation_summary.get("pending", 0) > 0 or journal_summary.get("pending", 0) > 0:
         next_actions.append("Review and approve pending recommendations or journal drafts.")
@@ -720,6 +732,15 @@ def _build_readiness_summary(
     ):
         next_actions.append(
             "Advance the close run to Processing when you are done collecting approved documents."
+        )
+    if (
+        close_run.get("active_phase") == "processing"
+        and not blockers
+        and gl_coding_document_count == 0
+    ):
+        next_actions.append(
+            "Advance the close run to Reconciliation when no GL-coding work is required for "
+            "the approved documents."
         )
     if not next_actions:
         next_actions.append(

@@ -45,6 +45,9 @@ from services.db.repositories.entity_repo import EntityUserRecord
 from services.db.repositories.recommendation_journal_repo import RecommendationJournalRepository
 from services.db.repositories.reconciliation_repo import ReconciliationRepository
 from services.db.repositories.report_repo import ReportRepository
+from services.documents.recommendation_eligibility import (
+    GL_CODING_RECOMMENDATION_ELIGIBLE_TYPE_VALUES,
+)
 from services.documents.review_service import DocumentReviewService
 from services.exports.service import ExportService
 from services.jobs.service import JobService
@@ -1827,6 +1830,7 @@ class AccountingToolset:
             .filter(
                 Document.close_run_id == close_run_id,
                 Document.status == "approved",
+                Document.document_type.in_(GL_CODING_RECOMMENDATION_ELIGIBLE_TYPE_VALUES),
             )
             .order_by(Document.created_at.asc(), Document.id.asc())
         )

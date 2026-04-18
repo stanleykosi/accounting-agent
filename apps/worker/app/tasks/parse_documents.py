@@ -32,6 +32,9 @@ from services.db.repositories.document_repo import DocumentRepository, ParseDocu
 from services.db.repositories.entity_repo import EntityRepository
 from services.db.session import get_session_factory
 from services.documents.ai_assist import run_document_parse_assist
+from services.documents.recommendation_eligibility import (
+    GL_CODING_RECOMMENDATION_ELIGIBLE_DOCUMENT_TYPES,
+)
 from services.documents.transaction_matching import update_extraction_auto_review_payload
 from services.extraction.field_extractors import (
     compute_confidence_summary,
@@ -342,14 +345,7 @@ _BANK_STATEMENT_DERIVED_FIELDS = frozenset(
         "total_debits",
     }
 )
-_RECONCILIATION_RECOMMENDATION_ELIGIBLE_TYPES = frozenset(
-    {
-        DocumentType.INVOICE,
-        DocumentType.BANK_STATEMENT,
-        DocumentType.PAYSLIP,
-        DocumentType.RECEIPT,
-    }
-)
+_AUTO_GL_RECOMMENDATION_ELIGIBLE_TYPES = GL_CODING_RECOMMENDATION_ELIGIBLE_DOCUMENT_TYPES
 _AI_ASSIST_ELIGIBLE_FIELDS_BY_DOCUMENT_TYPE: dict[DocumentType, frozenset[str]] = {
     DocumentType.INVOICE: frozenset(
         {
@@ -1679,7 +1675,7 @@ def _post_process_parsed_document(
             raise
 
     if (
-        document_type in _RECONCILIATION_RECOMMENDATION_ELIGIBLE_TYPES
+        document_type in _AUTO_GL_RECOMMENDATION_ELIGIBLE_TYPES
         and auto_approved
         and latest_extraction is not None
     ):

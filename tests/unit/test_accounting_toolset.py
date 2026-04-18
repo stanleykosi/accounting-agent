@@ -13,6 +13,8 @@ from uuid import UUID, uuid4
 from services.agents.accounting_toolset import AccountingToolset
 from services.agents.models import AgentExecutionContext
 from services.common.enums import CloseRunStatus, WorkflowPhase
+from services.db.models.documents import Document
+from services.db.models.recommendations import Recommendation
 from services.db.repositories.entity_repo import EntityUserRecord
 
 
@@ -34,7 +36,12 @@ class _FakeCloseRunService:
 
 
 class _FakeDocumentRepository:
-    def __init__(self, *, source_document: object, documents_by_close_run_id: dict[UUID, tuple[object, ...]]) -> None:
+    def __init__(
+        self,
+        *,
+        source_document: object,
+        documents_by_close_run_id: dict[UUID, tuple[object, ...]],
+    ) -> None:
         self.source_document = source_document
         self.documents_by_close_run_id = documents_by_close_run_id
 
@@ -128,12 +135,28 @@ def test_resolve_document_id_for_scope_preserves_duplicate_upload_order() -> Non
         "file_size_bytes": 4096,
     }
     source_documents = (
-        _document_record(document_id=uuid4(), created_at=datetime(2026, 4, 1, tzinfo=UTC), **fingerprint),
-        _document_record(document_id=uuid4(), created_at=datetime(2026, 4, 2, tzinfo=UTC), **fingerprint),
+        _document_record(
+            document_id=uuid4(),
+            created_at=datetime(2026, 4, 1, tzinfo=UTC),
+            **fingerprint,
+        ),
+        _document_record(
+            document_id=uuid4(),
+            created_at=datetime(2026, 4, 2, tzinfo=UTC),
+            **fingerprint,
+        ),
     )
     target_documents = (
-        _document_record(document_id=uuid4(), created_at=datetime(2026, 4, 3, tzinfo=UTC), **fingerprint),
-        _document_record(document_id=uuid4(), created_at=datetime(2026, 4, 4, tzinfo=UTC), **fingerprint),
+        _document_record(
+            document_id=uuid4(),
+            created_at=datetime(2026, 4, 3, tzinfo=UTC),
+            **fingerprint,
+        ),
+        _document_record(
+            document_id=uuid4(),
+            created_at=datetime(2026, 4, 4, tzinfo=UTC),
+            **fingerprint,
+        ),
     )
     toolset = _make_toolset(
         document_repository=_FakeDocumentRepository(
@@ -194,6 +217,103 @@ def test_create_close_run_tool_uses_canonical_contract_validation() -> None:
     assert result["active_phase"] == WorkflowPhase.COLLECTION.value
 
 
+def test_queue_recommendation_jobs_skips_bank_statements() -> None:
+    """Only bookable approved documents should enter GL-coding recommendation generation."""
+
+    actor = EntityUserRecord(id=uuid4(), email="ops@example.com", full_name="Finance Ops")
+    close_run_id = uuid4()
+    invoice_id = uuid4()
+    bank_statement_id = uuid4()
+    dispatched_document_ids: list[UUID] = []
+
+    class _FakeQuery:
+        def __init__(self, records: list[object]) -> None:
+            self._records = records
+
+        def join(self, *args, **kwargs):
+            del args, kwargs
+            return self
+
+        def filter(self, *args, **kwargs):
+            del kwargs
+            filtered = list(self._records)
+            for expression in args:
+                rendered = str(expression)
+                if "documents.status" in rendered:
+                    filtered = [
+                        record
+                        for record in filtered
+                        if getattr(record, "status", None) == "approved"
+                    ]
+                elif "documents.document_type" in rendered and " IN " in rendered:
+                    filtered = [
+                        record
+                        for record in filtered
+                        if getattr(record, "document_type", None)
+                        in {"invoice", "receipt", "payslip"}
+                    ]
+            self._records = filtered
+            return self
+
+        def order_by(self, *args, **kwargs):
+            del args, kwargs
+            return self
+
+        def all(self):
+            return list(self._records)
+
+    class _FakeDbSession:
+        def __init__(self) -> None:
+            self.documents = [
+                SimpleNamespace(
+                    id=invoice_id,
+                    close_run_id=close_run_id,
+                    document_type="invoice",
+                    status="approved",
+                    created_at=datetime(2026, 4, 1, tzinfo=UTC),
+                ),
+                SimpleNamespace(
+                    id=bank_statement_id,
+                    close_run_id=close_run_id,
+                    document_type="bank_statement",
+                    status="approved",
+                    created_at=datetime(2026, 4, 2, tzinfo=UTC),
+                ),
+            ]
+
+        def query(self, model):
+            if model is Document:
+                return _FakeQuery(list(self.documents))
+            if model is Recommendation:
+                return _FakeQuery([])
+            raise AssertionError(f"Unexpected query model: {model!r}")
+
+    class _FakeJobService:
+        def dispatch_job(self, **kwargs):
+            dispatched_document_ids.append(kwargs["document_id"])
+            return SimpleNamespace(
+                id=uuid4(),
+                task_name="accounting.recommend_close_run",
+                status=SimpleNamespace(value="queued"),
+            )
+
+    toolset = _make_toolset()
+    toolset._db_session = _FakeDbSession()
+    toolset._job_service = _FakeJobService()
+
+    queued_jobs = toolset._queue_recommendation_jobs(
+        entity_id=uuid4(),
+        close_run_id=close_run_id,
+        actor_user=actor,
+        document_ids=None,
+        force=False,
+        trace_id=None,
+    )
+
+    assert [job["document_id"] for job in queued_jobs] == [str(invoice_id)]
+    assert dispatched_document_ids == [invoice_id]
+
+
 def _make_toolset(
     *,
     close_run_service: object | None = None,
@@ -219,7 +339,11 @@ def _make_toolset(
     )
 
 
-def _build_execution_context(*, actor: EntityUserRecord, close_run_id: UUID) -> AgentExecutionContext:
+def _build_execution_context(
+    *,
+    actor: EntityUserRecord,
+    close_run_id: UUID,
+) -> AgentExecutionContext:
     """Return the minimum execution context needed for approval checks."""
 
     return AgentExecutionContext(

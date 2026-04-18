@@ -46,6 +46,9 @@ from services.db.models.reconciliation import (
 )
 from services.db.models.reporting import CommentaryStatus, ReportCommentary, ReportRun
 from services.db.models.supporting_schedules import SupportingSchedule, SupportingScheduleRow
+from services.documents.recommendation_eligibility import (
+    is_gl_coding_recommendation_eligible,
+)
 from services.jobs.task_names import TaskName
 from sqlalchemy import asc, delete, desc, func, select
 from sqlalchemy.exc import IntegrityError
@@ -1040,7 +1043,12 @@ class CloseRunRepository:
                 "blocked",
             }
         )
-        approved_document_ids = {row.id for row in document_rows if row.status == "approved"}
+        approved_document_ids = {
+            row.id
+            for row in document_rows
+            if row.status == "approved"
+            and is_gl_coding_recommendation_eligible(row.document_type)
+        }
 
         open_issue_rows = (
             self._db_session.execute(
