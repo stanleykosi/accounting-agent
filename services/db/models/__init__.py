@@ -33,6 +33,13 @@ from services.db.models.journals import (
     JournalPostingStatus,
     JournalPostingTarget,
 )
+from services.db.models.ledger import (
+    CloseRunLedgerBinding,
+    GeneralLedgerImportBatch,
+    GeneralLedgerImportLine,
+    TrialBalanceImportBatch,
+    TrialBalanceImportLine,
+)
 from services.db.models.ownership import OwnershipTarget
 from services.db.models.recommendations import Recommendation
 from services.db.models.reconciliation import (
@@ -62,6 +69,7 @@ __all__ = [
     "ChatMessage",
     "ChatThread",
     "CloseRun",
+    "CloseRunLedgerBinding",
     "CloseRunPhaseState",
     "CoaAccount",
     "CoaMappingRule",
@@ -80,6 +88,8 @@ __all__ = [
     "ExportRun",
     "ExportStatus",
     "ExtractedField",
+    "GeneralLedgerImportBatch",
+    "GeneralLedgerImportLine",
     "IntegrationConnection",
     "IntegrationConnectionStatus",
     "IntegrationProvider",
@@ -104,6 +114,8 @@ __all__ = [
     "Session",
     "SupportingSchedule",
     "SupportingScheduleRow",
+    "TrialBalanceImportBatch",
+    "TrialBalanceImportLine",
     "TrialBalanceSnapshot",
     "User",
     "UserStatus",

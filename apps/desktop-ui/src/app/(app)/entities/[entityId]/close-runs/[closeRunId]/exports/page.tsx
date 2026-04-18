@@ -16,6 +16,13 @@ import {
   readLatestEvidencePack,
   triggerExport,
 } from "../../../../../../../lib/exports";
+import {
+  buildGeneralLedgerExportDownloadPath,
+  generateGeneralLedgerExport,
+  type GeneralLedgerExportSummary,
+  LedgerApiError,
+  readLatestGeneralLedgerExport,
+} from "../../../../../../../lib/ledger";
 
 type DistributionFormState = {
   deliveryChannel: string;
@@ -47,8 +54,10 @@ export default function CloseRunExportsPage({
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [exportDetail, setExportDetail] = useState<ExportDetail | null>(null);
   const [exports, setExports] = useState<readonly ExportSummary[]>([]);
+  const [generalLedgerExport, setGeneralLedgerExport] = useState<GeneralLedgerExportSummary | null>(null);
   const [isAssemblingEvidence, setIsAssemblingEvidence] = useState(false);
   const [isDistributingExport, setIsDistributingExport] = useState(false);
+  const [isGeneratingGeneralLedgerExport, setIsGeneratingGeneralLedgerExport] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [isTriggeringExport, setIsTriggeringExport] = useState(false);
   const [latestEvidencePack, setLatestEvidencePack] = useState<EvidencePackBundle | null>(null);
@@ -61,12 +70,14 @@ export default function CloseRunExportsPage({
   const loadExportsWorkspace = useCallback(async (preferredExportId?: string): Promise<void> => {
     setIsLoading(true);
     try {
-      const [nextExports, nextEvidencePack] = await Promise.all([
+      const [nextExports, nextEvidencePack, nextGeneralLedgerExport] = await Promise.all([
         listExports(entityId, closeRunId),
         readLatestEvidencePack(entityId, closeRunId),
+        readLatestGeneralLedgerExport(entityId, closeRunId),
       ]);
       setExports(nextExports);
       setLatestEvidencePack(nextEvidencePack);
+      setGeneralLedgerExport(nextGeneralLedgerExport);
       const nextSelectedExportId = preferredExportId ?? selectedExportId ?? nextExports[0]?.id ?? null;
       setSelectedExportId(nextSelectedExportId);
 
@@ -99,6 +110,20 @@ export default function CloseRunExportsPage({
       setErrorMessage(resolveExportErrorMessage(error));
     } finally {
       setIsTriggeringExport(false);
+    }
+  }
+
+  async function handleGenerateGeneralLedgerExport(): Promise<void> {
+    setIsGeneratingGeneralLedgerExport(true);
+    try {
+      const summary = await generateGeneralLedgerExport(entityId, closeRunId);
+      setGeneralLedgerExport(summary);
+      setStatusMessage(`GL export ready: ${summary.filename}`);
+      setErrorMessage(null);
+    } catch (error: unknown) {
+      setErrorMessage(resolveExportErrorMessage(error));
+    } finally {
+      setIsGeneratingGeneralLedgerExport(false);
     }
   }
 
@@ -185,6 +210,16 @@ export default function CloseRunExportsPage({
               type="button"
             >
               {isAssemblingEvidence ? "Assembling..." : "Assemble evidence pack"}
+            </button>
+            <button
+              className="secondary-button"
+              disabled={isGeneratingGeneralLedgerExport}
+              onClick={() => {
+                void handleGenerateGeneralLedgerExport();
+              }}
+              type="button"
+            >
+              {isGeneratingGeneralLedgerExport ? "Generating..." : "Generate GL export"}
             </button>
             <p className="form-helper">
               Evidence-pack assembly is idempotent, and exports snapshot the artifact manifest tied
@@ -311,6 +346,64 @@ export default function CloseRunExportsPage({
           )}
         </SurfaceCard>
       </section>
+
+      <SurfaceCard
+        title="General Ledger Export"
+        subtitle={
+          generalLedgerExport
+            ? `Version ${generalLedgerExport.version_no} • ${generalLedgerExport.row_count} rows`
+            : "Not generated"
+        }
+      >
+        {generalLedgerExport === null ? (
+          <p className="form-helper">
+            Generate the effective-ledger CSV to export the bound imported GL baseline plus any
+            approved or applied close-run journal adjustments.
+          </p>
+        ) : (
+          <>
+            <dl className="entity-meta-grid close-run-summary-grid">
+              <div>
+                <dt>Generated</dt>
+                <dd>{formatTimestamp(generalLedgerExport.generated_at)}</dd>
+              </div>
+              <div>
+                <dt>Composition</dt>
+                <dd>{generalLedgerExport.composition_mode.replaceAll("_", " ")}</dd>
+              </div>
+              <div>
+                <dt>Imported rows</dt>
+                <dd>{generalLedgerExport.imported_line_count}</dd>
+              </div>
+              <div>
+                <dt>Adjustment rows</dt>
+                <dd>{generalLedgerExport.adjustment_line_count}</dd>
+              </div>
+              <div>
+                <dt>Storage key</dt>
+                <dd>{generalLedgerExport.storage_key}</dd>
+              </div>
+              <div>
+                <dt>Size</dt>
+                <dd>{generalLedgerExport.size_bytes} bytes</dd>
+              </div>
+            </dl>
+            <p className="form-helper">
+              {generalLedgerExport.includes_imported_baseline
+                ? "This export includes the bound imported GL baseline together with current-run journal adjustments."
+                : "No imported GL baseline is bound to this run, so this export contains approved or applied close-run journal adjustments only."}
+            </p>
+            <div className="close-run-link-row">
+              <a
+                className="workspace-link-inline"
+                href={buildGeneralLedgerExportDownloadPath(entityId, closeRunId)}
+              >
+                Download GL export
+              </a>
+            </div>
+          </>
+        )}
+      </SurfaceCard>
 
       <SurfaceCard
         title="Artifact Manifest"
@@ -520,6 +613,9 @@ function formatTimestamp(value: string | null): string {
 
 function resolveExportErrorMessage(error: unknown): string {
   if (error instanceof ExportApiError) {
+    return error.message;
+  }
+  if (error instanceof LedgerApiError) {
     return error.message;
   }
   if (error instanceof Error) {

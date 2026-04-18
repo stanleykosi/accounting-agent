@@ -221,10 +221,12 @@ def test_queue_recommendation_jobs_skips_bank_statements() -> None:
     """Only bookable approved documents should enter GL-coding recommendation generation."""
 
     actor = EntityUserRecord(id=uuid4(), email="ops@example.com", full_name="Finance Ops")
+    entity_id = uuid4()
     close_run_id = uuid4()
     invoice_id = uuid4()
     bank_statement_id = uuid4()
     dispatched_document_ids: list[UUID] = []
+    dispatched_payloads: list[dict[str, object]] = []
 
     class _FakeQuery:
         def __init__(self, records: list[object]) -> None:
@@ -291,6 +293,7 @@ def test_queue_recommendation_jobs_skips_bank_statements() -> None:
     class _FakeJobService:
         def dispatch_job(self, **kwargs):
             dispatched_document_ids.append(kwargs["document_id"])
+            dispatched_payloads.append(dict(kwargs["payload"]))
             return SimpleNamespace(
                 id=uuid4(),
                 task_name="accounting.recommend_close_run",
@@ -302,7 +305,7 @@ def test_queue_recommendation_jobs_skips_bank_statements() -> None:
     toolset._job_service = _FakeJobService()
 
     queued_jobs = toolset._queue_recommendation_jobs(
-        entity_id=uuid4(),
+        entity_id=entity_id,
         close_run_id=close_run_id,
         actor_user=actor,
         document_ids=None,
@@ -312,6 +315,15 @@ def test_queue_recommendation_jobs_skips_bank_statements() -> None:
 
     assert [job["document_id"] for job in queued_jobs] == [str(invoice_id)]
     assert dispatched_document_ids == [invoice_id]
+    assert dispatched_payloads == [
+        {
+            "entity_id": str(entity_id),
+            "close_run_id": str(close_run_id),
+            "document_id": str(invoice_id),
+            "actor_user_id": str(actor.id),
+            "force": False,
+        }
+    ]
 
 
 def _make_toolset(

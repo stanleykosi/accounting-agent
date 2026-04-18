@@ -52,13 +52,19 @@ export default function RecommendationsPage({
         listRecommendations(entityId, closeRunId),
         listJournals(entityId, closeRunId),
       ]);
-      setRecommendations(nextRecommendations);
-      setJournals(nextJournals);
+      const visibleRecommendations = nextRecommendations.filter(
+        (recommendation) => recommendation.status !== "superseded",
+      );
+      const visibleJournals = nextJournals.filter((journal) => journal.status !== "superseded");
+      setRecommendations(visibleRecommendations);
+      setJournals(visibleJournals);
       setSelectedJournal((currentSelectedJournal) => {
         if (currentSelectedJournal === null) {
-          return nextJournals[0] ?? null;
+          return visibleJournals[0] ?? null;
         }
-        return nextJournals.find((journal) => journal.id === currentSelectedJournal.id) ?? null;
+        return (
+          visibleJournals.find((journal) => journal.id === currentSelectedJournal.id) ?? null
+        );
       });
       setErrorMessage(null);
     } catch (error: unknown) {
@@ -72,14 +78,20 @@ export default function RecommendationsPage({
     void refreshWorkspace();
   }, [refreshWorkspace]);
 
-  async function handleGenerateRecommendations(): Promise<void> {
+  async function handleGenerateRecommendations(force = false): Promise<void> {
     setIsGenerating(true);
     try {
-      const result = await generateRecommendations(entityId, closeRunId);
+      const result = await generateRecommendations(entityId, closeRunId, { force });
       setQueuedMessage(
-        result.queued_count > 0
-          ? `${result.queued_count} recommendation job(s) queued.`
-          : "No eligible documents were found for recommendation generation.",
+        force
+          ? result.queued_count > 0
+            ? `${result.queued_count} recommendation regeneration job(s) queued.`
+            : "No eligible documents were found for recommendation regeneration."
+          : result.queued_count > 0
+            ? `${result.queued_count} recommendation job(s) queued.`
+            : result.skipped_document_ids.length > 0
+              ? "No new recommendations were queued because the document already has an active recommendation. Use Regenerate recommendations to replace it."
+              : "No eligible documents were found for recommendation generation.",
       );
       await refreshWorkspace();
     } catch (error: unknown) {
@@ -166,11 +178,21 @@ export default function RecommendationsPage({
               className="primary-button"
               disabled={isGenerating}
               onClick={() => {
-                void handleGenerateRecommendations();
+                void handleGenerateRecommendations(false);
               }}
               type="button"
             >
               {isGenerating ? "Queueing..." : "Generate recommendations"}
+            </button>
+            <button
+              className="secondary-button"
+              disabled={isGenerating || recommendations.length === 0}
+              onClick={() => {
+                void handleGenerateRecommendations(true);
+              }}
+              type="button"
+            >
+              {isGenerating ? "Queueing..." : "Regenerate recommendations"}
             </button>
             <p className="form-helper">
               Recommendation generation runs asynchronously for eligible documents in this close

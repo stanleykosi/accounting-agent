@@ -62,6 +62,7 @@ from services.contracts.storage_models import StorageBucketKind
 from services.db.models.audit import AuditSourceSurface
 from services.db.models.documents import Document
 from services.db.models.extractions import DocumentExtraction
+from services.db.models.journals import JournalEntry
 from services.db.models.recommendations import Recommendation
 from services.db.repositories.entity_repo import EntityUserRecord
 from services.db.repositories.integration_repo import IntegrationRepository
@@ -260,6 +261,14 @@ def generate_recommendations_for_close_run(
         document_query = document_query.filter(Document.id.in_(payload.document_ids))
 
     eligible_documents = document_query.all()
+    if payload.force:
+        for document in eligible_documents:
+            _ensure_document_recommendation_regeneration_allowed(
+                db_session=db_session,
+                close_run_id=close_run_id,
+                document_id=document.id,
+            )
+
     existing_recommendations = set()
     if not payload.force:
         existing_recommendations = {
@@ -292,6 +301,7 @@ def generate_recommendations_for_close_run(
                     "close_run_id": str(close_run_id),
                     "document_id": str(document.id),
                     "actor_user_id": str(session_result.user.id),
+                    "force": payload.force,
                 },
                 entity_id=entity_id,
                 close_run_id=close_run_id,
@@ -322,6 +332,50 @@ def generate_recommendations_for_close_run(
         "queued_jobs": queued_jobs,
         "skipped_document_ids": skipped_document_ids,
     }
+
+
+def _ensure_document_recommendation_regeneration_allowed(
+    *,
+    db_session: DbSessionDep,
+    close_run_id: UUID,
+    document_id: UUID,
+) -> None:
+    """Fail fast when a document already contributed an applied journal."""
+
+    active_recommendation_ids = tuple(
+        row.id
+        for row in db_session.query(Recommendation.id)
+        .filter(
+            Recommendation.close_run_id == close_run_id,
+            Recommendation.document_id == document_id,
+            Recommendation.superseded_by_id.is_(None),
+        )
+        .all()
+    )
+    if not active_recommendation_ids:
+        return
+
+    blocking_applied_journal = (
+        db_session.query(JournalEntry.id)
+        .filter(
+            JournalEntry.close_run_id == close_run_id,
+            JournalEntry.recommendation_id.in_(active_recommendation_ids),
+            JournalEntry.superseded_by_id.is_(None),
+            JournalEntry.status == ReviewStatus.APPLIED.value,
+        )
+        .first()
+    )
+    if blocking_applied_journal is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "recommendation_regeneration_blocked",
+                "message": (
+                    "This document already has an applied journal. Rewind the close run or "
+                    "delete the run before regenerating recommendations for it."
+                ),
+            },
+        )
 
 
 @router.post(

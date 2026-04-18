@@ -21,6 +21,7 @@ import {
   archiveCloseRun,
   CloseRunApiError,
   buildPhaseProgressItems,
+  deleteCloseRun,
   deriveCloseRunAttention,
   findActivePhase,
   formatCloseRunDateTime,
@@ -32,6 +33,7 @@ import {
   type CloseRunWorkspaceData,
 } from "../../../../../../lib/close-runs";
 import { EntityApiError } from "../../../../../../lib/entities/api";
+import { useRouter } from "next/navigation";
 
 type CloseRunOverviewPageProps = {
   params: Promise<{
@@ -50,6 +52,7 @@ export default function CloseRunOverviewPage({
   params,
 }: Readonly<CloseRunOverviewPageProps>): ReactElement {
   const { closeRunId, entityId } = use(params);
+  const router = useRouter();
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isMutating, setIsMutating] = useState(false);
@@ -235,6 +238,25 @@ export default function CloseRunOverviewPage({
     }
   }
 
+  async function handleDeleteCloseRun(): Promise<void> {
+    const confirmed = window.confirm(
+      "Delete this close run? This removes uploaded documents, recommendations, journals, reports, and close-run chat threads for the period.",
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    setIsMutating(true);
+    try {
+      await deleteCloseRun(entityId, closeRun.id);
+      router.push(`/entities/${closeRun.entityId}`);
+      router.refresh();
+    } catch (error: unknown) {
+      setErrorMessage(resolveCloseRunOverviewErrorMessage(error));
+      setIsMutating(false);
+    }
+  }
+
   return (
     <div className="app-shell close-run-overview-page">
       <section className="hero-grid close-run-hero-grid">
@@ -396,6 +418,25 @@ export default function CloseRunOverviewPage({
                   type="button"
                 >
                   {isMutating ? "Saving..." : "Archive"}
+                </button>
+              </div>
+            </article>
+            <article className="dashboard-row">
+              <strong className="close-run-row-title">Delete mutable close run</strong>
+              <p className="form-helper">
+                Remove this working period entirely when you want to start over without keeping its
+                uploaded evidence or downstream workflow state.
+              </p>
+              <div className="close-run-link-row">
+                <button
+                  className="secondary-button"
+                  disabled={isMutating || !canDeleteCloseRun(closeRun)}
+                  onClick={() => {
+                    void handleDeleteCloseRun();
+                  }}
+                  type="button"
+                >
+                  {isMutating ? "Saving..." : "Delete close run"}
                 </button>
               </div>
             </article>
@@ -562,6 +603,14 @@ function resolveCloseRunOverviewErrorMessage(error: unknown): string {
   }
 
   return "The close-run overview could not be loaded. Reload the workspace and try again.";
+}
+
+function canDeleteCloseRun(closeRun: Readonly<CloseRunSummary>): boolean {
+  return (
+    closeRun.status === "draft" ||
+    closeRun.status === "in_review" ||
+    closeRun.status === "reopened"
+  );
 }
 
 function MetricCard({

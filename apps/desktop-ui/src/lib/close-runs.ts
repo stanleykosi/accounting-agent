@@ -52,6 +52,16 @@ export type CloseRunWorkspaceData = {
   entity: EntityWorkspace;
 };
 
+export type CloseRunDeleteResponse = {
+  canceled_job_count: number;
+  deleted_close_run_id: string;
+  deleted_document_count: number;
+  deleted_journal_count: number;
+  deleted_recommendation_count: number;
+  deleted_report_run_count: number;
+  deleted_thread_count: number;
+};
+
 export type CloseRunAttentionTone = "default" | "success" | "warning";
 
 export type CloseRunAttention = {
@@ -77,6 +87,7 @@ export type CloseRunApiErrorCode =
   | "approval_blocked"
   | "archive_not_allowed"
   | "close_run_not_found"
+  | "delete_not_allowed"
   | "duplicate_period"
   | "entity_archived"
   | "entity_not_found"
@@ -204,6 +215,18 @@ export async function archiveCloseRun(
     },
   );
   return parseCloseRunSummary(response);
+}
+
+export async function deleteCloseRun(
+  entityId: string,
+  closeRunId: string,
+): Promise<CloseRunDeleteResponse> {
+  return closeRunRequest<CloseRunDeleteResponse>(
+    buildEntityProxyPath(entityId, ["close-runs", closeRunId]),
+    {
+      method: "DELETE",
+    },
+  );
 }
 
 /**
@@ -539,6 +562,7 @@ function asCloseRunApiErrorCode(value: unknown): CloseRunApiErrorCode {
     case "approval_blocked":
     case "archive_not_allowed":
     case "close_run_not_found":
+    case "delete_not_allowed":
     case "duplicate_period":
     case "entity_archived":
     case "entity_not_found":

@@ -165,7 +165,8 @@ export type DocumentReviewApiErrorCode =
   | "unsupported_content"
   | "unknown_error"
   | "user_disabled"
-  | "validation_error";
+  | "validation_error"
+  | "workflow_phase_locked";
 
 /**
  * Purpose: Represent a structured document-review API failure that UI callers can branch on.

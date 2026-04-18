@@ -28,13 +28,15 @@ from services.auth.service import (
     AuthService,
     AuthServiceError,
 )
+from services.close_runs.delete_service import CloseRunDeleteService
 from services.close_runs.service import CloseRunService, CloseRunServiceError
 from services.common.settings import AppSettings, get_settings
 from services.contracts.close_run_models import (
     CloseRunDecisionRequest,
+    CloseRunDeleteResponse,
     CloseRunListResponse,
-    CloseRunRewindResponse,
     CloseRunReopenResponse,
+    CloseRunRewindResponse,
     CloseRunSummary,
     CloseRunTransitionResponse,
     CreateCloseRunRequest,
@@ -44,6 +46,8 @@ from services.contracts.close_run_models import (
 from services.db.models.audit import AuditSourceSurface
 from services.db.repositories.close_run_repo import CloseRunRepository
 from services.db.repositories.entity_repo import EntityUserRecord
+from services.jobs.service import JobService
+from services.storage.repository import StorageRepository
 
 router = APIRouter(prefix="/entities/{entity_id}/close-runs", tags=["close_runs"])
 
@@ -58,6 +62,24 @@ def get_close_run_service(db_session: DatabaseSessionDependency) -> CloseRunServ
 
 
 CloseRunServiceDependency = Annotated[CloseRunService, Depends(get_close_run_service)]
+
+
+def get_close_run_delete_service(
+    db_session: DatabaseSessionDependency,
+) -> CloseRunDeleteService:
+    """Construct the destructive close-run delete service from request-scoped dependencies."""
+
+    return CloseRunDeleteService(
+        repository=CloseRunRepository(db_session=db_session),
+        storage_repository=StorageRepository(),
+        job_service=JobService(db_session=db_session),
+    )
+
+
+CloseRunDeleteServiceDependency = Annotated[
+    CloseRunDeleteService,
+    Depends(get_close_run_delete_service),
+]
 
 
 @router.get(
@@ -145,6 +167,38 @@ def read_close_run(
     session_result = auth_context
     try:
         return close_run_service.get_close_run(
+            actor_user=_to_entity_user(session_result),
+            entity_id=entity_id,
+            close_run_id=close_run_id,
+        )
+    except CloseRunServiceError as error:
+        raise _build_close_run_http_exception(error) from error
+
+
+@router.delete(
+    "/{close_run_id}",
+    response_model=CloseRunDeleteResponse,
+    summary="Delete one mutable close run",
+)
+def delete_close_run(
+    entity_id: UUID,
+    close_run_id: UUID,
+    request: Request,
+    response: Response,
+    settings: SettingsDependency,
+    auth_service: AuthServiceDependency,
+    close_run_delete_service: CloseRunDeleteServiceDependency,
+) -> CloseRunDeleteResponse:
+    """Delete one mutable close run and its owned working-state graph."""
+
+    session_result = _require_authenticated_browser_session(
+        request=request,
+        response=response,
+        settings=settings,
+        auth_service=auth_service,
+    )
+    try:
+        return close_run_delete_service.delete_close_run(
             actor_user=_to_entity_user(session_result),
             entity_id=entity_id,
             close_run_id=close_run_id,

@@ -11,12 +11,23 @@ from __future__ import annotations
 
 import sys
 import types
+from datetime import date
+from decimal import Decimal
 from uuid import uuid4
 
 from services.common.enums import DocumentSourceChannel, DocumentStatus
 from services.db.base import Base
+from services.db.models.close_run import CloseRun
 from services.db.models.documents import Document
 from services.db.models.extractions import DocumentExtraction
+from services.db.models.journals import JournalEntry, JournalLine
+from services.db.models.ledger import (
+    CloseRunLedgerBinding,
+    GeneralLedgerImportBatch,
+    GeneralLedgerImportLine,
+    TrialBalanceImportBatch,
+    TrialBalanceImportLine,
+)
 from sqlalchemy import create_engine
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.compiler import compiles
@@ -44,10 +55,13 @@ sys.modules.setdefault(
     types.SimpleNamespace(JobRuntimeContext=object, TrackedJobTask=object),
 )
 
+import apps.worker.app.tasks.run_reconciliation as run_reconciliation_task
 from apps.worker.app.tasks.run_reconciliation import (
     _build_budget_counterparts,
     _build_fixed_asset_counterparts,
+    _compute_account_balances,
     _load_bank_statement_data,
+    _load_ledger_transactions,
     _read_statement_lines_from_payload,
 )
 
@@ -273,3 +287,302 @@ def test_read_statement_lines_supports_nested_parser_output_payloads() -> None:
             "description": "Opening balance",
         },
     )
+
+
+def test_load_ledger_transactions_includes_imported_baseline_and_close_run_journals() -> None:
+    """Effective ledger loading should combine imported GL lines with current-run journals."""
+
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    tables = [
+        CloseRun.__table__,
+        GeneralLedgerImportBatch.__table__,
+        GeneralLedgerImportLine.__table__,
+        CloseRunLedgerBinding.__table__,
+        JournalEntry.__table__,
+        JournalLine.__table__,
+    ]
+    Base.metadata.create_all(engine, tables=tables)
+    session_factory = sessionmaker(bind=engine)
+
+    close_run_id = uuid4()
+    gl_batch_id = uuid4()
+    entity_id = uuid4()
+    with session_factory() as session:
+        session.add(
+            CloseRun(
+                id=close_run_id,
+                entity_id=entity_id,
+                period_start=date(2026, 3, 1),
+                period_end=date(2026, 3, 31),
+                status="draft",
+                reporting_currency="USD",
+                current_version_no=1,
+                opened_by_user_id=uuid4(),
+                approved_by_user_id=None,
+                approved_at=None,
+                archived_at=None,
+                reopened_from_close_run_id=None,
+            )
+        )
+        session.add(
+            GeneralLedgerImportBatch(
+                id=gl_batch_id,
+                entity_id=entity_id,
+                period_start=date(2026, 3, 1),
+                period_end=date(2026, 3, 31),
+                source_format="csv",
+                uploaded_filename="march-gl.csv",
+                row_count=1,
+                imported_by_user_id=None,
+                import_metadata={},
+            )
+        )
+        session.add(
+            GeneralLedgerImportLine(
+                id=uuid4(),
+                batch_id=gl_batch_id,
+                line_no=1,
+                posting_date=date(2026, 3, 5),
+                account_code="1000",
+                account_name="Cash",
+                reference="GL-001",
+                description="Imported cash receipt",
+                debit_amount="1200.00",
+                credit_amount="0.00",
+                dimensions={},
+                external_ref=None,
+            )
+        )
+        session.add(
+            CloseRunLedgerBinding(
+                id=uuid4(),
+                close_run_id=close_run_id,
+                general_ledger_import_batch_id=gl_batch_id,
+                trial_balance_import_batch_id=None,
+                binding_source="auto",
+                bound_by_user_id=None,
+            )
+        )
+        journal_id = uuid4()
+        session.add(
+            JournalEntry(
+                id=journal_id,
+                entity_id=session.get(CloseRun, close_run_id).entity_id,
+                close_run_id=close_run_id,
+                recommendation_id=None,
+                journal_number="JE-2026-00001",
+                posting_date=date(2026, 3, 31),
+                status="approved",
+                description="Close-run adjustment",
+                total_debits="50.00",
+                total_credits="50.00",
+                line_count=2,
+                source_surface="system",
+                autonomy_mode=None,
+                reasoning_summary=None,
+                metadata_payload={},
+                approved_by_user_id=None,
+                applied_by_user_id=None,
+                superseded_by_id=None,
+            )
+        )
+        session.add_all(
+            (
+                JournalLine(
+                    id=uuid4(),
+                    journal_entry_id=journal_id,
+                    line_no=1,
+                    account_code="6100",
+                    line_type="debit",
+                    amount="50.00",
+                    description="Expense true-up",
+                    dimensions={},
+                    reference="ADJ-001",
+                ),
+                JournalLine(
+                    id=uuid4(),
+                    journal_entry_id=journal_id,
+                    line_no=2,
+                    account_code="1000",
+                    line_type="credit",
+                    amount="50.00",
+                    description="Cash true-up",
+                    dimensions={},
+                    reference="ADJ-001",
+                ),
+            )
+        )
+        session.commit()
+
+        transactions = _load_ledger_transactions(session, close_run_id)
+
+    assert [transaction["ref"] for transaction in transactions] == [
+        f"gl:{gl_batch_id}:1",
+        "je:JE-2026-00001:1",
+        "je:JE-2026-00001:2",
+    ]
+    assert transactions[0]["signed_amount"] == "1200.00"
+    assert transactions[2]["signed_amount"] == "-50.00"
+
+
+def test_compute_account_balances_uses_trial_balance_import_plus_journal_adjustments(
+    monkeypatch,
+) -> None:
+    """Trial balance should start from the imported TB baseline and then add run journals."""
+
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    tables = [
+        CloseRun.__table__,
+        TrialBalanceImportBatch.__table__,
+        TrialBalanceImportLine.__table__,
+        CloseRunLedgerBinding.__table__,
+        JournalEntry.__table__,
+        JournalLine.__table__,
+    ]
+    Base.metadata.create_all(engine, tables=tables)
+    session_factory = sessionmaker(bind=engine)
+
+    close_run_id = uuid4()
+    entity_id = uuid4()
+    tb_batch_id = uuid4()
+    monkeypatch.setattr(
+        run_reconciliation_task,
+        "_load_coa_accounts",
+        lambda session, close_run_id: {
+            "1000": {
+                "account_code": "1000",
+                "account_name": "Cash",
+                "account_type": "asset",
+                "is_postable": True,
+            },
+            "6100": {
+                "account_code": "6100",
+                "account_name": "Office Expense",
+                "account_type": "expense",
+                "is_postable": True,
+            },
+        },
+    )
+    with session_factory() as session:
+        session.add(
+            CloseRun(
+                id=close_run_id,
+                entity_id=entity_id,
+                period_start=date(2026, 3, 1),
+                period_end=date(2026, 3, 31),
+                status="draft",
+                reporting_currency="USD",
+                current_version_no=1,
+                opened_by_user_id=uuid4(),
+                approved_by_user_id=None,
+                approved_at=None,
+                archived_at=None,
+                reopened_from_close_run_id=None,
+            )
+        )
+        session.add(
+            TrialBalanceImportBatch(
+                id=tb_batch_id,
+                entity_id=entity_id,
+                period_start=date(2026, 3, 1),
+                period_end=date(2026, 3, 31),
+                source_format="csv",
+                uploaded_filename="march-tb.csv",
+                row_count=2,
+                imported_by_user_id=None,
+                import_metadata={},
+            )
+        )
+        session.add_all(
+            (
+                TrialBalanceImportLine(
+                    id=uuid4(),
+                    batch_id=tb_batch_id,
+                    line_no=1,
+                    account_code="1000",
+                    account_name="Cash",
+                    account_type="asset",
+                    debit_balance="5000.00",
+                    credit_balance="0.00",
+                    is_active=True,
+                ),
+                TrialBalanceImportLine(
+                    id=uuid4(),
+                    batch_id=tb_batch_id,
+                    line_no=2,
+                    account_code="6100",
+                    account_name="Office Expense",
+                    account_type="expense",
+                    debit_balance="0.00",
+                    credit_balance="0.00",
+                    is_active=True,
+                ),
+            )
+        )
+        session.add(
+            CloseRunLedgerBinding(
+                id=uuid4(),
+                close_run_id=close_run_id,
+                general_ledger_import_batch_id=None,
+                trial_balance_import_batch_id=tb_batch_id,
+                binding_source="auto",
+                bound_by_user_id=None,
+            )
+        )
+        journal_id = uuid4()
+        session.add(
+            JournalEntry(
+                id=journal_id,
+                entity_id=entity_id,
+                close_run_id=close_run_id,
+                recommendation_id=None,
+                journal_number="JE-2026-00002",
+                posting_date=date(2026, 3, 31),
+                status="approved",
+                description="Expense accrual",
+                total_debits="200.00",
+                total_credits="200.00",
+                line_count=2,
+                source_surface="system",
+                autonomy_mode=None,
+                reasoning_summary=None,
+                metadata_payload={},
+                approved_by_user_id=None,
+                applied_by_user_id=None,
+                superseded_by_id=None,
+            )
+        )
+        session.add_all(
+            (
+                JournalLine(
+                    id=uuid4(),
+                    journal_entry_id=journal_id,
+                    line_no=1,
+                    account_code="6100",
+                    line_type="debit",
+                    amount="200.00",
+                    description="Expense accrual",
+                    dimensions={},
+                    reference="ACCR-001",
+                ),
+                JournalLine(
+                    id=uuid4(),
+                    journal_entry_id=journal_id,
+                    line_no=2,
+                    account_code="1000",
+                    line_type="credit",
+                    amount="200.00",
+                    description="Cash offset",
+                    dimensions={},
+                    reference="ACCR-001",
+                ),
+            )
+        )
+        session.commit()
+
+        balances = _compute_account_balances(session, close_run_id)
+
+    balances_by_code = {row["account_code"]: row for row in balances}
+    assert balances_by_code["1000"]["debit_balance"] == Decimal("5000.00")
+    assert balances_by_code["1000"]["credit_balance"] == Decimal("200.00")
+    assert balances_by_code["6100"]["debit_balance"] == Decimal("200.00")

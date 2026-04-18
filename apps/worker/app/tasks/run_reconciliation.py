@@ -30,16 +30,27 @@ from apps.worker.app.tasks.base import JobRuntimeContext, TrackedJobTask
 from apps.worker.app.tasks.close_run_phase_guard import ensure_close_run_active_phase
 from services.common.enums import ReconciliationType, WorkflowPhase
 from services.common.logging import get_logger
-from services.db.models.close_run import CloseRun
-from services.db.models.coa import CoaAccount, CoaSet
 from services.db.models.documents import Document, DocumentType
 from services.db.models.extractions import DocumentExtraction
 from services.db.models.journals import JournalEntry, JournalLine
+from services.db.models.ledger import (
+    GeneralLedgerImportLine,
+    TrialBalanceImportLine,
+)
 from services.db.repositories.reconciliation_repo import ReconciliationRepository
 from services.db.repositories.supporting_schedule_repo import SupportingScheduleRepository
 from services.db.session import get_session_factory
 from services.jobs.retry_policy import JobCancellationRequestedError
 from services.jobs.task_names import TaskName, resolve_task_route
+from services.ledger.effective_ledger import (
+    load_active_coa_accounts as _load_coa_accounts,
+)
+from services.ledger.effective_ledger import (
+    load_close_run_ledger_binding as _load_close_run_ledger_binding,
+)
+from services.ledger.effective_ledger import (
+    load_effective_ledger_transactions as _load_ledger_transactions,
+)
 from services.reconciliation.matchers import DEFAULT_MATCHING_CONFIG, MatchingConfig
 from services.reconciliation.service import ReconciliationService
 from services.supporting_schedules.service import SupportingScheduleService
@@ -158,111 +169,8 @@ def _read_statement_lines_from_payload(*, payload: Any) -> tuple[dict[str, Any],
     return ()
 
 
-def _load_ledger_transactions(session, close_run_id: UUID) -> list[dict[str, Any]]:
-    """Load ledger transactions from approved journal entries.
-
-    Args:
-        session: Active SQLAlchemy session.
-        close_run_id: The close run to load data for.
-
-    Returns:
-        List of ledger transaction dicts.
-    """
-    transactions: list[dict[str, Any]] = []
-
-    # Load journal entries for this close run
-    journals = (
-        session.query(JournalEntry)
-        .filter(
-            JournalEntry.close_run_id == close_run_id,
-            JournalEntry.status.in_(["approved", "applied"]),
-        )
-        .all()
-    )
-
-    for journal in journals:
-        # Load journal lines
-        lines = (
-            session.query(JournalLine)
-            .filter(JournalLine.journal_entry_id == journal.id)
-            .order_by(JournalLine.line_no)
-            .all()
-        )
-
-        for line in lines:
-            amount = Decimal(str(line.amount))
-            transactions.append(
-                {
-                    "ref": f"je:{journal.journal_number}:{line.line_no}",
-                    "amount": str(line.amount),
-                    "signed_amount": str(
-                        amount if line.line_type == "debit" else Decimal("0.00") - amount
-                    ),
-                    "date": str(journal.posting_date),
-                    "period": journal.posting_date.strftime("%Y-%m"),
-                    "reference": line.reference or "",
-                    "account_code": line.account_code,
-                    "description": line.description or "",
-                    "dimensions": line.dimensions,
-                    "line_type": line.line_type,
-                }
-            )
-
-    return transactions
-
-
-def _load_coa_accounts(session, close_run_id: UUID) -> dict[str, dict[str, Any]]:
-    """Load the active chart of accounts for a close run's entity.
-
-    Args:
-        session: Active SQLAlchemy session.
-        close_run_id: The close run to load COA for.
-
-    Returns:
-        Dict mapping account codes to account metadata.
-    """
-    # Get the close run to find the entity
-    close_run = session.query(CloseRun).filter(CloseRun.id == close_run_id).first()
-    if close_run is None:
-        return {}
-
-    # Get the active COA set for this entity
-    coa_set = (
-        session.query(CoaSet)
-        .filter(
-            CoaSet.entity_id == close_run.entity_id,
-            CoaSet.is_active,
-        )
-        .order_by(CoaSet.version_no.desc())
-        .first()
-    )
-
-    if coa_set is None:
-        return {}
-
-    # Load accounts
-    accounts = (
-        session.query(CoaAccount)
-        .filter(
-            CoaAccount.coa_set_id == coa_set.id,
-            CoaAccount.is_active,
-        )
-        .all()
-    )
-
-    return {
-        acct.account_code: {
-            "account_code": acct.account_code,
-            "account_name": acct.account_name,
-            "account_type": acct.account_type,
-            "is_postable": acct.is_postable,
-        }
-        for acct in accounts
-    }
-
-
 def _compute_account_balances(session, close_run_id: UUID) -> list[dict[str, Any]]:
-    """Compute account balances from journal lines for trial balance.
+    """Compute effective account balances for the close run trial balance.
 
     Args:
         session: Active SQLAlchemy session.
@@ -274,7 +182,104 @@ def _compute_account_balances(session, close_run_id: UUID) -> list[dict[str, Any
     # Load COA accounts
     coa_accounts = _load_coa_accounts(session, close_run_id)
 
-    # Load all journal lines for this close run
+    balances: dict[str, dict[str, Any]] = {}
+    binding = _load_close_run_ledger_binding(session, close_run_id)
+    if binding is not None and binding.trial_balance_import_batch_id is not None:
+        _seed_balances_from_imported_trial_balance(
+            session=session,
+            trial_balance_import_batch_id=binding.trial_balance_import_batch_id,
+            coa_accounts=coa_accounts,
+            balances=balances,
+        )
+        _apply_close_run_journal_deltas(
+            session=session,
+            close_run_id=close_run_id,
+            coa_accounts=coa_accounts,
+            balances=balances,
+        )
+        return list(balances.values())
+
+    if binding is not None and binding.general_ledger_import_batch_id is not None:
+        _seed_balances_from_imported_general_ledger(
+            session=session,
+            general_ledger_import_batch_id=binding.general_ledger_import_batch_id,
+            coa_accounts=coa_accounts,
+            balances=balances,
+        )
+
+    _apply_close_run_journal_deltas(
+        session=session,
+        close_run_id=close_run_id,
+        coa_accounts=coa_accounts,
+        balances=balances,
+    )
+
+    return list(balances.values())
+
+
+def _seed_balances_from_imported_trial_balance(
+    *,
+    session,
+    trial_balance_import_batch_id: UUID,
+    coa_accounts: dict[str, dict[str, Any]],
+    balances: dict[str, dict[str, Any]],
+) -> None:
+    """Seed account balances from one imported trial-balance batch."""
+
+    lines = (
+        session.query(TrialBalanceImportLine)
+        .filter(TrialBalanceImportLine.batch_id == trial_balance_import_batch_id)
+        .order_by(TrialBalanceImportLine.line_no)
+        .all()
+    )
+    for line in lines:
+        acct_info = coa_accounts.get(line.account_code, {})
+        balances[line.account_code] = {
+            "account_code": line.account_code,
+            "account_name": line.account_name or acct_info.get("account_name", line.account_code),
+            "account_type": line.account_type or acct_info.get("account_type", "unknown"),
+            "debit_balance": Decimal(str(line.debit_balance)),
+            "credit_balance": Decimal(str(line.credit_balance)),
+            "is_active": bool(line.is_active),
+        }
+
+
+def _seed_balances_from_imported_general_ledger(
+    *,
+    session,
+    general_ledger_import_batch_id: UUID,
+    coa_accounts: dict[str, dict[str, Any]],
+    balances: dict[str, dict[str, Any]],
+) -> None:
+    """Seed account balances by aggregating one imported general-ledger batch."""
+
+    lines = (
+        session.query(GeneralLedgerImportLine)
+        .filter(GeneralLedgerImportLine.batch_id == general_ledger_import_batch_id)
+        .order_by(GeneralLedgerImportLine.posting_date, GeneralLedgerImportLine.line_no)
+        .all()
+    )
+    for line in lines:
+        bucket = _ensure_balance_bucket(
+            balances=balances,
+            coa_accounts=coa_accounts,
+            account_code=line.account_code,
+            account_name=line.account_name,
+            account_type=None,
+        )
+        bucket["debit_balance"] += Decimal(str(line.debit_amount))
+        bucket["credit_balance"] += Decimal(str(line.credit_amount))
+
+
+def _apply_close_run_journal_deltas(
+    *,
+    session,
+    close_run_id: UUID,
+    coa_accounts: dict[str, dict[str, Any]],
+    balances: dict[str, dict[str, Any]],
+) -> None:
+    """Layer approved/applied close-run journal lines onto the running account balances."""
+
     journals = (
         session.query(JournalEntry)
         .filter(
@@ -283,36 +288,48 @@ def _compute_account_balances(session, close_run_id: UUID) -> list[dict[str, Any
         )
         .all()
     )
-
-    # Aggregate balances by account code
-    balances: dict[str, dict[str, Any]] = {}
     for journal in journals:
         lines = (
             session.query(JournalLine)
             .filter(JournalLine.journal_entry_id == journal.id)
             .all()
         )
-
         for line in lines:
-            code = line.account_code
-            if code not in balances:
-                acct_info = coa_accounts.get(code, {})
-                balances[code] = {
-                    "account_code": code,
-                    "account_name": acct_info.get("account_name", code),
-                    "account_type": acct_info.get("account_type", "unknown"),
-                    "debit_balance": Decimal("0.00"),
-                    "credit_balance": Decimal("0.00"),
-                    "is_active": True,
-                }
-
+            bucket = _ensure_balance_bucket(
+                balances=balances,
+                coa_accounts=coa_accounts,
+                account_code=line.account_code,
+                account_name=None,
+                account_type=None,
+            )
             amount = Decimal(str(line.amount))
             if line.line_type == "debit":
-                balances[code]["debit_balance"] += amount
+                bucket["debit_balance"] += amount
             else:
-                balances[code]["credit_balance"] += amount
+                bucket["credit_balance"] += amount
 
-    return list(balances.values())
+
+def _ensure_balance_bucket(
+    *,
+    balances: dict[str, dict[str, Any]],
+    coa_accounts: dict[str, dict[str, Any]],
+    account_code: str,
+    account_name: str | None,
+    account_type: str | None,
+) -> dict[str, Any]:
+    """Return a mutable balance bucket for one account code, creating it when needed."""
+
+    if account_code not in balances:
+        acct_info = coa_accounts.get(account_code, {})
+        balances[account_code] = {
+            "account_code": account_code,
+            "account_name": account_name or acct_info.get("account_name", account_code),
+            "account_type": account_type or acct_info.get("account_type", "unknown"),
+            "debit_balance": Decimal("0.00"),
+            "credit_balance": Decimal("0.00"),
+            "is_active": True,
+        }
+    return balances[account_code]
 
 
 def _build_reconciliation_source_data(

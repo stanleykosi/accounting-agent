@@ -15,6 +15,7 @@ from pydantic import Field, field_validator, model_validator
 from services.common.enums import CloseRunStatus, WorkflowPhase
 from services.contracts.api_models import ContractModel
 from services.contracts.domain_models import CloseRunWorkflowState
+from services.contracts.ledger_models import CloseRunLedgerBindingSummary
 
 
 def _normalize_currency_code(value: str) -> str:
@@ -187,6 +188,10 @@ class CloseRunSummary(ContractModel):
         default=None,
         description="Source close-run UUID when this row is a reopened working version.",
     )
+    ledger_binding: CloseRunLedgerBindingSummary | None = Field(
+        default=None,
+        description="Imported ledger baseline bound to this close run, if any.",
+    )
     workflow_state: CloseRunWorkflowState = Field(
         description="Calculated lifecycle and phase-gate state in canonical phase order.",
     )
@@ -229,11 +234,42 @@ class CloseRunReopenResponse(ContractModel):
     status: Literal["reopened"] = Field(description="Stable reopened response status.")
 
 
+class CloseRunDeleteResponse(ContractModel):
+    """Describe the destructive result of deleting one mutable close run."""
+
+    deleted_close_run_id: str = Field(description="UUID of the deleted close run.")
+    deleted_document_count: int = Field(
+        ge=0,
+        description="Number of source documents removed with the close run.",
+    )
+    deleted_recommendation_count: int = Field(
+        ge=0,
+        description="Number of recommendations removed with the close run.",
+    )
+    deleted_journal_count: int = Field(
+        ge=0,
+        description="Number of journals removed with the close run.",
+    )
+    deleted_report_run_count: int = Field(
+        ge=0,
+        description="Number of reporting runs removed with the close run.",
+    )
+    deleted_thread_count: int = Field(
+        ge=0,
+        description="Number of close-run-scoped chat threads removed with the close run.",
+    )
+    canceled_job_count: int = Field(
+        ge=0,
+        description="Number of active background jobs canceled before deletion.",
+    )
+
+
 __all__ = [
     "CloseRunDecisionRequest",
+    "CloseRunDeleteResponse",
     "CloseRunListResponse",
-    "CloseRunRewindResponse",
     "CloseRunReopenResponse",
+    "CloseRunRewindResponse",
     "CloseRunSummary",
     "CloseRunTransitionResponse",
     "CreateCloseRunRequest",

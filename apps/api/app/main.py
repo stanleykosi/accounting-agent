@@ -22,6 +22,8 @@ from apps.api.app.routes.documents import router as documents_router
 from apps.api.app.routes.entities import router as entities_router
 from apps.api.app.routes.exports import router as exports_router
 from apps.api.app.routes.jobs import router as jobs_router
+from apps.api.app.routes.ledger import close_run_router as close_run_ledger_router
+from apps.api.app.routes.ledger import router as ledger_router
 from apps.api.app.routes.ownership import router as ownership_router
 from apps.api.app.routes.quickbooks import router as quickbooks_router
 from apps.api.app.routes.recommendations import router as recommendations_router
@@ -133,6 +135,8 @@ def create_app(*, settings: AppSettings | None = None) -> FastAPI:
     api_router.include_router(chat_router)
     api_router.include_router(entities_router)
     api_router.include_router(jobs_router)
+    api_router.include_router(ledger_router)
+    api_router.include_router(close_run_ledger_router)
     api_router.include_router(close_runs_router)
     api_router.include_router(coa_router)
     api_router.include_router(documents_router)

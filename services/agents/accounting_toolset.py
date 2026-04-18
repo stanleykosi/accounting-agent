@@ -1865,6 +1865,7 @@ class AccountingToolset:
                     "close_run_id": str(close_run_id),
                     "document_id": str(document.id),
                     "actor_user_id": str(actor_user.id),
+                    "force": force,
                 },
                 entity_id=entity_id,
                 close_run_id=close_run_id,

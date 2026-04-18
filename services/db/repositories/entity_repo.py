@@ -29,6 +29,13 @@ from services.db.models.exports import Artifact, ExportDistribution, ExportRun
 from services.db.models.extractions import DocumentExtraction, DocumentLineItem, ExtractedField
 from services.db.models.integration import IntegrationConnection
 from services.db.models.jobs import Job
+from services.db.models.ledger import (
+    CloseRunLedgerBinding,
+    GeneralLedgerImportBatch,
+    GeneralLedgerImportLine,
+    TrialBalanceImportBatch,
+    TrialBalanceImportLine,
+)
 from services.db.models.ownership import OwnershipTarget
 from services.db.models.reporting import (
     ReportCommentary,
@@ -553,6 +560,20 @@ class EntityRepository:
             if close_run_ids
             else ()
         )
+        gl_batch_ids = tuple(
+            self._db_session.scalars(
+                select(GeneralLedgerImportBatch.id).where(
+                    GeneralLedgerImportBatch.entity_id == entity_id
+                )
+            ).all()
+        )
+        tb_batch_ids = tuple(
+            self._db_session.scalars(
+                select(TrialBalanceImportBatch.id).where(
+                    TrialBalanceImportBatch.entity_id == entity_id
+                )
+            ).all()
+        )
         document_ids = (
             tuple(
                 self._db_session.scalars(
@@ -584,6 +605,9 @@ class EntityRepository:
         )
         if close_run_ids:
             self._db_session.execute(
+                delete(CloseRunLedgerBinding).where(CloseRunLedgerBinding.close_run_id.in_(close_run_ids))
+            )
+            self._db_session.execute(
                 delete(ReviewAction).where(ReviewAction.close_run_id.in_(close_run_ids))
             )
         self._db_session.execute(delete(AuditEvent).where(AuditEvent.entity_id == entity_id))
@@ -614,6 +638,20 @@ class EntityRepository:
         )
         self._db_session.execute(
             delete(IntegrationConnection).where(IntegrationConnection.entity_id == entity_id)
+        )
+        if gl_batch_ids:
+            self._db_session.execute(
+                delete(GeneralLedgerImportLine).where(GeneralLedgerImportLine.batch_id.in_(gl_batch_ids))
+            )
+        self._db_session.execute(
+            delete(GeneralLedgerImportBatch).where(GeneralLedgerImportBatch.entity_id == entity_id)
+        )
+        if tb_batch_ids:
+            self._db_session.execute(
+                delete(TrialBalanceImportLine).where(TrialBalanceImportLine.batch_id.in_(tb_batch_ids))
+            )
+        self._db_session.execute(
+            delete(TrialBalanceImportBatch).where(TrialBalanceImportBatch.entity_id == entity_id)
         )
         self._db_session.execute(
             delete(CoaMappingRule).where(CoaMappingRule.entity_id == entity_id)

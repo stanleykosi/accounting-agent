@@ -326,6 +326,9 @@ export default function EntityWorkspacePage({
             <Link className="secondary-button" href={`/entities/${entity.id}/coa`}>
               Open chart of accounts
             </Link>
+            <Link className="secondary-button" href={`/entities/${entity.id}/ledger`}>
+              Open ledger baselines
+            </Link>
             {entity.current_user_membership.role === "owner" ? (
               <button
                 className="secondary-button"

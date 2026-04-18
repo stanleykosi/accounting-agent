@@ -551,6 +551,9 @@ function selectInitialDocumentId(workspace: DocumentReviewWorkspaceData): string
 
 function resolveDocumentReviewErrorMessage(error: unknown): string {
   if (error instanceof DocumentReviewApiError) {
+    if (error.code === "workflow_phase_locked") {
+      return "Document review actions are only available during Collection. Rewind the close run to Collection or delete the mutable run to start over.";
+    }
     return error.message;
   }
 

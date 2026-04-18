@@ -226,6 +226,14 @@ class ReviewStatus(CanonicalDomainEnum):
 class ArtifactType(CanonicalDomainEnum):
     """Enumerate the released artifact categories linked to close run versions."""
 
+    GENERAL_LEDGER_EXPORT = (
+        "general_ledger_export",
+        "General ledger export",
+        (
+            "Close-run effective ledger export combining any imported GL baseline with "
+            "current-run adjustments."
+        ),
+    )
     GL_POSTING_PACKAGE = (
         "gl_posting_package",
         "GL posting package",

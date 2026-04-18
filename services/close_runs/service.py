@@ -36,17 +36,19 @@ from services.common.enums import (
 from services.common.types import JsonObject, utc_now
 from services.contracts.close_run_models import (
     CloseRunListResponse,
-    CloseRunRewindResponse,
     CloseRunReopenResponse,
+    CloseRunRewindResponse,
     CloseRunSummary,
     CloseRunTransitionResponse,
 )
 from services.contracts.domain_models import CloseRunPhaseState, CloseRunWorkflowState
+from services.contracts.ledger_models import CloseRunLedgerBindingSummary
 from services.db.models.audit import AuditSourceSurface
 from services.db.models.entity import EntityStatus
 from services.db.repositories.close_run_repo import (
     CloseRunAccessRecord,
     CloseRunEntityRecord,
+    CloseRunLedgerBindingRecord,
     CloseRunPhaseStateRecord,
     CloseRunRecord,
     CloseRunStateResetSummary,
@@ -62,6 +64,7 @@ class CloseRunServiceErrorCode(StrEnum):
     DUPLICATE_PERIOD = "duplicate_period"
     ENTITY_ARCHIVED = "entity_archived"
     ENTITY_NOT_FOUND = "entity_not_found"
+    DELETE_NOT_ALLOWED = "delete_not_allowed"
     INTEGRITY_CONFLICT = "integrity_conflict"
     INVALID_TRANSITION = "invalid_transition"
     PHASE_BLOCKED = "phase_blocked"
@@ -150,6 +153,17 @@ class CloseRunRepositoryProtocol(Protocol):
     ) -> tuple[CloseRunPhaseStateRecord, ...]:
         """Persist the five canonical phase states for a close run."""
 
+    def bind_latest_imported_ledger_baseline(
+        self,
+        *,
+        entity_id: UUID,
+        close_run_id: UUID,
+        period_start: date,
+        period_end: date,
+        bound_by_user_id: UUID | None = None,
+    ) -> CloseRunLedgerBindingRecord | None:
+        """Bind the newest exact-period GL/TB imports to a fresh close run when present."""
+
     def carry_forward_working_state_for_reopened_close_run(
         self,
         *,
@@ -191,6 +205,13 @@ class CloseRunRepositoryProtocol(Protocol):
 
     def get_phase_gate_signals(self, *, close_run_id: UUID) -> PhaseGateSignals:
         """Return the deterministic readiness signals for one close run."""
+
+    def get_close_run_ledger_binding(
+        self,
+        *,
+        close_run_id: UUID,
+    ) -> CloseRunLedgerBindingRecord | None:
+        """Return the imported ledger baseline bound to one close run."""
 
     def create_review_action(
         self,
@@ -310,6 +331,13 @@ class CloseRunService:
             self._repository.create_phase_states(
                 close_run_id=close_run.id,
                 phase_states=build_initial_phase_states(),
+            )
+            self._repository.bind_latest_imported_ledger_baseline(
+                entity_id=entity_id,
+                close_run_id=close_run.id,
+                period_start=period_start,
+                period_end=period_end,
+                bound_by_user_id=actor_user.id,
             )
             self._repository.create_activity_event(
                 entity_id=entity_id,
@@ -733,9 +761,11 @@ class CloseRunService:
                 close_run_id=reopened_close_run.id,
                 phase_states=build_reopened_phase_states(),
             )
-            carry_forward_summary = self._repository.carry_forward_working_state_for_reopened_close_run(
-                source_close_run_id=close_run_id,
-                target_close_run_id=reopened_close_run.id,
+            carry_forward_summary = (
+                self._repository.carry_forward_working_state_for_reopened_close_run(
+                    source_close_run_id=close_run_id,
+                    target_close_run_id=reopened_close_run.id,
+                )
             )
             self._repository.create_review_action(
                 entity_id=entity_id,
@@ -908,6 +938,9 @@ class CloseRunService:
                 if close_run.reopened_from_close_run_id is not None
                 else None
             ),
+            ledger_binding=_build_ledger_binding_summary(
+                self._repository.get_close_run_ledger_binding(close_run_id=close_run.id)
+            ),
             workflow_state=workflow_state,
             created_at=close_run.created_at,
             updated_at=close_run.updated_at,
@@ -922,6 +955,37 @@ def _build_contract_phase_state(phase_state: EvaluatedPhaseState) -> CloseRunPha
         status=phase_state.status,
         blocking_reason=phase_state.blocking_reason,
         completed_at=phase_state.completed_at,
+    )
+
+
+def _build_ledger_binding_summary(
+    binding: CloseRunLedgerBindingRecord | None,
+) -> CloseRunLedgerBindingSummary | None:
+    """Convert one repository binding record into the public close-run contract."""
+
+    if binding is None:
+        return None
+
+    return CloseRunLedgerBindingSummary(
+        close_run_id=serialize_uuid(binding.close_run_id),
+        general_ledger_import_batch_id=(
+            serialize_uuid(binding.general_ledger_import_batch_id)
+            if binding.general_ledger_import_batch_id is not None
+            else None
+        ),
+        trial_balance_import_batch_id=(
+            serialize_uuid(binding.trial_balance_import_batch_id)
+            if binding.trial_balance_import_batch_id is not None
+            else None
+        ),
+        binding_source=binding.binding_source,
+        bound_by_user_id=(
+            serialize_uuid(binding.bound_by_user_id)
+            if binding.bound_by_user_id is not None
+            else None
+        ),
+        created_at=binding.created_at,
+        updated_at=binding.updated_at,
     )
 
 

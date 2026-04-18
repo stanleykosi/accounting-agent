@@ -6,11 +6,31 @@ Dependencies: Recommendation task helpers plus lightweight session doubles.
 
 from __future__ import annotations
 
+from datetime import date
 from uuid import uuid4
 
 from apps.worker.app.tasks import generate_recommendations as recommendation_task_module
-from services.common.enums import WorkflowPhase
+from services.common.enums import ReviewStatus, WorkflowPhase
 from services.contracts.recommendation_models import RecommendationContext
+from services.db.base import Base
+from services.db.models.close_run import CloseRun
+from services.db.models.journals import JournalEntry
+from services.db.models.recommendations import Recommendation
+from sqlalchemy import create_engine
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.ext.compiler import compiles
+from sqlalchemy.orm import sessionmaker
+
+
+@compiles(JSONB, "sqlite")
+def _compile_jsonb_for_sqlite(
+    _type_: JSONB,
+    _compiler: object,
+    **_compiler_kwargs: object,
+) -> str:
+    """Allow recommendation-task helpers to run against in-memory SQLite."""
+
+    return "JSON"
 
 
 class _FakeQuery:
@@ -37,6 +57,9 @@ class _FakeSession:
 
     def add(self, value: object) -> None:
         self.added.append(value)
+
+    def flush(self) -> None:
+        return None
 
     def commit(self) -> None:
         self.commit_count += 1
@@ -99,6 +122,7 @@ def test_persist_recommendation_checks_processing_phase_in_persistence_session(m
         routed_status="draft",
         context=context,
         actor_user_id=uuid4(),
+        force=False,
         trace_id="trace-123",
     )
 
@@ -107,3 +131,227 @@ def test_persist_recommendation_checks_processing_phase_in_persistence_session(m
         (fake_session, context.close_run_id, WorkflowPhase.PROCESSING)
     ]
     assert fake_session.commit_count == 1
+
+
+def test_force_regeneration_supersedes_prior_recommendation_state() -> None:
+    """A replacement recommendation should supersede older active state for the document."""
+
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    tables = [
+        CloseRun.__table__,
+        Recommendation.__table__,
+        JournalEntry.__table__,
+    ]
+    Base.metadata.create_all(engine, tables=tables)
+    session_factory = sessionmaker(bind=engine)
+
+    close_run_id = uuid4()
+    document_id = uuid4()
+    entity_id = uuid4()
+    old_recommendation_id = uuid4()
+    replacement_recommendation_id = uuid4()
+    journal_id = uuid4()
+
+    with session_factory() as session:
+        session.add(
+            CloseRun(
+                id=close_run_id,
+                entity_id=entity_id,
+                period_start=date(2026, 3, 1),
+                period_end=date(2026, 3, 31),
+                status="draft",
+                reporting_currency="USD",
+                current_version_no=1,
+                opened_by_user_id=uuid4(),
+                approved_by_user_id=None,
+                approved_at=None,
+                archived_at=None,
+                reopened_from_close_run_id=None,
+            )
+        )
+        session.add_all(
+            (
+                Recommendation(
+                    id=old_recommendation_id,
+                    close_run_id=close_run_id,
+                    document_id=document_id,
+                    recommendation_type="gl_coding",
+                    status=ReviewStatus.DRAFT.value,
+                    payload={"account_code": "6100"},
+                    confidence=0.61,
+                    reasoning_summary="Original recommendation",
+                    evidence_links=[],
+                    prompt_version="prompt-v1",
+                    rule_version="rules-v1",
+                    schema_version="1.0.0",
+                ),
+                Recommendation(
+                    id=replacement_recommendation_id,
+                    close_run_id=close_run_id,
+                    document_id=document_id,
+                    recommendation_type="gl_coding",
+                    status=ReviewStatus.DRAFT.value,
+                    payload={"account_code": "6200"},
+                    confidence=0.83,
+                    reasoning_summary="Replacement recommendation",
+                    evidence_links=[],
+                    prompt_version="prompt-v2",
+                    rule_version="rules-v2",
+                    schema_version="1.0.0",
+                ),
+                JournalEntry(
+                    id=journal_id,
+                    entity_id=entity_id,
+                    close_run_id=close_run_id,
+                    recommendation_id=old_recommendation_id,
+                    journal_number="JE-2026-00001",
+                    posting_date=date(2026, 3, 31),
+                    status=ReviewStatus.APPROVED.value,
+                    description="Original generated journal",
+                    total_debits="50.00",
+                    total_credits="50.00",
+                    line_count=2,
+                    source_surface="system",
+                    autonomy_mode=None,
+                    reasoning_summary=None,
+                    metadata_payload={},
+                    approved_by_user_id=None,
+                    applied_by_user_id=None,
+                    superseded_by_id=None,
+                ),
+            )
+        )
+        session.commit()
+
+        counts = recommendation_task_module._supersede_existing_recommendation_state_for_document(
+            db_session=session,
+            close_run_id=close_run_id,
+            document_id=document_id,
+            replacement_recommendation_id=replacement_recommendation_id,
+        )
+        session.commit()
+
+        refreshed_old_recommendation = session.get(Recommendation, old_recommendation_id)
+        refreshed_replacement = session.get(Recommendation, replacement_recommendation_id)
+        refreshed_journal = session.get(JournalEntry, journal_id)
+
+    assert counts == (1, 1)
+    assert refreshed_old_recommendation is not None
+    assert refreshed_old_recommendation.status == ReviewStatus.SUPERSEDED.value
+    assert refreshed_old_recommendation.superseded_by_id == replacement_recommendation_id
+    assert refreshed_replacement is not None
+    assert refreshed_replacement.superseded_by_id is None
+    assert refreshed_journal is not None
+    assert refreshed_journal.status == ReviewStatus.SUPERSEDED.value
+
+
+def test_force_regeneration_blocks_when_prior_applied_journal_exists() -> None:
+    """A late applied journal should still block worker-side regeneration superseding."""
+
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    tables = [
+        CloseRun.__table__,
+        Recommendation.__table__,
+        JournalEntry.__table__,
+    ]
+    Base.metadata.create_all(engine, tables=tables)
+    session_factory = sessionmaker(bind=engine)
+
+    close_run_id = uuid4()
+    document_id = uuid4()
+    entity_id = uuid4()
+    old_recommendation_id = uuid4()
+    replacement_recommendation_id = uuid4()
+    journal_id = uuid4()
+
+    with session_factory() as session:
+        session.add(
+            CloseRun(
+                id=close_run_id,
+                entity_id=entity_id,
+                period_start=date(2026, 3, 1),
+                period_end=date(2026, 3, 31),
+                status="draft",
+                reporting_currency="USD",
+                current_version_no=1,
+                opened_by_user_id=uuid4(),
+                approved_by_user_id=None,
+                approved_at=None,
+                archived_at=None,
+                reopened_from_close_run_id=None,
+            )
+        )
+        session.add_all(
+            (
+                Recommendation(
+                    id=old_recommendation_id,
+                    close_run_id=close_run_id,
+                    document_id=document_id,
+                    recommendation_type="gl_coding",
+                    status=ReviewStatus.DRAFT.value,
+                    payload={"account_code": "6100"},
+                    confidence=0.61,
+                    reasoning_summary="Original recommendation",
+                    evidence_links=[],
+                    prompt_version="prompt-v1",
+                    rule_version="rules-v1",
+                    schema_version="1.0.0",
+                ),
+                Recommendation(
+                    id=replacement_recommendation_id,
+                    close_run_id=close_run_id,
+                    document_id=document_id,
+                    recommendation_type="gl_coding",
+                    status=ReviewStatus.DRAFT.value,
+                    payload={"account_code": "6200"},
+                    confidence=0.83,
+                    reasoning_summary="Replacement recommendation",
+                    evidence_links=[],
+                    prompt_version="prompt-v2",
+                    rule_version="rules-v2",
+                    schema_version="1.0.0",
+                ),
+                JournalEntry(
+                    id=journal_id,
+                    entity_id=entity_id,
+                    close_run_id=close_run_id,
+                    recommendation_id=old_recommendation_id,
+                    journal_number="JE-2026-00002",
+                    posting_date=date(2026, 3, 31),
+                    status=ReviewStatus.APPLIED.value,
+                    description="Already applied journal",
+                    total_debits="50.00",
+                    total_credits="50.00",
+                    line_count=2,
+                    source_surface="system",
+                    autonomy_mode=None,
+                    reasoning_summary=None,
+                    metadata_payload={},
+                    approved_by_user_id=None,
+                    applied_by_user_id=None,
+                    superseded_by_id=None,
+                ),
+            )
+        )
+        session.commit()
+
+        try:
+            recommendation_task_module._supersede_existing_recommendation_state_for_document(
+                db_session=session,
+                close_run_id=close_run_id,
+                document_id=document_id,
+                replacement_recommendation_id=replacement_recommendation_id,
+            )
+        except recommendation_task_module.RecommendationRegenerationBlockedError:
+            session.rollback()
+        else:
+            raise AssertionError("Expected applied-journal regeneration guard to raise.")
+
+        refreshed_old_recommendation = session.get(Recommendation, old_recommendation_id)
+        refreshed_journal = session.get(JournalEntry, journal_id)
+
+    assert refreshed_old_recommendation is not None
+    assert refreshed_old_recommendation.status == ReviewStatus.DRAFT.value
+    assert refreshed_old_recommendation.superseded_by_id is None
+    assert refreshed_journal is not None
+    assert refreshed_journal.status == ReviewStatus.APPLIED.value

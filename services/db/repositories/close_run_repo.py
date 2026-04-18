@@ -29,7 +29,8 @@ from services.common.enums import (
     WorkflowPhase,
 )
 from services.common.types import JsonObject, utc_now
-from services.db.models.audit import AuditSourceSurface
+from services.db.models.audit import AuditEvent, AuditSourceSurface, ReviewAction
+from services.db.models.chat import ChatThread
 from services.db.models.close_run import CloseRun, CloseRunPhaseState
 from services.db.models.documents import Document, DocumentIssue, DocumentVersion
 from services.db.models.entity import Entity, EntityMembership, EntityStatus
@@ -37,6 +38,12 @@ from services.db.models.exports import Artifact, ExportDistribution, ExportRun
 from services.db.models.extractions import DocumentExtraction, DocumentLineItem, ExtractedField
 from services.db.models.jobs import Job
 from services.db.models.journals import JournalEntry, JournalLine, JournalPosting
+from services.db.models.ledger import (
+    CloseRunLedgerBinding,
+    GeneralLedgerImportBatch,
+    TrialBalanceImportBatch,
+)
+from services.db.models.ownership import OwnershipTarget
 from services.db.models.recommendations import Recommendation
 from services.db.models.reconciliation import (
     Reconciliation,
@@ -50,7 +57,7 @@ from services.documents.recommendation_eligibility import (
     is_gl_coding_recommendation_eligible,
 )
 from services.jobs.task_names import TaskName
-from sqlalchemy import asc, delete, desc, func, select
+from sqlalchemy import asc, delete, desc, func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -132,6 +139,37 @@ class CloseRunStateResetSummary:
     export_run_count: int = 0
     evidence_pack_count: int = 0
     canceled_job_count: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class CloseRunLedgerBindingRecord:
+    """Describe the imported ledger baseline bound to one close run."""
+
+    id: UUID
+    close_run_id: UUID
+    general_ledger_import_batch_id: UUID | None
+    trial_balance_import_batch_id: UUID | None
+    binding_source: str
+    bound_by_user_id: UUID | None
+    created_at: datetime
+    updated_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class CloseRunDeletionPlan:
+    """Describe the full delete footprint for one mutable close run."""
+
+    close_run: CloseRunRecord
+    entity: CloseRunEntityRecord
+    document_count: int
+    recommendation_count: int
+    journal_count: int
+    report_run_count: int
+    thread_count: int
+    active_job_ids: tuple[UUID, ...]
+    source_storage_keys: tuple[str, ...]
+    derivative_storage_keys: tuple[str, ...]
+    artifact_storage_keys: tuple[str, ...]
 
 
 class CloseRunRepository:
@@ -276,6 +314,175 @@ class CloseRunRepository:
         self._db_session.flush()
         return _map_close_run(close_run)
 
+    def bind_latest_imported_ledger_baseline(
+        self,
+        *,
+        entity_id: UUID,
+        close_run_id: UUID,
+        period_start: date,
+        period_end: date,
+        bound_by_user_id: UUID | None = None,
+    ) -> CloseRunLedgerBindingRecord | None:
+        """Bind the newest exact-period GL/TB imports to a fresh close run when present."""
+
+        gl_batch = self._db_session.execute(
+            select(GeneralLedgerImportBatch)
+            .where(
+                GeneralLedgerImportBatch.entity_id == entity_id,
+                GeneralLedgerImportBatch.period_start == period_start,
+                GeneralLedgerImportBatch.period_end == period_end,
+            )
+            .order_by(desc(GeneralLedgerImportBatch.created_at), desc(GeneralLedgerImportBatch.id))
+            .limit(1)
+        ).scalar_one_or_none()
+        tb_batch = self._db_session.execute(
+            select(TrialBalanceImportBatch)
+            .where(
+                TrialBalanceImportBatch.entity_id == entity_id,
+                TrialBalanceImportBatch.period_start == period_start,
+                TrialBalanceImportBatch.period_end == period_end,
+            )
+            .order_by(desc(TrialBalanceImportBatch.created_at), desc(TrialBalanceImportBatch.id))
+            .limit(1)
+        ).scalar_one_or_none()
+        if gl_batch is None and tb_batch is None:
+            return None
+
+        binding = CloseRunLedgerBinding(
+            close_run_id=close_run_id,
+            general_ledger_import_batch_id=gl_batch.id if gl_batch is not None else None,
+            trial_balance_import_batch_id=tb_batch.id if tb_batch is not None else None,
+            binding_source="auto",
+            bound_by_user_id=bound_by_user_id,
+        )
+        self._db_session.add(binding)
+        self._db_session.flush()
+        return _map_ledger_binding(binding)
+
+    def get_close_run_ledger_binding(
+        self,
+        *,
+        close_run_id: UUID,
+    ) -> CloseRunLedgerBindingRecord | None:
+        """Return the imported ledger baseline binding for one close run, if present."""
+
+        binding = self._db_session.execute(
+            select(CloseRunLedgerBinding).where(CloseRunLedgerBinding.close_run_id == close_run_id)
+        ).scalar_one_or_none()
+        return _map_ledger_binding(binding) if binding is not None else None
+
+    def get_close_run_deletion_plan_for_user(
+        self,
+        *,
+        entity_id: UUID,
+        close_run_id: UUID,
+        user_id: UUID,
+    ) -> CloseRunDeletionPlan | None:
+        """Return the delete footprint for one accessible close run."""
+
+        access_record = self.get_close_run_for_user(
+            entity_id=entity_id,
+            close_run_id=close_run_id,
+            user_id=user_id,
+        )
+        if access_record is None:
+            return None
+
+        document_ids = tuple(
+            self._db_session.scalars(
+                select(Document.id).where(Document.close_run_id == close_run_id)
+            ).all()
+        )
+        source_storage_keys = tuple(
+            storage_key.strip()
+            for storage_key in self._db_session.scalars(
+                select(Document.storage_key).where(Document.close_run_id == close_run_id)
+            ).all()
+            if isinstance(storage_key, str) and storage_key.strip()
+        )
+
+        derivative_keys: list[str] = []
+        if document_ids:
+            version_rows = self._db_session.scalars(
+                select(DocumentVersion)
+                .where(DocumentVersion.document_id.in_(document_ids))
+                .order_by(
+                    asc(DocumentVersion.document_id),
+                    asc(DocumentVersion.version_no),
+                    asc(DocumentVersion.created_at),
+                )
+            ).all()
+            for version in version_rows:
+                if (
+                    version.normalized_storage_key is not None
+                    and version.normalized_storage_key.strip()
+                ):
+                    derivative_keys.append(version.normalized_storage_key.strip())
+                if (
+                    version.ocr_text_storage_key is not None
+                    and version.ocr_text_storage_key.strip()
+                ):
+                    derivative_keys.append(version.ocr_text_storage_key.strip())
+                derivative_keys.extend(
+                    _collect_raw_parse_derivative_keys(raw_parse_payload=version.raw_parse_payload)
+                )
+
+        active_job_ids = tuple(
+            self._db_session.scalars(
+                select(Job.id)
+                .where(
+                    Job.close_run_id == close_run_id,
+                    Job.status.in_(
+                        (
+                            JobStatus.QUEUED.value,
+                            JobStatus.RUNNING.value,
+                            JobStatus.BLOCKED.value,
+                        )
+                    ),
+                )
+                .order_by(asc(Job.created_at), asc(Job.id))
+            ).all()
+        )
+
+        recommendation_count = int(
+            self._db_session.execute(
+                select(func.count(Recommendation.id)).where(
+                    Recommendation.close_run_id == close_run_id
+                )
+            ).scalar_one()
+        )
+        journal_count = int(
+            self._db_session.execute(
+                select(func.count(JournalEntry.id)).where(JournalEntry.close_run_id == close_run_id)
+            ).scalar_one()
+        )
+        report_run_count = int(
+            self._db_session.execute(
+                select(func.count(ReportRun.id)).where(ReportRun.close_run_id == close_run_id)
+            ).scalar_one()
+        )
+        thread_count = int(
+            self._db_session.execute(
+                select(func.count(ChatThread.id)).where(ChatThread.close_run_id == close_run_id)
+            ).scalar_one()
+        )
+
+        return CloseRunDeletionPlan(
+            close_run=access_record.close_run,
+            entity=access_record.entity,
+            document_count=len(document_ids),
+            recommendation_count=recommendation_count,
+            journal_count=journal_count,
+            report_run_count=report_run_count,
+            thread_count=thread_count,
+            active_job_ids=active_job_ids,
+            source_storage_keys=tuple(dict.fromkeys(source_storage_keys)),
+            derivative_storage_keys=tuple(dict.fromkeys(derivative_keys)),
+            artifact_storage_keys=self._collect_close_run_artifact_storage_keys(
+                close_run_id=close_run_id
+            ),
+        )
+
     def create_phase_states(
         self,
         *,
@@ -308,6 +515,22 @@ class CloseRunRepository:
 
         target_close_run = self._load_close_run(close_run_id=target_close_run_id)
         target_version_no = target_close_run.current_version_no
+        source_binding = self._db_session.execute(
+            select(CloseRunLedgerBinding).where(
+                CloseRunLedgerBinding.close_run_id == source_close_run_id
+            )
+        ).scalar_one_or_none()
+        if source_binding is not None:
+            self._db_session.add(
+                CloseRunLedgerBinding(
+                    close_run_id=target_close_run_id,
+                    general_ledger_import_batch_id=source_binding.general_ledger_import_batch_id,
+                    trial_balance_import_batch_id=source_binding.trial_balance_import_batch_id,
+                    binding_source=source_binding.binding_source,
+                    bound_by_user_id=source_binding.bound_by_user_id,
+                )
+            )
+            self._db_session.flush()
         source_documents = self._db_session.scalars(
             select(Document)
             .where(Document.close_run_id == source_close_run_id)
@@ -845,6 +1068,102 @@ class CloseRunRepository:
             report_run_count=len(source_report_runs),
         )
 
+    def delete_close_run(self, *, close_run_id: UUID) -> None:
+        """Delete one mutable close run and its owned database graph."""
+
+        document_ids = tuple(
+            self._db_session.scalars(
+                select(Document.id).where(Document.close_run_id == close_run_id)
+            ).all()
+        )
+        extraction_ids = (
+            tuple(
+                self._db_session.scalars(
+                    select(DocumentExtraction.id).where(
+                        DocumentExtraction.document_id.in_(document_ids)
+                    )
+                ).all()
+            )
+            if document_ids
+            else ()
+        )
+        report_run_ids = tuple(
+            self._db_session.scalars(
+                select(ReportRun.id).where(ReportRun.close_run_id == close_run_id)
+            ).all()
+        )
+
+        self._db_session.execute(
+            update(Job)
+            .where(Job.close_run_id == close_run_id)
+            .values(close_run_id=None, document_id=None)
+        )
+        self._db_session.execute(
+            delete(OwnershipTarget).where(OwnershipTarget.close_run_id == close_run_id)
+        )
+        self._db_session.execute(
+            delete(CloseRunLedgerBinding).where(CloseRunLedgerBinding.close_run_id == close_run_id)
+        )
+        self._db_session.execute(
+            delete(ReviewAction).where(ReviewAction.close_run_id == close_run_id)
+        )
+        self._db_session.execute(delete(AuditEvent).where(AuditEvent.close_run_id == close_run_id))
+        self._db_session.execute(
+            delete(ExportDistribution).where(ExportDistribution.close_run_id == close_run_id)
+        )
+        self._db_session.execute(delete(ChatThread).where(ChatThread.close_run_id == close_run_id))
+        self._db_session.execute(delete(Artifact).where(Artifact.close_run_id == close_run_id))
+        if report_run_ids:
+            self._db_session.execute(
+                update(ReportCommentary)
+                .where(ReportCommentary.report_run_id.in_(report_run_ids))
+                .values(superseded_by_id=None)
+            )
+            self._db_session.execute(
+                delete(ReportCommentary).where(ReportCommentary.report_run_id.in_(report_run_ids))
+            )
+        self._db_session.execute(delete(ExportRun).where(ExportRun.close_run_id == close_run_id))
+        self._db_session.execute(delete(ReportRun).where(ReportRun.close_run_id == close_run_id))
+        if extraction_ids:
+            self._db_session.execute(
+                delete(DocumentLineItem).where(
+                    DocumentLineItem.document_extraction_id.in_(extraction_ids)
+                )
+            )
+            self._db_session.execute(
+                delete(ExtractedField).where(
+                    ExtractedField.document_extraction_id.in_(extraction_ids)
+                )
+            )
+            self._db_session.execute(
+                delete(DocumentExtraction).where(DocumentExtraction.id.in_(extraction_ids))
+            )
+        if document_ids:
+            self._db_session.execute(
+                update(Recommendation)
+                .where(Recommendation.document_id.in_(document_ids))
+                .values(document_id=None)
+            )
+            self._db_session.execute(
+                update(Job).where(Job.document_id.in_(document_ids)).values(document_id=None)
+            )
+            self._db_session.execute(
+                delete(DocumentIssue).where(DocumentIssue.document_id.in_(document_ids))
+            )
+            self._db_session.execute(
+                delete(DocumentVersion).where(DocumentVersion.document_id.in_(document_ids))
+            )
+            self._db_session.execute(
+                update(Document).where(Document.id.in_(document_ids)).values(parent_document_id=None)
+            )
+            self._db_session.execute(delete(Document).where(Document.id.in_(document_ids)))
+
+        self._db_session.execute(
+            delete(CloseRunPhaseState).where(CloseRunPhaseState.close_run_id == close_run_id)
+        )
+        self._db_session.execute(delete(CloseRun).where(CloseRun.id == close_run_id))
+        self._db_session.flush()
+
     def clear_state_after_phase_rewind(
         self,
         *,
@@ -1378,6 +1697,31 @@ class CloseRunRepository:
 
         return close_run
 
+    def _collect_close_run_artifact_storage_keys(self, *, close_run_id: UUID) -> tuple[str, ...]:
+        """Return artifact storage keys referenced directly or indirectly by one close run."""
+
+        artifact_keys: list[str] = [
+            storage_key
+            for storage_key in self._db_session.scalars(
+                select(Artifact.storage_key).where(Artifact.close_run_id == close_run_id)
+            ).all()
+            if isinstance(storage_key, str) and storage_key.strip()
+        ]
+
+        report_artifact_payloads = self._db_session.scalars(
+            select(ReportRun.artifact_refs).where(ReportRun.close_run_id == close_run_id)
+        ).all()
+        for payload in report_artifact_payloads:
+            artifact_keys.extend(_collect_storage_keys_from_json_list(payload))
+
+        export_manifest_payloads = self._db_session.scalars(
+            select(ExportRun.artifact_manifest).where(ExportRun.close_run_id == close_run_id)
+        ).all()
+        for payload in export_manifest_payloads:
+            artifact_keys.extend(_collect_storage_keys_from_json_list(payload))
+
+        return tuple(dict.fromkeys(artifact_keys))
+
     def _clear_processing_state(self, *, close_run_id: UUID) -> tuple[int, int]:
         """Remove processing-phase recommendations, journals, and posting artifacts."""
 
@@ -1556,6 +1900,21 @@ def _map_phase_state(phase_state: CloseRunPhaseState) -> CloseRunPhaseStateRecor
     )
 
 
+def _map_ledger_binding(binding: CloseRunLedgerBinding) -> CloseRunLedgerBindingRecord:
+    """Convert an ORM ledger-binding row into the immutable repository record."""
+
+    return CloseRunLedgerBindingRecord(
+        id=binding.id,
+        close_run_id=binding.close_run_id,
+        general_ledger_import_batch_id=binding.general_ledger_import_batch_id,
+        trial_balance_import_batch_id=binding.trial_balance_import_batch_id,
+        binding_source=binding.binding_source,
+        bound_by_user_id=binding.bound_by_user_id,
+        created_at=binding.created_at,
+        updated_at=binding.updated_at,
+    )
+
+
 def _resolve_autonomy_mode(value: str) -> AutonomyMode:
     """Resolve a stored autonomy-mode value or fail fast on schema drift."""
 
@@ -1604,6 +1963,40 @@ def _clone_json_value(value: object) -> object:
     return value
 
 
+def _collect_raw_parse_derivative_keys(*, raw_parse_payload: JsonObject) -> tuple[str, ...]:
+    """Return derivative storage keys persisted inside one raw parse payload."""
+
+    raw_derivatives = raw_parse_payload.get("derivatives")
+    if not isinstance(raw_derivatives, dict):
+        return ()
+
+    extracted_tables_storage_key = raw_derivatives.get("extracted_tables_storage_key")
+    if not isinstance(extracted_tables_storage_key, str):
+        return ()
+    normalized = extracted_tables_storage_key.strip()
+    if not normalized:
+        return ()
+    return (normalized,)
+
+
+def _collect_storage_keys_from_json_list(payload: object) -> tuple[str, ...]:
+    """Return storage keys from JSON arrays of artifact reference dictionaries."""
+
+    if not isinstance(payload, list):
+        return ()
+
+    storage_keys: list[str] = []
+    for item in payload:
+        if not isinstance(item, dict):
+            continue
+        for key_name in ("storage_key", "object_key"):
+            value = item.get(key_name)
+            if isinstance(value, str) and value.strip():
+                storage_keys.append(value.strip())
+
+    return tuple(storage_keys)
+
+
 def _build_reopened_journal_number(*, source_journal_number: str, target_version_no: int) -> str:
     """Return the canonical journal number for a reopened close-run version."""
 
@@ -1647,7 +2040,9 @@ def _later_phase_task_names_after_rewind(*, target_phase: WorkflowPhase) -> tupl
 
 __all__ = [
     "CloseRunAccessRecord",
+    "CloseRunDeletionPlan",
     "CloseRunEntityRecord",
+    "CloseRunLedgerBindingRecord",
     "CloseRunPhaseStateRecord",
     "CloseRunRecord",
     "CloseRunRepository",

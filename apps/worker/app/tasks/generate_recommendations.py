@@ -39,6 +39,7 @@ from services.contracts.recommendation_models import (
 )
 from services.db.models.coa import CoaAccount, CoaSet
 from services.db.models.extractions import DocumentExtraction
+from services.db.models.journals import JournalEntry
 from services.db.session import get_session_factory
 from services.jobs.task_names import TaskName, resolve_task_route
 from services.model_gateway.client import ModelGatewayError
@@ -62,12 +63,17 @@ class RecommendationReceipt:
     errors: list[str]
 
 
+class RecommendationRegenerationBlockedError(RuntimeError):
+    """Represent a force-regeneration race that now conflicts with applied journals."""
+
+
 def _run_recommendation_task(
     *,
     entity_id: str,
     close_run_id: str,
     document_id: str,
     actor_user_id: str,
+    force: bool,
     job_context: JobRuntimeContext,
 ) -> dict[str, Any]:
     """Run the recommendation workflow from a Celery invocation.
@@ -133,6 +139,7 @@ def _run_recommendation_task(
         routed_status=routed_status,
         context=context,
         actor_user_id=parsed_actor_user_id,
+        force=force,
         trace_id=trace_id,
     )
     job_context.checkpoint(
@@ -366,6 +373,7 @@ def _persist_recommendation(
     routed_status: str,
     context: RecommendationContext,
     actor_user_id: UUID,
+    force: bool,
     trace_id: str | None,
 ) -> RecommendationReceipt:
     """Persist the assembled recommendation and emit an audit event.
@@ -413,6 +421,25 @@ def _persist_recommendation(
             schema_version=rec_input.schema_version,
         )
         db.add(recommendation)
+        db.flush()
+        if force:
+            (
+                superseded_recommendation_count,
+                superseded_journal_count,
+            ) = _supersede_existing_recommendation_state_for_document(
+                db_session=db,
+                close_run_id=context.close_run_id,
+                document_id=context.document_id,
+                replacement_recommendation_id=recommendation.id,
+            )
+            logger.info(
+                "recommendation_force_regeneration_superseded_prior_state",
+                close_run_id=str(context.close_run_id),
+                document_id=str(context.document_id),
+                recommendation_id=str(recommendation.id),
+                superseded_recommendation_count=superseded_recommendation_count,
+                superseded_journal_count=superseded_journal_count,
+            )
         db.commit()
         db.refresh(recommendation)
 
@@ -450,6 +477,76 @@ def _persist_recommendation(
     )
 
 
+def _supersede_existing_recommendation_state_for_document(
+    *,
+    db_session,
+    close_run_id: UUID,
+    document_id: UUID,
+    replacement_recommendation_id: UUID,
+) -> tuple[int, int]:
+    """Supersede prior active document recommendations once a replacement exists."""
+
+    from services.db.models.recommendations import Recommendation
+
+    active_recommendation_ids = tuple(
+        row.id
+        for row in db_session.query(Recommendation.id)
+        .filter(
+            Recommendation.close_run_id == close_run_id,
+            Recommendation.document_id == document_id,
+            Recommendation.superseded_by_id.is_(None),
+            Recommendation.id != replacement_recommendation_id,
+        )
+        .all()
+    )
+    if not active_recommendation_ids:
+        return 0, 0
+
+    blocking_applied_journal = (
+        db_session.query(JournalEntry.id)
+        .filter(
+            JournalEntry.close_run_id == close_run_id,
+            JournalEntry.recommendation_id.in_(active_recommendation_ids),
+            JournalEntry.superseded_by_id.is_(None),
+            JournalEntry.status == ReviewStatus.APPLIED.value,
+        )
+        .first()
+    )
+    if blocking_applied_journal is not None:
+        raise RecommendationRegenerationBlockedError(
+            "This document already has an applied journal. Rewind the close run or delete the "
+            "run before regenerating recommendations for it."
+        )
+
+    superseded_journal_count = int(
+        db_session.query(JournalEntry)
+        .filter(
+            JournalEntry.close_run_id == close_run_id,
+            JournalEntry.recommendation_id.in_(active_recommendation_ids),
+            JournalEntry.superseded_by_id.is_(None),
+        )
+        .update(
+            {JournalEntry.status: ReviewStatus.SUPERSEDED.value},
+            synchronize_session=False,
+        )
+    )
+    superseded_recommendation_count = int(
+        db_session.query(Recommendation)
+        .filter(
+            Recommendation.id.in_(active_recommendation_ids),
+            Recommendation.superseded_by_id.is_(None),
+        )
+        .update(
+            {
+                Recommendation.status: ReviewStatus.SUPERSEDED.value,
+                Recommendation.superseded_by_id: replacement_recommendation_id,
+            },
+            synchronize_session=False,
+        )
+    )
+    return superseded_recommendation_count, superseded_journal_count
+
+
 @celery_app.task(
     bind=True,
     base=TrackedJobTask,
@@ -466,6 +563,7 @@ def recommend_close_run(
     close_run_id: str,
     document_id: str,
     actor_user_id: str,
+    force: bool = False,
 ) -> dict[str, Any]:
     """Execute recommendation generation under the canonical checkpointed job wrapper."""
 
@@ -475,6 +573,7 @@ def recommend_close_run(
             close_run_id=close_run_id,
             document_id=document_id,
             actor_user_id=actor_user_id,
+            force=force,
             job_context=job_context,
         )
     )

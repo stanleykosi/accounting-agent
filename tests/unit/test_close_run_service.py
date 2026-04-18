@@ -24,6 +24,7 @@ from services.db.models.entity import EntityStatus
 from services.db.repositories.close_run_repo import (
     CloseRunAccessRecord,
     CloseRunEntityRecord,
+    CloseRunLedgerBindingRecord,
     CloseRunPhaseStateRecord,
     CloseRunRecord,
     CloseRunStateResetSummary,
@@ -51,12 +52,19 @@ class _FakeCloseRunRepository:
         self.activity_payload: dict[str, object] | None = None
         self.created_close_run: CloseRunRecord | None = None
         self.last_rewind_canceled_by_user_id: UUID | None = None
+        self.bind_calls: list[dict[str, object]] = []
+        self.ledger_bindings_by_close_run_id: dict[UUID, CloseRunLedgerBindingRecord] = {}
 
     def get_entity_for_user(self, *, entity_id: UUID, user_id: UUID) -> CloseRunEntityRecord | None:
         del entity_id, user_id
         return self.access_record.entity
 
-    def list_close_runs_for_entity(self, *, entity_id: UUID, user_id: UUID) -> tuple[CloseRunRecord, ...]:
+    def list_close_runs_for_entity(
+        self,
+        *,
+        entity_id: UUID,
+        user_id: UUID,
+    ) -> tuple[CloseRunRecord, ...]:
         del entity_id, user_id
         return (self.access_record.close_run,)
 
@@ -71,7 +79,10 @@ class _FakeCloseRunRepository:
         if close_run_id == self.access_record.close_run.id:
             return self.access_record
         if self.created_close_run is not None and close_run_id == self.created_close_run.id:
-            return CloseRunAccessRecord(close_run=self.created_close_run, entity=self.access_record.entity)
+            return CloseRunAccessRecord(
+                close_run=self.created_close_run,
+                entity=self.access_record.entity,
+            )
         return None
 
     def find_open_close_run_for_period(
@@ -131,9 +142,32 @@ class _FakeCloseRunRepository:
         close_run_id: UUID,
         phase_states: tuple,
     ) -> tuple[CloseRunPhaseStateRecord, ...]:
-        records = tuple(_to_phase_state_record(close_run_id=close_run_id, state=state) for state in phase_states)
+        records = tuple(
+            _to_phase_state_record(close_run_id=close_run_id, state=state)
+            for state in phase_states
+        )
         self.phase_states_by_close_run_id[close_run_id] = records
         return records
+
+    def bind_latest_imported_ledger_baseline(
+        self,
+        *,
+        entity_id: UUID,
+        close_run_id: UUID,
+        period_start: date,
+        period_end: date,
+        bound_by_user_id: UUID | None = None,
+    ) -> CloseRunLedgerBindingRecord | None:
+        self.bind_calls.append(
+            {
+                "entity_id": entity_id,
+                "close_run_id": close_run_id,
+                "period_start": period_start,
+                "period_end": period_end,
+                "bound_by_user_id": bound_by_user_id,
+            }
+        )
+        return self.ledger_bindings_by_close_run_id.get(close_run_id)
 
     def carry_forward_working_state_for_reopened_close_run(
         self,
@@ -153,7 +187,10 @@ class _FakeCloseRunRepository:
         close_run_id: UUID,
         phase_states: tuple,
     ) -> tuple[CloseRunPhaseStateRecord, ...]:
-        records = tuple(_to_phase_state_record(close_run_id=close_run_id, state=state) for state in phase_states)
+        records = tuple(
+            _to_phase_state_record(close_run_id=close_run_id, state=state)
+            for state in phase_states
+        )
         self.phase_states_by_close_run_id[close_run_id] = records
         return records
 
@@ -177,7 +214,11 @@ class _FakeCloseRunRepository:
         approved_at: datetime | None = None,
         archived_at: datetime | None = None,
     ) -> CloseRunRecord:
-        target = self.created_close_run if self.created_close_run and self.created_close_run.id == close_run_id else self.access_record.close_run
+        target = (
+            self.created_close_run
+            if self.created_close_run and self.created_close_run.id == close_run_id
+            else self.access_record.close_run
+        )
         updated = replace(
             target,
             status=status,
@@ -193,6 +234,13 @@ class _FakeCloseRunRepository:
     def get_phase_gate_signals(self, *, close_run_id: UUID) -> PhaseGateSignals:
         del close_run_id
         return PhaseGateSignals()
+
+    def get_close_run_ledger_binding(
+        self,
+        *,
+        close_run_id: UUID,
+    ) -> CloseRunLedgerBindingRecord | None:
+        return self.ledger_bindings_by_close_run_id.get(close_run_id)
 
     def create_review_action(self, **kwargs) -> None:
         self.review_action_payload = kwargs.get("audit_payload")
@@ -282,6 +330,35 @@ def test_rewind_close_run_records_reset_summary_for_later_phase_invalidation() -
     assert repository.activity_payload["reset_summary"]["canceled_job_count"] == 3
 
 
+def test_create_close_run_attempts_to_bind_latest_imported_ledger_baseline() -> None:
+    """Fresh close runs should auto-bind any exact-period imported GL/TB baseline."""
+
+    actor_user = EntityUserRecord(id=uuid4(), email="ops@example.com", full_name="Finance Ops")
+    access_record = _build_access_record(status=CloseRunStatus.DRAFT)
+    repository = _FakeCloseRunRepository(
+        access_record=access_record,
+        phase_states=_reopened_phase_state_records(close_run_id=access_record.close_run.id),
+    )
+
+    service = CloseRunService(repository=repository)
+    response = service.create_close_run(
+        actor_user=actor_user,
+        entity_id=access_record.close_run.entity_id,
+        period_start=date(2026, 4, 1),
+        period_end=date(2026, 4, 30),
+        reporting_currency=None,
+        allow_duplicate_period=False,
+        duplicate_period_reason=None,
+        source_surface=AuditSourceSurface.DESKTOP,
+        trace_id="trace-create",
+    )
+
+    assert response.reporting_currency == access_record.entity.base_currency
+    assert repository.bind_calls
+    assert repository.bind_calls[0]["close_run_id"] == repository.created_close_run.id
+    assert repository.bind_calls[0]["bound_by_user_id"] == actor_user.id
+
+
 def _build_access_record(*, status: CloseRunStatus) -> CloseRunAccessRecord:
     """Return one close-run access record suitable for service orchestration tests."""
 
@@ -341,7 +418,11 @@ def _to_phase_state_record(
         id=uuid4(),
         close_run_id=close_run_id,
         phase=state.phase,
-        status=state.status if isinstance(state.status, CloseRunPhaseStatus) else CloseRunPhaseStatus(state.status),
+        status=(
+            state.status
+            if isinstance(state.status, CloseRunPhaseStatus)
+            else CloseRunPhaseStatus(state.status)
+        ),
         blocking_reason=state.blocking_reason,
         completed_at=state.completed_at,
         created_at=created_at,
