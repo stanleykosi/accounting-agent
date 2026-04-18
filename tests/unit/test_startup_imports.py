@@ -12,6 +12,7 @@ import sys
 
 import pytest
 from services.common.settings import AppSettings, reset_settings_cache
+from services.jobs.task_names import TaskName
 
 
 def _clear_modules(*prefixes: str) -> None:
@@ -53,4 +54,5 @@ def test_worker_startup_import_skips_pdf_builder_until_report_generation(
     module = importlib.import_module("apps.worker.app.celery_app")
 
     assert module.celery_app is not None
+    assert TaskName.RECONCILIATION_EXECUTE_CLOSE_RUN.value in module.celery_app.tasks
     assert "services.reporting.pdf_builder" not in sys.modules

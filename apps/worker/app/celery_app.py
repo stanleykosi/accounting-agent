@@ -201,5 +201,6 @@ import apps.worker.app.tasks.extract_documents as _extract_documents  # noqa: E4
 import apps.worker.app.tasks.generate_recommendations as _generate_recommendations  # noqa: E402,F401
 import apps.worker.app.tasks.generate_reports as _generate_reports  # noqa: E402,F401
 import apps.worker.app.tasks.parse_documents as _parse_documents  # noqa: E402,F401
+import apps.worker.app.tasks.run_reconciliation as _run_reconciliation  # noqa: E402,F401
 
 __all__ = ["ObservedTask", "celery_app", "run_trace_probe"]
