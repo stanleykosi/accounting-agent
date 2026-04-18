@@ -31,7 +31,7 @@ from services.agents.policy import ExecutionPolicy
 from services.auth.service import serialize_uuid
 from services.chat.grounding import ChatGroundingService, GroundingContextRecord
 from services.close_runs.service import CloseRunService, CloseRunServiceError
-from services.coa.service import CoaRepository
+from services.coa.service import CoaRepository, CoaService
 from services.common.enums import CloseRunStatus, WorkflowPhase
 from services.common.types import utc_now
 from services.contracts.chat_models import (
@@ -156,6 +156,7 @@ class ChatActionExecutor:
         self._grounding = grounding_service
         self._entity_repo = entity_repository
         self._close_run_service = close_run_service
+        self._coa_service = CoaService(repository=CoaRepository(db_session=db_session))
 
         self._workspace_builder = AccountingWorkspaceContextBuilder(
             action_repository=action_repository,
@@ -210,6 +211,7 @@ class ChatActionExecutor:
     ) -> ChatExecutionOutcome:
         """Plan a chat response and optionally execute the selected deterministic tool."""
 
+        self._ensure_entity_coa_available(actor_user=actor_user, entity_id=entity_id)
         grounding, thread = self._load_thread_context(
             thread_id=thread_id,
             entity_id=entity_id,
@@ -631,6 +633,7 @@ class ChatActionExecutor:
     ) -> ChatThreadWorkspaceResponse:
         """Return the agent workspace context exposed for one chat thread."""
 
+        self._ensure_entity_coa_available(actor_user=actor_user, entity_id=entity_id)
         _, thread = self._load_thread_context(
             thread_id=thread_id,
             entity_id=entity_id,
@@ -704,6 +707,7 @@ class ChatActionExecutor:
     ) -> McpToolCallOutcome:
         """Execute or stage one deterministic tool call through the shared agent runtime."""
 
+        self._ensure_entity_coa_available(actor_user=actor_user, entity_id=entity_id)
         grounding, thread = self._load_thread_context(
             thread_id=thread_id,
             entity_id=entity_id,
@@ -888,6 +892,21 @@ class ChatActionExecutor:
             entity_id=entity_id,
             close_run_id=close_run_id,
             thread_id=thread_id,
+        )
+
+    def _ensure_entity_coa_available(
+        self,
+        *,
+        actor_user: EntityUserRecord,
+        entity_id: UUID,
+    ) -> None:
+        """Ensure chat/workbench reads observe the canonical active-or-fallback COA state."""
+
+        self._coa_service.read_workspace(
+            actor_user=actor_user,
+            entity_id=entity_id,
+            source_surface=AuditSourceSurface.DESKTOP,
+            trace_id=None,
         )
 
     def _build_execution_context(
@@ -1329,7 +1348,8 @@ class ChatActionExecutor:
                 ),
                 (
                     "When you choose a tool, explain in plain operator language what you are "
-                    "about to change, why it fits the current workflow state, and what happens next."
+                    "about to change, why it fits the current workflow state, and what "
+                    "happens next."
                 ),
                 (
                     "If the operator states a desired outcome but multiple actions could fit, "
@@ -1358,14 +1378,15 @@ class ChatActionExecutor:
                 (
                     "If the active chart of accounts is missing, do not choose a tool for "
                     "recommendation generation, journals, reconciliation, reporting, or "
-                    "exports. Respond in read_only mode and ask the operator to upload or "
-                    "sync the production COA from the workbench."
+                    "exports. Respond in read_only mode and ask the operator to upload a "
+                    "production COA from the workbench or Chart of Accounts page."
                 ),
                 (
                     "If the active chart of accounts is fallback-only, you may explain "
                     "state, parsing, and intake progress, but for precision-sensitive "
                     "coding, journals, reconciliation, reporting, and sign-off you should "
-                    "direct the operator to upload or sync the production COA first."
+                    "direct the operator to upload a production COA first if they want "
+                    "entity-specific mapping."
                 ),
                 (
                     "If source documents are missing, direct the operator to the "
@@ -1485,7 +1506,11 @@ def _format_approval_message(
         if isinstance(assistant_response, str)
         else "Approved action executed."
     )
-    return f"{base}\n\n{_format_scope_handoff_message(handoff_message)}{_format_execution_result(applied_result)}"
+    return (
+        f"{base}\n\n"
+        f"{_format_scope_handoff_message(handoff_message)}"
+        f"{_format_execution_result(applied_result)}"
+    )
 
 
 def _truncate_text(value: str | None, *, limit: int = 500) -> str | None:
@@ -1576,7 +1601,8 @@ def _build_scope_handoff_message(*, applied_result: dict[str, Any]) -> str | Non
             status_label = _format_close_run_status_label(reopened_from_status)
             if status_label is not None:
                 notes.append(
-                    f"I reopened the {status_label.lower()} close run as working version {version_no}."
+                    "I reopened the "
+                    f"{status_label.lower()} close run as working version {version_no}."
                 )
             else:
                 notes.append(f"I reopened this close run as working version {version_no}.")

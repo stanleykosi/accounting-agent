@@ -51,12 +51,28 @@ def test_collection_gate_blocks_missing_and_unauthorized_documents() -> None:
     assert processing.status is CloseRunPhaseStatus.NOT_STARTED
 
 
+def test_collection_gate_requires_at_least_one_approved_source_document() -> None:
+    """Collection should stay blocked until at least one source document is approved."""
+
+    evaluated = evaluate_phase_gates(
+        phase_states=_existing_states_from_initial(),
+        signals=PhaseGateSignals(),
+    )
+
+    collection = evaluated[0]
+
+    assert collection.status is CloseRunPhaseStatus.BLOCKED
+    assert collection.blocking_reason is not None
+    assert "no approved source documents yet" in collection.blocking_reason
+
+
 def test_collection_gate_mentions_pending_verification_and_transaction_mismatch() -> None:
     """Collection should stay blocked until verification and document matching are complete."""
 
     evaluated = evaluate_phase_gates(
         phase_states=_existing_states_from_initial(),
         signals=PhaseGateSignals(
+            approved_document_count=1,
             pending_document_review_count=2,
             unmatched_transaction_count=1,
         ),
@@ -77,7 +93,7 @@ def test_transition_opens_only_the_immediate_next_phase() -> None:
     result = transition_to_next_phase(
         phase_states=_existing_states_from_initial(),
         target_phase=WorkflowPhase.PROCESSING,
-        signals=PhaseGateSignals(),
+        signals=PhaseGateSignals(approved_document_count=1),
         transitioned_at=transitioned_at,
     )
 
@@ -91,7 +107,7 @@ def test_transition_opens_only_the_immediate_next_phase() -> None:
         transition_to_next_phase(
             phase_states=_existing_states_from_initial(),
             target_phase=WorkflowPhase.RECONCILIATION,
-            signals=PhaseGateSignals(),
+            signals=PhaseGateSignals(approved_document_count=1),
         )
 
 

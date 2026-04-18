@@ -33,6 +33,7 @@ class PhaseGateSignals:
     """Collect deterministic signals that can block phase progression."""
 
     missing_required_documents: tuple[str, ...] = ()
+    approved_document_count: int = 0
     unauthorized_document_count: int = 0
     pending_document_review_count: int = 0
     unmatched_transaction_count: int = 0
@@ -336,6 +337,8 @@ def _build_blocking_reason(*, phase: WorkflowPhase, signals: PhaseGateSignals) -
 
     if phase is WorkflowPhase.COLLECTION:
         blockers: list[str] = []
+        if signals.approved_document_count <= 0:
+            blockers.append("no approved source documents yet")
         if signals.missing_required_documents:
             blockers.append(
                 "missing required documents: " + ", ".join(signals.missing_required_documents)
@@ -423,8 +426,8 @@ __all__ = [
     "EvaluatedPhaseState",
     "ExistingPhaseState",
     "PhaseGateError",
-    "PhaseRewindResult",
     "PhaseGateSignals",
+    "PhaseRewindResult",
     "PhaseTransitionResult",
     "build_initial_phase_states",
     "build_reopened_phase_states",

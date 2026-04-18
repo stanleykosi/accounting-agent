@@ -40,12 +40,8 @@ class CompletenessCheckProtocol(Protocol):
 class CompletenessCheckService:
     """Service for checking document type completeness in close runs."""
 
-    # Default required document types for a basic accounting close run
-    DEFAULT_REQUIRED_DOCUMENT_TYPES: ClassVar[set[DocumentType]] = {
-        DocumentType.INVOICE,
-        DocumentType.BANK_STATEMENT,
-        DocumentType.RECEIPT,
-    }
+    # No generic type checklist is enforced unless the caller explicitly supplies one.
+    DEFAULT_REQUIRED_DOCUMENT_TYPES: ClassVar[set[DocumentType]] = set()
 
     def __init__(
         self,
@@ -72,8 +68,11 @@ class CompletenessCheckService:
         Returns:
             CompletenessCheckResult indicating completeness status
         """
-        if required_document_types is None:
-            required_document_types = self.DEFAULT_REQUIRED_DOCUMENT_TYPES
+        resolved_required_document_types = (
+            set(self.DEFAULT_REQUIRED_DOCUMENT_TYPES)
+            if required_document_types is None
+            else set(required_document_types)
+        )
 
         documents = self._document_repo.list_documents_for_close_run(
             close_run_id=UUID(close_run_id)
@@ -92,13 +91,13 @@ class CompletenessCheckService:
                 continue
             present_document_types.add(document_type)
 
-        missing_document_types = required_document_types - present_document_types
+        missing_document_types = resolved_required_document_types - present_document_types
 
         return CompletenessCheckResult(
             is_complete=len(missing_document_types) == 0,
             missing_document_types=missing_document_types,
             present_document_types=present_document_types,
-            required_document_types=required_document_types,
+            required_document_types=resolved_required_document_types,
         )
 
 

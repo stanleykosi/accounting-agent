@@ -9,10 +9,10 @@ and review persistence models.
 
 from __future__ import annotations
 
+import re
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import date, datetime
-import re
 from uuid import UUID
 
 from services.audit.service import AuditService
@@ -23,7 +23,6 @@ from services.common.enums import (
     AutonomyMode,
     CloseRunPhaseStatus,
     CloseRunStatus,
-    DocumentType,
     JobStatus,
     SupportingScheduleStatus,
     SupportingScheduleType,
@@ -34,8 +33,8 @@ from services.db.models.audit import AuditSourceSurface
 from services.db.models.close_run import CloseRun, CloseRunPhaseState
 from services.db.models.documents import Document, DocumentIssue, DocumentVersion
 from services.db.models.entity import Entity, EntityMembership, EntityStatus
-from services.db.models.extractions import DocumentExtraction, DocumentLineItem, ExtractedField
 from services.db.models.exports import Artifact, ExportDistribution, ExportRun
+from services.db.models.extractions import DocumentExtraction, DocumentLineItem, ExtractedField
 from services.db.models.jobs import Job
 from services.db.models.journals import JournalEntry, JournalLine, JournalPosting
 from services.db.models.recommendations import Recommendation
@@ -387,7 +386,9 @@ class CloseRunRepository:
             cloned_extractions_by_source_id[source_extraction.id] = clone
         self._db_session.flush()
 
-        source_extraction_ids = tuple(source_extraction.id for source_extraction in source_extractions)
+        source_extraction_ids = tuple(
+            source_extraction.id for source_extraction in source_extractions
+        )
         if source_extraction_ids:
             source_fields = self._db_session.scalars(
                 select(ExtractedField)
@@ -576,7 +577,8 @@ class CloseRunRepository:
                     source_artifact = source_artifacts_by_id.get(source_posting.artifact_id)
                     if source_artifact is None:
                         raise LookupError(
-                            "A journal posting referenced a missing artifact while reopening the close run."
+                            "A journal posting referenced a missing artifact while reopening "
+                            "the close run."
                         )
                     cloned_artifact = cloned_artifacts_by_source_id.get(source_artifact.id)
                     if cloned_artifact is None:
@@ -790,7 +792,9 @@ class CloseRunRepository:
             cloned_report_runs_by_source_id[source_report_run.id] = clone
         self._db_session.flush()
 
-        source_report_run_ids = tuple(source_report_run.id for source_report_run in source_report_runs)
+        source_report_run_ids = tuple(
+            source_report_run.id for source_report_run in source_report_runs
+        )
         if source_report_run_ids:
             source_commentary = self._db_session.scalars(
                 select(ReportCommentary)
@@ -1021,23 +1025,8 @@ class CloseRunRepository:
         ).all()
         document_ids = tuple(row.id for row in document_rows)
 
-        required_document_types = {
-            DocumentType.INVOICE,
-            DocumentType.BANK_STATEMENT,
-            DocumentType.RECEIPT,
-        }
-        present_document_types = {
-            DocumentType(row.document_type)
-            for row in document_rows
-            if row.document_type != DocumentType.UNKNOWN.value
-            and row.status not in {"rejected", "duplicate"}
-        }
-        missing_required_documents = tuple(
-            sorted(
-                document_type.value
-                for document_type in (required_document_types - present_document_types)
-            )
-        )
+        missing_required_documents: tuple[str, ...] = ()
+        approved_document_count = sum(1 for row in document_rows if row.status == "approved")
         pending_document_review_count = sum(
             1
             for row in document_rows
@@ -1283,6 +1272,7 @@ class CloseRunRepository:
 
         return PhaseGateSignals(
             missing_required_documents=missing_required_documents,
+            approved_document_count=approved_document_count,
             unauthorized_document_count=len(unauthorized_document_ids),
             pending_document_review_count=pending_document_review_count,
             unmatched_transaction_count=len(unmatched_transaction_document_ids),
@@ -1404,7 +1394,9 @@ class CloseRunRepository:
             self._db_session.execute(
                 delete(JournalLine).where(JournalLine.journal_entry_id.in_(journal_ids))
             )
-        self._db_session.execute(delete(JournalEntry).where(JournalEntry.close_run_id == close_run_id))
+        self._db_session.execute(
+            delete(JournalEntry).where(JournalEntry.close_run_id == close_run_id)
+        )
         self._db_session.execute(
             delete(Recommendation).where(Recommendation.close_run_id == close_run_id)
         )
@@ -1647,10 +1639,10 @@ def _later_phase_task_names_after_rewind(*, target_phase: WorkflowPhase) -> tupl
 
 __all__ = [
     "CloseRunAccessRecord",
-    "CloseRunStateResetSummary",
     "CloseRunEntityRecord",
     "CloseRunPhaseStateRecord",
     "CloseRunRecord",
     "CloseRunRepository",
+    "CloseRunStateResetSummary",
     "ReopenedCloseRunCarryForwardSummary",
 ]

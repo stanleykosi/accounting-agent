@@ -4,15 +4,9 @@ Unit tests for document issue rules and quality checks.
 
 from datetime import date, datetime
 from decimal import Decimal
+from unittest.mock import Mock
 from uuid import uuid4
 
-from services.documents.completeness import CompletenessCheckResult, CompletenessCheckService
-from services.documents.duplicate_detection import (
-    DuplicateDetectionResult,
-    DuplicateDetectionService,
-)
-from services.documents.issues import DocumentIssueRecord, DocumentIssueService
-from services.documents.period_validation import PeriodValidationResult, PeriodValidationService
 from services.common.enums import (
     DocumentIssueSeverity,
     DocumentIssueStatus,
@@ -20,6 +14,14 @@ from services.common.enums import (
     DocumentStatus,
     DocumentType,
 )
+from services.documents.completeness import CompletenessCheckResult, CompletenessCheckService
+from services.documents.duplicate_detection import (
+    DuplicateDetectionResult,
+    DuplicateDetectionService,
+)
+from services.documents.issues import DocumentIssueRecord, DocumentIssueService
+from services.documents.period_validation import PeriodValidationResult, PeriodValidationService
+from sqlalchemy.orm import Session
 
 
 class MockDocumentRepository:
@@ -31,12 +33,12 @@ class MockDocumentRepository:
 
     def get_close_run_for_user(self, *, entity_id, close_run_id, user_id):
         # Mock implementation
+        from services.common.enums import AutonomyMode, EntityStatus
         from services.db.repositories.document_repo import (
             DocumentCloseRunAccessRecord,
             DocumentCloseRunRecord,
             DocumentEntityRecord,
         )
-        from services.common.enums import AutonomyMode, EntityStatus
 
         return DocumentCloseRunAccessRecord(
             close_run=DocumentCloseRunRecord(
@@ -76,11 +78,6 @@ class MockStorageRepository:
         self, *, scope, document_id, original_filename, payload, content_type, expected_sha256
     ):
         # Mock implementation
-        from services.storage.repository import (
-            SourceStorageMetadataProtocol,
-            SourceStorageReferenceProtocol,
-        )
-
         class MockReference:
             @property
             def object_key(self):
@@ -187,7 +184,7 @@ def test_duplicate_detection_service():
     )
 
     assert isinstance(result, DuplicateDetectionResult)
-    assert result.is_duplicate == False
+    assert result.is_duplicate is False
     assert result.existing_document_id is None
     assert result.similarity_score == 0.0
     assert result.detection_method == "sha256_exact"
@@ -420,7 +417,7 @@ def test_period_validation_service():
     )
 
     assert isinstance(result, PeriodValidationResult)
-    assert result.is_valid == True
+    assert result.is_valid is True
     assert result.document_period_start == date(2024, 1, 15)
     assert result.document_period_end == date(2024, 1, 20)
     assert result.close_run_period_start == date(2024, 1, 1)
@@ -435,7 +432,7 @@ def test_period_validation_service():
         close_run_period_end=date(2024, 1, 31),
     )
 
-    assert result.is_valid == False
+    assert result.is_valid is False
     print("✓ Period validation service test passed (no overlap)")
 
     # Test undetectable period
@@ -446,7 +443,7 @@ def test_period_validation_service():
         close_run_period_end=date(2024, 1, 31),
     )
 
-    assert result.is_valid == False
+    assert result.is_valid is False
     print("✓ Period validation service test passed (undetectable period)")
 
 
@@ -455,16 +452,13 @@ def test_completeness_check_service():
     doc_repo = MockDocumentRepository()
     service = CompletenessCheckService(document_repo=doc_repo)
 
-    # Test with no required types specified (should use defaults)
+    # Test with no required types specified (should use the empty default checklist)
     result = service.check_completeness(close_run_id=str(uuid4()))
 
     assert isinstance(result, CompletenessCheckResult)
-    # Should be incomplete since we have no documents in mock repo
-    assert result.is_complete == False
-    assert len(result.missing_document_types) > 0
-    assert DocumentType.INVOICE in result.required_document_types
-    assert DocumentType.BANK_STATEMENT in result.required_document_types
-    assert DocumentType.RECEIPT in result.required_document_types
+    assert result.is_complete is True
+    assert result.missing_document_types == set()
+    assert result.required_document_types == set()
     print("✓ Completeness check service test passed (default types)")
 
     # Test with custom required types
@@ -475,14 +469,12 @@ def test_completeness_check_service():
     )
 
     assert result.required_document_types == custom_types
-    assert result.is_complete == False  # Still no documents
+    assert result.is_complete is False  # Still no documents
     print("✓ Completeness check service test passed (custom types)")
 
 
 def test_document_issue_service():
     """Test document issue service."""
-    from unittest.mock import Mock
-    from sqlalchemy.orm import Session
 
     # Mock dependencies
     db_session = Mock(spec=Session)

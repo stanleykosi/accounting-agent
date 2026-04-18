@@ -404,8 +404,9 @@ class AccountingWorkspaceContextBuilder(WorkspaceContextBuilder):
                 "requires_operator_upload": True,
                 "activated_at": None,
                 "summary": (
-                    "No active chart of accounts is configured. Upload or sync the production COA "
-                    "before relying on the agent for high-precision coding and reporting."
+                    "No active chart of accounts is configured. Upload a production COA from the "
+                    "workbench or Chart of Accounts page before relying on the agent for "
+                    "high-precision coding and reporting."
                 ),
                 "accounts": [],
             }
@@ -418,8 +419,9 @@ class AccountingWorkspaceContextBuilder(WorkspaceContextBuilder):
             status = "fallback"
             summary = (
                 f"Fallback chart of accounts version {active_set.version_no} is active with "
-                f"{len(active_accounts)} active accounts. Upload or sync the production COA "
-                "to improve mapping precision."
+                f"{len(active_accounts)} active accounts. You can continue collection and "
+                "document review now; upload a production COA later if you want to replace "
+                "the fallback before sign-off."
             )
         else:
             status = "active"
@@ -650,13 +652,18 @@ def _build_readiness_summary(
 
     if not coa_summary.get("is_available", False):
         blockers.append("No active chart of accounts is configured for this entity.")
-        next_actions.append("Upload or sync the production chart of accounts from the workbench.")
+        next_actions.append(
+            "Upload a production chart of accounts from the workbench or Chart of Accounts page."
+        )
     elif coa_summary.get("requires_operator_upload", False):
         warnings.append(
-            "A fallback chart of accounts is active. Upload or sync the production "
-            "COA before sign-off."
+            "A fallback chart of accounts is active. You can continue intake work now, but "
+            "upload a production COA before sign-off if you need entity-specific mapping."
         )
-        next_actions.append("Upload the production chart of accounts from the workbench.")
+        next_actions.append(
+            "Upload a production chart of accounts from the workbench or Chart of Accounts page "
+            "if you want to replace the fallback before sign-off."
+        )
 
     document_count = sum(document_summary.values())
     parsed_document_count = sum(
@@ -706,6 +713,14 @@ def _build_readiness_summary(
         if phase_state.get("status") == "blocked" and phase_state.get("blocking_reason")
     ]
     blockers.extend(reason for reason in blocked_phase_reasons if reason not in blockers)
+    if (
+        close_run.get("active_phase") == "collection"
+        and not blockers
+        and document_count > 0
+    ):
+        next_actions.append(
+            "Advance the close run to Processing when you are done collecting approved documents."
+        )
     if not next_actions:
         next_actions.append(
             "Ask the agent for the next best action or review the latest trace output."
