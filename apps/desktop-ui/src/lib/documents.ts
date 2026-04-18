@@ -212,6 +212,22 @@ export type DocumentDeleteResult = {
   deletedDocumentId: string;
 };
 
+export type DocumentReparseResult = {
+  canceledJobCount: number;
+  clearedExtractionCount: number;
+  clearedIssueCount: number;
+  clearedVersionCount: number;
+  dispatch: {
+    queueName: string;
+    routingKey: string;
+    taskId: string;
+    taskName: string;
+    traceId: string | null;
+  };
+  reparsedDocumentFilename: string;
+  reparsedDocumentId: string;
+};
+
 /**
  * Purpose: Load and normalize the document review workspace for one entity close run.
  * Inputs: Entity UUID and close-run UUID from the active route context.
@@ -359,6 +375,21 @@ export async function deleteSourceDocument(
   );
 
   return parseDocumentDeleteResult(payload);
+}
+
+export async function reparseSourceDocument(
+  entityId: string,
+  closeRunId: string,
+  documentId: string,
+): Promise<DocumentReparseResult> {
+  const payload = await documentReviewRequest<unknown>(
+    buildEntityProxyPath(entityId, ["close-runs", closeRunId, "documents", documentId, "reparse"]),
+    {
+      method: "POST",
+    },
+  );
+
+  return parseDocumentReparseResult(payload);
 }
 
 /**
@@ -634,6 +665,50 @@ function parseDocumentDeleteResult(payload: unknown): DocumentDeleteResult {
       "documentDelete.deleted_document_filename",
     ),
     deletedDocumentId: requireString(payload.deleted_document_id, "documentDelete.deleted_document_id"),
+  };
+}
+
+function parseDocumentReparseResult(payload: unknown): DocumentReparseResult {
+  if (!isRecord(payload)) {
+    throw new Error("Document reparse response was not an object.");
+  }
+
+  const dispatch = requireRecord(payload.dispatch, "documentReparse.dispatch");
+  return {
+    canceledJobCount: requireNumber(
+      payload.canceled_job_count,
+      "documentReparse.canceled_job_count",
+    ),
+    clearedExtractionCount: requireNumber(
+      payload.cleared_extraction_count,
+      "documentReparse.cleared_extraction_count",
+    ),
+    clearedIssueCount: requireNumber(
+      payload.cleared_issue_count,
+      "documentReparse.cleared_issue_count",
+    ),
+    clearedVersionCount: requireNumber(
+      payload.cleared_version_count,
+      "documentReparse.cleared_version_count",
+    ),
+    dispatch: {
+      queueName: requireString(dispatch.queue_name, "documentReparse.dispatch.queue_name"),
+      routingKey: requireString(
+        dispatch.routing_key,
+        "documentReparse.dispatch.routing_key",
+      ),
+      taskId: requireString(dispatch.task_id, "documentReparse.dispatch.task_id"),
+      taskName: requireString(dispatch.task_name, "documentReparse.dispatch.task_name"),
+      traceId: requireNullableString(dispatch.trace_id, "documentReparse.dispatch.trace_id"),
+    },
+    reparsedDocumentFilename: requireString(
+      payload.reparsed_document_filename,
+      "documentReparse.reparsed_document_filename",
+    ),
+    reparsedDocumentId: requireString(
+      payload.reparsed_document_id,
+      "documentReparse.reparsed_document_id",
+    ),
   };
 }
 

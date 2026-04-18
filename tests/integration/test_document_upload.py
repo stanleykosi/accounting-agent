@@ -34,6 +34,7 @@ from services.db.repositories.document_repo import (
     DocumentDeletionPlan,
     DocumentEntityRecord,
     DocumentRecord,
+    DocumentReparsePlan,
     DocumentWithExtractionRecord,
 )
 from services.db.repositories.entity_repo import EntityUserRecord
@@ -330,6 +331,77 @@ def test_document_delete_rejects_missing_documents() -> None:
     assert error.value.code is DocumentUploadServiceErrorCode.DOCUMENT_NOT_FOUND
 
 
+def test_document_reparse_resets_parse_artifacts_and_queues_a_fresh_parse_job() -> None:
+    """Reparsing should clear prior parse state, remove derivatives, and dispatch fresh work."""
+
+    repository = InMemoryDocumentRepository()
+    storage = InMemoryStorageRepository()
+    job_service = InMemoryJobService()
+    dispatcher = InMemoryTaskDispatcher()
+    service = DocumentUploadService(
+        repository=repository,
+        storage_repository=storage,
+        job_service=job_service,
+        task_dispatcher=dispatcher,
+    )
+
+    upload_response = service.upload_documents(
+        actor_user=repository.actor,
+        entity_id=repository.access_record.entity.id,
+        close_run_id=repository.access_record.close_run.id,
+        files=(
+            UploadFilePayload(
+                filename="Vendor Invoice.pdf",
+                payload=b"%PDF-1.7\n1 0 obj\n<< /Type /Catalog /Font <<>> >>\n%%EOF",
+                declared_content_type="application/pdf",
+            ),
+        ),
+        source_surface=AuditSourceSurface.DESKTOP,
+        trace_id="req-doc-upload",
+    )
+    uploaded_document = upload_response.uploaded_documents[0].document
+    original_job_id = next(iter(job_service.dispatched_jobs))
+    document_id = UUID(uploaded_document.id)
+    repository.active_job_ids_by_document[document_id] = (original_job_id,)
+    repository.derivative_storage_keys_by_document[document_id] = (
+        "documents/derivatives/test-version/tables.json",
+        "documents/ocr/test-version/text.txt",
+    )
+    repository.extraction_counts_by_document[document_id] = 1
+    repository.issue_counts_by_document[document_id] = 2
+    repository.version_counts_by_document[document_id] = 3
+    storage.objects["documents/derivatives/test-version/tables.json"] = b"{}"
+    storage.objects["documents/ocr/test-version/text.txt"] = b"ocr"
+
+    reparse_response = service.reparse_document(
+        actor_user=repository.actor,
+        entity_id=repository.access_record.entity.id,
+        close_run_id=repository.access_record.close_run.id,
+        document_id=document_id,
+        source_surface=AuditSourceSurface.DESKTOP,
+        trace_id="req-doc-reparse",
+    )
+
+    reparsed_document = repository.documents[document_id]
+    assert reparse_response.reparsed_document_id == uploaded_document.id
+    assert reparse_response.reparsed_document_filename == uploaded_document.original_filename
+    assert reparse_response.canceled_job_count == 1
+    assert reparse_response.cleared_extraction_count == 1
+    assert reparse_response.cleared_issue_count == 2
+    assert reparse_response.cleared_version_count == 3
+    assert original_job_id in job_service.canceled_job_ids
+    assert len(job_service.dispatched_jobs) == 2
+    assert reparsed_document.status is DocumentStatus.PROCESSING
+    assert reparsed_document.document_type is DocumentType.UNKNOWN
+    assert reparsed_document.classification_confidence is None
+    assert repository.extraction_counts_by_document[document_id] == 0
+    assert repository.issue_counts_by_document[document_id] == 0
+    assert repository.version_counts_by_document[document_id] == 0
+    assert "documents/derivatives/test-version/tables.json" not in storage.objects
+    assert "documents/ocr/test-version/text.txt" not in storage.objects
+    assert repository.activity_events[-1]["event_type"] == "document.reparse_requested"
+
+
 class InMemoryDocumentRepository:
     """Provide a deterministic repository double for document upload integration tests."""
 
@@ -358,6 +430,9 @@ class InMemoryDocumentRepository:
         self.documents: dict[UUID, DocumentRecord] = {}
         self.active_job_ids_by_document: dict[UUID, tuple[UUID, ...]] = {}
         self.derivative_storage_keys_by_document: dict[UUID, tuple[str, ...]] = {}
+        self.extraction_counts_by_document: dict[UUID, int] = {}
+        self.issue_counts_by_document: dict[UUID, int] = {}
+        self.version_counts_by_document: dict[UUID, int] = {}
         self.activity_events: list[dict[str, object]] = []
         self.committed = False
         self.rolled_back = False
@@ -503,6 +578,36 @@ class InMemoryDocumentRepository:
             active_job_ids=tuple(dict.fromkeys(active_job_ids)),
         )
 
+    def get_document_reparse_plan_for_user(
+        self,
+        *,
+        entity_id: UUID,
+        close_run_id: UUID,
+        document_id: UUID,
+        user_id: UUID,
+    ) -> DocumentReparsePlan | None:
+        """Return one synthetic reparse plan when the actor can access the document."""
+
+        if (
+            entity_id != self.access_record.entity.id
+            or close_run_id != self.access_record.close_run.id
+            or user_id != self.actor.id
+        ):
+            return None
+
+        document = self.documents.get(document_id)
+        if document is None:
+            return None
+
+        return DocumentReparsePlan(
+            document=document,
+            derivative_storage_keys=self.derivative_storage_keys_by_document.get(document_id, ()),
+            active_job_ids=self.active_job_ids_by_document.get(document_id, ()),
+            existing_extraction_count=self.extraction_counts_by_document.get(document_id, 0),
+            existing_issue_count=self.issue_counts_by_document.get(document_id, 0),
+            existing_version_count=self.version_counts_by_document.get(document_id, 0),
+        )
+
     def delete_document_tree(self, *, document_ids: tuple[UUID, ...]) -> None:
         """Delete one in-memory document subtree and clear its synthetic linked state."""
 
@@ -510,6 +615,36 @@ class InMemoryDocumentRepository:
             self.documents.pop(document_id, None)
             self.active_job_ids_by_document.pop(document_id, None)
             self.derivative_storage_keys_by_document.pop(document_id, None)
+            self.extraction_counts_by_document.pop(document_id, None)
+            self.issue_counts_by_document.pop(document_id, None)
+            self.version_counts_by_document.pop(document_id, None)
+
+    def reset_document_for_reparse(
+        self,
+        *,
+        document_id: UUID,
+        actor_user_id: UUID,
+    ) -> DocumentRecord:
+        """Clear synthetic parse artifacts and reset one document to processing."""
+
+        document = self.documents[document_id]
+        reparsed_document = replace(
+            document,
+            document_type=DocumentType.UNKNOWN,
+            classification_confidence=None,
+            period_start=None,
+            period_end=None,
+            status=DocumentStatus.PROCESSING,
+            owner_user_id=None,
+            last_touched_by_user_id=actor_user_id,
+            updated_at=datetime.now(tz=UTC),
+        )
+        self.documents[document_id] = reparsed_document
+        self.derivative_storage_keys_by_document[document_id] = ()
+        self.extraction_counts_by_document[document_id] = 0
+        self.issue_counts_by_document[document_id] = 0
+        self.version_counts_by_document[document_id] = 0
+        return reparsed_document
 
     def commit(self) -> None:
         """Mark the in-memory unit of work as committed."""

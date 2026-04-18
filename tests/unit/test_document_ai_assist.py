@@ -115,3 +115,28 @@ def test_should_invoke_document_parse_assist_skips_high_confidence_non_ocr_page_
     )
 
     assert should_invoke is False
+
+
+def test_should_invoke_document_parse_assist_force_overrides_high_confidence_gate(
+    monkeypatch,
+) -> None:
+    """Forced retries should bypass the confidence gate when the model gateway is configured."""
+
+    monkeypatch.setattr(
+        ai_assist,
+        "get_settings",
+        lambda: SimpleNamespace(model_gateway=SimpleNamespace(api_key="test-key")),
+    )
+
+    should_invoke = ai_assist.should_invoke_document_parse_assist(
+        raw_parse_payload={
+            "text": "Invoice Number: INV-1048\nTotal: 2450.00",
+            "pages": [{"text": "Invoice Number: INV-1048", "extraction_method": "pdf_text"}],
+            "metadata": {"requires_ocr": False},
+        },
+        document_type=DocumentType.INVOICE,
+        classification_confidence=0.96,
+        force=True,
+    )
+
+    assert should_invoke is True

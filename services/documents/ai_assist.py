@@ -101,6 +101,7 @@ def should_invoke_document_parse_assist(
     raw_parse_payload: JsonObject,
     document_type: DocumentType,
     classification_confidence: float | None,
+    force: bool = False,
 ) -> bool:
     """Return whether one parsed document should receive the bounded LLM assist pass."""
 
@@ -111,6 +112,9 @@ def should_invoke_document_parse_assist(
     text_excerpt = _collect_document_text(raw_parse_payload=raw_parse_payload)
     if not text_excerpt:
         return False
+
+    if force:
+        return True
 
     requires_ocr = _raw_payload_requires_ocr(raw_parse_payload=raw_parse_payload)
 
@@ -132,6 +136,7 @@ def run_document_parse_assist(
     close_run_period_start: str,
     close_run_period_end: str,
     current_field_hints: dict[str, Any] | None,
+    force: bool = False,
 ) -> DocumentParseAssistOutput | None:
     """Run the bounded LLM assist for one parsed document and return validated output."""
 
@@ -139,6 +144,7 @@ def run_document_parse_assist(
         raw_parse_payload=raw_parse_payload,
         document_type=deterministic_document_type,
         classification_confidence=deterministic_classification_confidence,
+        force=force,
     ):
         return None
 

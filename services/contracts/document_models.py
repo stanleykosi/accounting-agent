@@ -237,6 +237,35 @@ class DocumentDeleteResponse(ContractModel):
     )
 
 
+class DocumentReparseResponse(ContractModel):
+    """Return the canonical outcome after queuing one document for reparsing."""
+
+    reparsed_document_id: str = Field(description="The document UUID queued for reparsing.")
+    reparsed_document_filename: str = Field(
+        min_length=1,
+        description="Original filename of the reparsed document.",
+    )
+    cleared_extraction_count: int = Field(
+        ge=0,
+        description="Number of prior extraction versions removed before reparsing.",
+    )
+    cleared_issue_count: int = Field(
+        ge=0,
+        description="Number of prior document issues cleared before reparsing.",
+    )
+    cleared_version_count: int = Field(
+        ge=0,
+        description="Number of prior parser versions removed before reparsing.",
+    )
+    canceled_job_count: int = Field(
+        ge=0,
+        description="Number of active linked jobs canceled before reparsing.",
+    )
+    dispatch: DocumentProcessingDispatch = Field(
+        description="Background parse task receipt for the queued reparse.",
+    )
+
+
 class DocumentReviewDecisionRequest(ContractModel):
     """Capture a reviewer decision for one document queue item."""
 
@@ -314,6 +343,7 @@ __all__ = [
     "DocumentIssueSummary",
     "DocumentListResponse",
     "DocumentProcessingDispatch",
+    "DocumentReparseResponse",
     "DocumentReviewActionResponse",
     "DocumentReviewDecisionRequest",
     "DocumentSummary",

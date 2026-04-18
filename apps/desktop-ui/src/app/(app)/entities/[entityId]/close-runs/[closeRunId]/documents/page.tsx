@@ -20,6 +20,7 @@ import {
   persistDocumentReviewDecision,
   persistExtractedFieldCorrection,
   readDocumentReviewWorkspace,
+  reparseSourceDocument,
   type DocumentReviewFilter,
   type DocumentReviewWorkspaceData,
   type EvidenceReference,
@@ -71,6 +72,7 @@ export default function CloseRunDocumentsPage({
   const [fieldMutationId, setFieldMutationId] = useState<string | null>(null);
   const [noteDraft, setNoteDraft] = useState("");
   const [operationMessage, setOperationMessage] = useState<string | null>(null);
+  const [reparseMutationDocumentId, setReparseMutationDocumentId] = useState<string | null>(null);
   const [reviewMutationDocumentId, setReviewMutationDocumentId] = useState<string | null>(null);
   const [selectedDocumentId, setSelectedDocumentId] = useState<string | null>(null);
   const [verificationDrafts, setVerificationDrafts] = useState<
@@ -273,6 +275,45 @@ export default function CloseRunDocumentsPage({
     [closeRunId, entityId, refreshWorkspace, workspaceData],
   );
 
+  const handleReparseDocument = useCallback(
+    async (documentId: string): Promise<void> => {
+      const document =
+        workspaceData?.items.find((candidate) => candidate.id === documentId) ?? null;
+      if (document === null) {
+        setErrorMessage("Select a document from the queue before reparsing it.");
+        return;
+      }
+
+      const confirmed = window.confirm(
+        `Reparse ${document.originalFilename}? This clears the current extraction, issues, and parse artifacts before queuing a fresh parse.`,
+      );
+      if (!confirmed) {
+        return;
+      }
+
+      setReparseMutationDocumentId(documentId);
+      setOperationMessage(null);
+      try {
+        const result = await reparseSourceDocument(entityId, closeRunId, documentId);
+        setOperationMessage(
+          `${result.reparsedDocumentFilename} was queued for reparsing. Cleared ${result.clearedExtractionCount} extraction(s), ${result.clearedIssueCount} issue(s), and ${result.clearedVersionCount} prior parse version(s).`,
+        );
+        setNoteDraft("");
+        setVerificationDrafts((current) => {
+          const nextDrafts = { ...current };
+          delete nextDrafts[documentId];
+          return nextDrafts;
+        });
+        await refreshWorkspace();
+      } catch (error) {
+        setErrorMessage(resolveDocumentReviewErrorMessage(error));
+      } finally {
+        setReparseMutationDocumentId(null);
+      }
+    },
+    [closeRunId, entityId, refreshWorkspace, workspaceData],
+  );
+
   const handleOpenEvidenceForDocument = (documentId: string): void => {
     if (workspaceData === null) {
       return;
@@ -434,10 +475,12 @@ export default function CloseRunDocumentsPage({
                 fieldMutationId={fieldMutationId}
                 onChecklistChange={handleChecklistChange}
                 onDeleteDocument={handleDeleteDocument}
+                onReparseDocument={handleReparseDocument}
                 onOpenEvidence={handleOpenEvidence}
                 onFieldCorrection={handleFieldCorrection}
                 onNoteChange={setNoteDraft}
                 onReviewAction={handleReviewAction}
+                reparseMutationDocumentId={reparseMutationDocumentId}
                 reviewMutationDocumentId={reviewMutationDocumentId}
                 selectedDocument={selectedDocument}
               />

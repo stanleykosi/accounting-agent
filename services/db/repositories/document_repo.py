@@ -174,6 +174,18 @@ class DocumentDeletionPlan:
 
 
 @dataclass(frozen=True, slots=True)
+class DocumentReparsePlan:
+    """Describe the parse artifacts and active jobs tied to one reparse request."""
+
+    document: DocumentRecord
+    derivative_storage_keys: tuple[str, ...]
+    active_job_ids: tuple[UUID, ...]
+    existing_extraction_count: int
+    existing_issue_count: int
+    existing_version_count: int
+
+
+@dataclass(frozen=True, slots=True)
 class DocumentVersionRecord:
     """Describe one persisted parser output version."""
 
@@ -544,6 +556,84 @@ class DocumentRepository:
             active_job_ids=active_job_ids,
         )
 
+    def get_document_reparse_plan_for_user(
+        self,
+        *,
+        entity_id: UUID,
+        close_run_id: UUID,
+        document_id: UUID,
+        user_id: UUID,
+    ) -> DocumentReparsePlan | None:
+        """Return the parse artifacts and active jobs tied to one accessible document."""
+
+        access_record = self.get_document_for_user(
+            entity_id=entity_id,
+            close_run_id=close_run_id,
+            document_id=document_id,
+            user_id=user_id,
+        )
+        if access_record is None:
+            return None
+
+        version_rows = self._db_session.scalars(
+            select(DocumentVersion)
+            .where(DocumentVersion.document_id == document_id)
+            .order_by(DocumentVersion.version_no.asc(), DocumentVersion.created_at.asc())
+        ).all()
+        derivative_keys: list[str] = []
+        for version in version_rows:
+            if (
+                version.normalized_storage_key is not None
+                and version.normalized_storage_key.strip()
+            ):
+                derivative_keys.append(version.normalized_storage_key.strip())
+            if version.ocr_text_storage_key is not None and version.ocr_text_storage_key.strip():
+                derivative_keys.append(version.ocr_text_storage_key.strip())
+            derivative_keys.extend(
+                _collect_raw_parse_derivative_keys(raw_parse_payload=version.raw_parse_payload)
+            )
+
+        existing_extraction_count = len(
+            tuple(
+                self._db_session.scalars(
+                    select(DocumentExtraction.id).where(
+                        DocumentExtraction.document_id == document_id
+                    )
+                ).all()
+            )
+        )
+        existing_issue_count = len(
+            tuple(
+                self._db_session.scalars(
+                    select(DocumentIssue.id).where(DocumentIssue.document_id == document_id)
+                ).all()
+            )
+        )
+        active_job_ids = tuple(
+            self._db_session.scalars(
+                select(Job.id)
+                .where(
+                    Job.document_id == document_id,
+                    Job.status.in_(
+                        (
+                            JobStatus.QUEUED.value,
+                            JobStatus.RUNNING.value,
+                            JobStatus.BLOCKED.value,
+                        )
+                    ),
+                )
+                .order_by(Job.created_at.asc(), Job.id.asc())
+            ).all()
+        )
+        return DocumentReparsePlan(
+            document=access_record.document,
+            derivative_storage_keys=tuple(dict.fromkeys(derivative_keys)),
+            active_job_ids=active_job_ids,
+            existing_extraction_count=existing_extraction_count,
+            existing_issue_count=existing_issue_count,
+            existing_version_count=len(version_rows),
+        )
+
     def next_document_version_no(self, *, document_id: UUID) -> int:
         """Return the next parser output version number for one document."""
 
@@ -703,6 +793,62 @@ class DocumentRepository:
         )
         self._db_session.execute(delete(Document).where(Document.id.in_(document_ids)))
         self._db_session.flush()
+
+    def reset_document_for_reparse(
+        self,
+        *,
+        document_id: UUID,
+        actor_user_id: UUID,
+    ) -> DocumentRecord:
+        """Delete parse artifacts for one document and reset it to a queued parse state."""
+
+        extraction_ids = tuple(
+            self._db_session.scalars(
+                select(DocumentExtraction.id).where(DocumentExtraction.document_id == document_id)
+            ).all()
+        )
+        self._db_session.execute(
+            update(Recommendation)
+            .where(Recommendation.document_id == document_id)
+            .values(document_id=None)
+        )
+        self._db_session.execute(
+            delete(OwnershipTarget).where(
+                OwnershipTarget.target_type == OwnershipTargetType.DOCUMENT.value,
+                OwnershipTarget.target_id == document_id,
+            )
+        )
+        if extraction_ids:
+            self._db_session.execute(
+                delete(DocumentLineItem).where(
+                    DocumentLineItem.document_extraction_id.in_(extraction_ids)
+                )
+            )
+            self._db_session.execute(
+                delete(ExtractedField).where(
+                    ExtractedField.document_extraction_id.in_(extraction_ids)
+                )
+            )
+            self._db_session.execute(
+                delete(DocumentExtraction).where(DocumentExtraction.id.in_(extraction_ids))
+            )
+        self._db_session.execute(
+            delete(DocumentIssue).where(DocumentIssue.document_id == document_id)
+        )
+        self._db_session.execute(
+            delete(DocumentVersion).where(DocumentVersion.document_id == document_id)
+        )
+
+        document = self._load_document(document_id=document_id)
+        document.document_type = DocumentType.UNKNOWN.value
+        document.classification_confidence = None
+        document.period_start = None
+        document.period_end = None
+        document.status = DocumentStatus.PROCESSING.value
+        document.owner_user_id = None
+        document.last_touched_by_user_id = actor_user_id
+        self._db_session.flush()
+        return _map_document(document)
 
     def commit(self) -> None:
         """Commit the current document transaction after a successful mutation."""
@@ -935,6 +1081,7 @@ __all__ = [
     "DocumentExtractionRecord",
     "DocumentIssueRecord",
     "DocumentRecord",
+    "DocumentReparsePlan",
     "DocumentRepository",
     "DocumentVersionRecord",
     "DocumentWithExtractionRecord",

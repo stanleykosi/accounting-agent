@@ -22,6 +22,7 @@ export type ExtractionPanelProps = {
   fieldMutationId: string | null;
   checklist: DocumentVerificationChecklist | null;
   onDeleteDocument: (documentId: string) => Promise<void> | void;
+  onReparseDocument: (documentId: string) => Promise<void> | void;
   onFieldCorrection: (input: {
     correctedType: string;
     correctedValue: string;
@@ -41,6 +42,7 @@ export type ExtractionPanelProps = {
     documentId: string,
     decision: "approved" | "rejected" | "needs_info",
   ) => Promise<void> | void;
+  reparseMutationDocumentId: string | null;
   reviewMutationDocumentId: string | null;
   selectedDocument: DocumentReviewQueueItem | null;
 };
@@ -51,11 +53,13 @@ export function ExtractionPanel({
   fieldMutationId,
   checklist,
   onDeleteDocument,
+  onReparseDocument,
   onFieldCorrection,
   onChecklistChange,
   onNoteChange,
   onOpenEvidence,
   onReviewAction,
+  reparseMutationDocumentId,
   reviewMutationDocumentId,
   selectedDocument,
 }: Readonly<ExtractionPanelProps>): ReactElement {
@@ -73,6 +77,7 @@ export function ExtractionPanel({
 
   const isReviewMutating = reviewMutationDocumentId === selectedDocument.id;
   const isDeleteMutating = deleteMutationDocumentId === selectedDocument.id;
+  const isReparseMutating = reparseMutationDocumentId === selectedDocument.id;
   const approvalReady =
     checklist !== null &&
     checklist.complete &&
@@ -128,7 +133,7 @@ export function ExtractionPanel({
         </button>
         <button
           className="secondary-button compact-action"
-          disabled={isReviewMutating || isDeleteMutating || !approvalReady}
+          disabled={isReviewMutating || isDeleteMutating || isReparseMutating || !approvalReady}
           onClick={() => {
             void onReviewAction(selectedDocument.id, "approved");
           }}
@@ -138,7 +143,7 @@ export function ExtractionPanel({
         </button>
         <button
           className="secondary-button compact-action"
-          disabled={isReviewMutating || isDeleteMutating}
+          disabled={isReviewMutating || isDeleteMutating || isReparseMutating}
           onClick={() => {
             void onReviewAction(selectedDocument.id, "rejected");
           }}
@@ -148,7 +153,7 @@ export function ExtractionPanel({
         </button>
         <button
           className="secondary-button compact-action"
-          disabled={isReviewMutating || isDeleteMutating}
+          disabled={isReviewMutating || isDeleteMutating || isReparseMutating}
           onClick={() => {
             void onReviewAction(selectedDocument.id, "needs_info");
           }}
@@ -158,7 +163,17 @@ export function ExtractionPanel({
         </button>
         <button
           className="secondary-button compact-action"
-          disabled={isReviewMutating || isDeleteMutating}
+          disabled={isReviewMutating || isDeleteMutating || isReparseMutating}
+          onClick={() => {
+            void onReparseDocument(selectedDocument.id);
+          }}
+          type="button"
+        >
+          {isReparseMutating ? "Reparsing..." : "Reparse document"}
+        </button>
+        <button
+          className="secondary-button compact-action"
+          disabled={isReviewMutating || isDeleteMutating || isReparseMutating}
           onClick={() => {
             void onDeleteDocument(selectedDocument.id);
           }}

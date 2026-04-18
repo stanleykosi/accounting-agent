@@ -320,6 +320,28 @@ _BANK_STATEMENT_LINE_ALIASES: dict[str, tuple[str, ...]] = {
     "amount": ("amount",),
     "balance": ("balance", "running_balance"),
 }
+_BANK_STATEMENT_SIGNAL_FIELDS: tuple[str, ...] = (
+    "bank_name",
+    "account_number",
+    "account_name",
+    "statement_start_date",
+    "statement_end_date",
+    "opening_balance",
+    "closing_balance",
+    "total_credits",
+    "total_debits",
+    "currency",
+)
+_BANK_STATEMENT_DERIVED_FIELDS = frozenset(
+    {
+        "statement_start_date",
+        "statement_end_date",
+        "opening_balance",
+        "closing_balance",
+        "total_credits",
+        "total_debits",
+    }
+)
 _RECONCILIATION_RECOMMENDATION_ELIGIBLE_TYPES = frozenset(
     {
         DocumentType.INVOICE,
@@ -583,6 +605,14 @@ def _derive_document_classification(
     if isinstance(raw_text, str) and raw_text.strip():
         inferred_type = infer_document_type_from_text(raw_text)
         if inferred_type is not DocumentType.UNKNOWN:
+            if inferred_type is DocumentType.BANK_STATEMENT:
+                return (
+                    inferred_type,
+                    _estimate_bank_statement_classification_confidence(
+                        raw_parse_payload=raw_parse_payload,
+                        base_confidence=0.65,
+                    ),
+                )
             return inferred_type, 0.65
 
     pages = raw_parse_payload.get("pages")
@@ -595,6 +625,14 @@ def _derive_document_classification(
         if page_text:
             inferred_type = infer_document_type_from_text(page_text)
             if inferred_type is not DocumentType.UNKNOWN:
+                if inferred_type is DocumentType.BANK_STATEMENT:
+                    return (
+                        inferred_type,
+                        _estimate_bank_statement_classification_confidence(
+                            raw_parse_payload=raw_parse_payload,
+                            base_confidence=0.55,
+                        ),
+                    )
                 return inferred_type, 0.55
 
     return DocumentType.UNKNOWN, None
@@ -803,7 +841,13 @@ def _build_extraction_parser_output(
     }
 
     if document_type is DocumentType.BANK_STATEMENT:
-        parser_output["statement_lines"] = _build_statement_lines(rows=rows)
+        statement_lines = _build_statement_lines(rows=rows)
+        parser_output["statement_lines"] = statement_lines
+        _apply_bank_statement_field_confidences(
+            raw_fields=raw_fields,
+            statement_lines=statement_lines,
+            source_type=source_type,
+        )
     else:
         parser_output["line_items"] = _build_document_line_items(rows=rows)
 
@@ -1151,6 +1195,77 @@ def _build_statement_lines(*, rows: list[dict[str, str]]) -> list[dict[str, Any]
     return statement_lines
 
 
+def _estimate_bank_statement_classification_confidence(
+    *,
+    raw_parse_payload: JsonObject,
+    base_confidence: float,
+) -> float:
+    """Boost bank-statement classification when structured fields corroborate the label."""
+
+    parser_output = _build_extraction_parser_output(
+        raw_parse_payload=raw_parse_payload,
+        document_type=DocumentType.BANK_STATEMENT,
+    )
+    raw_fields = parser_output.get("fields", {})
+    if not isinstance(raw_fields, dict):
+        return base_confidence
+
+    signal_field_count = _count_populated_bank_statement_signal_fields(raw_fields=raw_fields)
+    statement_lines = parser_output.get("statement_lines")
+    statement_line_count = len(statement_lines) if isinstance(statement_lines, list) else 0
+
+    if signal_field_count >= 6 and statement_line_count >= 3:
+        return max(base_confidence, 0.96)
+    if signal_field_count >= 4 and statement_line_count >= 2:
+        return max(base_confidence, 0.93)
+    if signal_field_count >= 3:
+        return max(base_confidence, 0.88)
+    if statement_line_count >= 3:
+        return max(base_confidence, 0.86)
+    return base_confidence
+
+
+def _apply_bank_statement_field_confidences(
+    *,
+    raw_fields: dict[str, Any],
+    statement_lines: list[dict[str, Any]],
+    source_type: str,
+) -> None:
+    """Seed parser confidences for corroborated bank-statement fields."""
+
+    signal_field_count = _count_populated_bank_statement_signal_fields(raw_fields=raw_fields)
+    statement_line_count = len(statement_lines)
+    if signal_field_count >= 6 and statement_line_count >= 3:
+        base_confidence = 0.92 if source_type == "ocr" else 0.96
+        derived_confidence = 0.95 if source_type == "ocr" else 0.98
+    elif signal_field_count >= 4 and statement_line_count >= 2:
+        base_confidence = 0.90 if source_type == "ocr" else 0.93
+        derived_confidence = 0.93 if source_type == "ocr" else 0.96
+    else:
+        return
+
+    for field_name in _BANK_STATEMENT_SIGNAL_FIELDS:
+        field_value = raw_fields.get(field_name)
+        if field_value in {None, ""}:
+            continue
+        confidence = (
+            derived_confidence
+            if field_name in _BANK_STATEMENT_DERIVED_FIELDS and statement_line_count >= 2
+            else base_confidence
+        )
+        raw_fields.setdefault(f"{field_name}_confidence", round(confidence, 4))
+
+
+def _count_populated_bank_statement_signal_fields(*, raw_fields: dict[str, Any]) -> int:
+    """Count populated bank-statement fields used to corroborate classification confidence."""
+
+    return sum(
+        1
+        for field_name in _BANK_STATEMENT_SIGNAL_FIELDS
+        if raw_fields.get(field_name) not in {None, ""}
+    )
+
+
 def _find_first_row_value(*, row: dict[str, str], aliases: tuple[str, ...]) -> str | None:
     """Return the first populated value for the supplied aliases from one normalized row."""
 
@@ -1283,6 +1398,7 @@ def _post_process_parsed_document(
         )
     )
     ai_assist_field_count = 0
+    ai_assist_retried_for_low_confidence = False
     extraction_created = False
     needs_review = False
     quality_issue_count = 0
@@ -1329,6 +1445,7 @@ def _post_process_parsed_document(
                         raw_parse_payload=raw_parse_payload,
                         document_type=document_type,
                     )
+                    ai_assist_fields_applied: list[str] = []
                     ai_assist_fields_applied = _apply_document_ai_assist_to_parser_output(
                         parser_output=parser_output,
                         document_type=document_type,
@@ -1338,6 +1455,39 @@ def _post_process_parsed_document(
                     fields = extract_fields_by_document_type(document_type, parser_output)
                     confidence_summary = compute_confidence_summary(fields)
                     needs_review = confidence_summary.low_confidence_fields > 0
+                    if needs_review and assist_output is None:
+                        retry_assist_output = run_document_parse_assist(
+                            filename=parse_record.document.original_filename,
+                            raw_parse_payload=raw_parse_payload,
+                            deterministic_document_type=document_type,
+                            deterministic_classification_confidence=classification_confidence,
+                            close_run_period_start=parse_record.close_run.period_start.isoformat(),
+                            close_run_period_end=parse_record.close_run.period_end.isoformat(),
+                            current_field_hints=(
+                                parser_output.get("fields")
+                                if isinstance(parser_output.get("fields"), dict)
+                                else None
+                            ),
+                            force=True,
+                        )
+                        if retry_assist_output is not None:
+                            ai_assist_retried_for_low_confidence = True
+                            assist_output = retry_assist_output
+                            if retry_assist_output.predicted_type is document_type:
+                                ai_assist_fields_applied = (
+                                    _apply_document_ai_assist_to_parser_output(
+                                        parser_output=parser_output,
+                                        document_type=document_type,
+                                        assist_output=retry_assist_output,
+                                    )
+                                )
+                                ai_assist_field_count = len(ai_assist_fields_applied)
+                                fields = extract_fields_by_document_type(
+                                    document_type,
+                                    parser_output,
+                                )
+                                confidence_summary = compute_confidence_summary(fields)
+                                needs_review = confidence_summary.low_confidence_fields > 0
                     extracted_payload: dict[str, Any] = {
                         "fields": [field.model_dump(mode="json") for field in fields],
                         "parser_output": parser_output,
@@ -1511,8 +1661,10 @@ def _post_process_parsed_document(
                     "document_id": str(parse_record.document.id),
                     "document_type": document.document_type,
                     "classification_confidence": classification_confidence,
+                    "ai_assist_returned_output": assist_output is not None,
                     "ai_assist_applied_classification": ai_assist_applied_classification,
                     "ai_assist_field_count": ai_assist_field_count,
+                    "ai_assist_retried_for_low_confidence": ai_assist_retried_for_low_confidence,
                     "auto_approved": auto_approved,
                     "extraction_created": extraction_created,
                     "issue_count": quality_issue_count,

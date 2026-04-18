@@ -17,6 +17,10 @@ from services.contracts.document_ai_models import (
     DocumentFieldAssistCandidate,
     DocumentParseAssistOutput,
 )
+from services.extraction.field_extractors import (
+    compute_confidence_summary,
+    extract_fields_by_document_type,
+)
 
 
 def test_invoice_parser_output_normalizes_fields_and_line_items() -> None:
@@ -291,6 +295,108 @@ def test_tabular_document_type_label_boosts_classification_confidence() -> None:
 
     assert document_type is DocumentType.BANK_STATEMENT
     assert confidence == 0.96
+
+
+def test_bank_statement_classification_confidence_boosts_when_fields_and_lines_corroborate(
+) -> None:
+    """Bank statements with strong structured evidence should not stay on the 0.65 fallback."""
+
+    document_type, confidence = _derive_document_classification(
+        {
+            "text": (
+                "Bank Statement\n"
+                "Bank Name: Demo Bank\n"
+                "Account Name: Operating Account\n"
+                "Account Number: 1234567890\n"
+                "Currency: USD\n"
+            ),
+            "tables": [
+                {
+                    "name": "Statement",
+                    "rows": [
+                        {
+                            "Date": "2026-03-01",
+                            "Description": "Opening balance",
+                            "Credit": "1000.00",
+                            "Balance": "1000.00",
+                        },
+                        {
+                            "Date": "2026-03-02",
+                            "Description": "Vendor payment",
+                            "Debit": "250.00",
+                            "Balance": "750.00",
+                        },
+                        {
+                            "Date": "2026-03-03",
+                            "Description": "Customer receipt",
+                            "Credit": "500.00",
+                            "Balance": "1250.00",
+                        },
+                    ],
+                }
+            ],
+        }
+    )
+
+    assert document_type is DocumentType.BANK_STATEMENT
+    assert confidence == 0.96
+
+
+def test_ocr_bank_statement_structural_fields_do_not_fall_below_review_threshold(
+) -> None:
+    """OCR bank statements with strong structure should stay above the review threshold."""
+
+    parser_output = _build_extraction_parser_output(
+        raw_parse_payload={
+            "metadata": {"requires_ocr": True},
+            "pages": [
+                {
+                    "page_number": 1,
+                    "extraction_method": "ocr",
+                    "text": "Scanned statement page",
+                }
+            ],
+            "text": (
+                "Bank Statement\n"
+                "Bank Name: Demo Bank\n"
+                "Account Name: Operating Account\n"
+                "Account Number: 1234567890\n"
+                "Currency: USD\n"
+            ),
+            "tables": [
+                {
+                    "name": "Statement",
+                    "rows": [
+                        {
+                            "Date": "2026-03-01",
+                            "Description": "Opening balance",
+                            "Credit": "1000.00",
+                            "Balance": "1000.00",
+                        },
+                        {
+                            "Date": "2026-03-02",
+                            "Description": "Vendor payment",
+                            "Debit": "250.00",
+                            "Balance": "750.00",
+                        },
+                        {
+                            "Date": "2026-03-03",
+                            "Description": "Customer receipt",
+                            "Credit": "500.00",
+                            "Balance": "1250.00",
+                        },
+                    ],
+                }
+            ],
+        },
+        document_type=DocumentType.BANK_STATEMENT,
+    )
+    fields = extract_fields_by_document_type(DocumentType.BANK_STATEMENT, parser_output)
+    confidence_summary = compute_confidence_summary(fields)
+
+    assert parser_output["source_type"] == "ocr"
+    assert confidence_summary.low_confidence_fields == 0
+    assert confidence_summary.overall_confidence >= 0.75
 
 
 def test_invoice_pdf_like_text_extracts_labeled_amounts_without_invoice_number_leakage() -> None:

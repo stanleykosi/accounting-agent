@@ -27,6 +27,7 @@ from services.contracts.document_models import (
     DocumentIssueSummary,
     DocumentListResponse,
     DocumentProcessingDispatch,
+    DocumentReparseResponse,
     DocumentSummary,
     ExtractedFieldSummary,
     UploadedDocumentResult,
@@ -40,6 +41,7 @@ from services.db.repositories.document_repo import (
     DocumentExtractionRecord,
     DocumentIssueRecord,
     DocumentRecord,
+    DocumentReparsePlan,
     DocumentWithExtractionRecord,
     ExtractedFieldRecord,
 )
@@ -170,8 +172,26 @@ class DocumentRepositoryProtocol(Protocol):
     ) -> DocumentDeletionPlan | None:
         """Return the delete plan for one accessible document subtree."""
 
+    def get_document_reparse_plan_for_user(
+        self,
+        *,
+        entity_id: UUID,
+        close_run_id: UUID,
+        document_id: UUID,
+        user_id: UUID,
+    ) -> DocumentReparsePlan | None:
+        """Return the reparse plan for one accessible document."""
+
     def delete_document_tree(self, *, document_ids: tuple[UUID, ...]) -> None:
         """Delete one document subtree after linked references are detached."""
+
+    def reset_document_for_reparse(
+        self,
+        *,
+        document_id: UUID,
+        actor_user_id: UUID,
+    ) -> DocumentRecord:
+        """Delete parse artifacts and reset one document to a queued parse state."""
 
     def commit(self) -> None:
         """Commit the current unit of work."""
@@ -433,12 +453,22 @@ class DocumentUploadService:
         canceled_job_count = self._cancel_document_jobs(
             actor_user=actor_user,
             access_record=access_record,
-            deletion_plan=deletion_plan,
+            document_id=deletion_plan.root_document.id,
+            active_job_ids=deletion_plan.active_job_ids,
+            cancellation_reason=(
+                "Execution stopped because the linked source document was deleted by an "
+                "operator."
+            ),
         )
         self._wait_for_document_jobs_to_settle(
             actor_user=actor_user,
             access_record=access_record,
-            deletion_plan=deletion_plan,
+            document_id=deletion_plan.root_document.id,
+            active_job_ids=deletion_plan.active_job_ids,
+            in_progress_message=(
+                "The document is still finishing background processing. Retry deletion after "
+                "processing stops."
+            ),
         )
         try:
             self._repository.delete_document_tree(
@@ -483,6 +513,124 @@ class DocumentUploadService:
             deleted_document_filename=deletion_plan.root_document.original_filename,
             deleted_document_count=len(deletion_plan.documents),
             canceled_job_count=canceled_job_count,
+        )
+
+    def reparse_document(
+        self,
+        *,
+        actor_user: EntityUserRecord,
+        entity_id: UUID,
+        close_run_id: UUID,
+        document_id: UUID,
+        source_surface: AuditSourceSurface,
+        trace_id: str | None,
+    ) -> DocumentReparseResponse:
+        """Clear one document's prior parse artifacts and queue a fresh parse."""
+
+        access_record = self._require_close_run_access(
+            actor_user=actor_user,
+            entity_id=entity_id,
+            close_run_id=close_run_id,
+        )
+        reparse_plan = self._repository.get_document_reparse_plan_for_user(
+            entity_id=entity_id,
+            close_run_id=close_run_id,
+            document_id=document_id,
+            user_id=actor_user.id,
+        )
+        if reparse_plan is None:
+            raise DocumentUploadServiceError(
+                status_code=404,
+                code=DocumentUploadServiceErrorCode.DOCUMENT_NOT_FOUND,
+                message="The requested document was not found for this close run.",
+            )
+
+        canceled_job_count = self._cancel_document_jobs(
+            actor_user=actor_user,
+            access_record=access_record,
+            document_id=reparse_plan.document.id,
+            active_job_ids=reparse_plan.active_job_ids,
+            cancellation_reason=(
+                "Execution stopped because the source document was queued for reparsing by an "
+                "operator."
+            ),
+        )
+        self._wait_for_document_jobs_to_settle(
+            actor_user=actor_user,
+            access_record=access_record,
+            document_id=reparse_plan.document.id,
+            active_job_ids=reparse_plan.active_job_ids,
+            in_progress_message=(
+                "The document is still finishing background processing. Retry reparsing after "
+                "processing stops."
+            ),
+        )
+        try:
+            reparsed_document = self._repository.reset_document_for_reparse(
+                document_id=document_id,
+                actor_user_id=actor_user.id,
+            )
+            dispatch = self._dispatch_parse_task(
+                document=reparsed_document,
+                entity_id=access_record.close_run.entity_id,
+                close_run_id=access_record.close_run.id,
+                actor_user_id=actor_user.id,
+                trace_id=trace_id,
+            )
+            self._repository.create_activity_event(
+                entity_id=access_record.close_run.entity_id,
+                close_run_id=access_record.close_run.id,
+                actor_user_id=actor_user.id,
+                event_type="document.reparse_requested",
+                source_surface=source_surface,
+                payload={
+                    "summary": (
+                        f"{actor_user.full_name} queued {reparse_plan.document.original_filename} "
+                        "for reparsing."
+                    ),
+                    "document_id": serialize_uuid(reparse_plan.document.id),
+                    "original_filename": reparse_plan.document.original_filename,
+                    "cleared_extraction_count": reparse_plan.existing_extraction_count,
+                    "cleared_issue_count": reparse_plan.existing_issue_count,
+                    "cleared_version_count": reparse_plan.existing_version_count,
+                    "canceled_job_count": canceled_job_count,
+                    "parse_task_id": dispatch.task_id,
+                },
+                trace_id=trace_id,
+            )
+            self._repository.commit()
+        except Exception as error:
+            self._repository.rollback()
+            if self._repository.is_integrity_error(error):
+                raise DocumentUploadServiceError(
+                    status_code=409,
+                    code=DocumentUploadServiceErrorCode.INTEGRITY_CONFLICT,
+                    message=(
+                        "The document could not be queued for reparsing because linked "
+                        "state changed."
+                    ),
+                ) from error
+            raise
+
+        self._delete_document_storage_objects(
+            root_document_id=reparse_plan.document.id,
+            source_storage_keys=(),
+            derivative_storage_keys=reparse_plan.derivative_storage_keys,
+        )
+        return DocumentReparseResponse(
+            reparsed_document_id=serialize_uuid(reparse_plan.document.id),
+            reparsed_document_filename=reparse_plan.document.original_filename,
+            cleared_extraction_count=reparse_plan.existing_extraction_count,
+            cleared_issue_count=reparse_plan.existing_issue_count,
+            cleared_version_count=reparse_plan.existing_version_count,
+            canceled_job_count=canceled_job_count,
+            dispatch=DocumentProcessingDispatch(
+                task_id=dispatch.task_id,
+                task_name=dispatch.task_name,
+                queue_name=dispatch.queue_name,
+                routing_key=dispatch.routing_key,
+                trace_id=dispatch.trace_id,
+            ),
         )
 
     def _upload_one_document(
@@ -669,21 +817,20 @@ class DocumentUploadService:
         *,
         actor_user: EntityUserRecord,
         access_record: DocumentCloseRunAccessRecord,
-        deletion_plan: DocumentDeletionPlan,
+        document_id: UUID,
+        active_job_ids: tuple[UUID, ...],
+        cancellation_reason: str,
     ) -> int:
         """Cancel active linked jobs before their source documents are deleted."""
 
         canceled_job_count = 0
-        for job_id in deletion_plan.active_job_ids:
+        for job_id in active_job_ids:
             try:
                 self._job_service.request_cancellation(
                     entity_id=access_record.entity.id,
                     job_id=job_id,
                     actor_user_id=actor_user.id,
-                    reason=(
-                        "Execution stopped because the linked source document was deleted by an "
-                        "operator."
-                    ),
+                    reason=cancellation_reason,
                 )
                 canceled_job_count += 1
             except JobServiceError as error:
@@ -694,7 +841,7 @@ class DocumentUploadService:
                     logger.warning(
                         "Document deletion skipped job cancellation because the job state changed.",
                         job_id=serialize_uuid(job_id),
-                        document_id=serialize_uuid(deletion_plan.root_document.id),
+                        document_id=serialize_uuid(document_id),
                         error_code=str(error.code),
                     )
                     continue
@@ -707,15 +854,17 @@ class DocumentUploadService:
         *,
         actor_user: EntityUserRecord,
         access_record: DocumentCloseRunAccessRecord,
-        deletion_plan: DocumentDeletionPlan,
+        document_id: UUID,
+        active_job_ids: tuple[UUID, ...],
+        in_progress_message: str,
     ) -> None:
         """Block deletion until linked active jobs become terminal or timeout explicitly."""
 
-        if not deletion_plan.active_job_ids:
+        if not active_job_ids:
             return
 
         deadline = monotonic() + self.active_job_settle_timeout_seconds
-        pending_job_ids = set(deletion_plan.active_job_ids)
+        pending_job_ids = set(active_job_ids)
         active_statuses = {
             JobStatus.QUEUED,
             JobStatus.RUNNING,
@@ -746,15 +895,12 @@ class DocumentUploadService:
                 raise DocumentUploadServiceError(
                     status_code=409,
                     code=DocumentUploadServiceErrorCode.PROCESSING_IN_PROGRESS,
-                    message=(
-                        "The document is still finishing background processing. "
-                        "Retry deletion after processing stops."
-                    ),
+                    message=in_progress_message,
                 )
 
             logger.info(
                 "Document deletion is waiting for linked jobs to stop before removing rows.",
-                document_id=serialize_uuid(deletion_plan.root_document.id),
+                document_id=serialize_uuid(document_id),
                 entity_id=serialize_uuid(access_record.entity.id),
                 actor_user_id=serialize_uuid(actor_user.id),
                 pending_job_ids=[
