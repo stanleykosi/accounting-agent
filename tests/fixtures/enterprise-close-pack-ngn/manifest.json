@@ -1,0 +1,303 @@
+{
+  "company": {
+    "name": "Apex Meridian Distribution Limited",
+    "tax_id": "NG-TIN-12844319-0001",
+    "registration_number": "RC 1284431",
+    "base_currency": "NGN"
+  },
+  "recommended_close_run_period": {
+    "period_start": "2026-03-01",
+    "period_end": "2026-03-31"
+  },
+  "scenario_summary": {
+    "in_period_invoice_total": "102800000.00",
+    "represented_invoice_total": "87320000.00",
+    "unrepresented_invoice_total": "15480000.00",
+    "payroll_net_total": "10970000.00",
+    "payroll_gross_total": "13390000.00",
+    "operating_statement_closing_balance": "207875000.00",
+    "payroll_statement_closing_balance": "250000.00",
+    "general_ledger_row_count": 46,
+    "trial_balance_row_count": 40,
+    "document_count": 27
+  },
+  "source_documents": [
+    {
+      "slug": "invoice-harbor-warehouse-rent-2026-03",
+      "document_type": "invoice",
+      "amount": "14500000.00",
+      "date": "2026-03-03",
+      "represented_in_gl": true,
+      "related_contract_number": "CTR-WHL-2026-001",
+      "pdf_path": "source-documents/invoices/invoice-harbor-warehouse-rent-2026-03.pdf",
+      "xlsx_path": "source-documents/invoices/invoice-harbor-warehouse-rent-2026-03.xlsx"
+    },
+    {
+      "slug": "invoice-nova-diesel-supply-2026-03",
+      "document_type": "invoice",
+      "amount": "9860000.00",
+      "date": "2026-03-07",
+      "represented_in_gl": true,
+      "related_contract_number": null,
+      "pdf_path": "source-documents/invoices/invoice-nova-diesel-supply-2026-03.pdf",
+      "xlsx_path": "source-documents/invoices/invoice-nova-diesel-supply-2026-03.xlsx"
+    },
+    {
+      "slug": "invoice-axis-haulage-2026-03",
+      "document_type": "invoice",
+      "amount": "12740000.00",
+      "date": "2026-03-09",
+      "represented_in_gl": true,
+      "related_contract_number": "CTR-LOG-2026-014",
+      "pdf_path": "source-documents/invoices/invoice-axis-haulage-2026-03.pdf",
+      "xlsx_path": "source-documents/invoices/invoice-axis-haulage-2026-03.xlsx"
+    },
+    {
+      "slug": "invoice-signal-security-services-2026-03",
+      "document_type": "invoice",
+      "amount": "5940000.00",
+      "date": "2026-03-10",
+      "represented_in_gl": true,
+      "related_contract_number": "CTR-SEC-2026-007",
+      "pdf_path": "source-documents/invoices/invoice-signal-security-services-2026-03.pdf",
+      "xlsx_path": "source-documents/invoices/invoice-signal-security-services-2026-03.xlsx"
+    },
+    {
+      "slug": "invoice-cloud-erp-subscription-2026-03",
+      "document_type": "invoice",
+      "amount": "4280000.00",
+      "date": "2026-03-12",
+      "represented_in_gl": true,
+      "related_contract_number": "CTR-ERP-2026-021",
+      "pdf_path": "source-documents/invoices/invoice-cloud-erp-subscription-2026-03.pdf",
+      "xlsx_path": "source-documents/invoices/invoice-cloud-erp-subscription-2026-03.xlsx"
+    },
+    {
+      "slug": "invoice-kano-field-marketing-2026-03",
+      "document_type": "invoice",
+      "amount": "7650000.00",
+      "date": "2026-03-14",
+      "represented_in_gl": true,
+      "related_contract_number": null,
+      "pdf_path": "source-documents/invoices/invoice-kano-field-marketing-2026-03.pdf",
+      "xlsx_path": "source-documents/invoices/invoice-kano-field-marketing-2026-03.xlsx"
+    },
+    {
+      "slug": "invoice-kano-field-marketing-2026-03-duplicate",
+      "document_type": "invoice",
+      "amount": "7650000.00",
+      "date": "2026-03-14",
+      "represented_in_gl": true,
+      "duplicate_of": "invoice-kano-field-marketing-2026-03",
+      "pdf_path": "source-documents/invoices/invoice-kano-field-marketing-2026-03-duplicate.pdf"
+    },
+    {
+      "slug": "invoice-vertex-forklifts-2026-03",
+      "document_type": "invoice",
+      "amount": "28400000.00",
+      "date": "2026-03-17",
+      "represented_in_gl": true,
+      "related_contract_number": null,
+      "pdf_path": "source-documents/invoices/invoice-vertex-forklifts-2026-03.pdf",
+      "xlsx_path": "source-documents/invoices/invoice-vertex-forklifts-2026-03.xlsx"
+    },
+    {
+      "slug": "invoice-datahub-connectivity-2026-03",
+      "document_type": "invoice",
+      "amount": "3950000.00",
+      "date": "2026-03-18",
+      "represented_in_gl": true,
+      "related_contract_number": null,
+      "pdf_path": "source-documents/invoices/invoice-datahub-connectivity-2026-03.pdf",
+      "xlsx_path": "source-documents/invoices/invoice-datahub-connectivity-2026-03.xlsx"
+    },
+    {
+      "slug": "invoice-oceanic-audit-retainer-2026-03",
+      "document_type": "invoice",
+      "amount": "8500000.00",
+      "date": "2026-03-21",
+      "represented_in_gl": false,
+      "related_contract_number": null,
+      "pdf_path": "source-documents/invoices/invoice-oceanic-audit-retainer-2026-03.pdf",
+      "xlsx_path": "source-documents/invoices/invoice-oceanic-audit-retainer-2026-03.xlsx"
+    },
+    {
+      "slug": "invoice-north-gate-customs-clearing-2026-03",
+      "document_type": "invoice",
+      "amount": "6980000.00",
+      "date": "2026-03-23",
+      "represented_in_gl": false,
+      "related_contract_number": null,
+      "pdf_path": "source-documents/invoices/invoice-north-gate-customs-clearing-2026-03.pdf",
+      "xlsx_path": "source-documents/invoices/invoice-north-gate-customs-clearing-2026-03.xlsx"
+    },
+    {
+      "slug": "invoice-april-generator-overhaul-2026-04",
+      "document_type": "invoice",
+      "amount": "6800000.00",
+      "date": "2026-04-04",
+      "represented_in_gl": false,
+      "related_contract_number": null,
+      "pdf_path": "source-documents/invoices/invoice-april-generator-overhaul-2026-04.pdf",
+      "xlsx_path": "source-documents/invoices/invoice-april-generator-overhaul-2026-04.xlsx"
+    },
+    {
+      "slug": "payslip-adaobi-nwosu-2026-03",
+      "document_type": "payslip",
+      "amount": "2100000.00",
+      "date": "2026-03-25",
+      "represented_in_gl": false,
+      "pdf_path": "source-documents/payslips/payslip-adaobi-nwosu-2026-03.pdf",
+      "xlsx_path": "source-documents/payslips/payslip-adaobi-nwosu-2026-03.xlsx"
+    },
+    {
+      "slug": "payslip-tunde-afolayan-2026-03",
+      "document_type": "payslip",
+      "amount": "1650000.00",
+      "date": "2026-03-25",
+      "represented_in_gl": false,
+      "pdf_path": "source-documents/payslips/payslip-tunde-afolayan-2026-03.pdf",
+      "xlsx_path": "source-documents/payslips/payslip-tunde-afolayan-2026-03.xlsx"
+    },
+    {
+      "slug": "payslip-mariam-bello-2026-03",
+      "document_type": "payslip",
+      "amount": "1480000.00",
+      "date": "2026-03-25",
+      "represented_in_gl": false,
+      "pdf_path": "source-documents/payslips/payslip-mariam-bello-2026-03.pdf",
+      "xlsx_path": "source-documents/payslips/payslip-mariam-bello-2026-03.xlsx"
+    },
+    {
+      "slug": "payslip-emeka-okoro-2026-03",
+      "document_type": "payslip",
+      "amount": "1250000.00",
+      "date": "2026-03-25",
+      "represented_in_gl": false,
+      "pdf_path": "source-documents/payslips/payslip-emeka-okoro-2026-03.pdf",
+      "xlsx_path": "source-documents/payslips/payslip-emeka-okoro-2026-03.xlsx"
+    },
+    {
+      "slug": "payslip-ifeoma-eze-2026-03",
+      "document_type": "payslip",
+      "amount": "1060000.00",
+      "date": "2026-03-25",
+      "represented_in_gl": false,
+      "pdf_path": "source-documents/payslips/payslip-ifeoma-eze-2026-03.pdf",
+      "xlsx_path": "source-documents/payslips/payslip-ifeoma-eze-2026-03.xlsx"
+    },
+    {
+      "slug": "payslip-hassan-garba-2026-03",
+      "document_type": "payslip",
+      "amount": "950000.00",
+      "date": "2026-03-25",
+      "represented_in_gl": false,
+      "pdf_path": "source-documents/payslips/payslip-hassan-garba-2026-03.pdf",
+      "xlsx_path": "source-documents/payslips/payslip-hassan-garba-2026-03.xlsx"
+    },
+    {
+      "slug": "payslip-chisom-umeh-2026-03",
+      "document_type": "payslip",
+      "amount": "1220000.00",
+      "date": "2026-03-25",
+      "represented_in_gl": false,
+      "pdf_path": "source-documents/payslips/payslip-chisom-umeh-2026-03.pdf",
+      "xlsx_path": "source-documents/payslips/payslip-chisom-umeh-2026-03.xlsx"
+    },
+    {
+      "slug": "payslip-binta-yusuf-2026-03",
+      "document_type": "payslip",
+      "amount": "1260000.00",
+      "date": "2026-03-25",
+      "represented_in_gl": false,
+      "pdf_path": "source-documents/payslips/payslip-binta-yusuf-2026-03.pdf",
+      "xlsx_path": "source-documents/payslips/payslip-binta-yusuf-2026-03.xlsx"
+    },
+    {
+      "slug": "contract-lagos-warehouse-lease-2026",
+      "document_type": "contract",
+      "amount": "174000000.00",
+      "date": "2026-01-15",
+      "represented_in_gl": false,
+      "pdf_path": "source-documents/contracts/contract-lagos-warehouse-lease-2026.pdf",
+      "xlsx_path": "source-documents/contracts/contract-lagos-warehouse-lease-2026.xlsx"
+    },
+    {
+      "slug": "contract-axis-haulage-msa-2026",
+      "document_type": "contract",
+      "amount": "153000000.00",
+      "date": "2026-02-10",
+      "represented_in_gl": false,
+      "pdf_path": "source-documents/contracts/contract-axis-haulage-msa-2026.pdf",
+      "xlsx_path": "source-documents/contracts/contract-axis-haulage-msa-2026.xlsx"
+    },
+    {
+      "slug": "contract-signal-security-services-2026",
+      "document_type": "contract",
+      "amount": "71280000.00",
+      "date": "2026-02-01",
+      "represented_in_gl": false,
+      "pdf_path": "source-documents/contracts/contract-signal-security-services-2026.pdf",
+      "xlsx_path": "source-documents/contracts/contract-signal-security-services-2026.xlsx"
+    },
+    {
+      "slug": "contract-cloudcore-erp-subscription-2026",
+      "document_type": "contract",
+      "amount": "51360000.00",
+      "date": "2026-03-01",
+      "represented_in_gl": false,
+      "pdf_path": "source-documents/contracts/contract-cloudcore-erp-subscription-2026.pdf",
+      "xlsx_path": "source-documents/contracts/contract-cloudcore-erp-subscription-2026.xlsx"
+    },
+    {
+      "slug": "bank-statement-operating-account-2026-03",
+      "document_type": "bank_statement",
+      "account_code": "1010",
+      "statement_start_date": "2026-03-01",
+      "statement_end_date": "2026-03-31",
+      "pdf_path": "source-documents/bank-statements/bank-statement-operating-account-2026-03.pdf",
+      "xlsx_path": "source-documents/bank-statements/bank-statement-operating-account-2026-03.xlsx"
+    },
+    {
+      "slug": "bank-statement-operating-account-2026-03-scanned",
+      "document_type": "bank_statement",
+      "account_code": "1010",
+      "requires_ocr_runtime": true,
+      "pdf_path": "source-documents/bank-statements/bank-statement-operating-account-2026-03-scanned.pdf"
+    },
+    {
+      "slug": "bank-statement-payroll-account-2026-03",
+      "document_type": "bank_statement",
+      "account_code": "1015",
+      "statement_start_date": "2026-03-01",
+      "statement_end_date": "2026-03-31",
+      "pdf_path": "source-documents/bank-statements/bank-statement-payroll-account-2026-03.pdf",
+      "xlsx_path": "source-documents/bank-statements/bank-statement-payroll-account-2026-03.xlsx"
+    }
+  ],
+  "coa_files": [
+    {
+      "xlsx_path": "coa/apex-meridian-enterprise-coa.xlsx",
+      "pdf_path": "coa/apex-meridian-enterprise-coa.pdf",
+      "account_count": 49
+    }
+  ],
+  "ledger_files": [
+    {
+      "xlsx_path": "ledger/apex-meridian-general-ledger-2026-03.xlsx",
+      "pdf_path": "ledger/apex-meridian-general-ledger-2026-03.pdf",
+      "row_count": 46
+    },
+    {
+      "xlsx_path": "ledger/apex-meridian-trial-balance-2026-03.xlsx",
+      "pdf_path": "ledger/apex-meridian-trial-balance-2026-03.pdf",
+      "row_count": 40
+    }
+  ],
+  "intended_edge_cases": [
+    "duplicate_invoice_pdf",
+    "out_of_period_invoice",
+    "scanned_bank_statement_pdf",
+    "source_documents_not_represented_in_imported_gl"
+  ]
+}
