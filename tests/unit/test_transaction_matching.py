@@ -14,6 +14,7 @@ from services.common.enums import DocumentType
 from services.documents.transaction_matching import (
     AutoTransactionMatchStatus,
     StatementLineCandidate,
+    _deduplicate_statement_candidates,
     evaluate_auto_transaction_match,
     extract_auto_review_metadata,
     extract_auto_transaction_match_metadata,
@@ -36,6 +37,7 @@ def test_invoice_auto_transaction_match_prefers_exact_amount_date_and_reference(
         },
         statement_candidates=(
             StatementLineCandidate(
+                account_number=None,
                 document_id=uuid4(),
                 original_filename="march-bank-statement.pdf",
                 line_no=3,
@@ -45,6 +47,7 @@ def test_invoice_auto_transaction_match_prefers_exact_amount_date_and_reference(
                 description="ACME SUPPLIES PAYMENT",
             ),
             StatementLineCandidate(
+                account_number=None,
                 document_id=uuid4(),
                 original_filename="march-bank-statement.pdf",
                 line_no=7,
@@ -93,6 +96,51 @@ def test_bank_statement_auto_transaction_match_is_not_applicable() -> None:
     assert result.status is AutoTransactionMatchStatus.NOT_APPLICABLE
 
 
+def test_mirrored_bank_statement_uploads_are_deduplicated_before_matching() -> None:
+    """PDF/XLSX twins of the same statement line should not create fake ambiguity."""
+
+    candidates = _deduplicate_statement_candidates(
+        [
+            StatementLineCandidate(
+                account_number="3000149827",
+                document_id=uuid4(),
+                original_filename="bank-statement-operating-account-2026-03.pdf",
+                line_no=6,
+                amount=Decimal("5940000.00"),
+                date=date(2026, 3, 11),
+                reference="SGS-1103",
+                description="SIGNAL GUARD SERVICES SGS-1103",
+            ),
+            StatementLineCandidate(
+                account_number="3000149827",
+                document_id=uuid4(),
+                original_filename="bank-statement-operating-account-2026-03.xlsx",
+                line_no=6,
+                amount=Decimal("5940000.00"),
+                date=date(2026, 3, 11),
+                reference="SGS-1103",
+                description="SIGNAL GUARD SERVICES SGS-1103",
+            ),
+        ]
+    )
+
+    result = evaluate_auto_transaction_match(
+        document_type=DocumentType.INVOICE,
+        original_filename="invoice-signal-security-services-2026-03.pdf",
+        field_values={
+            "invoice_number": "SGS-1103",
+            "invoice_date": "2026-03-10",
+            "total": "5940000.00",
+            "vendor_name": "Signal Guard Services Limited",
+        },
+        statement_candidates=candidates,
+    )
+
+    assert len(candidates) == 1
+    assert result.status is AutoTransactionMatchStatus.MATCHED
+    assert result.matched_document_filename == "bank-statement-operating-account-2026-03.pdf"
+
+
 def test_transaction_matching_payload_helpers_round_trip_metadata() -> None:
     """Persisted extraction metadata should preserve match and auto-review state cleanly."""
 
@@ -107,6 +155,7 @@ def test_transaction_matching_payload_helpers_round_trip_metadata() -> None:
         },
         statement_candidates=(
             StatementLineCandidate(
+                account_number=None,
                 document_id=uuid4(),
                 original_filename="march-bank-statement.pdf",
                 line_no=12,

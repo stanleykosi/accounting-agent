@@ -760,13 +760,15 @@ function buildQueueItem(options: {
 
   const issueTypes: DocumentReviewIssueType[] = [];
 
-  const lowConfidence =
-    document.latestExtraction?.needsReview === true ||
-    document.latestExtraction?.fields.some(
-      (field) => field.confidence !== null && field.confidence < options.confidenceThreshold,
-    ) === true ||
-    (document.classificationConfidence !== null &&
-      document.classificationConfidence < options.confidenceThreshold);
+  const extractionNeedsReview = document.latestExtraction?.needsReview === true;
+  const extractionLowConfidenceFieldCount = readLowConfidenceFieldCount(
+    document.latestExtraction?.confidenceSummary ?? null,
+  );
+  const extractionLowConfidence = extractionNeedsReview || extractionLowConfidenceFieldCount > 0;
+  const classificationLowConfidence =
+    document.classificationConfidence !== null &&
+    document.classificationConfidence < options.confidenceThreshold;
+  const lowConfidence = extractionLowConfidence || classificationLowConfidence;
   if (lowConfidence) {
     issueTypes.push("low_confidence");
   }
@@ -818,7 +820,12 @@ function buildQueueItem(options: {
     ocrRequired: document.ocrRequired,
     originalFilename: document.originalFilename,
     openIssues: document.openIssues,
-    primaryIssueReason: derivePrimaryIssueReason(document),
+    primaryIssueReason: derivePrimaryIssueReason(document, {
+      classificationLowConfidence,
+      confidenceThreshold: options.confidenceThreshold,
+      extractionLowConfidence,
+      extractionLowConfidenceFieldCount,
+    }),
     periodEnd: document.periodEnd,
     periodStart: document.periodStart,
     periodState,
@@ -854,19 +861,42 @@ function buildQueueCounts(items: readonly DocumentReviewQueueItem[]): DocumentRe
   };
 }
 
-function derivePrimaryIssueReason(document: DocumentApiSummary): string | null {
+function derivePrimaryIssueReason(
+  document: DocumentApiSummary,
+  options: Readonly<{
+    classificationLowConfidence: boolean;
+    confidenceThreshold: number;
+    extractionLowConfidence: boolean;
+    extractionLowConfidenceFieldCount: number;
+  }>,
+): string | null {
   for (const issue of document.openIssues) {
     if (typeof issue.details.reason === "string" && issue.details.reason.trim().length > 0) {
       return issue.details.reason;
     }
   }
 
-  const autoTransactionMatchReasons = document.latestExtraction?.autoTransactionMatch?.reasons;
-  if (autoTransactionMatchReasons && autoTransactionMatchReasons.length > 0) {
-    return autoTransactionMatchReasons[0] ?? null;
+  if (options.classificationLowConfidence) {
+    return `Document classification confidence fell below the ${(options.confidenceThreshold * 100).toFixed(0)}% review threshold.`;
+  }
+
+  if (options.extractionLowConfidence) {
+    if (options.extractionLowConfidenceFieldCount > 0) {
+      const fieldLabel = options.extractionLowConfidenceFieldCount === 1 ? "field" : "fields";
+      return `Extraction confidence needs review for ${options.extractionLowConfidenceFieldCount} ${fieldLabel}.`;
+    }
+    return "Extraction needs reviewer confirmation before approval.";
   }
 
   return null;
+}
+
+function readLowConfidenceFieldCount(summary: Record<string, unknown> | null): number {
+  if (summary === null) {
+    return 0;
+  }
+  const value = summary.low_confidence_fields;
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
 }
 
 function resolveIssueSeverity(

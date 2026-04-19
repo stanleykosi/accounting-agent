@@ -23,13 +23,20 @@ from services.extraction.schemas import (
 type FieldType = Literal["string", "integer", "decimal", "date", "boolean"]
 
 _NON_BLOCKING_MISSING_FIELDS = {
+    "contract_notes",
+    "contract_summary",
+    "contract_terms",
+    "contract_type",
     "customer_name",
     "customer_tax_id",
     "discount_amount",
     "due_date",
     "notes",
     "payment_terms",
+    "renewal_terms",
     "tax_rate",
+    "termination_terms",
+    "terms",
     "vendor_address",
     "vendor_tax_id",
 }

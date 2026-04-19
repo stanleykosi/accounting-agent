@@ -16,6 +16,8 @@ import {
   type EvidenceReference,
 } from "../../lib/documents";
 
+const EXTRACTION_FIELD_WARNING_THRESHOLD = 0.7;
+
 export type ExtractionPanelProps = {
   actionNote: string;
   deleteMutationDocumentId: string | null;
@@ -257,7 +259,12 @@ export function ExtractionPanel({
 
       {selectedDocument.latestExtraction?.autoTransactionMatch ? (
         <section className="dashboard-row">
-          <strong className="close-run-row-title">Auto transaction link</strong>
+          <strong className="close-run-row-title">Bank evidence cross-check</strong>
+          <p className="form-helper">
+            This is optional supporting evidence during Collection. It helps cross-reference
+            invoices, receipts, and payslips to uploaded bank-statement lines when that evidence
+            exists, but it does not block approval by itself.
+          </p>
           <div className="dashboard-row-list">
             <article className="dashboard-row">
               <div className="close-run-row-header">
@@ -351,7 +358,12 @@ export function ExtractionPanel({
 
             return (
               <li
-                className={`extraction-field-row ${field.confidence !== null && field.confidence < 0.75 ? "is-low-confidence" : ""}`}
+                className={`extraction-field-row ${
+                  field.confidence !== null &&
+                  field.confidence < EXTRACTION_FIELD_WARNING_THRESHOLD
+                    ? "is-low-confidence"
+                    : ""
+                }`}
                 key={field.id}
               >
                 <div>
@@ -461,7 +473,7 @@ function formatAutoTransactionMatchStatus(
   value: AutoTransactionMatchSummary["status"],
 ): string {
   if (value === "not_applicable") {
-    return "Not applicable";
+    return "Not required";
   }
   if (value === "pending_evidence") {
     return "Waiting for bank evidence";
@@ -469,17 +481,20 @@ function formatAutoTransactionMatchStatus(
   if (value === "matched") {
     return "Matched automatically";
   }
-  return "Match not found";
+  return "No deterministic match";
 }
 
 function formatAutoTransactionMatchMeta(
   summary: AutoTransactionMatchSummary,
 ): string {
   if (summary.status === "not_applicable") {
-    return "No separate transaction link is required for this document type.";
+    return "Contracts and bank statements do not need a separate bank-line cross-check.";
   }
   if (summary.status === "pending_evidence") {
-    return "Upload and parse a bank statement later if you want deterministic transaction linking.";
+    return "Upload and parse a bank statement later if you want an optional deterministic cross-check.";
+  }
+  if (summary.status === "unmatched") {
+    return "No deterministic bank-line cross-check was confirmed yet. This remains supporting evidence only.";
   }
 
   const fragments: string[] = [];

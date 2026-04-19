@@ -40,6 +40,7 @@ class AutoTransactionMatchStatus(StrEnum):
 class StatementLineCandidate:
     """Describe one extracted bank-statement line available for matching."""
 
+    account_number: str | None
     document_id: UUID
     original_filename: str
     line_no: int
@@ -231,6 +232,7 @@ class TransactionMatchingService:
                 Document.document_type == DocumentType.BANK_STATEMENT.value,
             )
             .order_by(
+                Document.created_at.asc(),
                 Document.id.asc(),
                 DocumentExtraction.version_no.desc(),
                 DocumentExtraction.created_at.desc(),
@@ -242,9 +244,13 @@ class TransactionMatchingService:
 
         candidates: list[StatementLineCandidate] = []
         for document, extraction in latest_by_document_id.values():
+            account_number = _read_statement_account_number(
+                extracted_payload=extraction.extracted_payload
+            )
             for line in _read_statement_lines(extracted_payload=extraction.extracted_payload):
                 candidates.append(
                     StatementLineCandidate(
+                        account_number=account_number,
                         document_id=document.id,
                         original_filename=document.original_filename,
                         line_no=line.get("line_no") or 0,
@@ -254,7 +260,7 @@ class TransactionMatchingService:
                         description=_clean_text(line.get("description")),
                     )
                 )
-        return tuple(candidates)
+        return _deduplicate_statement_candidates(candidates)
 
 
 def evaluate_auto_transaction_match(
@@ -483,6 +489,64 @@ def _read_statement_lines(
         if isinstance(candidate, list):
             return tuple(item for item in candidate if isinstance(item, dict))
     return ()
+
+
+def _read_statement_account_number(
+    *,
+    extracted_payload: Mapping[str, Any] | None,
+) -> str | None:
+    """Read one extracted bank-account identifier when present."""
+
+    if not isinstance(extracted_payload, Mapping):
+        return None
+    fields = extracted_payload.get("fields")
+    if isinstance(fields, list):
+        for field in fields:
+            if not isinstance(field, Mapping):
+                continue
+            if field.get("field_name") != "account_number":
+                continue
+            return _clean_text(field.get("field_value"))
+
+    parser_output = extracted_payload.get("parser_output")
+    if isinstance(parser_output, Mapping):
+        raw_fields = parser_output.get("fields")
+        if isinstance(raw_fields, Mapping):
+            return _clean_text(raw_fields.get("account_number"))
+    return None
+
+
+def _deduplicate_statement_candidates(
+    candidates: list[StatementLineCandidate],
+) -> tuple[StatementLineCandidate, ...]:
+    """Collapse mirrored PDF/XLSX bank-statement lines into one canonical candidate set."""
+
+    deduplicated: list[StatementLineCandidate] = []
+    seen_signatures: set[
+        tuple[
+            str | None,
+            int,
+            str | None,
+            date | None,
+            str | None,
+            str | None,
+        ]
+    ] = set()
+
+    for candidate in candidates:
+        signature = (
+            candidate.account_number,
+            candidate.line_no,
+            _decimal_to_string(candidate.amount) if candidate.amount is not None else None,
+            candidate.date,
+            candidate.reference,
+            candidate.description,
+        )
+        if signature in seen_signatures:
+            continue
+        seen_signatures.add(signature)
+        deduplicated.append(candidate)
+    return tuple(deduplicated)
 
 
 def _resolve_target_amount(
