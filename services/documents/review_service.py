@@ -42,7 +42,6 @@ from services.db.repositories.document_repo import (
 from services.db.repositories.entity_repo import EntityUserRecord
 from services.documents.period_validation import PeriodValidationService
 from services.documents.transaction_matching import (
-    AutoTransactionMatchStatus,
     TransactionMatchingService,
     extract_auto_review_metadata,
     extract_auto_transaction_match_metadata,
@@ -139,8 +138,11 @@ class DocumentReviewService:
         extraction_approved = False
         normalized_decision = decision.strip().lower()
         if normalized_decision == "approved":
+            required_checks = ("complete", "authorized", "period")
             missing_checks = [
-                label for label, value in verification_checks.items() if value is not True
+                label
+                for label, value in verification_checks.items()
+                if label in required_checks and value is not True
             ]
             if missing_checks:
                 raise DocumentReviewServiceError(
@@ -148,7 +150,7 @@ class DocumentReviewService:
                     code=DocumentReviewServiceErrorCode.INVALID_ACTION,
                     message=(
                         "Approving a document requires reviewer confirmation for completeness, "
-                        "authorization, period alignment, and transaction matching."
+                        "authorization, and period alignment."
                     ),
                 )
             document.status = DocumentStatus.APPROVED.value
@@ -443,10 +445,6 @@ class DocumentReviewService:
                 "Document authorization could not be verified.",
             ),
             "period": ("wrong_period_document", "Document period is outside the close-run window."),
-            "transaction_match": (
-                "transaction_mismatch",
-                "Document could not be matched to the underlying transaction.",
-            ),
         }
         existing_issue_types = {
             issue.issue_type
@@ -459,6 +457,8 @@ class DocumentReviewService:
         }
         for check_name, passed in verification_checks.items():
             if passed is not False:
+                continue
+            if check_name not in issue_mapping:
                 continue
             issue_type, message = issue_mapping[check_name]
             if issue_type in existing_issue_types:
@@ -474,7 +474,7 @@ class DocumentReviewService:
                     resolved_by_user_id=None,
                     resolved_at=None,
                 )
-        )
+            )
         self._db_session.flush()
 
     def _refresh_document_derived_state(
@@ -499,21 +499,17 @@ class DocumentReviewService:
             actor_user_id=actor_user_id,
         )
 
-        transaction_match_result = TransactionMatchingService(
+        transaction_matching_service = TransactionMatchingService(
             db_session=self._db_session,
-        ).evaluate_and_persist(
+        )
+        transaction_matching_service.evaluate_and_persist(
             close_run_id=document.close_run_id,
             document_id=document.id,
         )
-        self._sync_transaction_match_issue(
-            document_id=document.id,
-            actor_user_id=actor_user_id,
-            match_status=transaction_match_result.status,
-            details={
-                "reason": transaction_match_result.primary_reason,
-                "auto_transaction_match": transaction_match_result.to_payload(),
-            },
-        )
+        if document.document_type == DocumentType.BANK_STATEMENT.value:
+            transaction_matching_service.refresh_close_run_matches(
+                close_run_id=document.close_run_id,
+            )
 
     def _derive_document_period(
         self,
@@ -619,35 +615,6 @@ class DocumentReviewService:
                 "validation_method": period_result.validation_method,
             },
             actor_user_id=actor_user_id,
-        )
-
-    def _sync_transaction_match_issue(
-        self,
-        *,
-        document_id: UUID,
-        actor_user_id: UUID,
-        match_status: AutoTransactionMatchStatus,
-        details: dict[str, Any],
-    ) -> None:
-        """Synchronize the transaction-mismatch issue with the latest match result."""
-
-        if match_status is AutoTransactionMatchStatus.UNMATCHED:
-            self._upsert_open_issue(
-                document_id=document_id,
-                issue_type="transaction_mismatch",
-                details=details,
-                actor_user_id=actor_user_id,
-            )
-            return
-
-        self._resolve_open_issue(
-            document_id=document_id,
-            issue_type="transaction_mismatch",
-            actor_user_id=actor_user_id,
-            resolution_details={
-                "resolution_reason": details["reason"],
-                "auto_transaction_match": details["auto_transaction_match"],
-            },
         )
 
     def _upsert_open_issue(

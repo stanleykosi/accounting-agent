@@ -6,7 +6,7 @@ Dependencies: React client hooks and the document upload helper in the shared do
 
 "use client";
 
-import { useRef, useState, type ChangeEvent, type ReactElement } from "react";
+import { useCallback, useRef, useState, type ChangeEvent, type ReactElement } from "react";
 import { DocumentReviewApiError, uploadSourceDocuments } from "../../lib/documents";
 
 type DocumentUploadPanelProps = {
@@ -30,13 +30,23 @@ export function DocumentUploadPanel({
   const [isUploading, setIsUploading] = useState(false);
   const [selectedFiles, setSelectedFiles] = useState<readonly File[]>([]);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
-  const inputRef = useRef<HTMLInputElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const directoryInputRef = useRef<HTMLInputElement | null>(null);
+
+  const setDirectoryPickerRef = useCallback((node: HTMLInputElement | null): void => {
+    directoryInputRef.current = node;
+    if (node !== null) {
+      node.setAttribute("webkitdirectory", "");
+      node.setAttribute("directory", "");
+    }
+  }, []);
 
   const handleFileChange = (event: ChangeEvent<HTMLInputElement>): void => {
     const nextFiles = Array.from(event.target.files ?? []);
-    setSelectedFiles(nextFiles);
+    setSelectedFiles((currentFiles) => mergeSelectedFiles(currentFiles, nextFiles));
     setErrorMessage(null);
     setSuccessMessage(null);
+    event.target.value = "";
   };
 
   const handleUpload = async (): Promise<void> => {
@@ -51,8 +61,11 @@ export function DocumentUploadPanel({
     try {
       const result = await uploadSourceDocuments(entityId, closeRunId, selectedFiles);
       setSelectedFiles([]);
-      if (inputRef.current !== null) {
-        inputRef.current.value = "";
+      if (fileInputRef.current !== null) {
+        fileInputRef.current.value = "";
+      }
+      if (directoryInputRef.current !== null) {
+        directoryInputRef.current.value = "";
       }
       setSuccessMessage(
         result.uploadedCount === 1
@@ -79,21 +92,57 @@ export function DocumentUploadPanel({
         <p className="eyebrow">Source Intake</p>
         <h2>Upload source documents.</h2>
         <p className="form-helper">
-          Hosted browser and Tauri shells send files through the API, which stores the originals
-          and queues parsing jobs for this close run.
+          Upload incrementally or choose the whole `source-documents` folder at once. Missing bank
+          statements do not block document review while you are still assembling the run.
         </p>
       </div>
 
-      <label className="document-upload-input">
-        <span>Select files</span>
-        <input
-          accept=".pdf,.csv,.xlsx,.xls,.xlsm"
-          multiple
-          onChange={handleFileChange}
-          ref={inputRef}
-          type="file"
-        />
-      </label>
+      <div className="document-upload-actions">
+        <button
+          className="secondary-button"
+          onClick={() => fileInputRef.current?.click()}
+          type="button"
+        >
+          Select files
+        </button>
+        <button
+          className="secondary-button"
+          onClick={() => directoryInputRef.current?.click()}
+          type="button"
+        >
+          Select folder
+        </button>
+        {selectedFiles.length > 0 ? (
+          <button
+            className="secondary-button"
+            onClick={() => {
+              setSelectedFiles([]);
+              setErrorMessage(null);
+              setSuccessMessage(null);
+            }}
+            type="button"
+          >
+            Clear selection
+          </button>
+        ) : null}
+      </div>
+
+      <input
+        accept=".pdf,.csv,.xlsx,.xls,.xlsm"
+        className="sr-only"
+        multiple
+        onChange={handleFileChange}
+        ref={fileInputRef}
+        type="file"
+      />
+      <input
+        accept=".pdf,.csv,.xlsx,.xls,.xlsm"
+        className="sr-only"
+        multiple
+        onChange={handleFileChange}
+        ref={setDirectoryPickerRef}
+        type="file"
+      />
 
       {selectedFiles.length > 0 ? (
         <div className="document-upload-file-list" role="list">
@@ -144,4 +193,18 @@ function formatByteSize(value: number): string {
   }
 
   return `${(value / (1024 * 1024)).toFixed(2)} MB`;
+}
+
+function mergeSelectedFiles(
+  currentFiles: readonly File[],
+  nextFiles: readonly File[],
+): readonly File[] {
+  const merged = new Map<string, File>();
+  for (const file of [...currentFiles, ...nextFiles]) {
+    merged.set(
+      `${file.name}:${file.size}:${file.lastModified}`,
+      file,
+    );
+  }
+  return Array.from(merged.values());
 }

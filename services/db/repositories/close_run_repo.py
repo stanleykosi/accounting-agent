@@ -33,6 +33,7 @@ from services.common.enums import (
 from services.common.types import JsonObject, utc_now
 from services.db.models.audit import AuditEvent, AuditSourceSurface, ReviewAction
 from services.db.models.chat import ChatThread
+from services.db.models.chat_action_plans import ChatActionPlan
 from services.db.models.close_run import CloseRun, CloseRunPhaseState
 from services.db.models.documents import Document, DocumentIssue, DocumentVersion
 from services.db.models.entity import Entity, EntityMembership, EntityStatus
@@ -55,11 +56,11 @@ from services.db.models.reconciliation import (
 )
 from services.db.models.reporting import CommentaryStatus, ReportCommentary, ReportRun
 from services.db.models.supporting_schedules import SupportingSchedule, SupportingScheduleRow
-from services.documents.recommendation_eligibility import (
-    is_gl_coding_recommendation_eligible,
-)
 from services.documents.imported_ledger_representation import (
     evaluate_documents_imported_gl_representation,
+)
+from services.documents.recommendation_eligibility import (
+    is_gl_coding_recommendation_eligible,
 )
 from services.jobs.task_names import TaskName
 from services.ledger.effective_ledger import (
@@ -784,7 +785,9 @@ class CloseRunRepository:
             for source_line in source_journal_lines:
                 self._db_session.add(
                     JournalLine(
-                        journal_entry_id=cloned_journals_by_source_id[source_line.journal_entry_id].id,
+                        journal_entry_id=cloned_journals_by_source_id[
+                            source_line.journal_entry_id
+                        ].id,
                         line_no=source_line.line_no,
                         account_code=source_line.account_code,
                         line_type=source_line.line_type,
@@ -992,7 +995,9 @@ class CloseRunRepository:
         if source_supporting_schedule_ids:
             source_supporting_schedule_rows = self._db_session.scalars(
                 select(SupportingScheduleRow)
-                .where(SupportingScheduleRow.supporting_schedule_id.in_(source_supporting_schedule_ids))
+                .where(
+                    SupportingScheduleRow.supporting_schedule_id.in_(source_supporting_schedule_ids)
+                )
                 .order_by(
                     asc(SupportingScheduleRow.supporting_schedule_id),
                     asc(SupportingScheduleRow.line_no),
@@ -1091,6 +1096,26 @@ class CloseRunRepository:
                 select(Document.id).where(Document.close_run_id == close_run_id)
             ).all()
         )
+        recommendation_ids = tuple(
+            self._db_session.scalars(
+                select(Recommendation.id).where(Recommendation.close_run_id == close_run_id)
+            ).all()
+        )
+        journal_ids = tuple(
+            self._db_session.scalars(
+                select(JournalEntry.id).where(JournalEntry.close_run_id == close_run_id)
+            ).all()
+        )
+        reconciliation_ids = tuple(
+            self._db_session.scalars(
+                select(Reconciliation.id).where(Reconciliation.close_run_id == close_run_id)
+            ).all()
+        )
+        supporting_schedule_ids = tuple(
+            self._db_session.scalars(
+                select(SupportingSchedule.id).where(SupportingSchedule.close_run_id == close_run_id)
+            ).all()
+        )
         extraction_ids = (
             tuple(
                 self._db_session.scalars(
@@ -1114,6 +1139,11 @@ class CloseRunRepository:
             .values(close_run_id=None, document_id=None)
         )
         self._db_session.execute(
+            update(CloseRun)
+            .where(CloseRun.reopened_from_close_run_id == close_run_id)
+            .values(reopened_from_close_run_id=None)
+        )
+        self._db_session.execute(
             delete(OwnershipTarget).where(OwnershipTarget.close_run_id == close_run_id)
         )
         self._db_session.execute(
@@ -1125,6 +1155,9 @@ class CloseRunRepository:
         self._db_session.execute(delete(AuditEvent).where(AuditEvent.close_run_id == close_run_id))
         self._db_session.execute(
             delete(ExportDistribution).where(ExportDistribution.close_run_id == close_run_id)
+        )
+        self._db_session.execute(
+            delete(ChatActionPlan).where(ChatActionPlan.close_run_id == close_run_id)
         )
         self._db_session.execute(delete(ChatThread).where(ChatThread.close_run_id == close_run_id))
         self._db_session.execute(delete(Artifact).where(Artifact.close_run_id == close_run_id))
@@ -1139,6 +1172,53 @@ class CloseRunRepository:
             )
         self._db_session.execute(delete(ExportRun).where(ExportRun.close_run_id == close_run_id))
         self._db_session.execute(delete(ReportRun).where(ReportRun.close_run_id == close_run_id))
+        if recommendation_ids:
+            self._db_session.execute(
+                update(Recommendation)
+                .where(Recommendation.superseded_by_id.in_(recommendation_ids))
+                .values(superseded_by_id=None)
+            )
+            self._db_session.execute(
+                delete(Recommendation).where(Recommendation.id.in_(recommendation_ids))
+            )
+        if journal_ids:
+            self._db_session.execute(
+                update(JournalEntry)
+                .where(JournalEntry.superseded_by_id.in_(journal_ids))
+                .values(superseded_by_id=None)
+            )
+            self._db_session.execute(
+                delete(JournalPosting).where(JournalPosting.journal_entry_id.in_(journal_ids))
+            )
+            self._db_session.execute(
+                delete(JournalLine).where(JournalLine.journal_entry_id.in_(journal_ids))
+            )
+            self._db_session.execute(delete(JournalEntry).where(JournalEntry.id.in_(journal_ids)))
+        if reconciliation_ids:
+            self._db_session.execute(
+                delete(ReconciliationItem).where(
+                    ReconciliationItem.reconciliation_id.in_(reconciliation_ids)
+                )
+            )
+        self._db_session.execute(
+            delete(ReconciliationAnomaly).where(ReconciliationAnomaly.close_run_id == close_run_id)
+        )
+        self._db_session.execute(
+            delete(TrialBalanceSnapshot).where(TrialBalanceSnapshot.close_run_id == close_run_id)
+        )
+        if reconciliation_ids:
+            self._db_session.execute(
+                delete(Reconciliation).where(Reconciliation.id.in_(reconciliation_ids))
+            )
+        if supporting_schedule_ids:
+            self._db_session.execute(
+                delete(SupportingScheduleRow).where(
+                    SupportingScheduleRow.supporting_schedule_id.in_(supporting_schedule_ids)
+                )
+            )
+            self._db_session.execute(
+                delete(SupportingSchedule).where(SupportingSchedule.id.in_(supporting_schedule_ids))
+            )
         if extraction_ids:
             self._db_session.execute(
                 delete(DocumentLineItem).where(
@@ -1155,11 +1235,6 @@ class CloseRunRepository:
             )
         if document_ids:
             self._db_session.execute(
-                update(Recommendation)
-                .where(Recommendation.document_id.in_(document_ids))
-                .values(document_id=None)
-            )
-            self._db_session.execute(
                 update(Job).where(Job.document_id.in_(document_ids)).values(document_id=None)
             )
             self._db_session.execute(
@@ -1169,7 +1244,9 @@ class CloseRunRepository:
                 delete(DocumentVersion).where(DocumentVersion.document_id.in_(document_ids))
             )
             self._db_session.execute(
-                update(Document).where(Document.id.in_(document_ids)).values(parent_document_id=None)
+                update(Document)
+                .where(Document.id.in_(document_ids))
+                .values(parent_document_id=None)
             )
             self._db_session.execute(delete(Document).where(Document.id.in_(document_ids)))
 
@@ -1385,8 +1462,7 @@ class CloseRunRepository:
         approved_document_ids = {
             row.id
             for row in document_rows
-            if row.status == "approved"
-            and is_gl_coding_recommendation_eligible(row.document_type)
+            if row.status == "approved" and is_gl_coding_recommendation_eligible(row.document_type)
         }
 
         open_issue_rows = (
@@ -1448,9 +1524,10 @@ class CloseRunRepository:
             document_ids=tuple(approved_document_ids),
         )
         for document_id in approved_document_ids:
-            if imported_gl_representation.get(document_id, None) and imported_gl_representation[
-                document_id
-            ].represented_in_imported_gl:
+            if (
+                imported_gl_representation.get(document_id, None)
+                and imported_gl_representation[document_id].represented_in_imported_gl
+            ):
                 continue
             recommendation_ids = recommendation_ids_by_document_id.get(document_id, set())
             if not recommendation_ids:
@@ -1503,9 +1580,7 @@ class CloseRunRepository:
                 Reconciliation.id,
                 Reconciliation.reconciliation_type,
                 Reconciliation.status,
-            ).where(
-                Reconciliation.close_run_id == close_run_id
-            )
+            ).where(Reconciliation.close_run_id == close_run_id)
         ).all()
         schedule_rows = self._db_session.execute(
             select(
@@ -2101,10 +2176,7 @@ def _build_carried_forward_artifact_idempotency_key(
 ) -> str:
     """Return a unique artifact idempotency key for carried-forward working state."""
 
-    return (
-        f"{source_idempotency_key}:reopened:{target_close_run_id}:"
-        f"version:{target_version_no}"
-    )
+    return f"{source_idempotency_key}:reopened:{target_close_run_id}:version:{target_version_no}"
 
 
 def _later_phase_task_names_after_rewind(*, target_phase: WorkflowPhase) -> tuple[TaskName, ...]:

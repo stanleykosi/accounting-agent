@@ -201,7 +201,7 @@ def test_review_document_approve_clears_latest_extraction_review_flag() -> None:
         verified_complete=True,
         verified_authorized=True,
         verified_period=True,
-        verified_transaction_match=True,
+        verified_transaction_match=None,
         source_surface=AuditSourceSurface.DESKTOP,
         trace_id="trace-review-3",
     )

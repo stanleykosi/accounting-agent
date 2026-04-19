@@ -21,6 +21,7 @@ from services.common.types import JsonObject
 from services.db.models.audit import AuditEvent, AuditSourceSurface, ReviewAction
 from services.db.models.auth import User
 from services.db.models.chat import ChatThread
+from services.db.models.chat_action_plans import ChatActionPlan
 from services.db.models.close_run import CloseRun, CloseRunPhaseState
 from services.db.models.coa import CoaAccount, CoaMappingRule, CoaSet
 from services.db.models.documents import Document, DocumentIssue, DocumentVersion
@@ -29,6 +30,7 @@ from services.db.models.exports import Artifact, ExportDistribution, ExportRun
 from services.db.models.extractions import DocumentExtraction, DocumentLineItem, ExtractedField
 from services.db.models.integration import IntegrationConnection
 from services.db.models.jobs import Job
+from services.db.models.journals import JournalEntry, JournalLine, JournalPosting
 from services.db.models.ledger import (
     CloseRunLedgerBinding,
     GeneralLedgerImportBatch,
@@ -37,12 +39,20 @@ from services.db.models.ledger import (
     TrialBalanceImportLine,
 )
 from services.db.models.ownership import OwnershipTarget
+from services.db.models.recommendations import Recommendation
+from services.db.models.reconciliation import (
+    Reconciliation,
+    ReconciliationAnomaly,
+    ReconciliationItem,
+    TrialBalanceSnapshot,
+)
 from services.db.models.reporting import (
     ReportCommentary,
     ReportRun,
     ReportTemplate,
     ReportTemplateSection,
 )
+from services.db.models.supporting_schedules import SupportingSchedule, SupportingScheduleRow
 from sqlalchemy import delete, desc, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -583,6 +593,44 @@ class EntityRepository:
             if close_run_ids
             else ()
         )
+        recommendation_ids = (
+            tuple(
+                self._db_session.scalars(
+                    select(Recommendation.id).where(Recommendation.close_run_id.in_(close_run_ids))
+                ).all()
+            )
+            if close_run_ids
+            else ()
+        )
+        journal_ids = (
+            tuple(
+                self._db_session.scalars(
+                    select(JournalEntry.id).where(JournalEntry.close_run_id.in_(close_run_ids))
+                ).all()
+            )
+            if close_run_ids
+            else ()
+        )
+        reconciliation_ids = (
+            tuple(
+                self._db_session.scalars(
+                    select(Reconciliation.id).where(Reconciliation.close_run_id.in_(close_run_ids))
+                ).all()
+            )
+            if close_run_ids
+            else ()
+        )
+        supporting_schedule_ids = (
+            tuple(
+                self._db_session.scalars(
+                    select(SupportingSchedule.id).where(
+                        SupportingSchedule.close_run_id.in_(close_run_ids)
+                    )
+                ).all()
+            )
+            if close_run_ids
+            else ()
+        )
         extraction_ids = (
             tuple(
                 self._db_session.scalars(
@@ -605,7 +653,9 @@ class EntityRepository:
         )
         if close_run_ids:
             self._db_session.execute(
-                delete(CloseRunLedgerBinding).where(CloseRunLedgerBinding.close_run_id.in_(close_run_ids))
+                delete(CloseRunLedgerBinding).where(
+                    CloseRunLedgerBinding.close_run_id.in_(close_run_ids)
+                )
             )
             self._db_session.execute(
                 delete(ReviewAction).where(ReviewAction.close_run_id.in_(close_run_ids))
@@ -614,8 +664,13 @@ class EntityRepository:
         self._db_session.execute(
             delete(ExportDistribution).where(ExportDistribution.entity_id == entity_id)
         )
+        self._db_session.execute(
+            delete(ChatActionPlan).where(ChatActionPlan.entity_id == entity_id)
+        )
         if close_run_ids:
-            self._db_session.execute(delete(Artifact).where(Artifact.close_run_id.in_(close_run_ids)))
+            self._db_session.execute(
+                delete(Artifact).where(Artifact.close_run_id.in_(close_run_ids))
+            )
             if report_run_ids:
                 self._db_session.execute(
                     update(ReportCommentary)
@@ -623,10 +678,68 @@ class EntityRepository:
                     .values(superseded_by_id=None)
                 )
                 self._db_session.execute(
-                    delete(ReportCommentary).where(ReportCommentary.report_run_id.in_(report_run_ids))
+                    delete(ReportCommentary).where(
+                        ReportCommentary.report_run_id.in_(report_run_ids)
+                    )
                 )
-            self._db_session.execute(delete(ExportRun).where(ExportRun.close_run_id.in_(close_run_ids)))
-            self._db_session.execute(delete(ReportRun).where(ReportRun.close_run_id.in_(close_run_ids)))
+            self._db_session.execute(
+                delete(ExportRun).where(ExportRun.close_run_id.in_(close_run_ids))
+            )
+            self._db_session.execute(
+                delete(ReportRun).where(ReportRun.close_run_id.in_(close_run_ids))
+            )
+        if recommendation_ids:
+            self._db_session.execute(
+                update(Recommendation)
+                .where(Recommendation.superseded_by_id.in_(recommendation_ids))
+                .values(superseded_by_id=None)
+            )
+            self._db_session.execute(
+                delete(Recommendation).where(Recommendation.id.in_(recommendation_ids))
+            )
+        if journal_ids:
+            self._db_session.execute(
+                update(JournalEntry)
+                .where(JournalEntry.superseded_by_id.in_(journal_ids))
+                .values(superseded_by_id=None)
+            )
+            self._db_session.execute(
+                delete(JournalPosting).where(JournalPosting.journal_entry_id.in_(journal_ids))
+            )
+            self._db_session.execute(
+                delete(JournalLine).where(JournalLine.journal_entry_id.in_(journal_ids))
+            )
+            self._db_session.execute(delete(JournalEntry).where(JournalEntry.id.in_(journal_ids)))
+        if reconciliation_ids:
+            self._db_session.execute(
+                delete(ReconciliationItem).where(
+                    ReconciliationItem.reconciliation_id.in_(reconciliation_ids)
+                )
+            )
+        if close_run_ids:
+            self._db_session.execute(
+                delete(ReconciliationAnomaly).where(
+                    ReconciliationAnomaly.close_run_id.in_(close_run_ids)
+                )
+            )
+            self._db_session.execute(
+                delete(TrialBalanceSnapshot).where(
+                    TrialBalanceSnapshot.close_run_id.in_(close_run_ids)
+                )
+            )
+        if reconciliation_ids:
+            self._db_session.execute(
+                delete(Reconciliation).where(Reconciliation.id.in_(reconciliation_ids))
+            )
+        if supporting_schedule_ids:
+            self._db_session.execute(
+                delete(SupportingScheduleRow).where(
+                    SupportingScheduleRow.supporting_schedule_id.in_(supporting_schedule_ids)
+                )
+            )
+            self._db_session.execute(
+                delete(SupportingSchedule).where(SupportingSchedule.id.in_(supporting_schedule_ids))
+            )
         if report_template_ids:
             self._db_session.execute(
                 delete(ReportTemplateSection).where(
@@ -641,14 +754,18 @@ class EntityRepository:
         )
         if gl_batch_ids:
             self._db_session.execute(
-                delete(GeneralLedgerImportLine).where(GeneralLedgerImportLine.batch_id.in_(gl_batch_ids))
+                delete(GeneralLedgerImportLine).where(
+                    GeneralLedgerImportLine.batch_id.in_(gl_batch_ids)
+                )
             )
         self._db_session.execute(
             delete(GeneralLedgerImportBatch).where(GeneralLedgerImportBatch.entity_id == entity_id)
         )
         if tb_batch_ids:
             self._db_session.execute(
-                delete(TrialBalanceImportLine).where(TrialBalanceImportLine.batch_id.in_(tb_batch_ids))
+                delete(TrialBalanceImportLine).where(
+                    TrialBalanceImportLine.batch_id.in_(tb_batch_ids)
+                )
             )
         self._db_session.execute(
             delete(TrialBalanceImportBatch).where(TrialBalanceImportBatch.entity_id == entity_id)
@@ -657,25 +774,35 @@ class EntityRepository:
             delete(CoaMappingRule).where(CoaMappingRule.entity_id == entity_id)
         )
         if coa_set_ids:
-            self._db_session.execute(delete(CoaAccount).where(CoaAccount.coa_set_id.in_(coa_set_ids)))
+            self._db_session.execute(
+                delete(CoaAccount).where(CoaAccount.coa_set_id.in_(coa_set_ids))
+            )
         self._db_session.execute(delete(CoaSet).where(CoaSet.entity_id == entity_id))
         if extraction_ids:
             self._db_session.execute(
-                delete(DocumentLineItem).where(DocumentLineItem.document_extraction_id.in_(extraction_ids))
+                delete(DocumentLineItem).where(
+                    DocumentLineItem.document_extraction_id.in_(extraction_ids)
+                )
             )
             self._db_session.execute(
-                delete(ExtractedField).where(ExtractedField.document_extraction_id.in_(extraction_ids))
+                delete(ExtractedField).where(
+                    ExtractedField.document_extraction_id.in_(extraction_ids)
+                )
             )
             self._db_session.execute(
                 delete(DocumentExtraction).where(DocumentExtraction.id.in_(extraction_ids))
             )
         if document_ids:
-            self._db_session.execute(delete(DocumentIssue).where(DocumentIssue.document_id.in_(document_ids)))
+            self._db_session.execute(
+                delete(DocumentIssue).where(DocumentIssue.document_id.in_(document_ids))
+            )
             self._db_session.execute(
                 delete(DocumentVersion).where(DocumentVersion.document_id.in_(document_ids))
             )
             self._db_session.execute(
-                update(Document).where(Document.id.in_(document_ids)).values(parent_document_id=None)
+                update(Document)
+                .where(Document.id.in_(document_ids))
+                .values(parent_document_id=None)
             )
             self._db_session.execute(delete(Document).where(Document.id.in_(document_ids)))
         if close_run_ids:
@@ -761,13 +888,17 @@ class EntityRepository:
     ) -> tuple[str, ...]:
         """Return canonical artifact storage keys attached to one entity workspace."""
 
-        artifact_keys: list[str] = [
-            storage_key
-            for storage_key in self._db_session.scalars(
-                select(Artifact.storage_key).where(Artifact.close_run_id.in_(close_run_ids))
-            ).all()
-            if isinstance(storage_key, str) and storage_key.strip()
-        ] if close_run_ids else []
+        artifact_keys: list[str] = (
+            [
+                storage_key
+                for storage_key in self._db_session.scalars(
+                    select(Artifact.storage_key).where(Artifact.close_run_id.in_(close_run_ids))
+                ).all()
+                if isinstance(storage_key, str) and storage_key.strip()
+            ]
+            if close_run_ids
+            else []
+        )
 
         if close_run_ids:
             report_artifact_payloads = self._db_session.scalars(

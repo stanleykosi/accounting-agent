@@ -360,10 +360,6 @@ def _build_blocking_reason(*, phase: WorkflowPhase, signals: PhaseGateSignals) -
             )
         if signals.unauthorized_document_count > 0:
             blockers.append(f"{signals.unauthorized_document_count} unauthorized document(s)")
-        if signals.unmatched_transaction_count > 0:
-            blockers.append(
-                f"{signals.unmatched_transaction_count} document(s) are not matched to transactions"
-            )
         if signals.wrong_period_document_count > 0:
             blockers.append(f"{signals.wrong_period_document_count} wrong-period document(s)")
         return _join_blockers(phase=phase, blockers=tuple(blockers))

@@ -44,7 +44,6 @@ const defaultVerificationChecklist: DocumentVerificationChecklist = {
   authorized: false,
   complete: false,
   period: false,
-  transactionMatch: false,
 };
 
 const defaultEvidenceDrawerState: EvidenceDrawerState = {
@@ -587,19 +586,14 @@ function deriveVerificationChecklistDraft(
   if (document === null) {
     return defaultVerificationChecklist;
   }
-  const autoTransactionMatchStatus = document.latestExtraction?.autoTransactionMatch?.status;
   if (document.status === "approved") {
     return {
       authorized: true,
       complete: true,
       period: true,
-      transactionMatch: true,
     };
   }
   return {
     ...defaultVerificationChecklist,
-    transactionMatch:
-      autoTransactionMatchStatus === "matched" ||
-      autoTransactionMatchStatus === "not_applicable",
   };
 }

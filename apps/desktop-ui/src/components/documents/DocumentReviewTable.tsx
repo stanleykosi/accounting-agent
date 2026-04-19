@@ -125,6 +125,9 @@ export function DocumentReviewTable({
                         <p>
                           {formatLabel(item.documentType)} • {formatLabel(item.status)}
                         </p>
+                        {item.primaryIssueReason ? (
+                          <p className="review-decision-label">{item.primaryIssueReason}</p>
+                        ) : null}
                       </div>
                     </td>
                     <td>

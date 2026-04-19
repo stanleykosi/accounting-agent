@@ -62,8 +62,8 @@ def test_invoice_auto_transaction_match_prefers_exact_amount_date_and_reference(
     assert result.score is not None and result.score >= 0.72
 
 
-def test_receipt_auto_transaction_match_returns_unmatched_when_no_bank_lines_exist() -> None:
-    """Receipts should remain unmatched when the close run has no bank-statement evidence yet."""
+def test_receipt_auto_transaction_match_waits_for_bank_evidence_when_no_lines_exist() -> None:
+    """Receipts should wait for bank evidence instead of becoming blocked immediately."""
 
     result = evaluate_auto_transaction_match(
         document_type=DocumentType.RECEIPT,
@@ -76,8 +76,8 @@ def test_receipt_auto_transaction_match_returns_unmatched_when_no_bank_lines_exi
         statement_candidates=(),
     )
 
-    assert result.status is AutoTransactionMatchStatus.UNMATCHED
-    assert "No bank-statement transactions" in result.primary_reason
+    assert result.status is AutoTransactionMatchStatus.PENDING_EVIDENCE
+    assert "Bank-statement evidence has not been uploaded yet" in result.primary_reason
 
 
 def test_bank_statement_auto_transaction_match_is_not_applicable() -> None:

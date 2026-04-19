@@ -79,11 +79,7 @@ export function ExtractionPanel({
   const isDeleteMutating = deleteMutationDocumentId === selectedDocument.id;
   const isReparseMutating = reparseMutationDocumentId === selectedDocument.id;
   const approvalReady =
-    checklist !== null &&
-    checklist.complete &&
-    checklist.authorized &&
-    checklist.period &&
-    checklist.transactionMatch;
+    checklist !== null && checklist.complete && checklist.authorized && checklist.period;
 
   return (
     <section className="extraction-panel-shell" aria-label="Extraction panel">
@@ -213,8 +209,9 @@ export function ExtractionPanel({
       <section className="dashboard-row">
         <strong className="close-run-row-title">Phase 1 review checklist</strong>
         <p className="form-helper">
-          The accountant workflow requires completeness, authorization, period alignment, and
-          transaction matching before Collection can move into Processing.
+          The accountant workflow requires completeness, authorization, and period alignment
+          before Collection can move into Processing. Transaction linking below is supporting
+          evidence when it is available.
         </p>
         <div className="entity-card-list">
           <label className="entity-card">
@@ -250,21 +247,10 @@ export function ExtractionPanel({
             <strong>Correct period</strong>
             <p className="form-helper">The source belongs to this close-run reporting window.</p>
           </label>
-          <label className="entity-card">
-            <input
-              checked={checklist?.transactionMatch ?? false}
-              onChange={(event) => {
-                onChecklistChange("transactionMatch", event.target.checked);
-              }}
-              type="checkbox"
-            />
-            <strong>Matched to transaction</strong>
-            <p className="form-helper">Evidence ties back to the transaction being recorded.</p>
-          </label>
         </div>
         {!approvalReady ? (
           <p className="form-helper">
-            Approval stays locked until all four verification controls are confirmed.
+            Approval stays locked until all three verification controls are confirmed.
           </p>
         ) : null}
       </section>
@@ -477,6 +463,9 @@ function formatAutoTransactionMatchStatus(
   if (value === "not_applicable") {
     return "Not applicable";
   }
+  if (value === "pending_evidence") {
+    return "Waiting for bank evidence";
+  }
   if (value === "matched") {
     return "Matched automatically";
   }
@@ -488,6 +477,9 @@ function formatAutoTransactionMatchMeta(
 ): string {
   if (summary.status === "not_applicable") {
     return "No separate transaction link is required for this document type.";
+  }
+  if (summary.status === "pending_evidence") {
+    return "Upload and parse a bank statement later if you want deterministic transaction linking.";
   }
 
   const fragments: string[] = [];

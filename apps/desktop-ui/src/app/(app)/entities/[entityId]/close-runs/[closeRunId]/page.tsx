@@ -699,7 +699,7 @@ function buildManagementReportWorkflowSteps(
     },
     {
       description:
-        "Check completeness, authorization, correct period, and transaction matching before processing.",
+        "Check completeness, authorization, and correct period before processing.",
       href: `/entities/${entityId}/close-runs/${closeRun.id}/documents`,
       phase: "collection" as WorkflowPhase,
       stepNo: "02",

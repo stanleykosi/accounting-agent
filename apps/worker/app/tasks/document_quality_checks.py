@@ -1,7 +1,7 @@
 """
 Purpose: Run document quality checks as part of the document processing pipeline.
 Scope: Execute duplicate detection, period validation, completeness checks,
-auto transaction-linking, and issue creation.
+and evidence-only transaction linking.
 Dependencies: Document upload service, issue service, quality check services, and deterministic
 transaction matching.
 """
@@ -11,8 +11,9 @@ from __future__ import annotations
 import logging
 from uuid import UUID
 
-from services.common.enums import DocumentIssueSeverity
+from services.common.enums import DocumentIssueSeverity, DocumentType
 from services.db.models.audit import AuditSourceSurface
+from services.db.models.documents import Document
 from services.db.repositories.document_repo import DocumentRepository
 from services.db.repositories.entity_repo import EntityRepository
 from services.documents.completeness import CompletenessCheckService
@@ -52,7 +53,7 @@ def run_document_quality_checks(
     2. Period validation (if period can be detected from document)
     3. Completeness check for the close run
     4. Deterministic transaction linking against bank-statement evidence
-    5. Creates issues for any problems found
+    5. Persists non-blocking transaction-link evidence for later review
 
     Args:
         entity_id: Entity ID
@@ -272,42 +273,31 @@ def run_document_quality_checks(
             }
         )
         results["transaction_match"] = transaction_match_result.to_payload()
+        _resolve_transaction_mismatch_issues(
+            issue_service=issue_service,
+            document_id=document_id,
+            actor_user_id=actor_user_id,
+            transaction_match_result=transaction_match_result,
+        )
 
-        if transaction_match_result.should_block_collection:
-            issue = issue_service.create_issue(
-                document_id=document_id,
-                issue_type="transaction_mismatch",
-                severity=DocumentIssueSeverity.BLOCKING,
-                details={
-                    "reason": transaction_match_result.primary_reason,
-                    "auto_transaction_match": transaction_match_result.to_payload(),
-                },
-                actor_user_id=actor_user_id,
-                source_surface=AuditSourceSurface.WORKER,
+        current_document = (
+            db_session.get(Document, document_id) if hasattr(db_session, "get") else None
+        )
+        if (
+            current_document is not None
+            and current_document.document_type == DocumentType.BANK_STATEMENT.value
+        ):
+            refreshed_matches = transaction_matcher.refresh_close_run_matches(
+                close_run_id=close_run_id,
             )
-            results["issues_created"].append(
-                {
-                    "issue_id": str(issue.id),
-                    "issue_type": "transaction_mismatch",
-                    "severity": issue.severity.value,
-                }
-            )
-            results["passed_all_checks"] = False
-        else:
-            for existing_issue in issue_service.get_document_issues(document_id=document_id):
-                if (
-                    existing_issue.status.value == "open"
-                    and existing_issue.issue_type == "transaction_mismatch"
-                ):
-                    issue_service.resolve_issue(
-                        issue_id=existing_issue.id,
-                        resolution_details={
-                            "resolution_reason": transaction_match_result.primary_reason,
-                            "auto_transaction_match": transaction_match_result.to_payload(),
-                        },
-                        actor_user_id=actor_user_id,
-                        source_surface=AuditSourceSurface.WORKER,
-                    )
+            results["transaction_match_refresh_count"] = len(refreshed_matches)
+            for refreshed_document_id, refreshed_result in refreshed_matches.items():
+                _resolve_transaction_mismatch_issues(
+                    issue_service=issue_service,
+                    document_id=refreshed_document_id,
+                    actor_user_id=actor_user_id,
+                    transaction_match_result=refreshed_result,
+                )
     except Exception as e:
         logger.error(f"Error running auto transaction-linking: {e}")
         results["checks_performed"].append(
@@ -323,6 +313,35 @@ def run_document_quality_checks(
         len(results["issues_created"]),
     )
     return results
+
+
+def _resolve_transaction_mismatch_issues(
+    *,
+    issue_service: DocumentIssueService,
+    document_id: UUID,
+    actor_user_id: UUID,
+    transaction_match_result,
+) -> None:
+    """Resolve any legacy transaction-mismatch blockers for one document."""
+
+    for existing_issue in issue_service.get_document_issues(document_id=document_id):
+        if (
+            existing_issue.status.value != "open"
+            or existing_issue.issue_type != "transaction_mismatch"
+        ):
+            continue
+        issue_service.resolve_issue(
+            issue_id=existing_issue.id,
+            resolution_details={
+                "resolution_reason": (
+                    "Transaction linking is recorded as supporting evidence and no longer "
+                    "blocks Collection. " + transaction_match_result.primary_reason
+                ),
+                "auto_transaction_match": transaction_match_result.to_payload(),
+            },
+            actor_user_id=actor_user_id,
+            source_surface=AuditSourceSurface.WORKER,
+        )
 
 
 __all__ = ["run_document_quality_checks"]

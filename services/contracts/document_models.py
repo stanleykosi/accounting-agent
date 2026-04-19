@@ -63,7 +63,7 @@ class DocumentIssueSummary(ContractModel):
 class AutoTransactionMatchSummary(ContractModel):
     """Describe the current deterministic transaction-linking result for a document."""
 
-    status: str = Field(description="matched, unmatched, or not_applicable.")
+    status: str = Field(description="matched, unmatched, pending_evidence, or not_applicable.")
     score: float | None = Field(
         default=None,
         ge=0.0,

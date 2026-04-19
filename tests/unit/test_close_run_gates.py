@@ -66,15 +66,14 @@ def test_collection_gate_requires_at_least_one_approved_source_document() -> Non
     assert "no approved source documents yet" in collection.blocking_reason
 
 
-def test_collection_gate_mentions_pending_verification_and_transaction_mismatch() -> None:
-    """Collection should stay blocked until verification and document matching are complete."""
+def test_collection_gate_mentions_pending_verification_without_transaction_matching() -> None:
+    """Collection blockers should focus on review state, not bank-link evidence."""
 
     evaluated = evaluate_phase_gates(
         phase_states=_existing_states_from_initial(),
         signals=PhaseGateSignals(
             approved_document_count=1,
             pending_document_review_count=2,
-            unmatched_transaction_count=1,
         ),
     )
 
@@ -83,7 +82,6 @@ def test_collection_gate_mentions_pending_verification_and_transaction_mismatch(
     assert collection.status is CloseRunPhaseStatus.BLOCKED
     assert collection.blocking_reason is not None
     assert "awaiting verification" in collection.blocking_reason
-    assert "matched to transactions" in collection.blocking_reason
 
 
 def test_transition_opens_only_the_immediate_next_phase() -> None:

@@ -32,6 +32,7 @@ class AutoTransactionMatchStatus(StrEnum):
 
     MATCHED = "matched"
     UNMATCHED = "unmatched"
+    PENDING_EVIDENCE = "pending_evidence"
     NOT_APPLICABLE = "not_applicable"
 
 
@@ -73,6 +74,8 @@ class AutoTransactionMatchResult:
             return self.reasons[0]
         if self.status is AutoTransactionMatchStatus.MATCHED:
             return "A matching transaction was identified automatically."
+        if self.status is AutoTransactionMatchStatus.PENDING_EVIDENCE:
+            return "Bank-statement evidence has not been uploaded yet for this close run."
         if self.status is AutoTransactionMatchStatus.NOT_APPLICABLE:
             return "Transaction matching is not required for this document type."
         return "No matching transaction was identified automatically."
@@ -81,7 +84,7 @@ class AutoTransactionMatchResult:
     def should_block_collection(self) -> bool:
         """Return whether this outcome should create a collection-phase blocker."""
 
-        return self.status is AutoTransactionMatchStatus.UNMATCHED and self.extraction_available
+        return False
 
     def to_payload(self) -> dict[str, Any]:
         """Serialize the result into JSON-safe extraction metadata."""
@@ -101,9 +104,7 @@ class AutoTransactionMatchResult:
                 self.matched_date.isoformat() if self.matched_date is not None else None
             ),
             "matched_amount": (
-                _decimal_to_string(self.matched_amount)
-                if self.matched_amount is not None
-                else None
+                _decimal_to_string(self.matched_amount) if self.matched_amount is not None else None
             ),
             "reasons": list(self.reasons),
         }
@@ -111,6 +112,14 @@ class AutoTransactionMatchResult:
 
 class TransactionMatchingService:
     """Load extracted evidence and persist one canonical auto transaction-linking result."""
+
+    eligible_document_types = frozenset(
+        {
+            DocumentType.INVOICE.value,
+            DocumentType.RECEIPT.value,
+            DocumentType.PAYSLIP.value,
+        }
+    )
 
     def __init__(self, *, db_session: Session) -> None:
         self._db_session = db_session
@@ -158,6 +167,31 @@ class TransactionMatchingService:
         )
         self._db_session.flush()
         return result
+
+    def refresh_close_run_matches(
+        self,
+        *,
+        close_run_id: UUID,
+    ) -> dict[UUID, AutoTransactionMatchResult]:
+        """Re-evaluate every eligible source document in one close run."""
+
+        document_ids = tuple(
+            self._db_session.scalars(
+                select(Document.id)
+                .where(
+                    Document.close_run_id == close_run_id,
+                    Document.document_type.in_(tuple(self.eligible_document_types)),
+                )
+                .order_by(Document.created_at.asc(), Document.id.asc())
+            ).all()
+        )
+        results: dict[UUID, AutoTransactionMatchResult] = {}
+        for document_id in document_ids:
+            results[document_id] = self.evaluate_and_persist(
+                close_run_id=close_run_id,
+                document_id=document_id,
+            )
+        return results
 
     def _get_latest_extraction(self, *, document_id: UUID) -> DocumentExtraction | None:
         """Return the newest extraction row for one document."""
@@ -295,7 +329,7 @@ def evaluate_auto_transaction_match(
 
     if not statement_candidates:
         return AutoTransactionMatchResult(
-            status=AutoTransactionMatchStatus.UNMATCHED,
+            status=AutoTransactionMatchStatus.PENDING_EVIDENCE,
             score=None,
             match_source=None,
             matched_document_id=None,
@@ -306,7 +340,8 @@ def evaluate_auto_transaction_match(
             matched_date=None,
             matched_amount=None,
             reasons=(
-                "No bank-statement transactions are available in this close run for auto-linking.",
+                "Bank-statement evidence has not been uploaded yet, so transaction linking is "
+                "deferred for now.",
             ),
         )
 

@@ -32,11 +32,11 @@ from services.db.repositories.document_repo import DocumentRepository, ParseDocu
 from services.db.repositories.entity_repo import EntityRepository
 from services.db.session import get_session_factory
 from services.documents.ai_assist import run_document_parse_assist
-from services.documents.recommendation_eligibility import (
-    GL_CODING_RECOMMENDATION_ELIGIBLE_DOCUMENT_TYPES,
-)
 from services.documents.imported_ledger_representation import (
     evaluate_document_imported_gl_representation,
+)
+from services.documents.recommendation_eligibility import (
+    GL_CODING_RECOMMENDATION_ELIGIBLE_DOCUMENT_TYPES,
 )
 from services.documents.transaction_matching import update_extraction_auto_review_payload
 from services.extraction.field_extractors import (
@@ -79,30 +79,16 @@ _TEXT_FIELD_PATTERNS: dict[str, tuple[re.Pattern[str], ...]] = {
     "contract_number": (
         re.compile(r"\bcontract\s*(?:number|no\.?|#)\s*[:#-]?\s*([A-Z0-9./-]+)", re.IGNORECASE),
     ),
-    "vendor_name": (
-        re.compile(r"\b(?:vendor|supplier|payee)\s*[:#-]?\s*([^\n]+)", re.IGNORECASE),
-    ),
-    "vendor_address": (
-        re.compile(r"\bvendor\s+address\s*[:#-]?\s*([^\n]+)", re.IGNORECASE),
-    ),
-    "vendor_tax_id": (
-        re.compile(r"\bvendor\s+tax\s+id\s*[:#-]?\s*([^\n]+)", re.IGNORECASE),
-    ),
-    "customer_name": (
-        re.compile(r"\bcustomer\s*[:#-]?\s*([^\n]+)", re.IGNORECASE),
-    ),
-    "customer_tax_id": (
-        re.compile(r"\bcustomer\s+tax\s+id\s*[:#-]?\s*([^\n]+)", re.IGNORECASE),
-    ),
+    "vendor_name": (re.compile(r"\b(?:vendor|supplier|payee)\s*[:#-]?\s*([^\n]+)", re.IGNORECASE),),
+    "vendor_address": (re.compile(r"\bvendor\s+address\s*[:#-]?\s*([^\n]+)", re.IGNORECASE),),
+    "vendor_tax_id": (re.compile(r"\bvendor\s+tax\s+id\s*[:#-]?\s*([^\n]+)", re.IGNORECASE),),
+    "customer_name": (re.compile(r"\bcustomer\s*[:#-]?\s*([^\n]+)", re.IGNORECASE),),
+    "customer_tax_id": (re.compile(r"\bcustomer\s+tax\s+id\s*[:#-]?\s*([^\n]+)", re.IGNORECASE),),
     "invoice_date": (
         re.compile(rf"\binvoice\s+date\s*[:#-]?\s*{_DATE_CAPTURE_PATTERN}", re.IGNORECASE),
     ),
-    "due_date": (
-        re.compile(rf"\bdue\s+date\s*[:#-]?\s*{_DATE_CAPTURE_PATTERN}", re.IGNORECASE),
-    ),
-    "subtotal": (
-        re.compile(rf"\bsubtotal\s*[:#-]?\s*{_AMOUNT_CAPTURE_PATTERN}", re.IGNORECASE),
-    ),
+    "due_date": (re.compile(rf"\bdue\s+date\s*[:#-]?\s*{_DATE_CAPTURE_PATTERN}", re.IGNORECASE),),
+    "subtotal": (re.compile(rf"\bsubtotal\s*[:#-]?\s*{_AMOUNT_CAPTURE_PATTERN}", re.IGNORECASE),),
     "tax_amount": (
         re.compile(rf"\b(?:tax|vat)\s+amount\s*[:#-]?\s*{_AMOUNT_CAPTURE_PATTERN}", re.IGNORECASE),
     ),
@@ -112,24 +98,14 @@ _TEXT_FIELD_PATTERNS: dict[str, tuple[re.Pattern[str], ...]] = {
     "discount_amount": (
         re.compile(rf"\bdiscount\s+amount\s*[:#-]?\s*{_AMOUNT_CAPTURE_PATTERN}", re.IGNORECASE),
     ),
-    "total": (
-        re.compile(rf"\btotal\s*[:#-]?\s*{_AMOUNT_CAPTURE_PATTERN}", re.IGNORECASE),
-    ),
-    "payment_terms": (
-        re.compile(r"\bpayment\s+terms\s*[:#-]?\s*([^\n]+)", re.IGNORECASE),
-    ),
-    "notes": (
-        re.compile(r"\bnotes?\s*[:#-]?\s*([^\n]+)", re.IGNORECASE),
-    ),
-    "employee_name": (
-        re.compile(r"\bemployee\s*(?:name)?\s*[:#-]?\s*([^\n]+)", re.IGNORECASE),
-    ),
+    "total": (re.compile(rf"\btotal\s*[:#-]?\s*{_AMOUNT_CAPTURE_PATTERN}", re.IGNORECASE),),
+    "payment_terms": (re.compile(r"\bpayment\s+terms\s*[:#-]?\s*([^\n]+)", re.IGNORECASE),),
+    "notes": (re.compile(r"\bnotes?\s*[:#-]?\s*([^\n]+)", re.IGNORECASE),),
+    "employee_name": (re.compile(r"\bemployee\s*(?:name)?\s*[:#-]?\s*([^\n]+)", re.IGNORECASE),),
     "employee_id": (
         re.compile(r"\bemployee\s*(?:id|number|no\.?)\s*[:#-]?\s*([A-Z0-9./-]+)", re.IGNORECASE),
     ),
-    "employer_name": (
-        re.compile(r"\bemployer\s*(?:name)?\s*[:#-]?\s*([^\n]+)", re.IGNORECASE),
-    ),
+    "employer_name": (re.compile(r"\bemployer\s*(?:name)?\s*[:#-]?\s*([^\n]+)", re.IGNORECASE),),
     "pay_period_start": (
         re.compile(
             rf"\b(?:pay\s+period\s+start|pay\s+period\s+from|period\s+start)\s*[:#-]?\s*{_DATE_CAPTURE_PATTERN}",
@@ -142,9 +118,7 @@ _TEXT_FIELD_PATTERNS: dict[str, tuple[re.Pattern[str], ...]] = {
             re.IGNORECASE,
         ),
     ),
-    "pay_date": (
-        re.compile(rf"\bpay\s+date\s*[:#-]?\s*{_DATE_CAPTURE_PATTERN}", re.IGNORECASE),
-    ),
+    "pay_date": (re.compile(rf"\bpay\s+date\s*[:#-]?\s*{_DATE_CAPTURE_PATTERN}", re.IGNORECASE),),
     "basic_salary": (
         re.compile(rf"\bbasic\s+salary\s*[:#-]?\s*{_AMOUNT_CAPTURE_PATTERN}", re.IGNORECASE),
     ),
@@ -157,24 +131,16 @@ _TEXT_FIELD_PATTERNS: dict[str, tuple[re.Pattern[str], ...]] = {
     "gross_pay": (
         re.compile(rf"\bgross\s+pay\s*[:#-]?\s*{_AMOUNT_CAPTURE_PATTERN}", re.IGNORECASE),
     ),
-    "net_pay": (
-        re.compile(rf"\bnet\s+pay\s*[:#-]?\s*{_AMOUNT_CAPTURE_PATTERN}", re.IGNORECASE),
-    ),
-    "paye_tax": (
-        re.compile(rf"\bpaye\s+tax\s*[:#-]?\s*{_AMOUNT_CAPTURE_PATTERN}", re.IGNORECASE),
-    ),
+    "net_pay": (re.compile(rf"\bnet\s+pay\s*[:#-]?\s*{_AMOUNT_CAPTURE_PATTERN}", re.IGNORECASE),),
+    "paye_tax": (re.compile(rf"\bpaye\s+tax\s*[:#-]?\s*{_AMOUNT_CAPTURE_PATTERN}", re.IGNORECASE),),
     "pension_contribution": (
         re.compile(
             rf"\bpension\s+contribution\s*[:#-]?\s*{_AMOUNT_CAPTURE_PATTERN}",
             re.IGNORECASE,
         ),
     ),
-    "bank_name": (
-        re.compile(r"\bbank\s+name\s*[:#-]?\s*([^\n]+)", re.IGNORECASE),
-    ),
-    "account_name": (
-        re.compile(r"\baccount\s*name\s*[:#-]?\s*([^\n]+)", re.IGNORECASE),
-    ),
+    "bank_name": (re.compile(r"\bbank\s+name\s*[:#-]?\s*([^\n]+)", re.IGNORECASE),),
+    "account_name": (re.compile(r"\baccount\s*name\s*[:#-]?\s*([^\n]+)", re.IGNORECASE),),
     "account_number": (
         re.compile(r"\baccount\s*(?:number|no\.?)\s*[:#-]?\s*([A-Z0-9./-]+)", re.IGNORECASE),
     ),
@@ -216,18 +182,12 @@ _TEXT_FIELD_PATTERNS: dict[str, tuple[re.Pattern[str], ...]] = {
             re.IGNORECASE,
         ),
     ),
-    "party_a_name": (
-        re.compile(r"\bparty\s*a\s*[:#-]?\s*([^\n]+)", re.IGNORECASE),
-    ),
-    "party_b_name": (
-        re.compile(r"\bparty\s*b\s*[:#-]?\s*([^\n]+)", re.IGNORECASE),
-    ),
+    "party_a_name": (re.compile(r"\bparty\s*a\s*[:#-]?\s*([^\n]+)", re.IGNORECASE),),
+    "party_b_name": (re.compile(r"\bparty\s*b\s*[:#-]?\s*([^\n]+)", re.IGNORECASE),),
     "receipt_date": (
         re.compile(rf"\breceipt\s+date\s*[:#-]?\s*{_DATE_CAPTURE_PATTERN}", re.IGNORECASE),
     ),
-    "payment_method": (
-        re.compile(r"\bpayment\s+method\s*[:#-]?\s*([^\n]+)", re.IGNORECASE),
-    ),
+    "payment_method": (re.compile(r"\bpayment\s+method\s*[:#-]?\s*([^\n]+)", re.IGNORECASE),),
     "contract_date": (
         re.compile(rf"\bcontract\s+date\s*[:#-]?\s*{_DATE_CAPTURE_PATTERN}", re.IGNORECASE),
     ),
@@ -243,18 +203,10 @@ _TEXT_FIELD_PATTERNS: dict[str, tuple[re.Pattern[str], ...]] = {
     "contract_value": (
         re.compile(rf"\bcontract\s+value\s*[:#-]?\s*{_AMOUNT_CAPTURE_PATTERN}", re.IGNORECASE),
     ),
-    "contract_type": (
-        re.compile(r"\bcontract\s+type\s*[:#-]?\s*([^\n]+)", re.IGNORECASE),
-    ),
-    "terms": (
-        re.compile(r"(?mi)^terms\s*[:#-]?\s*([^\n]+)"),
-    ),
-    "renewal_terms": (
-        re.compile(r"(?mi)^renewal\s+terms\s*[:#-]?\s*([^\n]+)"),
-    ),
-    "termination_terms": (
-        re.compile(r"(?mi)^termination\s+terms\s*[:#-]?\s*([^\n]+)"),
-    ),
+    "contract_type": (re.compile(r"\bcontract\s+type\s*[:#-]?\s*([^\n]+)", re.IGNORECASE),),
+    "terms": (re.compile(r"(?mi)^terms\s*[:#-]?\s*([^\n]+)"),),
+    "renewal_terms": (re.compile(r"(?mi)^renewal\s+terms\s*[:#-]?\s*([^\n]+)"),),
+    "termination_terms": (re.compile(r"(?mi)^termination\s+terms\s*[:#-]?\s*([^\n]+)"),),
 }
 _COLUMN_ALIASES_BY_FIELD: dict[str, tuple[str, ...]] = {
     "vendor_name": ("vendor", "supplier", "vendor_name", "supplier_name", "payee"),
@@ -586,12 +538,9 @@ def _derive_document_classification(
             except ValueError:
                 continue
             if candidate_type is not DocumentType.UNKNOWN:
-                if (
-                    explicit_type is not None
-                    and all(
-                        inferred_type in {DocumentType.UNKNOWN, explicit_type}
-                        for inferred_type in candidate_types
-                    )
+                if explicit_type is not None and all(
+                    inferred_type in {DocumentType.UNKNOWN, explicit_type}
+                    for inferred_type in candidate_types
                 ):
                     return explicit_type, 0.96
                 confidence = float(candidate.get("confidence") or 0.0)
@@ -713,12 +662,9 @@ def _merge_document_ai_classification(
     if deterministic_document_type is DocumentType.UNKNOWN:
         return assist_output.predicted_type, assist_output.classification_confidence, True
 
-    if (
-        assist_output.classification_confidence >= 0.9
-        and (
-            deterministic_classification_confidence is None
-            or deterministic_classification_confidence < 0.85
-        )
+    if assist_output.classification_confidence >= 0.9 and (
+        deterministic_classification_confidence is None
+        or deterministic_classification_confidence < 0.85
     ):
         return assist_output.predicted_type, assist_output.classification_confidence, True
 
@@ -826,10 +772,7 @@ def _build_extraction_parser_output(
     source_type = "parser"
     if _raw_payload_requires_ocr(raw_parse_payload) or (
         isinstance(pages, list)
-        and any(
-            isinstance(page, dict) and page.get("extraction_method") == "ocr"
-            for page in pages
-        )
+        and any(isinstance(page, dict) and page.get("extraction_method") == "ocr" for page in pages)
     ):
         source_type = "ocr"
     parser_output: dict[str, Any] = {
@@ -1430,9 +1373,7 @@ def _post_process_parsed_document(
             )
 
             document = (
-                db_session.query(Document)
-                .filter(Document.id == parse_record.document.id)
-                .first()
+                db_session.query(Document).filter(Document.id == parse_record.document.id).first()
             )
             if document is None:
                 raise LookupError(
@@ -1619,13 +1560,11 @@ def _post_process_parsed_document(
                 document.status = DocumentStatus.DUPLICATE.value
                 needs_review = True
             elif (
-                has_blocking_quality_issue
-                and document.status != DocumentStatus.NEEDS_REVIEW.value
+                has_blocking_quality_issue and document.status != DocumentStatus.NEEDS_REVIEW.value
             ):
                 document.status = DocumentStatus.NEEDS_REVIEW.value
                 needs_review = True
 
-            auto_transaction_match = quality_results.get("transaction_match")
             auto_approval_reasons: tuple[str, ...] = ()
             auto_approved = (
                 parse_record.entity.autonomy_mode is AutonomyMode.REDUCED_INTERRUPTION
@@ -1639,9 +1578,6 @@ def _post_process_parsed_document(
                 )
                 and classification_confidence is not None
                 and classification_confidence >= 0.85
-                and isinstance(auto_transaction_match, dict)
-                and str(auto_transaction_match.get("status", "")).strip().lower()
-                in {"matched", "not_applicable"}
             )
             if auto_approved and latest_extraction is not None:
                 document.status = DocumentStatus.APPROVED.value
@@ -1773,9 +1709,7 @@ def _run_parse_document_task(
             )
     except ParserPipelineError as error:
         failure_status = (
-            DocumentStatus.BLOCKED
-            if error.code.value == "blocked_input"
-            else DocumentStatus.FAILED
+            DocumentStatus.BLOCKED if error.code.value == "blocked_input" else DocumentStatus.FAILED
         )
         _record_parse_failure(
             parse_record=parse_record,
@@ -1924,9 +1858,7 @@ def parse_and_store_document(
         parser_result=parser_result,
         derivatives=derivatives,
     )
-    checksum = compute_sha256_text(
-        json.dumps(raw_parse_payload, ensure_ascii=True, sort_keys=True)
-    )
+    checksum = compute_sha256_text(json.dumps(raw_parse_payload, ensure_ascii=True, sort_keys=True))
 
     with get_session_factory()() as db_session:
         repository = DocumentRepository(db_session=db_session)

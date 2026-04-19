@@ -17,7 +17,6 @@ export type DocumentVerificationChecklist = {
   authorized: boolean;
   complete: boolean;
   period: boolean;
-  transactionMatch: boolean;
 };
 
 export type DocumentReviewIssueType = Exclude<DocumentReviewFilter, "all">;
@@ -102,7 +101,7 @@ export type AutoTransactionMatchSummary = {
   matchedReference: string | null;
   reasons: readonly string[];
   score: number | null;
-  status: "matched" | "unmatched" | "not_applicable";
+  status: "matched" | "unmatched" | "pending_evidence" | "not_applicable";
 };
 
 export type DocumentReviewQueueItem = {
@@ -131,6 +130,7 @@ export type DocumentReviewQueueItem = {
   extractedFields: readonly ExtractionFieldSummary[];
   latestExtraction: ExtractionSummary | null;
   openIssues: readonly DocumentIssueSummary[];
+  primaryIssueReason: string | null;
 };
 
 export type DocumentReviewQueueCounts = Record<DocumentReviewFilter, number>;
@@ -318,7 +318,6 @@ export async function persistDocumentReviewDecision(
     reviewPayload.verified_complete = checklist.complete;
     reviewPayload.verified_authorized = checklist.authorized;
     reviewPayload.verified_period = checklist.period;
-    reviewPayload.verified_transaction_match = checklist.transactionMatch;
   }
   const payload = await documentReviewRequest<unknown>(
     buildEntityProxyPath(entityId, ["close-runs", closeRunId, "documents", documentId, "review"]),
@@ -744,7 +743,7 @@ function buildQueueItem(options: {
     document.status === "blocked" ||
     document.status === "failed" ||
     document.openIssues.some((issue) =>
-      ["unauthorized_document", "transaction_mismatch", "unclassified_document"].includes(issue.issueType),
+      ["unauthorized_document", "unclassified_document"].includes(issue.issueType),
     )
   ) {
     issueTypes.push("blocked");
@@ -787,6 +786,7 @@ function buildQueueItem(options: {
     ocrRequired: document.ocrRequired,
     originalFilename: document.originalFilename,
     openIssues: document.openIssues,
+    primaryIssueReason: derivePrimaryIssueReason(document),
     periodEnd: document.periodEnd,
     periodStart: document.periodStart,
     periodState,
@@ -820,6 +820,21 @@ function buildQueueCounts(items: readonly DocumentReviewQueueItem[]): DocumentRe
     low_confidence: items.filter((item) => item.issueTypes.includes("low_confidence")).length,
     wrong_period: items.filter((item) => item.issueTypes.includes("wrong_period")).length,
   };
+}
+
+function derivePrimaryIssueReason(document: DocumentApiSummary): string | null {
+  for (const issue of document.openIssues) {
+    if (typeof issue.details.reason === "string" && issue.details.reason.trim().length > 0) {
+      return issue.details.reason;
+    }
+  }
+
+  const autoTransactionMatchReasons = document.latestExtraction?.autoTransactionMatch?.reasons;
+  if (autoTransactionMatchReasons && autoTransactionMatchReasons.length > 0) {
+    return autoTransactionMatchReasons[0] ?? null;
+  }
+
+  return null;
 }
 
 function resolveIssueSeverity(
@@ -1433,6 +1448,7 @@ function requireAutoTransactionMatchStatus(
   if (
     normalized === "matched" ||
     normalized === "unmatched" ||
+    normalized === "pending_evidence" ||
     normalized === "not_applicable"
   ) {
     return normalized;
