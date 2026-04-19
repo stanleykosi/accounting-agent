@@ -35,8 +35,10 @@ class _FakeLedgerRepository:
         self.open_close_runs: tuple[LedgerCloseRunRecord, ...] = ()
         self.ledger_activity_by_close_run_id: dict[UUID, bool] = {}
         self.created_gl_line_counts: list[int] = []
+        self.created_gl_lines: list[tuple] = []
         self.created_tb_line_counts: list[int] = []
         self.activity_events: list[dict[str, object]] = []
+        self.superseded_imported_gl_close_run_ids: list[UUID] = []
 
     def get_entity_for_user(self, *, entity_id: UUID, user_id: UUID) -> LedgerEntityRecord | None:
         del user_id
@@ -90,6 +92,7 @@ class _FakeLedgerRepository:
     def create_general_ledger_import_lines(self, *, batch_id: UUID, lines: tuple) -> int:
         del batch_id
         self.created_gl_line_counts.append(len(lines))
+        self.created_gl_lines.append(lines)
         return len(lines)
 
     def create_trial_balance_import_batch(self, **kwargs) -> TrialBalanceImportBatchRecord:
@@ -170,6 +173,14 @@ class _FakeLedgerRepository:
         self.bindings_by_close_run_id[close_run_id] = record
         return record
 
+    def supersede_imported_gl_processing_state(
+        self,
+        *,
+        close_run_id: UUID,
+    ) -> tuple[int, int]:
+        self.superseded_imported_gl_close_run_ids.append(close_run_id)
+        return (0, 0)
+
     def create_activity_event(self, **kwargs) -> None:
         self.activity_events.append(kwargs)
 
@@ -219,10 +230,12 @@ def test_upload_general_ledger_auto_binds_safe_close_runs_and_skips_started_runs
     assert response.auto_bound_close_run_ids == (str(safe_close_run.id),)
     assert response.skipped_close_run_ids == (str(started_close_run.id),)
     assert repository.created_gl_line_counts == [1]
+    assert repository.created_gl_lines[0][0].transaction_group_key.startswith("glgrp_")
     assert (
         repository.bindings_by_close_run_id[
             safe_close_run.id
         ].general_ledger_import_batch_id
         is not None
     )
+    assert repository.superseded_imported_gl_close_run_ids == [safe_close_run.id]
     assert repository.activity_events

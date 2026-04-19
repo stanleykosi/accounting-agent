@@ -6,12 +6,27 @@ Dependencies: accounting context helpers, chat action executor, and canonical en
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from uuid import uuid4
 
-from services.agents.accounting_context import _build_readiness_summary
+from services.agents.accounting_context import (
+    AccountingWorkspaceContextBuilder,
+    _build_readiness_summary,
+)
 from services.chat.action_execution import ChatActionExecutor
+from services.common.enums import (
+    CloseRunOperatingMode,
+    CloseRunStatus,
+    DocumentStatus,
+    DocumentType,
+    WorkflowPhase,
+)
 from services.db.models.audit import AuditSourceSurface
+from services.db.models.coa import CoaSetSource
 from services.db.repositories.entity_repo import EntityUserRecord
+from services.documents.imported_ledger_representation import (
+    ImportedLedgerRepresentationResult,
+)
 
 
 def test_readiness_summary_treats_fallback_coa_as_warning_and_prompts_phase_advance() -> None:
@@ -85,6 +100,79 @@ def test_readiness_summary_prompts_reconciliation_when_no_gl_coding_documents_ex
     )
 
 
+def test_readiness_summary_allows_reporting_advance_when_reconciliation_has_no_blockers() -> None:
+    """Reconciliation should prompt Reporting advance when no applicable work remains."""
+
+    readiness = _build_readiness_summary(
+        close_run={
+            "active_phase": "reconciliation",
+            "phase_states": [],
+        },
+        coa_summary={
+            "is_available": True,
+            "requires_operator_upload": False,
+        },
+        document_summary={
+            "approved": 1,
+        },
+        gl_coding_document_count=0,
+        recommendation_summary={},
+        journal_summary={},
+        reconciliation_summary={},
+        schedule_summary={"draft": 4},
+        report_summary={},
+        export_summary={},
+        distribution_summary={},
+        pending_action_count=0,
+    )
+
+    assert readiness["blockers"] == []
+    assert readiness["warnings"] == []
+    assert any(
+        "Advance the close run to Reporting" in action
+        for action in readiness["next_actions"]
+    )
+
+
+def test_readiness_summary_surfaces_source_document_only_mode_guidance() -> None:
+    """Readiness should explain that bank reconciliation is optional until ledger data exists."""
+
+    readiness = _build_readiness_summary(
+        close_run={
+            "active_phase": "reconciliation",
+            "phase_states": [],
+            "operating_mode": {
+                "mode": "source_documents_only",
+                "description": "This close run currently has source documents only.",
+            },
+        },
+        coa_summary={
+            "is_available": True,
+            "requires_operator_upload": False,
+        },
+        document_summary={
+            "approved": 1,
+        },
+        gl_coding_document_count=0,
+        recommendation_summary={},
+        journal_summary={},
+        reconciliation_summary={},
+        schedule_summary={},
+        report_summary={},
+        export_summary={},
+        distribution_summary={},
+        pending_action_count=0,
+    )
+
+    assert any(
+        "source documents only" in warning.lower() for warning in readiness["warnings"]
+    )
+    assert any(
+        "Upload a GL/cashbook later only if you want detailed bank reconciliation" in action
+        for action in readiness["next_actions"]
+    )
+
+
 def test_chat_executor_ensures_entity_coa_is_materialized_before_chat_reads() -> None:
     """Chat should ask the COA service for the canonical active-or-fallback workspace state."""
 
@@ -114,3 +202,129 @@ def test_chat_executor_ensures_entity_coa_is_materialized_before_chat_reads() ->
             "trace_id": None,
         }
     ]
+
+
+def test_workspace_snapshot_hides_gl_coding_work_for_docs_already_in_imported_gl(
+    monkeypatch,
+) -> None:
+    """Imported-GL runs should not keep prompting recommendation work for booked docs."""
+
+    actor_user = EntityUserRecord(
+        id=uuid4(),
+        email="ops@example.com",
+        full_name="Finance Ops",
+    )
+    entity_id = uuid4()
+    close_run_id = uuid4()
+    document_id = uuid4()
+
+    monkeypatch.setattr(
+        "services.agents.accounting_context.evaluate_documents_imported_gl_representation",
+        lambda **kwargs: {
+            document_id: ImportedLedgerRepresentationResult(
+                document_id=document_id,
+                represented_in_imported_gl=True,
+                status="represented_in_imported_gl",
+                reason="Imported GL baseline already contains this document.",
+                matched_line_no=4,
+                matched_reference="INV-1048",
+                matched_description="Acme Office Interiors",
+                matched_posting_date=None,
+            )
+        },
+    )
+
+    builder = AccountingWorkspaceContextBuilder(
+        action_repository=SimpleNamespace(),
+        close_run_service=SimpleNamespace(
+            get_close_run=lambda **kwargs: SimpleNamespace(
+                id=close_run_id,
+                status=CloseRunStatus.DRAFT,
+                reporting_currency="USD",
+                current_version_no=1,
+                operating_mode=SimpleNamespace(
+                    mode=CloseRunOperatingMode.IMPORTED_GENERAL_LEDGER,
+                    description=CloseRunOperatingMode.IMPORTED_GENERAL_LEDGER.description,
+                    has_general_ledger_baseline=True,
+                    has_trial_balance_baseline=False,
+                    has_working_ledger_entries=False,
+                    bank_reconciliation_available=True,
+                    trial_balance_review_available=False,
+                    journal_posting_available=True,
+                    general_ledger_export_available=True,
+                ),
+                workflow_state=SimpleNamespace(
+                    active_phase=WorkflowPhase.PROCESSING,
+                    phase_states=[],
+                ),
+            )
+        ),
+        coa_repository=SimpleNamespace(
+            get_active_set=lambda **kwargs: SimpleNamespace(
+                id=uuid4(),
+                source=CoaSetSource.MANUAL_UPLOAD,
+                version_no=1,
+                activated_at=None,
+            ),
+            list_accounts_for_set=lambda **kwargs: [
+                SimpleNamespace(
+                    account_code="6100",
+                    account_name="Office Expense",
+                    account_type="expense",
+                    is_active=True,
+                    is_postable=True,
+                )
+            ],
+        ),
+        document_repository=SimpleNamespace(
+            _db_session=object(),
+            list_documents_for_close_run_with_latest_extraction=lambda **kwargs: [
+                SimpleNamespace(
+                    document=SimpleNamespace(
+                        id=document_id,
+                        original_filename="invoice.pdf",
+                        status=DocumentStatus.APPROVED,
+                        document_type=DocumentType.INVOICE,
+                    ),
+                    latest_extraction=None,
+                )
+            ],
+        ),
+        export_service=SimpleNamespace(
+            list_export_summaries=lambda **kwargs: [],
+            get_latest_evidence_pack=lambda **kwargs: None,
+        ),
+        job_service=SimpleNamespace(
+            list_jobs_for_user=lambda **kwargs: [],
+        ),
+        reconciliation_repository=SimpleNamespace(
+            list_reconciliations=lambda *args, **kwargs: [],
+        ),
+        recommendation_repository=SimpleNamespace(
+            list_recommendations_for_close_run=lambda **kwargs: [],
+            list_journals_for_close_run=lambda **kwargs: [],
+            list_postings_for_journal_ids=lambda **kwargs: {},
+        ),
+        report_repository=SimpleNamespace(
+            list_report_runs_for_close_run=lambda **kwargs: [],
+        ),
+        supporting_schedule_service=SimpleNamespace(
+            list_workspace=lambda **kwargs: [],
+        ),
+    )
+
+    snapshot = builder.build_snapshot(
+        actor=actor_user,
+        entity_id=entity_id,
+        close_run_id=close_run_id,
+        thread_id=None,
+    )
+
+    assert not any(
+        "Generate accounting recommendations" in action
+        for action in snapshot["readiness"]["next_actions"]
+    )
+    assert any(
+        "Advance the close run to Reconciliation" in action
+        for action in snapshot["readiness"]["next_actions"]
+    )

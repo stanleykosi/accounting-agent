@@ -28,6 +28,24 @@ export type CloseRunWorkflowStateSummary = {
   status: CloseRunStatus;
 };
 
+export type CloseRunOperatingMode =
+  | "source_documents_only"
+  | "working_ledger"
+  | "imported_general_ledger"
+  | "trial_balance_only";
+
+export type CloseRunOperatingModeSummary = {
+  mode: CloseRunOperatingMode;
+  description: string;
+  hasGeneralLedgerBaseline: boolean;
+  hasTrialBalanceBaseline: boolean;
+  hasWorkingLedgerEntries: boolean;
+  bankReconciliationAvailable: boolean;
+  trialBalanceReviewAvailable: boolean;
+  journalPostingAvailable: boolean;
+  generalLedgerExportAvailable: boolean;
+};
+
 export type CloseRunSummary = {
   approvedAt: string | null;
   approvedByUserId: string | null;
@@ -37,6 +55,7 @@ export type CloseRunSummary = {
   entityId: string;
   id: string;
   openedByUserId: string;
+  operatingMode: CloseRunOperatingModeSummary;
   periodEnd: string;
   periodStart: string;
   reopenedFromCloseRunId: string | null;
@@ -474,6 +493,10 @@ function parseCloseRunSummary(payload: unknown): CloseRunSummary {
   if (!isRecord(workflowStatePayload) || !Array.isArray(workflowStatePayload.phase_states)) {
     throw new Error("Invalid close-run workflow state payload.");
   }
+  const operatingModePayload = payload.operating_mode;
+  if (!isRecord(operatingModePayload)) {
+    throw new Error("Invalid close-run operating-mode payload.");
+  }
 
   return {
     approvedAt: asOptionalString(payload.approved_at),
@@ -484,6 +507,7 @@ function parseCloseRunSummary(payload: unknown): CloseRunSummary {
     entityId: asString(payload.entity_id),
     id: asString(payload.id),
     openedByUserId: asString(payload.opened_by_user_id),
+    operatingMode: parseOperatingModeSummary(operatingModePayload),
     periodEnd: asString(payload.period_end),
     periodStart: asString(payload.period_start),
     reopenedFromCloseRunId: asOptionalString(payload.reopened_from_close_run_id),
@@ -497,6 +521,20 @@ function parseCloseRunSummary(payload: unknown): CloseRunSummary {
       ),
       status: asCloseRunStatus(workflowStatePayload.status),
     },
+  };
+}
+
+function parseOperatingModeSummary(payload: Record<string, unknown>): CloseRunOperatingModeSummary {
+  return {
+    mode: asCloseRunOperatingMode(payload.mode),
+    description: asString(payload.description),
+    hasGeneralLedgerBaseline: asBoolean(payload.has_general_ledger_baseline),
+    hasTrialBalanceBaseline: asBoolean(payload.has_trial_balance_baseline),
+    hasWorkingLedgerEntries: asBoolean(payload.has_working_ledger_entries),
+    bankReconciliationAvailable: asBoolean(payload.bank_reconciliation_available),
+    trialBalanceReviewAvailable: asBoolean(payload.trial_balance_review_available),
+    journalPostingAvailable: asBoolean(payload.journal_posting_available, true),
+    generalLedgerExportAvailable: asBoolean(payload.general_ledger_export_available),
   };
 }
 
@@ -579,6 +617,18 @@ function asCloseRunApiErrorCode(value: unknown): CloseRunApiErrorCode {
   }
 }
 
+function asCloseRunOperatingMode(value: unknown): CloseRunOperatingMode {
+  switch (value) {
+    case "source_documents_only":
+    case "working_ledger":
+    case "imported_general_ledger":
+    case "trial_balance_only":
+      return value;
+    default:
+      return "source_documents_only";
+  }
+}
+
 function asString(value: unknown): string {
   if (typeof value !== "string" || value.length === 0) {
     throw new Error("Expected a non-empty string in close-run payload.");
@@ -601,6 +651,16 @@ function asNumber(value: unknown): number {
   }
 
   return value;
+}
+
+function asBoolean(value: unknown, fallback = false): boolean {
+  if (typeof value === "boolean") {
+    return value;
+  }
+  if (value === null || value === undefined) {
+    return fallback;
+  }
+  throw new Error("Expected a boolean in close-run payload.");
 }
 
 function asCloseRunStatus(value: unknown): CloseRunStatus {

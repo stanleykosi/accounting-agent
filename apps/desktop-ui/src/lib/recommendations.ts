@@ -81,6 +81,11 @@ export type RecommendationGenerationResponse = {
     status: string;
     task_name: string;
   }[];
+  skipped_documents: readonly {
+    document_id: string;
+    reason: string;
+    status: string;
+  }[];
   skipped_document_ids: readonly string[];
 };
 

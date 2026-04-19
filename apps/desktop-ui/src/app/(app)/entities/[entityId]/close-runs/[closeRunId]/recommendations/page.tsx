@@ -26,6 +26,48 @@ import {
   type RecommendationSummary,
 } from "../../../../../../../lib/recommendations";
 
+function buildQueuedRecommendationMessage(
+  result: {
+    queued_count: number;
+    skipped_document_ids: readonly string[];
+    skipped_documents: readonly {
+      document_id: string;
+      reason: string;
+      status: string;
+    }[];
+  },
+  force: boolean,
+): string {
+  const importedGlSkipCount = result.skipped_documents.filter(
+    (document) => document.status === "represented_in_imported_gl",
+  ).length;
+  const existingRecommendationSkipCount = result.skipped_documents.filter(
+    (document) => document.status === "existing_recommendation",
+  ).length;
+
+  if (force) {
+    return result.queued_count > 0
+      ? `${result.queued_count} recommendation regeneration job(s) queued.`
+      : importedGlSkipCount > 0
+        ? "No regeneration jobs were queued because the imported GL already represents the eligible documents."
+        : "No eligible documents were found for recommendation regeneration.";
+  }
+
+  if (result.queued_count > 0) {
+    return `${result.queued_count} recommendation job(s) queued.`;
+  }
+  if (importedGlSkipCount > 0 && existingRecommendationSkipCount === 0) {
+    return "No new recommendations were queued because the imported GL already represents the eligible documents.";
+  }
+  if (existingRecommendationSkipCount > 0 && importedGlSkipCount === 0) {
+    return "No new recommendations were queued because the document already has an active recommendation. Use Regenerate recommendations to replace it.";
+  }
+  if (result.skipped_document_ids.length > 0) {
+    return "No new recommendations were queued because the eligible documents were already represented in the current close-run state.";
+  }
+  return "No eligible documents were found for recommendation generation.";
+}
+
 type RecommendationsPageProps = {
   params: Promise<{
     closeRunId: string;
@@ -82,17 +124,7 @@ export default function RecommendationsPage({
     setIsGenerating(true);
     try {
       const result = await generateRecommendations(entityId, closeRunId, { force });
-      setQueuedMessage(
-        force
-          ? result.queued_count > 0
-            ? `${result.queued_count} recommendation regeneration job(s) queued.`
-            : "No eligible documents were found for recommendation regeneration."
-          : result.queued_count > 0
-            ? `${result.queued_count} recommendation job(s) queued.`
-            : result.skipped_document_ids.length > 0
-              ? "No new recommendations were queued because the document already has an active recommendation. Use Regenerate recommendations to replace it."
-              : "No eligible documents were found for recommendation generation.",
-      );
+      setQueuedMessage(buildQueuedRecommendationMessage(result, force));
       await refreshWorkspace();
     } catch (error: unknown) {
       setErrorMessage(resolveRecommendationErrorMessage(error));

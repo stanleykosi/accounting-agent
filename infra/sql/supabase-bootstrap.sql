@@ -828,11 +828,11 @@ CREATE TABLE report_templates (
     CONSTRAINT fk_report_templates_created_by_user_id_users FOREIGN KEY(created_by_user_id) REFERENCES users (id)
 );
 
-CREATE INDEX ix_report_templates_is_active ON report_templates (is_active);
+CREATE UNIQUE INDEX uq_report_templates_entity_active ON report_templates (entity_id) WHERE is_active AND entity_id IS NOT NULL;
 
 CREATE INDEX ix_report_templates_entity_id ON report_templates (entity_id);
 
-CREATE UNIQUE INDEX uq_report_templates_entity_active ON report_templates (entity_id) WHERE is_active AND entity_id IS NOT NULL;
+CREATE INDEX ix_report_templates_is_active ON report_templates (is_active);
 
 CREATE INDEX ix_report_templates_source ON report_templates (source);
 
@@ -908,11 +908,11 @@ CREATE TABLE report_runs (
 
 CREATE INDEX ix_report_runs_close_run_id ON report_runs (close_run_id);
 
+CREATE INDEX ix_report_runs_status ON report_runs (status);
+
 CREATE INDEX ix_report_runs_close_run_version ON report_runs (close_run_id, version_no);
 
 CREATE INDEX ix_report_runs_template_id ON report_runs (template_id);
-
-CREATE INDEX ix_report_runs_status ON report_runs (status);
 
 COMMENT ON COLUMN report_runs.close_run_id IS 'Close run this report pack was generated for.';
 
@@ -951,9 +951,9 @@ CREATE TABLE report_commentary (
 
 CREATE INDEX ix_report_commentary_run_section_active ON report_commentary (report_run_id, section_key) WHERE status IN ('draft', 'under_review', 'approved');
 
-CREATE INDEX ix_report_commentary_report_run_id ON report_commentary (report_run_id);
-
 CREATE INDEX ix_report_commentary_section_key ON report_commentary (section_key);
+
+CREATE INDEX ix_report_commentary_report_run_id ON report_commentary (report_run_id);
 
 COMMENT ON COLUMN report_commentary.report_run_id IS 'Parent report run this commentary belongs to.';
 
@@ -1464,6 +1464,30 @@ CREATE INDEX ix_close_run_ledger_bindings_gl_batch ON close_run_ledger_bindings 
 CREATE INDEX ix_close_run_ledger_bindings_tb_batch ON close_run_ledger_bindings (trial_balance_import_batch_id);
 
 UPDATE alembic_version SET version_num='0017_ledger_import_baselines' WHERE alembic_version.version_num = '0016_supporting_schedules';
+
+-- Running upgrade 0017_ledger_import_baselines -> 0018_imported_gl_transaction_group_keys
+
+ALTER TABLE general_ledger_import_lines ADD COLUMN transaction_group_key VARCHAR(40);
+
+UPDATE general_ledger_import_lines
+        SET transaction_group_key = 'glgrp_' || md5(
+            posting_date::text || '|' ||
+            CASE
+                WHEN btrim(coalesce(external_ref, '')) <> ''
+                    THEN 'external_ref|' || lower(btrim(external_ref))
+                WHEN btrim(coalesce(reference, '')) <> ''
+                    THEN 'reference|' || lower(btrim(reference))
+                WHEN btrim(coalesce(description, '')) <> ''
+                    THEN 'description|' || lower(btrim(description))
+                ELSE 'line|' || line_no::text
+            END
+        );
+
+ALTER TABLE general_ledger_import_lines ALTER COLUMN transaction_group_key SET NOT NULL;
+
+CREATE INDEX ix_gl_import_lines_batch_group ON general_ledger_import_lines (batch_id, transaction_group_key);
+
+UPDATE alembic_version SET version_num='0018_imported_gl_transaction_group_keys' WHERE alembic_version.version_num = '0017_ledger_import_baselines';
 
 COMMIT;
 

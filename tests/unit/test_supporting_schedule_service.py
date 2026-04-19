@@ -102,6 +102,38 @@ def test_workspace_materializes_all_four_canonical_schedules() -> None:
     assert all(state["row_count"] == 0 for state in readiness.values())
 
 
+def test_deleting_last_schedule_row_returns_schedule_to_draft() -> None:
+    """Empty schedules should stop blocking review once their last row is removed."""
+
+    repository = InMemorySupportingScheduleRepository()
+    service = SupportingScheduleService(repository=repository)
+    close_run_id = UUID("50000000-0000-0000-0000-000000000001")
+
+    created = service.save_row(
+        close_run_id=close_run_id,
+        schedule_type=SupportingScheduleType.ACCRUAL_TRACKER,
+        row_id=None,
+        payload={
+            "ref": "AC-001",
+            "description": "Year-end utilities accrual",
+            "account_code": "2200",
+            "amount": "950.00",
+            "period": "2026-03",
+            "reversal_date": "2026-04-01",
+        },
+    )
+
+    refreshed = service.delete_row(
+        close_run_id=close_run_id,
+        schedule_type=SupportingScheduleType.ACCRUAL_TRACKER,
+        row_id=created.rows[0].id,
+    )
+
+    assert refreshed.schedule.status is SupportingScheduleStatus.DRAFT
+    assert refreshed.schedule.note is None
+    assert refreshed.rows == ()
+
+
 class InMemorySupportingScheduleRepository:
     """Provide a deterministic repository double for Step 6 service tests."""
 

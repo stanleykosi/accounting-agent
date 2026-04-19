@@ -119,6 +119,7 @@ def test_generate_export_combines_imported_gl_and_close_run_journal_adjustments(
                 credit_amount="0.00",
                 dimensions={"department": "Ops"},
                 external_ref="EXT-001",
+                transaction_group_key="glgrp_import_receipt",
             )
         )
         session.add(

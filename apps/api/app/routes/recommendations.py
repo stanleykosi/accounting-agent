@@ -69,6 +69,9 @@ from services.db.repositories.integration_repo import IntegrationRepository
 from services.db.repositories.recommendation_journal_repo import (
     RecommendationJournalRepository,
 )
+from services.documents.imported_ledger_representation import (
+    evaluate_documents_imported_gl_representation,
+)
 from services.documents.recommendation_eligibility import (
     GL_CODING_RECOMMENDATION_ELIGIBLE_TYPE_VALUES,
 )
@@ -278,6 +281,7 @@ def generate_recommendations_for_close_run(
                 Recommendation.close_run_id == close_run_id,
                 Recommendation.document_id.isnot(None),
                 Recommendation.superseded_by_id.is_(None),
+                Recommendation.status != ReviewStatus.SUPERSEDED.value,
             )
             .all()
             if recommendation.document_id is not None
@@ -286,10 +290,34 @@ def generate_recommendations_for_close_run(
     job_service = JobService(db_session=db_session)
     queued_jobs: list[dict[str, object]] = []
     skipped_document_ids: list[str] = []
+    skipped_documents: list[dict[str, object]] = []
+    imported_gl_representation = evaluate_documents_imported_gl_representation(
+        session=db_session,
+        close_run_id=close_run_id,
+        document_ids=tuple(document.id for document in eligible_documents),
+    )
 
     for document in eligible_documents:
         if not payload.force and document.id in existing_recommendations:
             skipped_document_ids.append(str(document.id))
+            skipped_documents.append(
+                {
+                    "document_id": str(document.id),
+                    "reason": "An active recommendation already exists for this document.",
+                    "status": "existing_recommendation",
+                }
+            )
+            continue
+        representation_result = imported_gl_representation.get(document.id)
+        if representation_result is not None and representation_result.represented_in_imported_gl:
+            skipped_document_ids.append(str(document.id))
+            skipped_documents.append(
+                {
+                    "document_id": str(document.id),
+                    "reason": representation_result.reason,
+                    "status": representation_result.status,
+                }
+            )
             continue
 
         try:
@@ -331,6 +359,7 @@ def generate_recommendations_for_close_run(
         "queued_count": len(queued_jobs),
         "queued_jobs": queued_jobs,
         "skipped_document_ids": skipped_document_ids,
+        "skipped_documents": skipped_documents,
     }
 
 
@@ -349,6 +378,7 @@ def _ensure_document_recommendation_regeneration_allowed(
             Recommendation.close_run_id == close_run_id,
             Recommendation.document_id == document_id,
             Recommendation.superseded_by_id.is_(None),
+            Recommendation.status != ReviewStatus.SUPERSEDED.value,
         )
         .all()
     )

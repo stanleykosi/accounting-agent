@@ -36,6 +36,7 @@ from services.common.enums import (
 from services.common.types import JsonObject, utc_now
 from services.contracts.close_run_models import (
     CloseRunListResponse,
+    CloseRunOperatingModeSummary,
     CloseRunReopenResponse,
     CloseRunRewindResponse,
     CloseRunSummary,
@@ -908,9 +909,10 @@ class CloseRunService:
         """Convert one close-run record into the public API response contract."""
 
         existing_states = self._existing_phase_states(close_run_id=close_run.id)
+        signals = self._repository.get_phase_gate_signals(close_run_id=close_run.id)
         phase_states = evaluate_phase_gates(
             phase_states=existing_states,
-            signals=self._repository.get_phase_gate_signals(close_run_id=close_run.id),
+            signals=signals,
         )
         workflow_state = CloseRunWorkflowState(
             status=close_run.status,
@@ -941,6 +943,7 @@ class CloseRunService:
             ledger_binding=_build_ledger_binding_summary(
                 self._repository.get_close_run_ledger_binding(close_run_id=close_run.id)
             ),
+            operating_mode=_build_operating_mode_summary(signals=signals),
             workflow_state=workflow_state,
             created_at=close_run.created_at,
             updated_at=close_run.updated_at,
@@ -986,6 +989,23 @@ def _build_ledger_binding_summary(
         ),
         created_at=binding.created_at,
         updated_at=binding.updated_at,
+    )
+
+
+def _build_operating_mode_summary(*, signals: PhaseGateSignals) -> CloseRunOperatingModeSummary:
+    """Convert phase-gate operating signals into the public close-run mode contract."""
+
+    description = signals.operating_mode_description or signals.operating_mode.description
+    return CloseRunOperatingModeSummary(
+        mode=signals.operating_mode,
+        description=description,
+        has_general_ledger_baseline=signals.has_general_ledger_baseline,
+        has_trial_balance_baseline=signals.has_trial_balance_baseline,
+        has_working_ledger_entries=signals.has_working_ledger_entries,
+        bank_reconciliation_available=signals.bank_reconciliation_available,
+        trial_balance_review_available=signals.trial_balance_review_available,
+        journal_posting_available=signals.journal_posting_available,
+        general_ledger_export_available=signals.general_ledger_export_available,
     )
 
 

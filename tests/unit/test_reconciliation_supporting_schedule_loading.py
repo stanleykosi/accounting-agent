@@ -63,6 +63,7 @@ from apps.worker.app.tasks.run_reconciliation import (
     _load_bank_statement_data,
     _load_ledger_transactions,
     _read_statement_lines_from_payload,
+    _resolve_statement_line_amount,
 )
 
 
@@ -289,6 +290,20 @@ def test_read_statement_lines_supports_nested_parser_output_payloads() -> None:
     )
 
 
+def test_resolve_statement_line_amount_prefers_non_zero_credit_over_zero_debit() -> None:
+    """Deposit lines should carry their credit amount into reconciliation matching."""
+
+    assert (
+        _resolve_statement_line_amount(
+            {
+                "debit": "0.00",
+                "credit": "12000.00",
+            }
+        )
+        == "12000.00"
+    )
+
+
 def test_load_ledger_transactions_includes_imported_baseline_and_close_run_journals() -> None:
     """Effective ledger loading should combine imported GL lines with current-run journals."""
 
@@ -351,6 +366,7 @@ def test_load_ledger_transactions_includes_imported_baseline_and_close_run_journ
                 credit_amount="0.00",
                 dimensions={},
                 external_ref=None,
+                transaction_group_key="glgrp_import_receipt",
             )
         )
         session.add(

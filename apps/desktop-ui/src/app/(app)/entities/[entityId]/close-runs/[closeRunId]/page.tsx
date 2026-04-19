@@ -329,7 +329,12 @@ export default function CloseRunOverviewPage({
               <dt>Active phase</dt>
               <dd>{activePhase ? activePhase.phase.replaceAll("_", " ") : "No active phase"}</dd>
             </div>
+            <div>
+              <dt>Operating mode</dt>
+              <dd>{formatOperatingModeLabel(closeRun.operatingMode.mode)}</dd>
+            </div>
           </dl>
+          <p className="form-helper">{closeRun.operatingMode.description}</p>
           <p className="form-helper">{attention.detail}</p>
         </SurfaceCard>
       </section>
@@ -667,6 +672,22 @@ function buildManagementReportWorkflowSteps(
     closeRun.workflowState.phaseStates.map((phaseState) => [phaseState.phase, phaseState]),
   );
   const activePhase = closeRun.workflowState.activePhase;
+  const operatingMode = closeRun.operatingMode.mode;
+  const trialBalanceReviewAvailable = closeRun.operatingMode.trialBalanceReviewAvailable;
+  const step04Description =
+    operatingMode === "imported_general_ledger"
+      ? "Post approved close-run adjustment journals into the working ledger layer above the imported production GL baseline."
+      : operatingMode === "trial_balance_only"
+        ? "Post approved close-run journals when source documents require them; the imported trial balance remains the external control baseline."
+        : operatingMode === "working_ledger"
+          ? "Post approved close-run journals into the platform working ledger because no imported production GL baseline is bound to this run."
+          : "Post approved journals only when eligible source documents create accounting entries. Bank statements remain reconciliation evidence rather than journal sources.";
+  const step05Description = closeRun.operatingMode.bankReconciliationAvailable
+    ? "Reconcile key balances against the ledger-side data available for this run and resolve resulting exceptions."
+    : "Detailed bank reconciliation is not currently applicable because this run has no ledger-side data to match against yet.";
+  const step07Description = trialBalanceReviewAvailable
+    ? "Confirm debits equal credits and clear unexplained anomalies or variances."
+    : "Trial-balance review becomes applicable once a trial-balance baseline or ledger-side transaction set exists for the run.";
 
   return [
     {
@@ -692,14 +713,14 @@ function buildManagementReportWorkflowSteps(
       title: "Code and classify transactions",
     },
     {
-      description: "Record journals, accruals, prepayments, and depreciation entries.",
+      description: step04Description,
       href: `/entities/${entityId}/close-runs/${closeRun.id}/recommendations`,
       phase: "processing" as WorkflowPhase,
       stepNo: "04",
       title: "Post transactions to the General Ledger",
     },
     {
-      description: "Reconcile bank, AR/AP ageing, intercompany, and payroll control balances.",
+      description: step05Description,
       href: `/entities/${entityId}/close-runs/${closeRun.id}/reconciliation`,
       phase: "reconciliation" as WorkflowPhase,
       stepNo: "05",
@@ -713,7 +734,7 @@ function buildManagementReportWorkflowSteps(
       title: "Update supporting schedules",
     },
     {
-      description: "Confirm debits equal credits and clear unexplained anomalies or variances.",
+      description: step07Description,
       href: `/entities/${entityId}/close-runs/${closeRun.id}/reconciliation`,
       phase: "reconciliation" as WorkflowPhase,
       stepNo: "07",
@@ -792,4 +813,17 @@ function getNextWorkflowPhase(closeRun: Readonly<CloseRunSummary>): WorkflowPhas
 
 function formatWorkflowPhaseLabel(phase: WorkflowPhase): string {
   return phase.replaceAll("_", " ");
+}
+
+function formatOperatingModeLabel(mode: CloseRunSummary["operatingMode"]["mode"]): string {
+  switch (mode) {
+    case "working_ledger":
+      return "Working ledger";
+    case "imported_general_ledger":
+      return "Imported general ledger";
+    case "trial_balance_only":
+      return "Trial balance only";
+    default:
+      return "Source documents only";
+  }
 }

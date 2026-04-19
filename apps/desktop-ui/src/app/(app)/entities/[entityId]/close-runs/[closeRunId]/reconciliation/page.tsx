@@ -231,6 +231,10 @@ export default function CloseRunReconciliationPage({
               <dd>{workspaceData.closeRunStatus.replaceAll("_", " ")}</dd>
             </div>
             <div>
+              <dt>Operating mode</dt>
+              <dd>{formatOperatingModeLabel(workspaceData.closeRunOperatingMode)}</dd>
+            </div>
+            <div>
               <dt>Reconciliation types</dt>
               <dd>
                 {workspaceData.reconciliations.length > 0
@@ -249,6 +253,11 @@ export default function CloseRunReconciliationPage({
             <MetricChip label="Unmatched" value={workspaceData.queueCounts.unmatched} />
             <MetricChip label="Unresolved anomalies" value={workspaceData.queueCounts.anomalyUnresolved} />
           </div>
+
+          <p className="form-helper" style={{ marginTop: "16px" }}>
+            {workspaceData.closeRunOperatingModeDescription ??
+              "The close run automatically adapts reconciliation behavior to the data currently available."}
+          </p>
 
           <div className="integration-action-stack" style={{ marginTop: "16px" }}>
             <button
@@ -270,8 +279,24 @@ export default function CloseRunReconciliationPage({
       </section>
 
       {queuedRun ? (
-        <div className="status-banner success" role="status">
-          Reconciliation job queued: {queuedRun.job_id}
+        <div
+          className={`status-banner ${queuedRun.status === "not_applicable" ? "warning" : "success"}`}
+          role="status"
+        >
+          {queuedRun.status === "not_applicable"
+            ? (queuedRun.message ?? "No applicable reconciliation work was detected for this run.")
+            : `Reconciliation job queued: ${queuedRun.job_id}${queuedRun.message ? ` — ${queuedRun.message}` : ""}`}
+        </div>
+      ) : null}
+
+      {workspaceData.reconciliations.length === 0 &&
+      workspaceData.items.length === 0 &&
+      workspaceData.anomalies.length === 0 &&
+      workspaceData.trialBalance === null ? (
+        <div className="status-banner info" role="status">
+          {workspaceData.bankReconciliationAvailable || workspaceData.trialBalanceReviewAvailable
+            ? "No reconciliation review items exist yet. Run reconciliation to generate the current control queues for this period."
+            : "No reconciliation review items exist yet. This run does not currently have ledger-side data, so detailed bank reconciliation is not applicable. You can advance to Reporting when the rest of the run is ready."}
         </div>
       ) : null}
 
@@ -280,8 +305,9 @@ export default function CloseRunReconciliationPage({
           <article className="dashboard-row">
             <strong className="close-run-row-title">05. Reconcile key accounts</strong>
             <p className="form-helper">
-              Bank reconciliation, AR/AP ageing, intercompany balances, and payroll control all
-              run through this workspace and its exception queue.
+              {workspaceData.bankReconciliationAvailable
+                ? "Bank reconciliation and other key balance controls run through this workspace and its exception queue."
+                : "Detailed bank reconciliation is not currently applicable because this run has no ledger-side data to match against. This workspace still handles applicable schedules and control checks."}
             </p>
           </article>
           <article className="dashboard-row">
@@ -295,8 +321,9 @@ export default function CloseRunReconciliationPage({
           <article className="dashboard-row">
             <strong className="close-run-row-title">07. Run and review trial balance</strong>
             <p className="form-helper">
-              Debits versus credits, anomalies, and unexplained variances must be cleared here
-              before the close run can advance into Reporting.
+              {workspaceData.trialBalanceReviewAvailable
+                ? "Debits versus credits, anomalies, and unexplained variances must be cleared here before the close run can advance into Reporting."
+                : "Trial-balance review becomes applicable once a trial-balance baseline or ledger-side transaction set exists for the run."}
             </p>
           </article>
         </div>
@@ -561,6 +588,19 @@ function resolveReconciliationErrorMessage(error: unknown): string {
     return error.message;
   }
   return "The reconciliation action failed. Retry the request.";
+}
+
+function formatOperatingModeLabel(mode: string): string {
+  switch (mode) {
+    case "working_ledger":
+      return "Working ledger";
+    case "imported_general_ledger":
+      return "Imported general ledger";
+    case "trial_balance_only":
+      return "Trial balance only";
+    default:
+      return "Source documents only";
+  }
 }
 
 /**

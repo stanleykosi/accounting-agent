@@ -21,6 +21,9 @@ from services.db.repositories.entity_repo import EntityUserRecord
 from services.db.repositories.recommendation_journal_repo import RecommendationJournalRepository
 from services.db.repositories.reconciliation_repo import ReconciliationRepository
 from services.db.repositories.report_repo import ReportRepository
+from services.documents.imported_ledger_representation import (
+    evaluate_documents_imported_gl_representation,
+)
 from services.documents.recommendation_eligibility import (
     is_gl_coding_recommendation_eligible,
 )
@@ -120,6 +123,30 @@ class AccountingWorkspaceContextBuilder(WorkspaceContextBuilder):
             "status": close_run.status.value,
             "reporting_currency": close_run.reporting_currency,
             "current_version_no": close_run.current_version_no,
+            "operating_mode": {
+                "mode": close_run.operating_mode.mode.value,
+                "label": close_run.operating_mode.mode.label,
+                "description": close_run.operating_mode.description,
+                "has_general_ledger_baseline": (
+                    close_run.operating_mode.has_general_ledger_baseline
+                ),
+                "has_trial_balance_baseline": (
+                    close_run.operating_mode.has_trial_balance_baseline
+                ),
+                "has_working_ledger_entries": (
+                    close_run.operating_mode.has_working_ledger_entries
+                ),
+                "bank_reconciliation_available": (
+                    close_run.operating_mode.bank_reconciliation_available
+                ),
+                "trial_balance_review_available": (
+                    close_run.operating_mode.trial_balance_review_available
+                ),
+                "journal_posting_available": close_run.operating_mode.journal_posting_available,
+                "general_ledger_export_available": (
+                    close_run.operating_mode.general_ledger_export_available
+                ),
+            },
             "active_phase": (
                 close_run.workflow_state.active_phase.value
                 if close_run.workflow_state.active_phase is not None
@@ -163,11 +190,30 @@ class AccountingWorkspaceContextBuilder(WorkspaceContextBuilder):
             for row in documents[:20]
         ]
         snapshot["document_summary"] = document_summary
-        gl_coding_document_count = sum(
-            1
+        gl_coding_candidate_rows = [
+            row
             for row in documents
             if is_gl_coding_recommendation_eligible(row.document.document_type)
             and row.document.status.value in {"parsed", "needs_review", "approved", "rejected"}
+        ]
+        approved_gl_coding_document_ids = tuple(
+            row.document.id
+            for row in gl_coding_candidate_rows
+            if row.document.status.value == "approved"
+        )
+        imported_gl_representation = evaluate_documents_imported_gl_representation(
+            session=self._document_repo._db_session,
+            close_run_id=close_run_id,
+            document_ids=approved_gl_coding_document_ids,
+        )
+        gl_coding_document_count = sum(
+            1
+            for row in gl_coding_candidate_rows
+            if not (
+                row.document.status.value == "approved"
+                and imported_gl_representation.get(row.document.id, None) is not None
+                and imported_gl_representation[row.document.id].represented_in_imported_gl
+            )
         )
 
         recommendations = self._recommendation_repo.list_recommendations_for_close_run(
@@ -515,6 +561,51 @@ def _build_workflow_blueprint(*, close_run: dict[str, Any]) -> list[dict[str, An
         for phase_state in close_run.get("phase_states", [])
     }
     active_phase = close_run.get("active_phase")
+    operating_mode = close_run.get("operating_mode", {})
+    operating_mode_value = str(operating_mode.get("mode") or "source_documents_only")
+    trial_balance_review_available = bool(operating_mode.get("trial_balance_review_available"))
+    if operating_mode_value == "imported_general_ledger":
+        step_04_description = (
+            "Post approved close-run adjustment journals into the working ledger layer above the "
+            "imported production GL baseline."
+        )
+        step_05_description = (
+            "Reconcile key balances against the imported GL baseline plus any approved close-run "
+            "adjustments."
+        )
+    elif operating_mode_value == "trial_balance_only":
+        step_04_description = (
+            "Post approved close-run journals when source documents require them; the imported "
+            "trial balance remains the external control baseline."
+        )
+        step_05_description = (
+            "Detailed bank reconciliation becomes available only when ledger-side journal entries "
+            "exist; otherwise focus this phase on schedules and control review."
+        )
+    elif operating_mode_value == "working_ledger":
+        step_04_description = (
+            "Post approved close-run journals into the platform working ledger because no "
+            "imported production GL baseline is bound to this run."
+        )
+        step_05_description = (
+            "Reconcile key balances against the working ledger assembled from approved or applied "
+            "close-run journals."
+        )
+    else:
+        step_04_description = (
+            "Post approved journals only when eligible source documents create accounting entries. "
+            "Bank statements remain reconciliation evidence rather than journal sources."
+        )
+        step_05_description = (
+            "Run detailed bank reconciliation only after ledger-side data exists; otherwise use "
+            "this phase for statement review and not-applicable control work."
+        )
+    step_07_description = (
+        "Confirm debits equal credits and clear unexplained anomalies or variances."
+        if trial_balance_review_available
+        else "Trial-balance review becomes applicable once a trial-balance baseline or "
+        "ledger-side transactions exist for this run."
+    )
     steps = [
         ("01", "Collect source documents", "collection"),
         ("02", "Review and verify documents", "collection"),
@@ -546,6 +637,15 @@ def _build_workflow_blueprint(*, close_run: dict[str, Any]) -> list[dict[str, An
                 "phase": phase,
                 "status": status,
                 "blocking_reason": phase_state.get("blocking_reason"),
+                "description": (
+                    step_04_description
+                    if step_no == "04"
+                    else step_05_description
+                    if step_no == "05"
+                    else step_07_description
+                    if step_no == "07"
+                    else None
+                ),
             }
         )
     return blueprint
@@ -584,8 +684,17 @@ def _build_progress_summary(
         if phase_state.get("status") == "blocked" and phase_state.get("blocking_reason")
     ]
     active_phase = close_run.get("active_phase") or "not_started"
+    operating_mode = close_run.get("operating_mode", {})
     parts = [
         f"Close run status={close_run.get('status')} active_phase={active_phase}.",
+        (
+            "OperatingMode="
+            f"{operating_mode.get('mode') or 'unknown'} "
+            "bank_reconciliation_available="
+            f"{operating_mode.get('bank_reconciliation_available', False)} "
+            "trial_balance_review_available="
+            f"{operating_mode.get('trial_balance_review_available', False)}."
+        ),
         (
             f"COA={coa_summary.get('status')} source={coa_summary.get('source') or 'none'} "
             f"accounts={coa_summary.get('account_count', 0)}."
@@ -690,20 +799,38 @@ def _build_readiness_summary(
             "Allow current parsing jobs to finish, then review extracted documents."
         )
 
+    operating_mode = close_run.get("operating_mode", {})
+    operating_mode_value = str(operating_mode.get("mode") or "source_documents_only")
+    operating_mode_description = str(operating_mode.get("description") or "").strip()
+    if operating_mode_description and operating_mode_description not in warnings:
+        warnings.append(operating_mode_description)
+    if operating_mode_value == "source_documents_only":
+        next_actions.append(
+            "Continue document review and processing now. Upload a GL/cashbook later only if "
+            "you want detailed bank reconciliation."
+        )
+    elif operating_mode_value == "working_ledger":
+        next_actions.append(
+            "Use approved or applied close-run journals as the working ledger for reconciliation "
+            "and exports."
+        )
+    elif operating_mode_value == "imported_general_ledger":
+        next_actions.append(
+            "Treat the imported GL as the baseline books and use close-run journals only for "
+            "period adjustments."
+        )
+    elif operating_mode_value == "trial_balance_only":
+        next_actions.append(
+            "Use the imported trial balance for control review and upload a GL/cashbook later if "
+            "you need detailed bank reconciliation."
+        )
+
     if recommendation_summary == {} and gl_coding_document_count > 0:
         next_actions.append("Generate accounting recommendations for the parsed document set.")
     if recommendation_summary.get("pending", 0) > 0 or journal_summary.get("pending", 0) > 0:
         next_actions.append("Review and approve pending recommendations or journal drafts.")
     if reconciliation_summary == {} and journal_summary.get("applied", 0) > 0:
         next_actions.append("Run reconciliations after journals are applied.")
-    if (
-        schedule_summary.get("approved", 0) < 4
-        and close_run.get("active_phase") == "reconciliation"
-    ):
-        next_actions.append(
-            "Update and review all supporting schedules before moving from "
-            "Reconciliation to Reporting."
-        )
     if report_summary == {} and reconciliation_summary.get("completed", 0) > 0:
         next_actions.append("Generate reports and commentary for the current close run.")
     if export_summary == {} and report_summary.get("completed", 0) > 0:
@@ -714,7 +841,7 @@ def _build_readiness_summary(
         )
     if pending_action_count > 0:
         warnings.append("Pending chat approvals are waiting for operator review.")
-    if schedule_summary.get("in_review", 0) > 0 or schedule_summary.get("draft", 0) > 0:
+    if schedule_summary.get("in_review", 0) > 0:
         warnings.append(
             "Supporting schedules are still being maintained or reviewed in the Step 6 workspace."
         )
@@ -741,6 +868,11 @@ def _build_readiness_summary(
         next_actions.append(
             "Advance the close run to Reconciliation when no GL-coding work is required for "
             "the approved documents."
+        )
+    if close_run.get("active_phase") == "reconciliation" and not blockers:
+        next_actions.append(
+            "Advance the close run to Reporting when reconciliation work is complete "
+            "or not applicable for this run."
         )
     if not next_actions:
         next_actions.append(

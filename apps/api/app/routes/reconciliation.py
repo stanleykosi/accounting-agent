@@ -43,6 +43,7 @@ from services.common.enums import (
     ReconciliationSourceType,
     ReconciliationStatus,
     ReconciliationType,
+    SupportingScheduleStatus,
     WorkflowPhase,
 )
 from services.common.settings import AppSettings, get_settings
@@ -58,12 +59,14 @@ from services.contracts.reconciliation_models import (
     ReconciliationItemMatch,
     ReconciliationItemSummary,
     ReconciliationListResponse,
+    ReconciliationRunResponse,
     ReconciliationSummary,
     ResolveAnomalyRequest,
     TrialBalanceAccountEntry,
     TrialBalanceDetailResponse,
     TrialBalanceSnapshotSummary,
 )
+from services.db.models.documents import Document, DocumentType
 from services.db.repositories.close_run_repo import CloseRunRepository
 from services.db.repositories.entity_repo import EntityUserRecord
 from services.db.repositories.reconciliation_repo import (
@@ -72,9 +75,22 @@ from services.db.repositories.reconciliation_repo import (
     ReconciliationRecord,
     ReconciliationRepository,
 )
+from services.db.repositories.supporting_schedule_repo import SupportingScheduleRepository
 from services.jobs.service import JobService, JobServiceError
 from services.jobs.task_names import TaskName
+from services.ledger.effective_ledger import (
+    load_close_run_ledger_binding,
+    load_effective_ledger_transactions,
+)
+from services.reconciliation.applicability import (
+    BANK_RECONCILIATION_LEDGER_GUIDANCE,
+    NO_APPLICABLE_RECONCILIATION_WORK_MESSAGE,
+    is_bank_reconciliation_applicable,
+    is_trial_balance_applicable,
+)
 from services.reconciliation.service import ReconciliationService
+from services.supporting_schedules.service import SupportingScheduleService
+from sqlalchemy import func, select
 
 RECONCILIATION_TAG = "reconciliation"
 REC_PREFIX = "/entities/{entity_id}/close-runs/{close_run_id}"
@@ -144,6 +160,96 @@ def _require_close_run_access(
     )
 
 
+def _resolve_requested_reconciliation_types(
+    *,
+    close_run_id: UUID,
+    reconciliation_types: tuple[ReconciliationType, ...],
+    db_session: DatabaseSessionDependency,
+) -> tuple[tuple[ReconciliationType, ...], tuple[ReconciliationType, ...], str | None]:
+    """Return applicable and skipped reconciliation types for the current close run."""
+
+    approved_bank_statement_count = int(
+        db_session.execute(
+            select(func.count(Document.id)).where(
+                Document.close_run_id == close_run_id,
+                Document.document_type == DocumentType.BANK_STATEMENT.value,
+                Document.status == "approved",
+            )
+        ).scalar_one()
+    )
+    effective_ledger_transaction_count = len(
+        load_effective_ledger_transactions(db_session, close_run_id)
+    )
+    binding = load_close_run_ledger_binding(db_session, close_run_id)
+    schedule_workspace = SupportingScheduleService(
+        repository=SupportingScheduleRepository(session=db_session),
+    ).list_workspace(close_run_id=close_run_id)
+    started_schedule_types = {
+        snapshot.schedule.schedule_type
+        for snapshot in schedule_workspace
+        if (
+            len(snapshot.rows) > 0
+            and snapshot.schedule.status is not SupportingScheduleStatus.NOT_APPLICABLE
+        )
+    }
+    started_schedule_type_values = {schedule_type.value for schedule_type in started_schedule_types}
+
+    applicable: list[ReconciliationType] = []
+    skipped: list[ReconciliationType] = []
+    messages: list[str] = []
+
+    for reconciliation_type in reconciliation_types:
+        if reconciliation_type is ReconciliationType.BANK_RECONCILIATION:
+            if is_bank_reconciliation_applicable(
+                approved_bank_statement_count=approved_bank_statement_count,
+                effective_ledger_transaction_count=effective_ledger_transaction_count,
+            ):
+                applicable.append(reconciliation_type)
+            else:
+                skipped.append(reconciliation_type)
+                if approved_bank_statement_count > 0:
+                    messages.append(BANK_RECONCILIATION_LEDGER_GUIDANCE)
+            continue
+
+        if reconciliation_type in {
+            ReconciliationType.FIXED_ASSETS,
+            ReconciliationType.LOAN_AMORTISATION,
+            ReconciliationType.ACCRUAL_TRACKER,
+            ReconciliationType.BUDGET_VS_ACTUAL,
+        }:
+            if reconciliation_type.value in started_schedule_type_values:
+                applicable.append(reconciliation_type)
+            else:
+                skipped.append(reconciliation_type)
+            continue
+
+        if reconciliation_type is ReconciliationType.TRIAL_BALANCE:
+            if is_trial_balance_applicable(
+                effective_ledger_transaction_count=effective_ledger_transaction_count,
+                has_trial_balance_baseline=(
+                    binding is not None and binding.trial_balance_import_batch_id is not None
+                ),
+            ):
+                applicable.append(reconciliation_type)
+            else:
+                skipped.append(reconciliation_type)
+            continue
+
+        applicable.append(reconciliation_type)
+
+    message: str | None = None
+    if not applicable:
+        unique_messages = tuple(dict.fromkeys(messages))
+        message = (
+            " ".join(unique_messages)
+            if unique_messages
+            else NO_APPLICABLE_RECONCILIATION_WORK_MESSAGE
+        )
+    elif messages:
+        message = " ".join(tuple(dict.fromkeys(messages)))
+    return tuple(applicable), tuple(skipped), message
+
+
 # ---------------------------------------------------------------------------
 # Reconciliation list and detail
 # ---------------------------------------------------------------------------
@@ -181,7 +287,7 @@ def list_reconciliations(
 
 @router.post(
     "/reconciliations/run",
-    response_model=object,
+    response_model=ReconciliationRunResponse,
     status_code=status.HTTP_202_ACCEPTED,
     summary="Queue reconciliation execution for a close run",
 )
@@ -196,7 +302,7 @@ def queue_reconciliation_run(
     db_session: DbSessionDep,
     task_dispatcher: TaskDispatcherDependency,
     auth_context: RequestAuthDependency,
-) -> dict[str, object]:
+) -> ReconciliationRunResponse:
     """Queue the canonical reconciliation execution workflow for this close run."""
 
     session_result = auth_context
@@ -218,6 +324,21 @@ def queue_reconciliation_run(
     reconciliation_types = payload.reconciliation_types or list(
         DEFAULT_RECONCILIATION_EXECUTION_TYPES
     )
+    requested_types = tuple(reconciliation_types)
+    applicable_types, skipped_types, message = _resolve_requested_reconciliation_types(
+        close_run_id=close_run_id,
+        reconciliation_types=requested_types,
+        db_session=db_session,
+    )
+    if not applicable_types:
+        return ReconciliationRunResponse(
+            job_id=None,
+            reconciliation_types=(),
+            skipped_types=skipped_types,
+            status="not_applicable",
+            task_name="reconciliation.not_applicable",
+            message=message or NO_APPLICABLE_RECONCILIATION_WORK_MESSAGE,
+        )
     job_service = JobService(db_session=db_session)
     try:
         job = job_service.dispatch_job(
@@ -227,7 +348,7 @@ def queue_reconciliation_run(
                 "close_run_id": str(close_run_id),
                 "reconciliation_types": [
                     reconciliation_type.value
-                    for reconciliation_type in reconciliation_types
+                    for reconciliation_type in applicable_types
                 ],
                 "actor_user_id": str(session_result.user.id),
             },
@@ -246,14 +367,14 @@ def queue_reconciliation_run(
             },
         ) from error
 
-    return {
-        "job_id": str(job.id),
-        "task_name": job.task_name,
-        "status": job.status.value,
-        "reconciliation_types": [
-            reconciliation_type.value for reconciliation_type in reconciliation_types
-        ],
-    }
+    return ReconciliationRunResponse(
+        job_id=str(job.id),
+        task_name=job.task_name,
+        status=job.status.value,
+        reconciliation_types=applicable_types,
+        skipped_types=skipped_types,
+        message=message,
+    )
 
 
 @router.get(

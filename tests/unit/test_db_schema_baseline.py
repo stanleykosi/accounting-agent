@@ -130,3 +130,12 @@ def test_jobs_metadata_exposes_checkpoint_and_dead_letter_integrity() -> None:
         "(status = 'blocked' AND blocking_reason IS NOT NULL) "
         "OR (status <> 'blocked' AND blocking_reason IS NULL)"
     ) in constraint_sql
+
+
+def test_general_ledger_import_lines_expose_transaction_group_key() -> None:
+    """Ensure imported GL rows carry the canonical persisted transaction grouping key."""
+
+    table = Base.metadata.tables["general_ledger_import_lines"]
+
+    assert "transaction_group_key" in table.c
+    assert table.c.transaction_group_key.nullable is False

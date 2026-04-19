@@ -35,6 +35,9 @@ from services.documents.ai_assist import run_document_parse_assist
 from services.documents.recommendation_eligibility import (
     GL_CODING_RECOMMENDATION_ELIGIBLE_DOCUMENT_TYPES,
 )
+from services.documents.imported_ledger_representation import (
+    evaluate_document_imported_gl_representation,
+)
 from services.documents.transaction_matching import update_extraction_auto_review_payload
 from services.extraction.field_extractors import (
     compute_confidence_summary,
@@ -1319,6 +1322,19 @@ def _queue_recommendation_job(
     """Queue recommendation generation after a document auto-approves, if possible."""
 
     with get_session_factory()() as db_session:
+        representation_result = evaluate_document_imported_gl_representation(
+            session=db_session,
+            close_run_id=parse_record.close_run.id,
+            document_id=parse_record.document.id,
+        )
+        if representation_result.represented_in_imported_gl:
+            logger.info(
+                "recommendation_dispatch_suppressed_imported_gl_match",
+                document_id=str(parse_record.document.id),
+                close_run_id=str(parse_record.close_run.id),
+                reason=representation_result.reason,
+            )
+            return None
         try:
             job = JobService(db_session=db_session).dispatch_job(
                 dispatcher=WorkerTaskDispatcher(),

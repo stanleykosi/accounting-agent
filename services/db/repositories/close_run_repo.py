@@ -17,6 +17,7 @@ from uuid import UUID
 
 from services.audit.service import AuditService
 from services.close_runs.gates import EvaluatedPhaseState, PhaseGateSignals
+from services.close_runs.operating_mode import resolve_close_run_operating_context
 from services.common.enums import (
     CANONICAL_WORKFLOW_PHASES,
     ArtifactType,
@@ -24,6 +25,7 @@ from services.common.enums import (
     CloseRunPhaseStatus,
     CloseRunStatus,
     JobStatus,
+    ReviewStatus,
     SupportingScheduleStatus,
     SupportingScheduleType,
     WorkflowPhase,
@@ -56,7 +58,18 @@ from services.db.models.supporting_schedules import SupportingSchedule, Supporti
 from services.documents.recommendation_eligibility import (
     is_gl_coding_recommendation_eligible,
 )
+from services.documents.imported_ledger_representation import (
+    evaluate_documents_imported_gl_representation,
+)
 from services.jobs.task_names import TaskName
+from services.ledger.effective_ledger import (
+    load_close_run_ledger_binding,
+    load_effective_ledger_transactions,
+)
+from services.reconciliation.applicability import (
+    is_bank_reconciliation_applicable,
+    is_trial_balance_applicable,
+)
 from sqlalchemy import asc, delete, desc, func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -690,6 +703,7 @@ class CloseRunRepository:
             .where(
                 Recommendation.close_run_id == source_close_run_id,
                 Recommendation.superseded_by_id.is_(None),
+                Recommendation.status != ReviewStatus.SUPERSEDED.value,
             )
             .order_by(asc(Recommendation.created_at), asc(Recommendation.id))
         ).all()
@@ -724,6 +738,7 @@ class CloseRunRepository:
             .where(
                 JournalEntry.close_run_id == source_close_run_id,
                 JournalEntry.superseded_by_id.is_(None),
+                JournalEntry.status != ReviewStatus.SUPERSEDED.value,
             )
             .order_by(asc(JournalEntry.created_at), asc(JournalEntry.id))
         ).all()
@@ -1349,6 +1364,11 @@ class CloseRunRepository:
 
         missing_required_documents: tuple[str, ...] = ()
         approved_document_count = sum(1 for row in document_rows if row.status == "approved")
+        approved_bank_statement_count = sum(
+            1
+            for row in document_rows
+            if row.status == "approved" and row.document_type == "bank_statement"
+        )
         pending_document_review_count = sum(
             1
             for row in document_rows
@@ -1399,6 +1419,7 @@ class CloseRunRepository:
             ).where(
                 Recommendation.close_run_id == close_run_id,
                 Recommendation.superseded_by_id.is_(None),
+                Recommendation.status != ReviewStatus.SUPERSEDED.value,
                 Recommendation.document_id.isnot(None),
             )
         ).all()
@@ -1421,7 +1442,16 @@ class CloseRunRepository:
             if row.recommendation_id is not None
         }
         unresolved_processing_item_count = 0
+        imported_gl_representation = evaluate_documents_imported_gl_representation(
+            session=self._db_session,
+            close_run_id=close_run_id,
+            document_ids=tuple(approved_document_ids),
+        )
         for document_id in approved_document_ids:
+            if imported_gl_representation.get(document_id, None) and imported_gl_representation[
+                document_id
+            ].represented_in_imported_gl:
+                continue
             recommendation_ids = recommendation_ids_by_document_id.get(document_id, set())
             if not recommendation_ids:
                 unresolved_processing_item_count += 1
@@ -1429,8 +1459,51 @@ class CloseRunRepository:
             if recommendation_ids.isdisjoint(applied_journal_recommendation_ids):
                 unresolved_processing_item_count += 1
 
+        ledger_binding = load_close_run_ledger_binding(self._db_session, close_run_id)
+        has_general_ledger_baseline = (
+            ledger_binding is not None and ledger_binding.general_ledger_import_batch_id is not None
+        )
+        has_trial_balance_baseline = (
+            ledger_binding is not None and ledger_binding.trial_balance_import_batch_id is not None
+        )
+        working_ledger_entry_count = int(
+            self._db_session.execute(
+                select(func.count(JournalLine.id))
+                .join(JournalEntry, JournalEntry.id == JournalLine.journal_entry_id)
+                .where(
+                    JournalEntry.close_run_id == close_run_id,
+                    JournalEntry.status.in_(("approved", "applied")),
+                )
+            ).scalar_one()
+        )
+        effective_ledger_transaction_count = len(
+            load_effective_ledger_transactions(self._db_session, close_run_id)
+        )
+        operating_context = resolve_close_run_operating_context(
+            has_general_ledger_baseline=has_general_ledger_baseline,
+            has_trial_balance_baseline=has_trial_balance_baseline,
+            has_working_ledger_entries=working_ledger_entry_count > 0,
+            approved_bank_statement_count=approved_bank_statement_count,
+            effective_ledger_transaction_count=effective_ledger_transaction_count,
+        )
+        applicable_reconciliation_types: set[str] = set()
+        if is_bank_reconciliation_applicable(
+            approved_bank_statement_count=approved_bank_statement_count,
+            effective_ledger_transaction_count=effective_ledger_transaction_count,
+        ):
+            applicable_reconciliation_types.add("bank_reconciliation")
+        if is_trial_balance_applicable(
+            effective_ledger_transaction_count=effective_ledger_transaction_count,
+            has_trial_balance_baseline=has_trial_balance_baseline,
+        ):
+            applicable_reconciliation_types.add("trial_balance")
+
         reconciliation_rows = self._db_session.execute(
-            select(Reconciliation.id, Reconciliation.status).where(
+            select(
+                Reconciliation.id,
+                Reconciliation.reconciliation_type,
+                Reconciliation.status,
+            ).where(
                 Reconciliation.close_run_id == close_run_id
             )
         ).all()
@@ -1473,21 +1546,26 @@ class CloseRunRepository:
         ):
             schedule_state = schedule_by_type.get(schedule_type)
             if schedule_state is None:
-                missing_supporting_schedules.append(schedule_type.value)
-                pending_supporting_schedule_review_count += 1
                 continue
             schedule_status, row_count = schedule_state
+            if row_count <= 0:
+                continue
             if schedule_status is SupportingScheduleStatus.NOT_APPLICABLE:
                 continue
-            if row_count == 0:
-                missing_supporting_schedules.append(schedule_type.value)
+            applicable_reconciliation_types.add(schedule_type.value)
             if schedule_status is not SupportingScheduleStatus.APPROVED:
                 pending_supporting_schedule_review_count += 1
 
+        existing_reconciliation_types = {
+            str(row.reconciliation_type)
+            for row in reconciliation_rows
+            if row.reconciliation_type in applicable_reconciliation_types
+        }
+        missing_reconciliation_types = tuple(
+            sorted(applicable_reconciliation_types.difference(existing_reconciliation_types))
+        )
         unresolved_reconciliation_exception_count = 0
-        if not reconciliation_rows:
-            unresolved_reconciliation_exception_count = 1
-        else:
+        if reconciliation_rows:
             reconciliation_ids = tuple(row.id for row in reconciliation_rows)
             unresolved_reconciliation_exception_count += self._db_session.execute(
                 select(func.count(ReconciliationItem.id)).where(
@@ -1598,6 +1676,15 @@ class CloseRunRepository:
         unresolved_signoff_item_count = len(missing_signoff_requirements)
 
         return PhaseGateSignals(
+            operating_mode=operating_context.mode,
+            operating_mode_description=operating_context.description,
+            has_general_ledger_baseline=operating_context.has_general_ledger_baseline,
+            has_trial_balance_baseline=operating_context.has_trial_balance_baseline,
+            has_working_ledger_entries=operating_context.has_working_ledger_entries,
+            bank_reconciliation_available=operating_context.bank_reconciliation_available,
+            trial_balance_review_available=operating_context.trial_balance_review_available,
+            journal_posting_available=operating_context.journal_posting_available,
+            general_ledger_export_available=operating_context.general_ledger_export_available,
             missing_required_documents=missing_required_documents,
             approved_document_count=approved_document_count,
             unauthorized_document_count=len(unauthorized_document_ids),
@@ -1606,6 +1693,7 @@ class CloseRunRepository:
             wrong_period_document_count=len(wrong_period_document_ids),
             unresolved_processing_item_count=unresolved_processing_item_count,
             unresolved_reconciliation_exception_count=unresolved_reconciliation_exception_count,
+            missing_reconciliation_types=missing_reconciliation_types,
             missing_supporting_schedules=tuple(sorted(missing_supporting_schedules)),
             pending_supporting_schedule_review_count=pending_supporting_schedule_review_count,
             missing_required_reports=tuple(missing_required_reports),

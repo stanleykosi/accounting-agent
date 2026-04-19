@@ -12,6 +12,7 @@ from datetime import datetime
 
 from services.common.enums import (
     CANONICAL_WORKFLOW_PHASES,
+    CloseRunOperatingMode,
     CloseRunPhaseStatus,
     WorkflowPhase,
 )
@@ -32,6 +33,15 @@ class ExistingPhaseState:
 class PhaseGateSignals:
     """Collect deterministic signals that can block phase progression."""
 
+    operating_mode: CloseRunOperatingMode = CloseRunOperatingMode.SOURCE_DOCUMENTS_ONLY
+    operating_mode_description: str = ""
+    has_general_ledger_baseline: bool = False
+    has_trial_balance_baseline: bool = False
+    has_working_ledger_entries: bool = False
+    bank_reconciliation_available: bool = False
+    trial_balance_review_available: bool = False
+    journal_posting_available: bool = True
+    general_ledger_export_available: bool = False
     missing_required_documents: tuple[str, ...] = ()
     approved_document_count: int = 0
     unauthorized_document_count: int = 0
@@ -40,6 +50,7 @@ class PhaseGateSignals:
     wrong_period_document_count: int = 0
     unresolved_processing_item_count: int = 0
     unresolved_reconciliation_exception_count: int = 0
+    missing_reconciliation_types: tuple[str, ...] = ()
     missing_supporting_schedules: tuple[str, ...] = ()
     pending_supporting_schedule_review_count: int = 0
     missing_required_reports: tuple[str, ...] = ()
@@ -370,6 +381,7 @@ def _build_blocking_reason(*, phase: WorkflowPhase, signals: PhaseGateSignals) -
         phase is WorkflowPhase.RECONCILIATION
         and (
             signals.unresolved_reconciliation_exception_count > 0
+            or bool(signals.missing_reconciliation_types)
             or signals.pending_supporting_schedule_review_count > 0
             or bool(signals.missing_supporting_schedules)
         )
@@ -378,6 +390,11 @@ def _build_blocking_reason(*, phase: WorkflowPhase, signals: PhaseGateSignals) -
         if signals.unresolved_reconciliation_exception_count > 0:
             blockers.append(
                 f"{signals.unresolved_reconciliation_exception_count} unresolved exception(s)"
+            )
+        if signals.missing_reconciliation_types:
+            blockers.append(
+                "pending reconciliation runs: "
+                + ", ".join(signals.missing_reconciliation_types)
             )
         if signals.missing_supporting_schedules:
             blockers.append(

@@ -14,6 +14,7 @@ from services.contracts.api_models import (
 from services.contracts.close_run_models import (
     CloseRunDecisionRequest,
     CloseRunListResponse,
+    CloseRunOperatingModeSummary,
     CloseRunReopenResponse,
     CloseRunSummary,
     CloseRunTransitionResponse,
@@ -106,6 +107,7 @@ __all__ = [
     "CloseRunDecisionRequest",
     "CloseRunLedgerBindingSummary",
     "CloseRunListResponse",
+    "CloseRunOperatingModeSummary",
     "CloseRunPhaseState",
     "CloseRunReopenResponse",
     "CloseRunSummary",

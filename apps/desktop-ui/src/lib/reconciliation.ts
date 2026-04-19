@@ -87,6 +87,12 @@ export type ReconciliationReviewWorkspaceData = {
   closeRunStatus: string;
   closeRunPeriodStart: string | null;
   closeRunPeriodEnd: string | null;
+  closeRunActivePhase: string | null;
+  closeRunBlockingReason: string | null;
+  closeRunOperatingMode: string;
+  closeRunOperatingModeDescription: string | null;
+  bankReconciliationAvailable: boolean;
+  trialBalanceReviewAvailable: boolean;
   reconciliations: ReadonlyArray<ReconciliationSummary>;
   items: ReadonlyArray<ReconciliationItemSummary>;
   anomalies: ReadonlyArray<ReconciliationAnomalySummary>;
@@ -115,10 +121,12 @@ export type DispositionActionValue =
   | "pending_info";
 
 export type ReconciliationRunResponse = {
-  job_id: string;
+  job_id: string | null;
   reconciliation_types: readonly string[];
+  skipped_types: readonly string[];
   status: string;
   task_name: string;
+  message: string | null;
 };
 
 /** Represent an API error from reconciliation endpoints. */
@@ -303,11 +311,43 @@ export async function readReconciliationReviewWorkspace(
   entityId: string,
   closeRunId: string,
 ): Promise<ReconciliationReviewWorkspaceData> {
-  const [reconciliationsResp, anomaliesResp, trialBalanceResp] = await Promise.allSettled([
+  const [closeRunResp, reconciliationsResp, anomaliesResp, trialBalanceResp] = await Promise.allSettled([
+    fetchWithAuth(buildEntityProxyPath(entityId, ["close-runs", closeRunId])),
     fetchWithAuth(buildEntityProxyPath(entityId, ["close-runs", closeRunId, "reconciliations"])),
     fetchWithAuth(buildEntityProxyPath(entityId, ["close-runs", closeRunId, "anomalies"])),
     fetchWithAuth(buildEntityProxyPath(entityId, ["close-runs", closeRunId, "trial-balance"])),
   ]);
+
+  const closeRunRaw =
+    closeRunResp.status === "fulfilled"
+      ? (closeRunResp.value as {
+          status?: string;
+          period_start?: string | null;
+          period_end?: string | null;
+          operating_mode?: {
+            mode?: string | null;
+            description?: string | null;
+            bank_reconciliation_available?: boolean | null;
+            trial_balance_review_available?: boolean | null;
+          } | null;
+          workflow_state?: {
+            active_phase?: string | null;
+            phase_states?: Array<{
+              phase?: string;
+              status?: string;
+              blocking_reason?: string | null;
+            }>;
+          } | null;
+        })
+      : null;
+  const workflowState = closeRunRaw?.workflow_state ?? null;
+  const operatingMode = closeRunRaw?.operating_mode ?? null;
+  const activePhase = (workflowState?.active_phase as string | null) ?? null;
+  const blockingReason =
+    ((workflowState?.phase_states ?? []).find(
+      (phaseState) =>
+        asString(phaseState.phase) === activePhase && asString(phaseState.status) === "blocked",
+    )?.blocking_reason ?? null);
 
   const reconciliationsRaw =
     reconciliationsResp.status === "fulfilled"
@@ -382,9 +422,15 @@ export async function readReconciliationReviewWorkspace(
 
   return {
     closeRunId,
-    closeRunStatus: "draft",
-    closeRunPeriodStart: null,
-    closeRunPeriodEnd: null,
+    closeRunStatus: asString(closeRunRaw?.status, "draft"),
+    closeRunPeriodStart: (closeRunRaw?.period_start as string | null) ?? null,
+    closeRunPeriodEnd: (closeRunRaw?.period_end as string | null) ?? null,
+    closeRunActivePhase: activePhase,
+    closeRunBlockingReason: blockingReason,
+    closeRunOperatingMode: asString(operatingMode?.mode, "source_documents_only"),
+    closeRunOperatingModeDescription: (operatingMode?.description as string | null) ?? null,
+    bankReconciliationAvailable: asBool(operatingMode?.bank_reconciliation_available),
+    trialBalanceReviewAvailable: asBool(operatingMode?.trial_balance_review_available),
     reconciliations,
     items: allItems,
     anomalies,
@@ -510,12 +556,20 @@ export async function runReconciliation(
     },
   ) as Record<string, unknown>;
   return {
-    job_id: asString(result.job_id),
+    job_id: (() => {
+      const value = result.job_id;
+      return value === null || value === undefined ? null : asString(value);
+    })(),
     reconciliation_types: ((result.reconciliation_types as string[]) ?? []).map((value) =>
       asString(value),
     ),
+    skipped_types: ((result.skipped_types as string[]) ?? []).map((value) => asString(value)),
     status: asString(result.status),
     task_name: asString(result.task_name),
+    message: (() => {
+      const value = result.message;
+      return typeof value === "string" ? value : null;
+    })(),
   };
 }
 

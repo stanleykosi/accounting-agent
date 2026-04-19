@@ -51,8 +51,11 @@ from services.ledger.effective_ledger import (
 from services.ledger.effective_ledger import (
     load_effective_ledger_transactions as _load_ledger_transactions,
 )
+from services.reconciliation.applicability import (
+    filter_runnable_reconciliation_types,
+)
 from services.reconciliation.matchers import DEFAULT_MATCHING_CONFIG, MatchingConfig
-from services.reconciliation.service import ReconciliationService
+from services.reconciliation.service import ReconciliationRunOutput, ReconciliationService
 from services.supporting_schedules.service import SupportingScheduleService
 
 logger = get_logger(__name__)
@@ -124,11 +127,7 @@ def _load_bank_statement_data(session, close_run_id: UUID) -> dict[str, list[dic
         payload = latest_extraction.extracted_payload
         for line_data in _read_statement_lines_from_payload(payload=payload):
             line_ref = f"bank:{doc.id}:{line_data.get('line_no', 0)}"
-            amount = (
-                line_data.get("amount")
-                or line_data.get("debit")
-                or line_data.get("credit")
-            )
+            amount = _resolve_statement_line_amount(line_data)
             source_items.append(
                 {
                     "ref": line_ref,
@@ -148,6 +147,38 @@ def _load_bank_statement_data(session, close_run_id: UUID) -> dict[str, list[dic
         "counterparts": [],  # Counterparts are ledger transactions, loaded separately
         "counterpart_index": counterpart_index,
     }
+
+
+def _resolve_statement_line_amount(line_data: dict[str, Any]) -> str | None:
+    """Return the effective absolute amount for one bank-statement line."""
+
+    explicit_amount = _parse_decimal_value(line_data.get("amount"))
+    if explicit_amount is not None:
+        return _decimal_to_string(explicit_amount)
+
+    debit_amount = _parse_decimal_value(line_data.get("debit"))
+    credit_amount = _parse_decimal_value(line_data.get("credit"))
+
+    if debit_amount is not None and debit_amount > 0:
+        return _decimal_to_string(debit_amount)
+    if credit_amount is not None and credit_amount > 0:
+        return _decimal_to_string(credit_amount)
+    if debit_amount is not None:
+        return _decimal_to_string(debit_amount)
+    if credit_amount is not None:
+        return _decimal_to_string(credit_amount)
+    return None
+
+
+def _parse_decimal_value(value: Any) -> Decimal | None:
+    """Parse one statement value into a Decimal when possible."""
+
+    if value is None:
+        return None
+    try:
+        return Decimal(str(value))
+    except Exception:
+        return None
 
 
 def _read_statement_lines_from_payload(*, payload: Any) -> tuple[dict[str, Any], ...]:
@@ -836,16 +867,39 @@ def _run_reconciliation_task(
                 )
             )
 
+        runnable_types, skipped_guidance = filter_runnable_reconciliation_types(
+            requested_types=parsed_types,
+            source_data=source_data,
+        )
+        if skipped_guidance:
+            logger.info(
+                "Skipped non-applicable reconciliation types for close run %s.",
+                close_run_id,
+                guidance=list(skipped_guidance),
+            )
+
         # Run reconciliation matching
         try:
-            output = svc.run_reconciliation(
-                close_run_id=parsed_close_run_id,
-                reconciliation_types=parsed_types,
-                source_data=source_data,
-                created_by_user_id=parsed_actor_user_id,
-                matching_config=config,
-                progress_guard=ensure_reconciliation_phase,
-            )
+            if runnable_types:
+                output = svc.run_reconciliation(
+                    close_run_id=parsed_close_run_id,
+                    reconciliation_types=list(runnable_types),
+                    source_data=source_data,
+                    created_by_user_id=parsed_actor_user_id,
+                    matching_config=config,
+                    progress_guard=ensure_reconciliation_phase,
+                )
+            else:
+                output = ReconciliationRunOutput(
+                    reconciliations=[],
+                    all_items=[],
+                    trial_balance=None,
+                    anomalies=[],
+                    total_items=0,
+                    matched_items=0,
+                    exception_items=0,
+                    unmatched_items=0,
+                )
             job_context.checkpoint(
                 step="run_reconciliation_matching",
                 state={
@@ -882,7 +936,7 @@ def _run_reconciliation_task(
         trial_balance_computed = False
         trial_balance_balanced = False
 
-        if ReconciliationType.TRIAL_BALANCE in parsed_types:
+        if ReconciliationType.TRIAL_BALANCE in runnable_types:
             try:
                 ensure_reconciliation_phase()
                 account_balances = _compute_account_balances(session, parsed_close_run_id)
@@ -923,7 +977,7 @@ def _run_reconciliation_task(
                 errors.append(msg)
 
         # Commit all successful mutations before closing the session
-        if not errors or output.total_items > 0:
+        if not errors or output.total_items > 0 or trial_balance_computed:
             try:
                 ensure_reconciliation_phase()
                 session.commit()

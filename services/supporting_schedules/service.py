@@ -146,10 +146,15 @@ class SupportingScheduleService:
         deleted = self._repo.delete_row(schedule_id=schedule.id, row_id=row_id)
         if not deleted:
             raise SupportingScheduleServiceError("The supporting schedule row was not found.")
+        remaining_row_count = self._repo.count_rows(schedule_id=schedule.id)
         refreshed = self._repo.update_schedule_status(
             schedule_id=schedule.id,
-            status=SupportingScheduleStatus.IN_REVIEW,
-            note=schedule.note,
+            status=(
+                SupportingScheduleStatus.DRAFT
+                if remaining_row_count == 0
+                else SupportingScheduleStatus.IN_REVIEW
+            ),
+            note=None if remaining_row_count == 0 else schedule.note,
             reviewed_by_user_id=None,
             reviewed_at=None,
         )

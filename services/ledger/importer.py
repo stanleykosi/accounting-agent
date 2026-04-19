@@ -8,6 +8,7 @@ Dependencies: Python CSV/io helpers, Decimal/date parsing, and openpyxl workbook
 from __future__ import annotations
 
 import csv
+import hashlib
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date, datetime
@@ -50,6 +51,7 @@ class ImportedGeneralLedgerLineSeed:
     credit_amount: Decimal
     dimensions: JsonObject
     external_ref: str | None
+    transaction_group_key: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -99,10 +101,20 @@ _GL_HEADER_ALIASES = {
     "description": "description",
     "debit": "debit_amount",
     "debit_amount": "debit_amount",
+    "entry_id": "transaction_group_key",
+    "entry_key": "transaction_group_key",
+    "entry_no": "transaction_group_key",
+    "entry_number": "transaction_group_key",
     "external_ref": "external_ref",
     "external_reference": "external_ref",
     "gl_code": "account_code",
+    "group_id": "transaction_group_key",
+    "group_key": "transaction_group_key",
     "journal_date": "posting_date",
+    "journal_id": "transaction_group_key",
+    "journal_key": "transaction_group_key",
+    "journal_no": "transaction_group_key",
+    "journal_number": "transaction_group_key",
     "line_type": "line_type",
     "memo": "description",
     "posting_date": "posting_date",
@@ -111,8 +123,18 @@ _GL_HEADER_ALIASES = {
     "reference": "reference",
     "signed_amount": "signed_amount",
     "transaction_date": "posting_date",
+    "transaction_group": "transaction_group_key",
+    "transaction_group_id": "transaction_group_key",
+    "transaction_group_key": "transaction_group_key",
+    "transaction_id": "transaction_group_key",
+    "transaction_key": "transaction_group_key",
+    "transaction_no": "transaction_group_key",
+    "transaction_number": "transaction_group_key",
     "transaction_ref": "reference",
     "type": "line_type",
+    "voucher_id": "transaction_group_key",
+    "voucher_no": "transaction_group_key",
+    "voucher_number": "transaction_group_key",
 }
 
 _TB_HEADER_ALIASES = {
@@ -157,6 +179,11 @@ def import_general_ledger_file(*, filename: str, payload: bytes) -> ImportedGene
         "detected_columns": ", ".join(sorted(detected_columns)),
         "format": source_format,
         "row_count": len(lines),
+        "transaction_grouping_strategy": (
+            "explicit_column"
+            if "transaction_group_key" in detected_columns
+            else "derived_from_ledger_fields"
+        ),
         "uploaded_filename": filename,
     }
     return ImportedGeneralLedgerFile(lines=lines, import_metadata=metadata)
@@ -369,18 +396,24 @@ def _parse_gl_row(*, row: dict[str, str], row_number: int) -> ImportedGeneralLed
         field_name="account_code",
         row_number=row_number,
     )
+    explicit_transaction_group_value = _optional_text(row.get("transaction_group_key"))
     debit_amount, credit_amount = _resolve_import_amounts(row=row, row_number=row_number)
     return ImportedGeneralLedgerLineSeed(
         line_no=row_number - 1,
         posting_date=posting_date,
         account_code=account_code,
         account_name=_optional_text(row.get("account_name")),
-        reference=_optional_text(row.get("reference")),
+        reference=_optional_text(row.get("reference")) or explicit_transaction_group_value,
         description=_optional_text(row.get("description")),
         debit_amount=debit_amount,
         credit_amount=credit_amount,
         dimensions=_build_dimensions(row=row),
         external_ref=_optional_text(row.get("external_ref")),
+        transaction_group_key=_build_transaction_group_key(
+            row=row,
+            posting_date=posting_date,
+            line_no=row_number - 1,
+        ),
     )
 
 
@@ -627,6 +660,59 @@ def _build_dimensions(*, row: dict[str, str]) -> JsonObject:
         if value is not None:
             dimensions[key] = value
     return dimensions
+
+
+def _build_transaction_group_key(
+    *,
+    row: dict[str, str],
+    posting_date: date,
+    line_no: int,
+) -> str:
+    """Return one canonical transaction-group key for imported GL rows."""
+
+    explicit_group_value = _normalize_group_key_component(row.get("transaction_group_key"))
+    if explicit_group_value is not None:
+        return _hash_transaction_group_seed(
+            posting_date=posting_date,
+            source_name="explicit",
+            source_value=explicit_group_value,
+        )
+
+    for source_name in ("external_ref", "reference", "description"):
+        normalized_value = _normalize_group_key_component(row.get(source_name))
+        if normalized_value is not None:
+            return _hash_transaction_group_seed(
+                posting_date=posting_date,
+                source_name=source_name,
+                source_value=normalized_value,
+            )
+
+    return _hash_transaction_group_seed(
+        posting_date=posting_date,
+        source_name="line",
+        source_value=str(line_no),
+    )
+
+
+def _normalize_group_key_component(value: str | None) -> str | None:
+    """Normalize one grouping value into a stable case-insensitive token."""
+
+    normalized = _optional_text(value)
+    if normalized is None:
+        return None
+    return normalized.lower()
+
+
+def _hash_transaction_group_seed(
+    *,
+    posting_date: date,
+    source_name: str,
+    source_value: str,
+) -> str:
+    """Hash one canonical transaction grouping seed into a compact stable key."""
+
+    seed = f"{posting_date.isoformat()}|{source_name}|{source_value}"
+    return f"glgrp_{hashlib.md5(seed.encode('utf-8'), usedforsecurity=False).hexdigest()}"
 
 
 def _normalize_header_name(value: str) -> str:

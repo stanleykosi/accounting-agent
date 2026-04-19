@@ -155,6 +155,32 @@ def test_reconciliation_gate_blocks_missing_or_unreviewed_supporting_schedules()
     assert "awaiting review" in reconciliation.blocking_reason
 
 
+def test_reconciliation_gate_mentions_pending_reconciliation_execution() -> None:
+    """Applicable reconciliation work should block advance until it has actually run."""
+
+    reconciliation_active = _existing_states(
+        completed=(
+            WorkflowPhase.COLLECTION,
+            WorkflowPhase.PROCESSING,
+        ),
+        active=WorkflowPhase.RECONCILIATION,
+    )
+
+    blocked = evaluate_phase_gates(
+        phase_states=reconciliation_active,
+        signals=PhaseGateSignals(
+            missing_reconciliation_types=("bank_reconciliation", "trial_balance"),
+        ),
+    )
+
+    reconciliation = blocked[2]
+
+    assert reconciliation.status is CloseRunPhaseStatus.BLOCKED
+    assert reconciliation.blocking_reason is not None
+    assert "pending reconciliation runs" in reconciliation.blocking_reason
+    assert "bank_reconciliation" in reconciliation.blocking_reason
+
+
 def test_signoff_readiness_requires_prior_phases_and_blocks_open_review_items() -> None:
     """Ensure Review / Sign-off is only ready after upstream phases and review blockers clear."""
 

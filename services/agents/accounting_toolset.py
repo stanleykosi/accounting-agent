@@ -48,6 +48,9 @@ from services.db.repositories.report_repo import ReportRepository
 from services.documents.recommendation_eligibility import (
     GL_CODING_RECOMMENDATION_ELIGIBLE_TYPE_VALUES,
 )
+from services.documents.imported_ledger_representation import (
+    evaluate_documents_imported_gl_representation,
+)
 from services.documents.review_service import DocumentReviewService
 from services.exports.service import ExportService
 from services.jobs.service import JobService
@@ -1847,14 +1850,23 @@ class AccountingToolset:
                     Recommendation.close_run_id == close_run_id,
                     Recommendation.document_id.isnot(None),
                     Recommendation.superseded_by_id.is_(None),
+                    Recommendation.status != ReviewStatus.SUPERSEDED.value,
                 )
                 .all()
                 if recommendation.document_id is not None
             }
 
         queued_jobs: list[dict[str, Any]] = []
+        imported_gl_representation = evaluate_documents_imported_gl_representation(
+            session=self._db_session,
+            close_run_id=close_run_id,
+            document_ids=tuple(document.id for document in eligible_documents),
+        )
         for document in eligible_documents:
             if not force and document.id in existing_recommendations:
+                continue
+            representation_result = imported_gl_representation.get(document.id)
+            if representation_result is not None and representation_result.represented_in_imported_gl:
                 continue
 
             job = self._job_service.dispatch_job(

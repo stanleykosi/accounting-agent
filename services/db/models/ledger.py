@@ -78,6 +78,7 @@ class GeneralLedgerImportLine(Base, UUIDPrimaryKeyMixin, TimestampedModel):
         ),
         Index("ix_gl_import_lines_batch_date", "batch_id", "posting_date"),
         Index("ix_gl_import_lines_batch_account", "batch_id", "account_code"),
+        Index("ix_gl_import_lines_batch_group", "batch_id", "transaction_group_key"),
     )
 
     batch_id: Mapped[UUID] = mapped_column(
@@ -98,6 +99,7 @@ class GeneralLedgerImportLine(Base, UUIDPrimaryKeyMixin, TimestampedModel):
         default=dict,
     )
     external_ref: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    transaction_group_key: Mapped[str] = mapped_column(String(40), nullable=False)
 
 
 class TrialBalanceImportBatch(Base, UUIDPrimaryKeyMixin, TimestampedModel):

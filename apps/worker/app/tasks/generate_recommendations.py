@@ -41,6 +41,9 @@ from services.db.models.coa import CoaAccount, CoaSet
 from services.db.models.extractions import DocumentExtraction
 from services.db.models.journals import JournalEntry
 from services.db.session import get_session_factory
+from services.documents.imported_ledger_representation import (
+    evaluate_document_imported_gl_representation,
+)
 from services.jobs.task_names import TaskName, resolve_task_route
 from services.model_gateway.client import ModelGatewayError
 from services.observability.context import current_trace_metadata
@@ -65,6 +68,25 @@ class RecommendationReceipt:
 
 class RecommendationRegenerationBlockedError(RuntimeError):
     """Represent a force-regeneration race that now conflicts with applied journals."""
+
+
+def _build_imported_gl_suppression_payload(
+    *,
+    close_run_id: str,
+    document_id: str,
+    reason: str,
+) -> dict[str, Any]:
+    """Return the stable task payload for an imported-GL suppression no-op."""
+
+    return {
+        "recommendation_id": None,
+        "status": "suppressed_existing_imported_gl",
+        "confidence": 1.0,
+        "model_used": False,
+        "errors": [reason],
+        "document_id": document_id,
+        "close_run_id": close_run_id,
+    }
 
 
 def _run_recommendation_task(
@@ -92,6 +114,25 @@ def _run_recommendation_task(
     parsed_document_id = UUID(document_id)
     parsed_actor_user_id = UUID(actor_user_id)
     trace_id = current_trace_metadata().trace_id
+
+    with get_session_factory()() as db_session:
+        representation_result = evaluate_document_imported_gl_representation(
+            session=db_session,
+            close_run_id=parsed_close_run_id,
+            document_id=parsed_document_id,
+        )
+    if representation_result.represented_in_imported_gl:
+        logger.info(
+            "recommendation_task_suppressed_imported_gl_match",
+            close_run_id=close_run_id,
+            document_id=document_id,
+            reason=representation_result.reason,
+        )
+        return _build_imported_gl_suppression_payload(
+            close_run_id=close_run_id,
+            document_id=document_id,
+            reason=representation_result.reason,
+        )
 
     # 1. Load context from the database
     context = _load_recommendation_context(
@@ -495,6 +536,7 @@ def _supersede_existing_recommendation_state_for_document(
             Recommendation.close_run_id == close_run_id,
             Recommendation.document_id == document_id,
             Recommendation.superseded_by_id.is_(None),
+            Recommendation.status != ReviewStatus.SUPERSEDED.value,
             Recommendation.id != replacement_recommendation_id,
         )
         .all()

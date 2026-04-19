@@ -73,6 +73,34 @@ class WorkflowPhase(CanonicalDomainEnum):
     )
 
 
+class CloseRunOperatingMode(CanonicalDomainEnum):
+    """Describe the ledger/control data posture available for one close run."""
+
+    SOURCE_DOCUMENTS_ONLY = (
+        "source_documents_only",
+        "Source documents only",
+        "The close run has source documents but no imported ledger baseline, imported trial "
+        "balance baseline, or posted working-ledger entries yet.",
+    )
+    WORKING_LEDGER = (
+        "working_ledger",
+        "Working ledger",
+        "The close run is using approved or applied close-run journals as its ledger-side data.",
+    )
+    IMPORTED_GENERAL_LEDGER = (
+        "imported_general_ledger",
+        "Imported general ledger",
+        "The close run is bound to an imported general-ledger baseline for the period and may "
+        "layer close-run journal adjustments on top of it.",
+    )
+    TRIAL_BALANCE_ONLY = (
+        "trial_balance_only",
+        "Trial balance only",
+        "The close run is bound to an imported trial-balance baseline without detailed general-"
+        "ledger transactions for the period.",
+    )
+
+
 class CloseRunStatus(CanonicalDomainEnum):
     """Enumerate the lifecycle states of a close run."""
 
@@ -810,6 +838,7 @@ __all__ = [
     "ArtifactType",
     "AutonomyMode",
     "CanonicalDomainEnum",
+    "CloseRunOperatingMode",
     "CloseRunPhaseStatus",
     "CloseRunStatus",
     "DispositionAction",

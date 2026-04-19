@@ -15,7 +15,7 @@ from uuid import UUID
 
 from services.audit.service import AuditService
 from services.auth.service import serialize_uuid
-from services.common.enums import CloseRunStatus
+from services.common.enums import CloseRunStatus, ReviewStatus
 from services.common.types import JsonObject
 from services.contracts.ledger_models import (
     CloseRunLedgerBindingSummary,
@@ -27,6 +27,7 @@ from services.contracts.ledger_models import (
 )
 from services.db.models.audit import AuditSourceSurface
 from services.db.models.close_run import CloseRun
+from services.db.models.documents import Document
 from services.db.models.entity import Entity, EntityMembership, EntityStatus
 from services.db.models.journals import JournalEntry
 from services.db.models.ledger import (
@@ -36,8 +37,12 @@ from services.db.models.ledger import (
     TrialBalanceImportBatch,
     TrialBalanceImportLine,
 )
+from services.db.models.recommendations import Recommendation
 from services.db.models.reconciliation import Reconciliation, TrialBalanceSnapshot
 from services.db.repositories.entity_repo import EntityUserRecord
+from services.documents.imported_ledger_representation import (
+    evaluate_documents_imported_gl_representation,
+)
 from services.ledger.importer import (
     ImportedGeneralLedgerLineSeed,
     ImportedTrialBalanceLineSeed,
@@ -240,6 +245,13 @@ class LedgerRepositoryProtocol(Protocol):
     ) -> CloseRunLedgerBindingRecord:
         """Create or replace the baseline binding for one close run."""
 
+    def supersede_imported_gl_processing_state(
+        self,
+        *,
+        close_run_id: UUID,
+    ) -> tuple[int, int]:
+        """Supersede stale recommendation and journal drafts now covered by imported GL."""
+
     def create_activity_event(
         self,
         *,
@@ -359,6 +371,7 @@ class LedgerRepository:
                 credit_amount=line.credit_amount,
                 dimensions=dict(line.dimensions),
                 external_ref=line.external_ref,
+                transaction_group_key=line.transaction_group_key,
             )
             for line in lines
         ]
@@ -493,6 +506,98 @@ class LedgerRepository:
             binding.bound_by_user_id = bound_by_user_id
         self._db_session.flush()
         return _map_binding(binding)
+
+    def supersede_imported_gl_processing_state(
+        self,
+        *,
+        close_run_id: UUID,
+    ) -> tuple[int, int]:
+        candidate_document_ids = tuple(
+            dict.fromkeys(
+                self._db_session.execute(
+                    select(Document.id)
+                    .join(Recommendation, Recommendation.document_id == Document.id)
+                    .where(
+                        Document.close_run_id == close_run_id,
+                        Recommendation.close_run_id == close_run_id,
+                        Recommendation.superseded_by_id.is_(None),
+                        Recommendation.status.in_(
+                            (
+                                ReviewStatus.DRAFT.value,
+                                ReviewStatus.PENDING_REVIEW.value,
+                                ReviewStatus.APPROVED.value,
+                            )
+                        ),
+                    )
+                ).scalars().all()
+            )
+        )
+        if not candidate_document_ids:
+            return 0, 0
+
+        representation = evaluate_documents_imported_gl_representation(
+            session=self._db_session,
+            close_run_id=close_run_id,
+            document_ids=candidate_document_ids,
+        )
+        represented_document_ids = tuple(
+            document_id
+            for document_id, result in representation.items()
+            if result.represented_in_imported_gl
+        )
+        if not represented_document_ids:
+            return 0, 0
+
+        recommendation_ids = tuple(
+            self._db_session.execute(
+                select(Recommendation.id).where(
+                    Recommendation.close_run_id == close_run_id,
+                    Recommendation.document_id.in_(represented_document_ids),
+                    Recommendation.superseded_by_id.is_(None),
+                    Recommendation.status.in_(
+                        (
+                            ReviewStatus.DRAFT.value,
+                            ReviewStatus.PENDING_REVIEW.value,
+                            ReviewStatus.APPROVED.value,
+                        )
+                    ),
+                )
+            ).scalars().all()
+        )
+        if not recommendation_ids:
+            return 0, 0
+
+        superseded_journal_count = int(
+            self._db_session.query(JournalEntry)
+            .filter(
+                JournalEntry.close_run_id == close_run_id,
+                JournalEntry.recommendation_id.in_(recommendation_ids),
+                JournalEntry.superseded_by_id.is_(None),
+                JournalEntry.status.in_(
+                    (
+                        ReviewStatus.DRAFT.value,
+                        ReviewStatus.PENDING_REVIEW.value,
+                    )
+                ),
+            )
+            .update(
+                {JournalEntry.status: ReviewStatus.SUPERSEDED.value},
+                synchronize_session=False,
+            )
+        )
+        superseded_recommendation_count = int(
+            self._db_session.query(Recommendation)
+            .filter(
+                Recommendation.id.in_(recommendation_ids),
+                Recommendation.superseded_by_id.is_(None),
+            )
+            .update(
+                {Recommendation.status: ReviewStatus.SUPERSEDED.value},
+                synchronize_session=False,
+            )
+        )
+        self._db_session.flush()
+        return superseded_recommendation_count, superseded_journal_count
 
     def create_activity_event(
         self,
@@ -749,6 +854,10 @@ class LedgerImportService:
                 binding_source="auto",
                 bound_by_user_id=bound_by_user_id,
             )
+            if general_ledger_import_batch_id is not None:
+                self._repository.supersede_imported_gl_processing_state(
+                    close_run_id=close_run.id
+                )
             auto_bound.append(close_run.id)
         return tuple(auto_bound), tuple(skipped)
 

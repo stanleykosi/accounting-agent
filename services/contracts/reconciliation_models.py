@@ -81,6 +81,29 @@ class ReconciliationListResponse(ContractModel):
     )
 
 
+class ReconciliationRunResponse(ContractModel):
+    """Return the result of requesting reconciliation execution for a close run."""
+
+    job_id: str | None = Field(
+        default=None,
+        description="Queued job UUID when execution was dispatched, else null.",
+    )
+    reconciliation_types: tuple[ReconciliationType, ...] = Field(
+        default=(),
+        description="Reconciliation types that will actually run for this request.",
+    )
+    skipped_types: tuple[ReconciliationType, ...] = Field(
+        default=(),
+        description="Requested reconciliation types skipped because they are not applicable.",
+    )
+    status: str = Field(description="Execution status, such as queued or not_applicable.")
+    task_name: str = Field(description="Canonical task name or no-op marker for this request.")
+    message: str | None = Field(
+        default=None,
+        description="Optional operator-facing guidance about skipped or non-applicable work.",
+    )
+
+
 # ---------------------------------------------------------------------------
 # Reconciliation creation contracts
 # ---------------------------------------------------------------------------
@@ -456,6 +479,7 @@ __all__ = [
     "ReconciliationItemMatch",
     "ReconciliationItemSummary",
     "ReconciliationListResponse",
+    "ReconciliationRunResponse",
     "ReconciliationRunResult",
     "ReconciliationSummary",
     "ResolveAnomalyRequest",

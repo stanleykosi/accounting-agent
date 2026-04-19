@@ -12,7 +12,7 @@ from datetime import date, datetime
 from typing import Literal
 
 from pydantic import Field, field_validator, model_validator
-from services.common.enums import CloseRunStatus, WorkflowPhase
+from services.common.enums import CloseRunOperatingMode, CloseRunStatus, WorkflowPhase
 from services.contracts.api_models import ContractModel
 from services.contracts.domain_models import CloseRunWorkflowState
 from services.contracts.ledger_models import CloseRunLedgerBindingSummary
@@ -154,6 +154,44 @@ class CloseRunDecisionRequest(ContractModel):
         return _normalize_optional_reason(value)
 
 
+class CloseRunOperatingModeSummary(ContractModel):
+    """Describe the ledger/control posture automatically detected for one close run."""
+
+    mode: CloseRunOperatingMode = Field(
+        description="Canonical operating mode resolved from available ledger and control data.",
+    )
+    description: str = Field(
+        min_length=1,
+        description="Operator-facing explanation of how this run will behave.",
+    )
+    has_general_ledger_baseline: bool = Field(
+        description="Whether an imported general-ledger baseline is bound to the close run.",
+    )
+    has_trial_balance_baseline: bool = Field(
+        description="Whether an imported trial-balance baseline is bound to the close run.",
+    )
+    has_working_ledger_entries: bool = Field(
+        description=(
+            "Whether approved or applied close-run journals already provide ledger-side data."
+        ),
+    )
+    bank_reconciliation_available: bool = Field(
+        description="Whether bank reconciliation is currently applicable for this run.",
+    )
+    trial_balance_review_available: bool = Field(
+        description="Whether trial-balance review is currently applicable for this run.",
+    )
+    journal_posting_available: bool = Field(
+        description=(
+            "Whether this mode supports posting eligible document journals into the working "
+            "ledger layer."
+        ),
+    )
+    general_ledger_export_available: bool = Field(
+        description="Whether a general-ledger export can currently be generated for the run.",
+    )
+
+
 class CloseRunSummary(ContractModel):
     """Describe one close run with lifecycle metadata and calculated phase state."""
 
@@ -191,6 +229,9 @@ class CloseRunSummary(ContractModel):
     ledger_binding: CloseRunLedgerBindingSummary | None = Field(
         default=None,
         description="Imported ledger baseline bound to this close run, if any.",
+    )
+    operating_mode: CloseRunOperatingModeSummary = Field(
+        description="Automatically detected ledger/control mode and its runtime capabilities.",
     )
     workflow_state: CloseRunWorkflowState = Field(
         description="Calculated lifecycle and phase-gate state in canonical phase order.",

@@ -16,6 +16,9 @@ from services.db.base import Base
 from services.db.models.close_run import CloseRun
 from services.db.models.journals import JournalEntry
 from services.db.models.recommendations import Recommendation
+from services.documents.imported_ledger_representation import (
+    ImportedLedgerRepresentationResult,
+)
 from sqlalchemy import create_engine
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.compiler import compiles
@@ -70,6 +73,15 @@ class _FakeSession:
     def query(self, model):
         del model
         return _FakeQuery()
+
+
+class _FakeJobContext:
+    def checkpoint(self, **kwargs):
+        del kwargs
+        return {}
+
+    def ensure_not_canceled(self) -> None:
+        return None
 
 
 def test_persist_recommendation_checks_processing_phase_in_persistence_session(monkeypatch) -> None:
@@ -131,6 +143,62 @@ def test_persist_recommendation_checks_processing_phase_in_persistence_session(m
         (fake_session, context.close_run_id, WorkflowPhase.PROCESSING)
     ]
     assert fake_session.commit_count == 1
+
+
+def test_run_recommendation_task_suppresses_when_imported_gl_already_represents_document(
+    monkeypatch,
+) -> None:
+    """The worker should no-op before graph execution when the imported GL already has the doc."""
+
+    fake_session = _FakeSession()
+    entity_id = uuid4()
+    close_run_id = uuid4()
+    document_id = uuid4()
+    actor_user_id = uuid4()
+
+    monkeypatch.setattr(
+        recommendation_task_module,
+        "get_session_factory",
+        lambda: (lambda: fake_session),
+    )
+    monkeypatch.setattr(
+        recommendation_task_module,
+        "evaluate_document_imported_gl_representation",
+        lambda **kwargs: ImportedLedgerRepresentationResult(
+            document_id=kwargs["document_id"],
+            represented_in_imported_gl=True,
+            status="represented_in_imported_gl",
+            reason="The imported general ledger already contains this transaction.",
+            matched_line_no=7,
+            matched_reference="INV-1048",
+            matched_description="Imported baseline entry",
+            matched_posting_date=date(2026, 3, 15),
+        ),
+    )
+    monkeypatch.setattr(
+        recommendation_task_module,
+        "_load_recommendation_context",
+        lambda **kwargs: (_ for _ in ()).throw(AssertionError("context load should not run")),
+    )
+
+    payload = recommendation_task_module._run_recommendation_task(
+        entity_id=str(entity_id),
+        close_run_id=str(close_run_id),
+        document_id=str(document_id),
+        actor_user_id=str(actor_user_id),
+        force=False,
+        job_context=_FakeJobContext(),
+    )
+
+    assert payload == {
+        "recommendation_id": None,
+        "status": "suppressed_existing_imported_gl",
+        "confidence": 1.0,
+        "model_used": False,
+        "errors": ["The imported general ledger already contains this transaction."],
+        "document_id": str(document_id),
+        "close_run_id": str(close_run_id),
+    }
 
 
 def test_force_regeneration_supersedes_prior_recommendation_state() -> None:

@@ -616,125 +616,19 @@ def _gather_section_data(
         Dictionary with data keyed by section identifier.
     """
 
-    requested = set(sections) if sections else {key.value for key in ReportSectionKey}
-    data: dict[str, Any] = {}
+    from services.reporting.section_data import gather_report_section_data
 
-    # In a full implementation, this would query journal entries, COA balances,
-    # budget tables, KPI tables, etc. For now, we construct placeholder data
-    # structures that the builders expect. The actual data pipeline will be
-    # populated by the reconciliation and accounting-engine services.
-
-    if ReportSectionKey.PROFIT_AND_LOSS.value in requested:
-        data['p_and_l'] = _load_pl_data(db, close_run_id)
-
-    if ReportSectionKey.BALANCE_SHEET.value in requested:
-        data['balance_sheet'] = _load_bs_data(db, close_run_id)
-
-    if ReportSectionKey.CASH_FLOW.value in requested:
-        data['cash_flow'] = _load_cf_data(db, close_run_id)
-
-    if ReportSectionKey.BUDGET_VARIANCE.value in requested:
-        data['budget_variance'] = _load_bv_data(db, close_run_id)
-
-    if ReportSectionKey.KPI_DASHBOARD.value in requested:
-        data['kpi_dashboard'] = _load_kpi_data(db, close_run_id)
-
-    return data
-
-
-def _load_pl_data(db: Any, close_run_id: UUID) -> dict[str, Any]:
-    """Load P&L section data from journal entries and COA.
-
-    Args:
-        db: Active SQLAlchemy session.
-        close_run_id: UUID of the close run.
-
-    Returns:
-        Dictionary with revenue, cost_of_sales, gross_profit, etc.
-    """
-
-    # Placeholder: In production, this queries approved journal entries
-    # aggregated by account type (revenue, cost of sales, expenses).
+    section_data = gather_report_section_data(
+        session=db,
+        close_run_id=close_run_id,
+        sections=sections,
+    )
     return {
-        'revenue': {},
-        'cost_of_sales': {},
-        'gross_profit': 0,
-        'operating_expenses': {},
-        'net_profit': 0,
-    }
-
-
-def _load_bs_data(db: Any, close_run_id: UUID) -> dict[str, Any]:
-    """Load Balance Sheet section data.
-
-    Args:
-        db: Active SQLAlchemy session.
-        close_run_id: UUID of the close run.
-
-    Returns:
-        Dictionary with assets, liabilities, equity, and totals.
-    """
-
-    return {
-        'assets': {},
-        'total_assets': 0,
-        'liabilities': {},
-        'total_liabilities': 0,
-        'equity': {},
-        'total_equity': 0,
-    }
-
-
-def _load_cf_data(db: Any, close_run_id: UUID) -> dict[str, Any]:
-    """Load Cash Flow section data.
-
-    Args:
-        db: Active SQLAlchemy session.
-        close_run_id: UUID of the close run.
-
-    Returns:
-        Dictionary with operating, investing, financing cash flows.
-    """
-
-    return {
-        'operating_activities': {},
-        'net_operating_cash_flow': 0,
-        'investing_activities': {},
-        'net_investing_cash_flow': 0,
-        'financing_activities': {},
-        'net_financing_cash_flow': 0,
-    }
-
-
-def _load_bv_data(db: Any, close_run_id: UUID) -> dict[str, Any]:
-    """Load Budget Variance section data.
-
-    Args:
-        db: Active SQLAlchemy session.
-        close_run_id: UUID of the close run.
-
-    Returns:
-        Dictionary with budget vs actual items.
-    """
-
-    return {
-        'items': [],
-    }
-
-
-def _load_kpi_data(db: Any, close_run_id: UUID) -> dict[str, Any]:
-    """Load KPI Dashboard section data.
-
-    Args:
-        db: Active SQLAlchemy session.
-        close_run_id: UUID of the close run.
-
-    Returns:
-        Dictionary with KPI metrics.
-    """
-
-    return {
-        'metrics': [],
+        'p_and_l': section_data.get(ReportSectionKey.PROFIT_AND_LOSS.value, {}),
+        'balance_sheet': section_data.get(ReportSectionKey.BALANCE_SHEET.value, {}),
+        'cash_flow': section_data.get(ReportSectionKey.CASH_FLOW.value, {}),
+        'budget_variance': section_data.get(ReportSectionKey.BUDGET_VARIANCE.value, {}),
+        'kpi_dashboard': section_data.get(ReportSectionKey.KPI_DASHBOARD.value, {}),
     }
 
 

@@ -15,6 +15,7 @@ from services.close_runs.gates import PhaseGateSignals, build_reopened_phase_sta
 from services.close_runs.service import CloseRunService
 from services.common.enums import (
     AutonomyMode,
+    CloseRunOperatingMode,
     CloseRunPhaseStatus,
     CloseRunStatus,
     WorkflowPhase,
@@ -54,6 +55,7 @@ class _FakeCloseRunRepository:
         self.last_rewind_canceled_by_user_id: UUID | None = None
         self.bind_calls: list[dict[str, object]] = []
         self.ledger_bindings_by_close_run_id: dict[UUID, CloseRunLedgerBindingRecord] = {}
+        self.phase_gate_signals = PhaseGateSignals()
 
     def get_entity_for_user(self, *, entity_id: UUID, user_id: UUID) -> CloseRunEntityRecord | None:
         del entity_id, user_id
@@ -233,7 +235,7 @@ class _FakeCloseRunRepository:
 
     def get_phase_gate_signals(self, *, close_run_id: UUID) -> PhaseGateSignals:
         del close_run_id
-        return PhaseGateSignals()
+        return self.phase_gate_signals
 
     def get_close_run_ledger_binding(
         self,
@@ -357,6 +359,38 @@ def test_create_close_run_attempts_to_bind_latest_imported_ledger_baseline() -> 
     assert repository.bind_calls
     assert repository.bind_calls[0]["close_run_id"] == repository.created_close_run.id
     assert repository.bind_calls[0]["bound_by_user_id"] == actor_user.id
+
+
+def test_get_close_run_surfaces_detected_operating_mode() -> None:
+    """Close-run summaries should expose the canonical operating mode and capabilities."""
+
+    actor_user = EntityUserRecord(id=uuid4(), email="ops@example.com", full_name="Finance Ops")
+    access_record = _build_access_record(status=CloseRunStatus.DRAFT)
+    repository = _FakeCloseRunRepository(
+        access_record=access_record,
+        phase_states=_reopened_phase_state_records(close_run_id=access_record.close_run.id),
+    )
+    repository.phase_gate_signals = PhaseGateSignals(
+        operating_mode=CloseRunOperatingMode.IMPORTED_GENERAL_LEDGER,
+        operating_mode_description="Imported GL baseline is active for this run.",
+        has_general_ledger_baseline=True,
+        bank_reconciliation_available=True,
+        trial_balance_review_available=True,
+        general_ledger_export_available=True,
+    )
+
+    service = CloseRunService(repository=repository)
+    summary = service.get_close_run(
+        actor_user=actor_user,
+        entity_id=access_record.close_run.entity_id,
+        close_run_id=access_record.close_run.id,
+    )
+
+    assert summary.operating_mode.mode.value == "imported_general_ledger"
+    assert summary.operating_mode.description == "Imported GL baseline is active for this run."
+    assert summary.operating_mode.has_general_ledger_baseline is True
+    assert summary.operating_mode.bank_reconciliation_available is True
+    assert summary.operating_mode.general_ledger_export_available is True
 
 
 def _build_access_record(*, status: CloseRunStatus) -> CloseRunAccessRecord:

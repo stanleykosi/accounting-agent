@@ -10,6 +10,8 @@ from datetime import UTC, date, datetime
 from types import SimpleNamespace
 from uuid import UUID, uuid4
 
+import pytest
+import services.agents.accounting_toolset as accounting_toolset_module
 from services.agents.accounting_toolset import AccountingToolset
 from services.agents.models import AgentExecutionContext
 from services.common.enums import CloseRunStatus, WorkflowPhase
@@ -217,7 +219,9 @@ def test_create_close_run_tool_uses_canonical_contract_validation() -> None:
     assert result["active_phase"] == WorkflowPhase.COLLECTION.value
 
 
-def test_queue_recommendation_jobs_skips_bank_statements() -> None:
+def test_queue_recommendation_jobs_skips_bank_statements(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Only bookable approved documents should enter GL-coding recommendation generation."""
 
     actor = EntityUserRecord(id=uuid4(), email="ops@example.com", full_name="Finance Ops")
@@ -303,6 +307,11 @@ def test_queue_recommendation_jobs_skips_bank_statements() -> None:
     toolset = _make_toolset()
     toolset._db_session = _FakeDbSession()
     toolset._job_service = _FakeJobService()
+    monkeypatch.setattr(
+        accounting_toolset_module,
+        "evaluate_documents_imported_gl_representation",
+        lambda **kwargs: {},
+    )
 
     queued_jobs = toolset._queue_recommendation_jobs(
         entity_id=entity_id,
