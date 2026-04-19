@@ -82,8 +82,10 @@ class DuplicateDetectionService:
             except ValueError:
                 current_document_uuid = None
 
-        close_run_documents = self._document_repo.list_documents_for_close_run_with_latest_extraction(
-            close_run_id=close_run_uuid
+        close_run_documents = (
+            self._document_repo.list_documents_for_close_run_with_latest_extraction(
+                close_run_id=close_run_uuid
+            )
         )
         candidate_rows = [
             row
@@ -135,6 +137,46 @@ class DuplicateDetectionService:
                 _duplicate_sort_key(item[1]),
             ),
         )[0][0]
+
+    def refresh_close_run_duplicates(
+        self,
+        *,
+        close_run_id: str,
+    ) -> dict[UUID, DuplicateDetectionResult]:
+        """Recompute duplicate state deterministically for every eligible document."""
+
+        try:
+            close_run_uuid = UUID(close_run_id)
+        except ValueError:
+            return {}
+
+        close_run_documents = (
+            self._document_repo.list_documents_for_close_run_with_latest_extraction(
+                close_run_id=close_run_uuid
+            )
+        )
+        ordered_rows = sorted(
+            (
+                row
+                for row in close_run_documents
+                if _document_is_duplicate_eligible(row)
+            ),
+            key=_duplicate_sort_key,
+        )
+
+        canonical_rows: list[DocumentWithExtractionRecord] = []
+        duplicate_results: dict[UUID, DuplicateDetectionResult] = {}
+
+        for row in ordered_rows:
+            duplicate_result = _detect_duplicate_against_canonical_rows(
+                current_row=row,
+                canonical_rows=tuple(canonical_rows),
+            )
+            duplicate_results[row.document.id] = duplicate_result
+            if not duplicate_result.is_duplicate:
+                canonical_rows.append(row)
+
+        return duplicate_results
 
 
 def _document_is_duplicate_eligible(row: DocumentWithExtractionRecord) -> bool:
@@ -209,6 +251,48 @@ def _match_semantic_duplicate(
             candidate_fields=candidate_fields,
         )
     return None
+
+
+def _detect_duplicate_against_canonical_rows(
+    *,
+    current_row: DocumentWithExtractionRecord,
+    canonical_rows: tuple[DocumentWithExtractionRecord, ...],
+) -> DuplicateDetectionResult:
+    """Return the best duplicate result for one row against previously accepted canonical rows."""
+
+    exact_matches = [
+        row
+        for row in canonical_rows
+        if row.document.sha256_hash == current_row.document.sha256_hash
+    ]
+    if exact_matches:
+        existing_row = sorted(exact_matches, key=_duplicate_sort_key)[0]
+        return DuplicateDetectionResult(
+            is_duplicate=True,
+            existing_document_id=str(existing_row.document.id),
+            existing_document_filename=existing_row.document.original_filename,
+            similarity_score=1.0,
+            detection_method="sha256_exact",
+            matched_fields=("sha256_hash",),
+        )
+
+    semantic_matches = [
+        (match, row)
+        for row in canonical_rows
+        if (match := _match_semantic_duplicate(current_row=current_row, candidate_row=row))
+        is not None
+    ]
+    if not semantic_matches:
+        return DuplicateDetectionResult(is_duplicate=False)
+
+    return sorted(
+        semantic_matches,
+        key=lambda item: (
+            -item[0].similarity_score,
+            1 if item[0].detection_method.endswith("_summary") else 0,
+            _duplicate_sort_key(item[1]),
+        ),
+    )[0][0]
 
 
 def _match_invoice_duplicate(
@@ -649,4 +733,8 @@ def _date_to_string(value: Any) -> str | None:
     return None
 
 
-__all__ = ["DuplicateDetectionResult", "DuplicateDetectionProtocol", "DuplicateDetectionService"]
+__all__ = [
+    "DuplicateDetectionProtocol",
+    "DuplicateDetectionResult",
+    "DuplicateDetectionService",
+]

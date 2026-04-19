@@ -50,8 +50,8 @@ from services.jobs.task_names import TaskName
 from services.storage.checksums import compute_sha256_bytes
 
 
-def test_document_upload_persists_records_stores_originals_and_dispatches_parse_jobs() -> None:
-    """Ensure a mixed PDF/CSV batch becomes stored document rows with parser jobs queued."""
+def test_document_upload_persists_records_and_stages_documents_without_dispatching_jobs() -> None:
+    """Ensure a mixed PDF/CSV batch becomes stored rows without auto-queueing parse jobs."""
 
     repository = InMemoryDocumentRepository()
     storage = InMemoryStorageRepository()
@@ -94,12 +94,8 @@ def test_document_upload_persists_records_stores_originals_and_dispatches_parse_
     assert uploaded_csv.sha256_hash == compute_sha256_bytes(
         b"date,description,amount\n2026-03-01,Opening balance,1000\n"
     )
-    assert all(
-        result.dispatch.task_name == TaskName.DOCUMENT_PARSE_AND_EXTRACT.value
-        for result in response.uploaded_documents
-    )
     assert len(storage.objects) == 2
-    assert len(dispatcher.dispatched_kwargs) == 2
+    assert len(dispatcher.dispatched_kwargs) == 0
     assert repository.committed is True
     assert repository.activity_events[0]["event_type"] == "document.uploaded"
 
@@ -147,8 +143,8 @@ def test_document_upload_rejects_unsupported_content_without_partial_commit() ->
     assert repository.rolled_back is True
 
 
-def test_document_upload_rejects_exact_duplicate_files_in_same_close_run() -> None:
-    """Exact duplicate uploads should fail fast instead of creating another document row."""
+def test_document_upload_accepts_exact_duplicate_files_for_later_review() -> None:
+    """Exact duplicate uploads should remain staged so duplicate review can happen later."""
 
     repository = InMemoryDocumentRepository()
     storage = InMemoryStorageRepository()
@@ -175,29 +171,83 @@ def test_document_upload_rejects_exact_duplicate_files_in_same_close_run() -> No
         trace_id="req-doc-upload-first",
     )
 
-    with pytest.raises(DocumentUploadServiceError) as error:
-        service.upload_documents(
-            actor_user=repository.actor,
-            entity_id=repository.access_record.entity.id,
-            close_run_id=repository.access_record.close_run.id,
-            files=(
-                UploadFilePayload(
-                    filename="Vendor Invoice copy.pdf",
-                    payload=duplicate_payload,
-                    declared_content_type="application/pdf",
-                ),
+    second_response = service.upload_documents(
+        actor_user=repository.actor,
+        entity_id=repository.access_record.entity.id,
+        close_run_id=repository.access_record.close_run.id,
+        files=(
+            UploadFilePayload(
+                filename="Vendor Invoice copy.pdf",
+                payload=duplicate_payload,
+                declared_content_type="application/pdf",
             ),
-            source_surface=AuditSourceSurface.DESKTOP,
-            trace_id="req-doc-upload-duplicate",
-        )
+        ),
+        source_surface=AuditSourceSurface.DESKTOP,
+        trace_id="req-doc-upload-duplicate",
+    )
 
     assert len(first_response.uploaded_documents) == 1
-    assert error.value.status_code == 409
-    assert error.value.code is DocumentUploadServiceErrorCode.DUPLICATE_UPLOAD
-    assert "already attached to this close run" in error.value.message
-    assert len(repository.documents) == 1
-    assert len(storage.objects) == 1
-    assert repository.rolled_back is True
+    assert len(second_response.uploaded_documents) == 1
+    assert len(repository.documents) == 2
+    assert len(storage.objects) == 2
+    assert repository.rolled_back is False
+
+
+def test_document_parse_queue_dispatches_jobs_only_after_explicit_request() -> None:
+    """Uploaded documents should remain staged until the operator explicitly queues parsing."""
+
+    repository = InMemoryDocumentRepository()
+    storage = InMemoryStorageRepository()
+    dispatcher = InMemoryTaskDispatcher()
+    service = DocumentUploadService(
+        repository=repository,
+        storage_repository=storage,
+        job_service=InMemoryJobService(),
+        task_dispatcher=dispatcher,
+    )
+
+    upload_response = service.upload_documents(
+        actor_user=repository.actor,
+        entity_id=repository.access_record.entity.id,
+        close_run_id=repository.access_record.close_run.id,
+        files=(
+            UploadFilePayload(
+                filename="Vendor Invoice.pdf",
+                payload=b"%PDF-1.7\n1 0 obj\n<< /Type /Catalog /Font <<>> >>\n%%EOF",
+                declared_content_type="application/pdf",
+            ),
+            UploadFilePayload(
+                filename="bank-statement.txt",
+                payload=b"date,description,amount\n2026-03-01,Opening balance,1000\n",
+                declared_content_type="text/plain",
+            ),
+        ),
+        source_surface=AuditSourceSurface.DESKTOP,
+        trace_id="req-doc-upload",
+    )
+
+    assert len(upload_response.uploaded_documents) == 2
+    assert len(dispatcher.dispatched_kwargs) == 0
+
+    queue_response = service.queue_uploaded_documents_for_parse(
+        actor_user=repository.actor,
+        entity_id=repository.access_record.entity.id,
+        close_run_id=repository.access_record.close_run.id,
+        source_surface=AuditSourceSurface.DESKTOP,
+        trace_id="req-doc-queue-parse",
+    )
+
+    assert len(queue_response.queued_documents) == 2
+    assert len(dispatcher.dispatched_kwargs) == 2
+    assert all(
+        queued.dispatch.task_name == TaskName.DOCUMENT_PARSE_AND_EXTRACT.value
+        for queued in queue_response.queued_documents
+    )
+    assert all(
+        repository.documents[UUID(queued.document.id)].status is DocumentStatus.PROCESSING
+        for queued in queue_response.queued_documents
+    )
+    assert repository.activity_events[-1]["event_type"] == "document.parse_requested"
 
 
 def test_document_delete_removes_document_records_jobs_and_storage_objects() -> None:
@@ -228,6 +278,13 @@ def test_document_delete_removes_document_records_jobs_and_storage_objects() -> 
         trace_id="req-doc-upload",
     )
     uploaded_document = upload_response.uploaded_documents[0].document
+    service.queue_uploaded_documents_for_parse(
+        actor_user=repository.actor,
+        entity_id=repository.access_record.entity.id,
+        close_run_id=repository.access_record.close_run.id,
+        source_surface=AuditSourceSurface.DESKTOP,
+        trace_id="req-doc-queue-parse",
+    )
     dispatched_job_id = next(iter(job_service.dispatched_jobs))
     repository.active_job_ids_by_document[UUID(uploaded_document.id)] = (dispatched_job_id,)
     repository.derivative_storage_keys_by_document[UUID(uploaded_document.id)] = (
@@ -282,6 +339,13 @@ def test_document_delete_waits_for_running_jobs_to_stop_before_removing_document
         trace_id="req-doc-upload",
     )
     uploaded_document = upload_response.uploaded_documents[0].document
+    service.queue_uploaded_documents_for_parse(
+        actor_user=repository.actor,
+        entity_id=repository.access_record.entity.id,
+        close_run_id=repository.access_record.close_run.id,
+        source_surface=AuditSourceSurface.DESKTOP,
+        trace_id="req-doc-queue-parse",
+    )
     dispatched_job_id = next(iter(job_service.dispatched_jobs))
     job_service.dispatched_jobs[dispatched_job_id] = replace(
         job_service.dispatched_jobs[dispatched_job_id],
@@ -360,6 +424,13 @@ def test_document_reparse_resets_parse_artifacts_and_queues_a_fresh_parse_job() 
         trace_id="req-doc-upload",
     )
     uploaded_document = upload_response.uploaded_documents[0].document
+    service.queue_uploaded_documents_for_parse(
+        actor_user=repository.actor,
+        entity_id=repository.access_record.entity.id,
+        close_run_id=repository.access_record.close_run.id,
+        source_surface=AuditSourceSurface.DESKTOP,
+        trace_id="req-doc-queue-parse",
+    )
     original_job_id = next(iter(job_service.dispatched_jobs))
     document_id = UUID(uploaded_document.id)
     repository.active_job_ids_by_document[document_id] = (original_job_id,)
@@ -645,6 +716,25 @@ class InMemoryDocumentRepository:
         self.issue_counts_by_document[document_id] = 0
         self.version_counts_by_document[document_id] = 0
         return reparsed_document
+
+    def update_document_status(
+        self,
+        *,
+        document_id: UUID,
+        status: DocumentStatus,
+        ocr_required: bool | None = None,
+    ) -> DocumentRecord:
+        """Update one in-memory document status."""
+
+        document = self.documents[document_id]
+        updated_document = replace(
+            document,
+            status=status,
+            ocr_required=document.ocr_required if ocr_required is None else ocr_required,
+            updated_at=datetime.now(tz=UTC),
+        )
+        self.documents[document_id] = updated_document
+        return updated_document
 
     def commit(self) -> None:
         """Mark the in-memory unit of work as committed."""

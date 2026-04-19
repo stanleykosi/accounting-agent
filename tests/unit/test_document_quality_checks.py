@@ -11,6 +11,7 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 from apps.worker.app.tasks import document_quality_checks as quality_checks_module
+from services.documents.duplicate_detection import DuplicateDetectionResult
 from services.documents.transaction_matching import (
     AutoTransactionMatchResult,
     AutoTransactionMatchStatus,
@@ -30,12 +31,14 @@ def test_quality_checks_skip_transaction_mismatch_until_extraction_exists(
 
         def check_duplicate(self, **kwargs):
             del kwargs
-            return SimpleNamespace(
+            return DuplicateDetectionResult(
                 is_duplicate=False,
                 existing_document_id=None,
-                similarity_score=0.0,
-                detection_method="sha256",
             )
+
+        def refresh_close_run_duplicates(self, **kwargs):
+            del kwargs
+            return {}
 
     class _PeriodService:
         def __init__(self, **kwargs) -> None:
@@ -156,21 +159,37 @@ def test_quality_checks_create_duplicate_issue_when_exact_match_is_found(monkeyp
 
     created_issue_types: list[str] = []
     created_issue_details: list[dict[str, object]] = []
+    current_document_id = uuid4()
+    existing_document_id = uuid4()
 
     class _DuplicateService:
         def __init__(self, **kwargs) -> None:
             del kwargs
 
         def check_duplicate(self, **kwargs):
-            assert kwargs["current_document_id"] is not None
-            return SimpleNamespace(
+            assert kwargs["current_document_id"] == str(current_document_id)
+            return DuplicateDetectionResult(
                 is_duplicate=True,
-                existing_document_id=str(uuid4()),
+                existing_document_id=str(existing_document_id),
                 existing_document_filename="existing.pdf",
                 similarity_score=1.0,
                 detection_method="sha256_exact",
                 matched_fields=("sha256_hash",),
             )
+
+        def refresh_close_run_duplicates(self, **kwargs):
+            del kwargs
+            document_id = current_document_id
+            return {
+                document_id: DuplicateDetectionResult(
+                    is_duplicate=True,
+                    existing_document_id=str(existing_document_id),
+                    existing_document_filename="existing.pdf",
+                    similarity_score=1.0,
+                    detection_method="sha256_exact",
+                    matched_fields=("sha256_hash",),
+                )
+            }
 
     class _PeriodService:
         def __init__(self, **kwargs) -> None:
@@ -245,7 +264,7 @@ def test_quality_checks_create_duplicate_issue_when_exact_match_is_found(monkeyp
     result = quality_checks_module.run_document_quality_checks(
         entity_id=uuid4(),
         close_run_id=uuid4(),
-        document_id=uuid4(),
+        document_id=current_document_id,
         document_hash="abc123",
         document_file_size=1024,
         document_period_start=None,

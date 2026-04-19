@@ -427,7 +427,7 @@ async def _ingest_chat_attachments(
             files=attachments,
             summary=(
                 f"{len(attachments)} source document"
-                f"{'' if len(attachments) == 1 else 's'} uploaded and queued for parsing."
+                f"{'' if len(attachments) == 1 else 's'} uploaded and staged for parsing."
             ),
             operator_prompt=_build_inline_attachment_prompt(
                 attachment_intent=normalized_intent,
@@ -439,7 +439,7 @@ async def _ingest_chat_attachments(
                 ),
                 summary=(
                     f"{len(attachments)} source document"
-                    f"{'' if len(attachments) == 1 else 's'} uploaded and queued for parsing."
+                    f"{'' if len(attachments) == 1 else 's'} uploaded and staged for parsing."
                 ),
             ),
         )

@@ -356,6 +356,57 @@ def test_duplicate_detection_service_prefers_original_over_existing_duplicate_ma
     assert result.existing_document_filename == original_row.document.original_filename
 
 
+def test_duplicate_detection_refresh_flags_cross_format_semantic_duplicates() -> None:
+    """Batch refresh should flag later PDF/XLSX twins against the earliest canonical row."""
+
+    close_run_id = uuid4()
+    canonical_row = _build_document_with_extraction(
+        close_run_id=close_run_id,
+        document_id=uuid4(),
+        document_type=DocumentType.INVOICE,
+        original_filename="invoice-axis-haulage-2026-03.xlsx",
+        sha256_hash="xlsx-hash",
+        created_at=datetime(2024, 1, 1),
+        status=DocumentStatus.APPROVED,
+        field_values={
+            "invoice_number": "INV-AXIS-0301",
+            "invoice_date": date(2024, 1, 15),
+            "total": Decimal("1250.00"),
+            "currency": "NGN",
+            "vendor_name": "Axis Haulage Limited",
+        },
+    )
+    later_pdf_row = _build_document_with_extraction(
+        close_run_id=close_run_id,
+        document_id=uuid4(),
+        document_type=DocumentType.INVOICE,
+        original_filename="invoice-axis-haulage-2026-03.pdf",
+        sha256_hash="pdf-hash",
+        created_at=datetime(2024, 1, 2),
+        status=DocumentStatus.NEEDS_REVIEW,
+        field_values={
+            "invoice_number": "INV-AXIS-0301",
+            "invoice_date": date(2024, 1, 15),
+            "total": Decimal("1250.00"),
+            "currency": "NGN",
+            "vendor_name": "Axis Haulage Ltd",
+        },
+    )
+    doc_repo = MockDocumentRepository()
+    doc_repo.documents_with_extractions = (canonical_row, later_pdf_row)
+    service = DuplicateDetectionService(
+        document_repo=doc_repo,
+        storage_repo=MockStorageRepository(),
+    )
+
+    results = service.refresh_close_run_duplicates(close_run_id=str(close_run_id))
+
+    assert results[canonical_row.document.id].is_duplicate is False
+    assert results[later_pdf_row.document.id].is_duplicate is True
+    assert results[later_pdf_row.document.id].existing_document_id == str(canonical_row.document.id)
+    assert results[later_pdf_row.document.id].detection_method == "semantic_invoice_reference"
+
+
 def test_duplicate_detection_service_requires_strong_semantic_evidence() -> None:
     """Documents should not be flagged as duplicates when only weak overlapping facts exist."""
 

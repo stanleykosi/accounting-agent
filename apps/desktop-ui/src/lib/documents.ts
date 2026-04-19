@@ -149,7 +149,6 @@ export type DocumentReviewWorkspaceData = {
 export type DocumentReviewApiErrorCode =
   | "close_run_not_found"
   | "document_not_found"
-  | "duplicate_upload"
   | "empty_batch"
   | "entity_archived"
   | "extraction_not_found"
@@ -159,6 +158,7 @@ export type DocumentReviewApiErrorCode =
   | "integrity_conflict"
   | "invalid_action"
   | "invalid_filename"
+  | "no_uploaded_documents"
   | "processing_in_progress"
   | "session_expired"
   | "session_required"
@@ -193,6 +193,10 @@ const ENTITIES_PROXY_BASE_PATH = "/api/entities";
 
 export type UploadedDocumentBatchResult = {
   uploadedCount: number;
+};
+
+export type DocumentParseBatchResult = {
+  queuedCount: number;
 };
 
 export type DocumentReviewActionResult = {
@@ -277,7 +281,7 @@ export async function readDocumentReviewWorkspace(
 /**
  * Purpose: Upload source documents through the same-origin API proxy.
  * Inputs: Entity/close-run identifiers plus browser-selected files.
- * Outputs: The number of files accepted and queued successfully.
+ * Outputs: The number of files accepted and staged successfully.
  * Behavior: Sends one multipart batch to the backend so hosted browser and desktop shells share the same canonical upload path.
  */
 export async function uploadSourceDocuments(
@@ -300,6 +304,26 @@ export async function uploadSourceDocuments(
 
   const uploadedCount = parseUploadedDocumentCount(uploadResponse);
   return { uploadedCount };
+}
+
+/**
+ * Purpose: Queue all staged uploaded documents for parsing through the same-origin API proxy.
+ * Inputs: Entity and close-run identifiers for the active collection workspace.
+ * Outputs: The number of documents moved from uploaded to processing.
+ * Behavior: Uses one explicit parse action so operators can review the upload queue before parsing starts.
+ */
+export async function queueUploadedDocumentsForParsing(
+  entityId: string,
+  closeRunId: string,
+): Promise<DocumentParseBatchResult> {
+  const payload = await documentReviewRequest<unknown>(
+    buildEntityProxyPath(entityId, ["close-runs", closeRunId, "documents", "parse"]),
+    {
+      method: "POST",
+    },
+  );
+
+  return { queuedCount: parseQueuedDocumentCount(payload) };
 }
 
 export async function persistDocumentReviewDecision(
@@ -484,6 +508,14 @@ function parseUploadedDocumentCount(payload: unknown): number {
   return payload.uploaded_documents.length;
 }
 
+function parseQueuedDocumentCount(payload: unknown): number {
+  if (!isRecord(payload) || !Array.isArray(payload.queued_documents)) {
+    throw new Error("Document parse queue must return a queued_documents array.");
+  }
+
+  return payload.queued_documents.length;
+}
+
 function buildDocumentReviewApiError(
   statusCode: number,
   payload: unknown,
@@ -522,7 +554,6 @@ function asDocumentReviewApiErrorCode(value: unknown): DocumentReviewApiErrorCod
   switch (value) {
     case "close_run_not_found":
     case "document_not_found":
-    case "duplicate_upload":
     case "empty_batch":
     case "entity_archived":
     case "extraction_not_found":
@@ -532,6 +563,7 @@ function asDocumentReviewApiErrorCode(value: unknown): DocumentReviewApiErrorCod
     case "integrity_conflict":
     case "invalid_action":
     case "invalid_filename":
+    case "no_uploaded_documents":
     case "processing_in_progress":
     case "session_expired":
     case "session_required":

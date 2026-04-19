@@ -95,48 +95,41 @@ def run_document_quality_checks(
 
     # 1. Duplicate Detection Check
     try:
-        duplicate_result = duplicate_service.check_duplicate(
-            document_hash=document_hash,
+        duplicate_results = duplicate_service.refresh_close_run_duplicates(
             close_run_id=str(close_run_id),
-            entity_id=str(entity_id),
-            current_document_id=str(document_id),
         )
+        duplicate_result = duplicate_results.get(document_id)
+        if duplicate_result is None:
+            duplicate_result = duplicate_service.check_duplicate(
+                document_hash=document_hash,
+                close_run_id=str(close_run_id),
+                entity_id=str(entity_id),
+                current_document_id=str(document_id),
+            )
         results["checks_performed"].append(
             {
                 "check": "duplicate_detection",
-                "result": duplicate_result.__dict__,
+                "result": _duplicate_result_payload(duplicate_result),
             }
         )
-
-        if duplicate_result.is_duplicate:
-            # Create duplicate issue
-            issue = issue_service.create_issue(
-                document_id=document_id,
-                issue_type="duplicate_document",
-                severity=DocumentIssueSeverity.BLOCKING,
-                details={
-                    "existing_document_id": duplicate_result.existing_document_id,
-                    "existing_document_filename": getattr(
-                        duplicate_result,
-                        "existing_document_filename",
-                        None,
-                    ),
-                    "similarity_score": duplicate_result.similarity_score,
-                    "detection_method": duplicate_result.detection_method,
-                    "matched_fields": list(getattr(duplicate_result, "matched_fields", ())),
-                    "document_hash": document_hash,
-                },
+        for duplicate_document_id, refreshed_result in duplicate_results.items():
+            issue = _synchronize_duplicate_document_issue(
+                issue_service=issue_service,
+                document_id=duplicate_document_id,
                 actor_user_id=actor_user_id,
-                source_surface=AuditSourceSurface.WORKER,
+                duplicate_result=refreshed_result,
             )
-            results["issues_created"].append(
-                {
-                    "issue_id": str(issue.id),
-                    "issue_type": "duplicate_document",
-                    "severity": issue.severity.value,
-                }
-            )
-            results["passed_all_checks"] = False
+            if issue is None:
+                continue
+            if duplicate_document_id == document_id:
+                results["issues_created"].append(
+                    {
+                        "issue_id": str(issue.id),
+                        "issue_type": "duplicate_document",
+                        "severity": issue.severity.value,
+                    }
+                )
+                results["passed_all_checks"] = False
 
     except Exception as e:
         logger.error(f"Error running duplicate detection: {e}")
@@ -342,6 +335,88 @@ def _resolve_transaction_mismatch_issues(
             actor_user_id=actor_user_id,
             source_surface=AuditSourceSurface.WORKER,
         )
+
+
+def _duplicate_result_payload(duplicate_result) -> dict[str, object]:
+    """Serialize one duplicate-detection result without depending on a mutable __dict__."""
+
+    return {
+        "is_duplicate": bool(getattr(duplicate_result, "is_duplicate", False)),
+        "existing_document_id": getattr(duplicate_result, "existing_document_id", None),
+        "existing_document_filename": getattr(duplicate_result, "existing_document_filename", None),
+        "similarity_score": float(getattr(duplicate_result, "similarity_score", 0.0)),
+        "detection_method": str(getattr(duplicate_result, "detection_method", "unknown")),
+        "matched_fields": list(getattr(duplicate_result, "matched_fields", ())),
+    }
+
+
+def _synchronize_duplicate_document_issue(
+    *,
+    issue_service: DocumentIssueService,
+    document_id: UUID,
+    actor_user_id: UUID,
+    duplicate_result,
+):
+    """Create, keep, or resolve duplicate-document issues for canonical batch state."""
+
+    open_duplicate_issues = [
+        issue
+        for issue in issue_service.get_document_issues(document_id=document_id)
+        if issue.status.value == "open" and issue.issue_type == "duplicate_document"
+    ]
+
+    if not duplicate_result.is_duplicate:
+        for existing_issue in open_duplicate_issues:
+            issue_service.resolve_issue(
+                issue_id=existing_issue.id,
+                resolution_details={
+                    "resolution_reason": "Duplicate evidence no longer applies after refresh.",
+                },
+                actor_user_id=actor_user_id,
+                source_surface=AuditSourceSurface.WORKER,
+            )
+        return None
+
+    desired_existing_document_id = getattr(duplicate_result, "existing_document_id", None)
+    desired_detection_method = getattr(duplicate_result, "detection_method", None)
+    for existing_issue in open_duplicate_issues:
+        if (
+            existing_issue.details.get("existing_document_id") == desired_existing_document_id
+            and existing_issue.details.get("detection_method") == desired_detection_method
+        ):
+            return None
+        issue_service.resolve_issue(
+            issue_id=existing_issue.id,
+            resolution_details={
+                "resolution_reason": "Duplicate evidence was refreshed to a newer canonical match.",
+            },
+            actor_user_id=actor_user_id,
+            source_surface=AuditSourceSurface.WORKER,
+        )
+
+    existing_filename = getattr(duplicate_result, "existing_document_filename", None)
+    matched_fields = list(getattr(duplicate_result, "matched_fields", ()))
+    reason = (
+        f"This document duplicates {existing_filename} based on "
+        f"{', '.join(matched_fields) if matched_fields else desired_detection_method}."
+        if existing_filename
+        else "This document duplicates an earlier source already attached to the close run."
+    )
+    return issue_service.create_issue(
+        document_id=document_id,
+        issue_type="duplicate_document",
+        severity=DocumentIssueSeverity.BLOCKING,
+        details={
+            "existing_document_id": desired_existing_document_id,
+            "existing_document_filename": existing_filename,
+            "similarity_score": getattr(duplicate_result, "similarity_score", 0.0),
+            "detection_method": desired_detection_method,
+            "matched_fields": matched_fields,
+            "reason": reason,
+        },
+        actor_user_id=actor_user_id,
+        source_surface=AuditSourceSurface.WORKER,
+    )
 
 
 __all__ = ["run_document_quality_checks"]

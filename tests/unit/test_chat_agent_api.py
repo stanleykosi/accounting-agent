@@ -717,7 +717,7 @@ def test_chat_action_attachment_route_ingests_source_documents(monkeypatch) -> N
     )
     attachments = executor.sent_action_message["message_grounding_payload"]["attachments"]
     assert attachments[0]["filename"] == "invoice.pdf"
-    assert "queued for parsing" in executor.sent_action_message["content"]
+    assert "staged for parsing" in executor.sent_action_message["content"]
 
 
 def test_chat_action_route_uses_shared_agent_lane_for_plain_conversation(monkeypatch) -> None:

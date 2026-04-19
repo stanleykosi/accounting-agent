@@ -134,8 +134,8 @@ export function AgentReadinessPanel({
       }
       setDocumentSuccess(
         result.uploadedCount === 1
-          ? "1 source document uploaded and queued for parsing."
-          : `${result.uploadedCount} source documents uploaded and queued for parsing.`,
+          ? "1 source document uploaded and staged. Open the document queue to start parsing."
+          : `${result.uploadedCount} source documents uploaded and staged. Open the document queue to start parsing.`,
       );
       await onRefresh();
     } catch (error: unknown) {
@@ -298,9 +298,8 @@ export function AgentReadinessPanel({
             </Link>
           </div>
           <p style={helperTextStyle}>
-            Files uploaded here go through the hosted document pipeline immediately. Parsing begins
-            automatically, and the agent can then move into review, recommendation, and close
-            actions from chat.
+            Files uploaded here land in the document queue first. Start parsing explicitly from the
+            document workspace once the upload set looks right.
           </p>
           <label style={inputShellStyle}>
             <span style={inputLabelStyle}>Select files</span>

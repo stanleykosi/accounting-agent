@@ -21,6 +21,7 @@ from services.common.logging import get_logger
 from services.common.types import JsonObject
 from services.contracts.document_models import (
     AutoTransactionMatchSummary,
+    BatchQueueDocumentsForParseResponse,
     BatchUploadDocumentsResponse,
     DocumentDeleteResponse,
     DocumentExtractionSummary,
@@ -30,6 +31,7 @@ from services.contracts.document_models import (
     DocumentReparseResponse,
     DocumentSummary,
     ExtractedFieldSummary,
+    QueuedDocumentParseResult,
     UploadedDocumentResult,
 )
 from services.contracts.storage_models import CloseRunStorageScope
@@ -84,12 +86,12 @@ class DocumentUploadServiceErrorCode(StrEnum):
 
     CLOSE_RUN_NOT_FOUND = "close_run_not_found"
     DOCUMENT_NOT_FOUND = "document_not_found"
-    DUPLICATE_UPLOAD = "duplicate_upload"
     ENTITY_ARCHIVED = "entity_archived"
     EMPTY_BATCH = "empty_batch"
     FILE_TOO_LARGE = "file_too_large"
     INTEGRITY_CONFLICT = "integrity_conflict"
     INVALID_FILENAME = "invalid_filename"
+    NO_UPLOADED_DOCUMENTS = "no_uploaded_documents"
     PROCESSING_IN_PROGRESS = "processing_in_progress"
     UNSUPPORTED_CONTENT = "unsupported_content"
 
@@ -161,6 +163,15 @@ class DocumentRepositoryProtocol(Protocol):
         trace_id: str | None,
     ) -> None:
         """Persist one activity event."""
+
+    def update_document_status(
+        self,
+        *,
+        document_id: UUID,
+        status: DocumentStatus,
+        ocr_required: bool | None = None,
+    ) -> DocumentRecord:
+        """Update one document status and return the refreshed row."""
 
     def get_document_deletion_plan_for_user(
         self,
@@ -374,7 +385,7 @@ class DocumentUploadService:
         source_surface: AuditSourceSurface,
         trace_id: str | None,
     ) -> BatchUploadDocumentsResponse:
-        """Validate, store, persist, and dispatch parsing for one uploaded document batch."""
+        """Validate, store, and persist one uploaded document batch."""
 
         if not files:
             raise DocumentUploadServiceError(
@@ -419,6 +430,92 @@ class DocumentUploadService:
             raise
 
         return BatchUploadDocumentsResponse(uploaded_documents=tuple(uploaded_documents))
+
+    def queue_uploaded_documents_for_parse(
+        self,
+        *,
+        actor_user: EntityUserRecord,
+        entity_id: UUID,
+        close_run_id: UUID,
+        source_surface: AuditSourceSurface,
+        trace_id: str | None,
+    ) -> BatchQueueDocumentsForParseResponse:
+        """Queue every staged uploaded document in one close run for parsing."""
+
+        access_record = self._require_close_run_access(
+            actor_user=actor_user,
+            entity_id=entity_id,
+            close_run_id=close_run_id,
+        )
+        uploaded_documents = tuple(
+            document
+            for document in self._repository.list_documents_for_close_run(
+                close_run_id=access_record.close_run.id
+            )
+            if document.status is DocumentStatus.UPLOADED
+        )
+        if not uploaded_documents:
+            raise DocumentUploadServiceError(
+                status_code=409,
+                code=DocumentUploadServiceErrorCode.NO_UPLOADED_DOCUMENTS,
+                message="No newly uploaded source documents are waiting to be parsed.",
+            )
+
+        queued_documents: list[QueuedDocumentParseResult] = []
+        try:
+            for document in uploaded_documents:
+                updated_document = self._repository.update_document_status(
+                    document_id=document.id,
+                    status=DocumentStatus.PROCESSING,
+                )
+                dispatch = self._dispatch_parse_task(
+                    document=updated_document,
+                    entity_id=access_record.close_run.entity_id,
+                    close_run_id=access_record.close_run.id,
+                    actor_user_id=actor_user.id,
+                    trace_id=trace_id,
+                )
+                self._repository.create_activity_event(
+                    entity_id=access_record.close_run.entity_id,
+                    close_run_id=access_record.close_run.id,
+                    actor_user_id=actor_user.id,
+                    event_type="document.parse_requested",
+                    source_surface=source_surface,
+                    payload={
+                        "summary": (
+                            f"{actor_user.full_name} queued "
+                            f"{updated_document.original_filename} for parsing."
+                        ),
+                        "document_id": serialize_uuid(updated_document.id),
+                        "original_filename": updated_document.original_filename,
+                        "parse_task_id": dispatch.task_id,
+                    },
+                    trace_id=trace_id,
+                )
+                queued_documents.append(
+                    QueuedDocumentParseResult(
+                        document=_build_document_summary(updated_document, None, ()),
+                        dispatch=DocumentProcessingDispatch(
+                            task_id=dispatch.task_id,
+                            task_name=dispatch.task_name,
+                            queue_name=dispatch.queue_name,
+                            routing_key=dispatch.routing_key,
+                            trace_id=dispatch.trace_id,
+                        ),
+                    )
+                )
+            self._repository.commit()
+        except Exception as error:
+            self._repository.rollback()
+            if self._repository.is_integrity_error(error):
+                raise DocumentUploadServiceError(
+                    status_code=409,
+                    code=DocumentUploadServiceErrorCode.INTEGRITY_CONFLICT,
+                    message="The parse queue request conflicts with existing document state.",
+                ) from error
+            raise
+
+        return BatchQueueDocumentsForParseResponse(queued_documents=tuple(queued_documents))
 
     def delete_document(
         self,
@@ -642,7 +739,7 @@ class DocumentUploadService:
         source_surface: AuditSourceSurface,
         trace_id: str | None,
     ) -> UploadedDocumentResult:
-        """Process one file in a batch upload and return its document plus task receipt."""
+        """Process one file in a batch upload and return its staged document row."""
 
         filename = _normalize_filename_for_display(file_payload.filename)
         if len(file_payload.payload) > self.max_file_size_bytes:
@@ -663,19 +760,6 @@ class DocumentUploadService:
 
         document_id = uuid4()
         sha256_hash = compute_sha256_bytes(file_payload.payload)
-        existing_duplicate = self._find_existing_exact_duplicate(
-            close_run_id=access_record.close_run.id,
-            sha256_hash=sha256_hash,
-        )
-        if existing_duplicate is not None:
-            raise DocumentUploadServiceError(
-                status_code=409,
-                code=DocumentUploadServiceErrorCode.DUPLICATE_UPLOAD,
-                message=_build_duplicate_upload_message(
-                    filename=filename,
-                    existing_document=existing_duplicate,
-                ),
-            )
         storage_metadata = self._storage_repository.store_source_document(
             scope=CloseRunStorageScope(
                 entity_id=access_record.close_run.entity_id,
@@ -702,13 +786,6 @@ class DocumentUploadService:
             ocr_required=sniffed.ocr_required,
             actor_user_id=actor_user.id,
         )
-        dispatch = self._dispatch_parse_task(
-            document=document,
-            entity_id=access_record.close_run.entity_id,
-            close_run_id=access_record.close_run.id,
-            actor_user_id=actor_user.id,
-            trace_id=trace_id,
-        )
         self._repository.create_activity_event(
             entity_id=access_record.close_run.entity_id,
             close_run_id=access_record.close_run.id,
@@ -723,21 +800,11 @@ class DocumentUploadService:
                 "declared_content_type": file_payload.declared_content_type,
                 "file_size_bytes": len(file_payload.payload),
                 "sha256_hash": sha256_hash,
-                "parse_task_id": dispatch.task_id,
             },
             trace_id=trace_id,
         )
 
-        return UploadedDocumentResult(
-            document=_build_document_summary(document, None, ()),
-            dispatch=DocumentProcessingDispatch(
-                task_id=dispatch.task_id,
-                task_name=dispatch.task_name,
-                queue_name=dispatch.queue_name,
-                routing_key=dispatch.routing_key,
-                trace_id=dispatch.trace_id,
-            ),
-        )
+        return UploadedDocumentResult(document=_build_document_summary(document, None, ()))
 
     def _dispatch_parse_task(
         self,
@@ -795,22 +862,6 @@ class DocumentUploadService:
             )
 
         return access_record
-
-    def _find_existing_exact_duplicate(
-        self,
-        *,
-        close_run_id: UUID,
-        sha256_hash: str,
-    ) -> DocumentRecord | None:
-        """Return an existing exact-match document when the close run already contains the file."""
-
-        for document in self._repository.list_documents_for_close_run(close_run_id=close_run_id):
-            if document.sha256_hash != sha256_hash:
-                continue
-            if document.status in {DocumentStatus.REJECTED, DocumentStatus.FAILED}:
-                continue
-            return document
-        return None
 
     def _cancel_document_jobs(
         self,
@@ -978,22 +1029,6 @@ def _build_document_summary(
         created_at=document.created_at,
         updated_at=document.updated_at,
     )
-
-
-def _build_duplicate_upload_message(
-    *,
-    filename: str,
-    existing_document: DocumentRecord,
-) -> str:
-    """Render an operator-facing error when the same file is uploaded twice."""
-
-    return (
-        f"{filename} matches a source document that is already attached to this close run "
-        f"(status: {existing_document.status.label}). Use the existing document, or ask the "
-        "agent to ignore the earlier upload first if it was a mistake."
-    )
-
-
 def _build_extraction_summary(
     extraction: DocumentExtractionRecord | None,
 ) -> DocumentExtractionSummary | None:

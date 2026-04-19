@@ -193,9 +193,15 @@ class DocumentSummary(ContractModel):
 
 
 class UploadedDocumentResult(ContractModel):
-    """Return one successfully uploaded document with its parse-dispatch receipt."""
+    """Return one successfully uploaded document staged for later parsing."""
 
     document: DocumentSummary = Field(description="Persisted document metadata.")
+
+
+class QueuedDocumentParseResult(ContractModel):
+    """Return one document that was queued explicitly for parsing."""
+
+    document: DocumentSummary = Field(description="Document metadata after parse queueing.")
     dispatch: DocumentProcessingDispatch = Field(
         description="Background parse task receipt for this document.",
     )
@@ -207,6 +213,15 @@ class BatchUploadDocumentsResponse(ContractModel):
     uploaded_documents: tuple[UploadedDocumentResult, ...] = Field(
         default=(),
         description="Uploaded documents in the same order as the submitted files.",
+    )
+
+
+class BatchQueueDocumentsForParseResponse(ContractModel):
+    """Return all uploaded documents that were queued for parsing."""
+
+    queued_documents: tuple[QueuedDocumentParseResult, ...] = Field(
+        default=(),
+        description="Documents queued for parsing in deterministic upload order.",
     )
 
 

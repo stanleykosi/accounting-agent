@@ -22,6 +22,18 @@ from services.extraction.schemas import (
 
 type FieldType = Literal["string", "integer", "decimal", "date", "boolean"]
 
+_NON_BLOCKING_MISSING_FIELDS = {
+    "customer_name",
+    "customer_tax_id",
+    "discount_amount",
+    "due_date",
+    "notes",
+    "payment_terms",
+    "tax_rate",
+    "vendor_address",
+    "vendor_tax_id",
+}
+
 
 def parse_field_value(
     raw_value: Any,
@@ -100,7 +112,7 @@ def estimate_field_confidence(
     base_confidence = parser_confidence if parser_confidence is not None else 0.8
 
     if raw_value is None or raw_value == "":
-        return 0.0
+        return 1.0 if field_name in _NON_BLOCKING_MISSING_FIELDS else 0.0
 
     if is_ocr:
         base_confidence *= 0.85

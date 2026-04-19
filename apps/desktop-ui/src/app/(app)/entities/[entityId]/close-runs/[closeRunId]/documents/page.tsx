@@ -122,6 +122,11 @@ export default function CloseRunDocumentsPage({
     return workspaceData.items.find((item) => item.id === selectedDocumentId) ?? null;
   }, [selectedDocumentId, workspaceData]);
 
+  const pendingParseCount = useMemo(
+    () => workspaceData?.items.filter((item) => item.status === "uploaded").length ?? 0,
+    [workspaceData],
+  );
+
   const selectedChecklist = useMemo(() => {
     if (selectedDocument === null) {
       return null;
@@ -417,6 +422,7 @@ export default function CloseRunDocumentsPage({
           </dl>
 
           <div className="document-metric-row">
+            <MetricChip label="Waiting to parse" value={pendingParseCount} />
             <MetricChip label="Low confidence" value={workspaceData.queueCounts.low_confidence} />
             <MetricChip label="Blocked" value={workspaceData.queueCounts.blocked} />
             <MetricChip label="Duplicate" value={workspaceData.queueCounts.duplicate} />
@@ -444,6 +450,7 @@ export default function CloseRunDocumentsPage({
           onUploadComplete={async () => {
             await refreshWorkspace();
           }}
+          pendingParseCount={pendingParseCount}
         />
       </SurfaceCard>
 

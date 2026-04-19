@@ -399,6 +399,38 @@ def test_ocr_bank_statement_structural_fields_do_not_fall_below_review_threshold
     assert confidence_summary.overall_confidence >= 0.75
 
 
+def test_missing_optional_invoice_fields_do_not_force_low_confidence_review() -> None:
+    """Optional invoice extras should not count as low-confidence misses."""
+
+    parser_output = _build_extraction_parser_output(
+        raw_parse_payload={
+            "text": (
+                "Tax Invoice\n"
+                "Document Type: Invoice\n"
+                "Vendor: Axis Haulage Limited\n"
+                "Invoice Number: INV-AXIS-0301\n"
+                "Invoice Date: 2026-03-08\n"
+                "Currency: NGN\n"
+                "Subtotal: 2250.00\n"
+                "Tax Amount: 168.75\n"
+                "Total: 2418.75\n"
+            )
+        },
+        document_type=DocumentType.INVOICE,
+    )
+    fields = extract_fields_by_document_type(DocumentType.INVOICE, parser_output)
+    confidence_summary = compute_confidence_summary(fields)
+    fields_by_name = {field.field_name: field for field in fields}
+
+    assert fields_by_name["tax_rate"].field_value is None
+    assert fields_by_name["payment_terms"].field_value is None
+    assert fields_by_name["notes"].field_value is None
+    assert fields_by_name["tax_rate"].confidence == 1.0
+    assert fields_by_name["payment_terms"].confidence == 1.0
+    assert fields_by_name["notes"].confidence == 1.0
+    assert confidence_summary.low_confidence_fields == 0
+
+
 def test_invoice_pdf_like_text_extracts_labeled_amounts_without_invoice_number_leakage() -> None:
     """Labeled PDF text should populate scalar invoice fields without using the invoice number."""
 
