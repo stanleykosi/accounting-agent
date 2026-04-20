@@ -25,6 +25,12 @@ from services.db.models.reporting import (
     ReportTemplateSection,
     ReportTemplateSource,
 )
+from services.reporting.default_template import (
+    DEFAULT_GLOBAL_REPORT_TEMPLATE_DESCRIPTION,
+    DEFAULT_GLOBAL_REPORT_TEMPLATE_NAME,
+    build_default_global_guardrail_config,
+    build_default_global_template_sections,
+)
 from sqlalchemy import desc, func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -206,6 +212,35 @@ class ReportRepository:
         )
         template = self._db_session.execute(statement).scalar_one_or_none()
         return _map_template(template) if template is not None else None
+
+    def ensure_active_global_template(self) -> ReportTemplateRecord:
+        """Return the canonical active global template, creating it when absent."""
+
+        active_template = self.get_active_global_template()
+        if active_template is not None:
+            return active_template
+
+        version_no = int(
+            self._db_session.execute(
+                select(func.coalesce(func.max(ReportTemplate.version_no), 0)).where(
+                    ReportTemplate.entity_id.is_(None)
+                )
+            ).scalar_one()
+        ) + 1
+        sections = build_default_global_template_sections()
+        template = self.create_template(
+            entity_id=None,
+            source=ReportTemplateSource.GLOBAL_DEFAULT,
+            version_no=version_no,
+            name=DEFAULT_GLOBAL_REPORT_TEMPLATE_NAME,
+            description=DEFAULT_GLOBAL_REPORT_TEMPLATE_DESCRIPTION,
+            is_active=True,
+            sections=[dict(section) for section in sections],
+            guardrail_config=build_default_global_guardrail_config(),
+            created_by_user_id=None,
+        )
+        self.create_template_sections(template_id=template.id, sections=sections)
+        return self.get_template_by_id(template_id=template.id) or template
 
     def get_template_by_id(
         self,

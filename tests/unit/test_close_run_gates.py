@@ -235,6 +235,32 @@ def test_signoff_readiness_requires_prior_phases_and_blocks_open_review_items() 
     assert ready.status is CloseRunPhaseStatus.READY
 
 
+def test_reporting_gate_gives_actionable_generation_message() -> None:
+    """Reporting blockers should tell operators to generate the pack, not imply a dead end."""
+
+    reporting_active = _existing_states(
+        completed=(
+            WorkflowPhase.COLLECTION,
+            WorkflowPhase.PROCESSING,
+            WorkflowPhase.RECONCILIATION,
+        ),
+        active=WorkflowPhase.REPORTING,
+    )
+
+    blocked = evaluate_phase_gates(
+        phase_states=reporting_active,
+        signals=PhaseGateSignals(
+            missing_required_reports=("report_excel", "report_pdf", "approved_commentary"),
+        ),
+    )
+
+    reporting = blocked[3]
+
+    assert reporting.status is CloseRunPhaseStatus.BLOCKED
+    assert reporting.blocking_reason is not None
+    assert "Generate the report pack" in reporting.blocking_reason
+
+
 def test_reopened_phase_states_preserve_work_and_reopen_signoff() -> None:
     """Ensure reopening creates a working sign-off gate without resetting upstream phases."""
 

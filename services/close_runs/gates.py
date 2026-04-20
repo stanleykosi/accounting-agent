@@ -413,7 +413,11 @@ def _build_blocking_reason(*, phase: WorkflowPhase, signals: PhaseGateSignals) -
 
     if phase is WorkflowPhase.REPORTING and signals.missing_required_reports:
         missing_reports = ", ".join(signals.missing_required_reports)
-        return f"Reporting is blocked until required report artifacts exist: {missing_reports}."
+        return (
+            "Reporting is waiting on generated report outputs: "
+            f"{missing_reports}. Generate the report pack and approve commentary to complete "
+            "this phase."
+        )
 
     if (
         phase is WorkflowPhase.REVIEW_SIGNOFF

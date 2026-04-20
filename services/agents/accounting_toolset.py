@@ -8,8 +8,8 @@ Dependencies: Accounting workflow services, repositories, and durable job dispat
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import json
+from dataclasses import dataclass
 from typing import Any, cast
 from uuid import UUID
 
@@ -20,8 +20,8 @@ from services.close_runs.service import CloseRunService
 from services.close_runs.workflow_guards import require_active_phase
 from services.common.enums import (
     CANONICAL_WORKFLOW_PHASES,
-    CloseRunStatus,
     DEFAULT_RECONCILIATION_EXECUTION_TYPES,
+    CloseRunStatus,
     ReconciliationType,
     ReviewStatus,
     SupportingScheduleStatus,
@@ -45,11 +45,11 @@ from services.db.repositories.entity_repo import EntityUserRecord
 from services.db.repositories.recommendation_journal_repo import RecommendationJournalRepository
 from services.db.repositories.reconciliation_repo import ReconciliationRepository
 from services.db.repositories.report_repo import ReportRepository
-from services.documents.recommendation_eligibility import (
-    GL_CODING_RECOMMENDATION_ELIGIBLE_TYPE_VALUES,
-)
 from services.documents.imported_ledger_representation import (
     evaluate_documents_imported_gl_representation,
+)
+from services.documents.recommendation_eligibility import (
+    GL_CODING_RECOMMENDATION_ELIGIBLE_TYPE_VALUES,
 )
 from services.documents.review_service import DocumentReviewService
 from services.exports.service import ExportService
@@ -150,7 +150,11 @@ class AccountingToolset:
         self._register(
             registry=registry,
             name="review_document",
-            prompt_signature="review_document(document_id, decision: approved|rejected|needs_info, reason?)",
+            prompt_signature=(
+                "review_document("
+                "document_id, decision: approved|rejected|needs_info, reason?"
+                ")"
+            ),
             description="Persist a document review decision and update its workflow state.",
             intent="proposed_edit",
             requires_human_approval=True,
@@ -208,8 +212,15 @@ class AccountingToolset:
         self._register(
             registry=registry,
             name="correct_extracted_field",
-            prompt_signature="correct_extracted_field(field_id, corrected_value, corrected_type, reason?)",
-            description="Correct one extracted field and return the document to review with audit history.",
+            prompt_signature=(
+                "correct_extracted_field("
+                "field_id, corrected_value, corrected_type, reason?"
+                ")"
+            ),
+            description=(
+                "Correct one extracted field and return the document to review with "
+                "audit history."
+            ),
             intent="proposed_edit",
             requires_human_approval=True,
             executor=self._correct_extracted_field,
@@ -251,7 +262,8 @@ class AccountingToolset:
                         "Optional three-letter reporting currency code."
                     ),
                     "allow_duplicate_period": _boolean_property(
-                        "Set true only when the operator explicitly wants another open run for the same period."
+                        "Set true only when the operator explicitly wants another open "
+                        "run for the same period."
                     ),
                     "duplicate_period_reason": _optional_string_property(
                         "Required rationale when allow_duplicate_period is true."
@@ -264,7 +276,10 @@ class AccountingToolset:
             registry=registry,
             name="advance_close_run",
             prompt_signature="advance_close_run(target_phase, reason?)",
-            description="Advance the close run into the next workflow phase after gate checks pass.",
+            description=(
+                "Advance the close run into the next workflow phase after gate "
+                "checks pass."
+            ),
             intent="workflow_action",
             requires_human_approval=True,
             executor=self._advance_close_run,
@@ -274,7 +289,9 @@ class AccountingToolset:
                         values=tuple(phase.value for phase in WorkflowPhase),
                         description="Workflow phase to transition the close run into.",
                     ),
-                    "reason": _optional_string_property("Optional operator reason for the transition."),
+                    "reason": _optional_string_property(
+                        "Optional operator reason for the transition."
+                    ),
                 },
                 required=("target_phase",),
             ),
@@ -325,7 +342,9 @@ class AccountingToolset:
             executor=self._archive_close_run,
             input_schema=_schema_object(
                 properties={
-                    "reason": _optional_string_property("Optional operator rationale for archiving."),
+                    "reason": _optional_string_property(
+                        "Optional operator rationale for archiving."
+                    ),
                 },
             ),
         )
@@ -358,8 +377,12 @@ class AccountingToolset:
             executor=self._generate_recommendations,
             input_schema=_schema_object(
                 properties={
-                    "force": _boolean_property("Recompute recommendations even when one already exists."),
-                    "document_ids": _uuid_array_property("Optional subset of document UUIDs to process."),
+                    "force": _boolean_property(
+                        "Recompute recommendations even when one already exists."
+                    ),
+                    "document_ids": _uuid_array_property(
+                        "Optional subset of document UUIDs to process."
+                    ),
                 },
             ),
         )
@@ -367,7 +390,10 @@ class AccountingToolset:
             registry=registry,
             name="approve_recommendation",
             prompt_signature="approve_recommendation(recommendation_id, reason?)",
-            description="Approve one accounting recommendation and optionally create its journal draft.",
+            description=(
+                "Approve one accounting recommendation and optionally create its "
+                "journal draft."
+            ),
             intent="approval_request",
             requires_human_approval=True,
             executor=self._approve_recommendation,
@@ -421,7 +447,10 @@ class AccountingToolset:
             registry=registry,
             name="apply_journal",
             prompt_signature="apply_journal(journal_id, posting_target, reason?)",
-            description="Post one approved journal draft either internally or as an external ERP package.",
+            description=(
+                "Post one approved journal draft either internally or as an "
+                "external ERP package."
+            ),
             intent="approval_request",
             requires_human_approval=True,
             executor=self._apply_journal,
@@ -472,7 +501,9 @@ class AccountingToolset:
             input_schema=_schema_object(
                 properties={
                     "reconciliation_types": _enum_array_property(
-                        values=tuple(reconciliation_type.value for reconciliation_type in ReconciliationType),
+                        values=tuple(
+                            reconciliation_type.value for reconciliation_type in ReconciliationType
+                        ),
                         description="Optional subset of reconciliation types to execute.",
                     ),
                 },
@@ -489,7 +520,9 @@ class AccountingToolset:
             input_schema=_schema_object(
                 properties={
                     "schedule_type": _enum_string_property(
-                        values=tuple(schedule_type.value for schedule_type in SupportingScheduleType),
+                        values=tuple(
+                            schedule_type.value for schedule_type in SupportingScheduleType
+                        ),
                         description="Standalone Step 6 schedule type to update.",
                     ),
                     "row_id": _uuid_or_null_property("Existing schedule row UUID for updates."),
@@ -509,7 +542,9 @@ class AccountingToolset:
             input_schema=_schema_object(
                 properties={
                     "schedule_type": _enum_string_property(
-                        values=tuple(schedule_type.value for schedule_type in SupportingScheduleType),
+                        values=tuple(
+                            schedule_type.value for schedule_type in SupportingScheduleType
+                        ),
                         description="Standalone Step 6 schedule type to update.",
                     ),
                     "row_id": _uuid_property("Supporting-schedule row UUID to delete."),
@@ -528,7 +563,9 @@ class AccountingToolset:
             input_schema=_schema_object(
                 properties={
                     "schedule_type": _enum_string_property(
-                        values=tuple(schedule_type.value for schedule_type in SupportingScheduleType),
+                        values=tuple(
+                            schedule_type.value for schedule_type in SupportingScheduleType
+                        ),
                         description="Standalone Step 6 schedule type to review.",
                     ),
                     "status": _enum_string_property(
@@ -567,32 +604,58 @@ class AccountingToolset:
         self._register(
             registry=registry,
             name="generate_reports",
-            prompt_signature="generate_reports(template_id?, generate_commentary?, use_llm_commentary?)",
-            description="Create a report run and queue report generation for the current close run.",
+            prompt_signature=(
+                "generate_reports("
+                "template_id?, generate_commentary?, use_llm_commentary?"
+                ")"
+            ),
+            description=(
+                "Create a report run and queue report generation for the current "
+                "close run."
+            ),
             intent="report_action",
             requires_human_approval=False,
             executor=self._generate_reports,
             input_schema=_schema_object(
                 properties={
-                    "template_id": _uuid_or_null_property("Optional report template UUID override."),
-                    "generate_commentary": _boolean_property("Whether to draft commentary alongside the report run."),
-                    "use_llm_commentary": _boolean_property("Whether to use the model-generated commentary path."),
+                    "template_id": _uuid_or_null_property(
+                        "Optional report template UUID override."
+                    ),
+                    "generate_commentary": _boolean_property(
+                        "Whether to draft commentary alongside the report run."
+                    ),
+                    "use_llm_commentary": _boolean_property(
+                        "Whether to use the model-generated commentary path."
+                    ),
                 },
             ),
         )
         self._register(
             registry=registry,
             name="generate_export",
-            prompt_signature="generate_export(include_evidence_pack?, include_audit_trail?, action_qualifier?)",
-            description="Generate the export manifest and released artifact bundle for the close run.",
+            prompt_signature=(
+                "generate_export("
+                "include_evidence_pack?, include_audit_trail?, action_qualifier?"
+                ")"
+            ),
+            description=(
+                "Generate the export manifest and released artifact bundle for the "
+                "close run."
+            ),
             intent="report_action",
             requires_human_approval=False,
             executor=self._generate_export,
             input_schema=_schema_object(
                 properties={
-                    "include_evidence_pack": _boolean_property("Whether to include the latest evidence pack."),
-                    "include_audit_trail": _boolean_property("Whether to include audit trail records."),
-                    "action_qualifier": _optional_string_property("Optional qualifier used for idempotent export naming."),
+                    "include_evidence_pack": _boolean_property(
+                        "Whether to include the latest evidence pack."
+                    ),
+                    "include_audit_trail": _boolean_property(
+                        "Whether to include audit trail records."
+                    ),
+                    "action_qualifier": _optional_string_property(
+                        "Optional qualifier used for idempotent export naming."
+                    ),
                 },
             ),
         )
@@ -613,7 +676,10 @@ class AccountingToolset:
                 "distribute_export(export_id, recipient_name, recipient_email, "
                 "recipient_role?, delivery_channel?, note?)"
             ),
-            description="Record distribution of a completed export package to management stakeholders.",
+            description=(
+                "Record distribution of a completed export package to management "
+                "stakeholders."
+            ),
             intent="approval_request",
             requires_human_approval=True,
             executor=self._distribute_export,
@@ -916,7 +982,9 @@ class AccountingToolset:
         context: AgentExecutionContext,
     ) -> dict[str, Any]:
         actor_user = self._require_actor(context)
-        close_run_id = self._require_close_run_id(context, "Close-run transition requires a close-run-scoped thread.")
+        close_run_id = self._require_close_run_id(
+            context, "Close-run transition requires a close-run-scoped thread."
+        )
         result = self._close_run_service.transition_close_run(
             actor_user=actor_user,
             entity_id=context.entity_id,
@@ -981,7 +1049,9 @@ class AccountingToolset:
         context: AgentExecutionContext,
     ) -> dict[str, Any]:
         actor_user = self._require_actor(context)
-        close_run_id = self._require_close_run_id(context, "Close-run approval requires a close-run-scoped thread.")
+        close_run_id = self._require_close_run_id(
+            context, "Close-run approval requires a close-run-scoped thread."
+        )
         result = self._close_run_service.approve_close_run(
             actor_user=actor_user,
             entity_id=context.entity_id,
@@ -1625,16 +1695,24 @@ class AccountingToolset:
             source_surface=cast(AuditSourceSurface, context.source_surface),
             trace_id=context.trace_id,
         )
-        latest_record = export_detail.distribution_records[0] if export_detail.distribution_records else None
+        latest_record = (
+            export_detail.distribution_records[0] if export_detail.distribution_records else None
+        )
         return self._with_scope_metadata(
             prepared=prepared,
             result={
                 "tool": "distribute_export",
                 "export_id": export_detail.id,
                 "distribution_count": export_detail.distribution_count,
-                "recipient_name": latest_record.recipient_name if latest_record is not None else None,
-                "delivery_channel": latest_record.delivery_channel if latest_record is not None else None,
-                "distributed_at": latest_record.distributed_at if latest_record is not None else None,
+                "recipient_name": latest_record.recipient_name
+                if latest_record is not None
+                else None,
+                "delivery_channel": latest_record.delivery_channel
+                if latest_record is not None
+                else None,
+                "distributed_at": latest_record.distributed_at
+                if latest_record is not None
+                else None,
             },
         )
 
@@ -1740,7 +1818,9 @@ class AccountingToolset:
         action: str,
     ) -> dict[str, Any]:
         actor_user = self._require_actor(context)
-        close_run_id = self._require_close_run_id(context, "Journal actions require a close-run-scoped thread.")
+        close_run_id = self._require_close_run_id(
+            context, "Journal actions require a close-run-scoped thread."
+        )
         source_close_run_id = self._source_close_run_id(
             context=context,
             current_close_run_id=close_run_id,
@@ -1866,7 +1946,10 @@ class AccountingToolset:
             if not force and document.id in existing_recommendations:
                 continue
             representation_result = imported_gl_representation.get(document.id)
-            if representation_result is not None and representation_result.represented_in_imported_gl:
+            if (
+                representation_result is not None
+                and representation_result.represented_in_imported_gl
+            ):
                 continue
 
             job = self._job_service.dispatch_job(
@@ -1913,10 +1996,8 @@ class AccountingToolset:
         else:
             resolved_template = (
                 self._report_repo.get_active_template_for_entity(entity_id=entity_id)
-                or self._report_repo.get_active_global_template()
+                or self._report_repo.ensure_active_global_template()
             )
-            if resolved_template is None:
-                raise ValueError("No active report template is available for this entity.")
             resolved_template_id = resolved_template.id
         version_no = self._report_repo.next_version_no_for_close_run(close_run_id=close_run_id)
         run_record = self._report_repo.create_report_run(
@@ -2125,7 +2206,8 @@ class AccountingToolset:
             return target_candidates[source_index].id
         if not target_candidates:
             raise ValueError(
-                "The reopened working version does not contain a carried-forward copy of that document."
+                "The reopened working version does not contain a carried-forward "
+                "copy of that document."
             )
         raise ValueError(
             "The reopened working version does not contain a usable copy of that document."
@@ -2147,7 +2229,9 @@ class AccountingToolset:
 
         source_row = (
             self._db_session.query(ExtractedField, DocumentExtraction, Document)
-            .join(DocumentExtraction, DocumentExtraction.id == ExtractedField.document_extraction_id)
+            .join(
+                DocumentExtraction, DocumentExtraction.id == ExtractedField.document_extraction_id
+            )
             .join(Document, Document.id == DocumentExtraction.document_id)
             .filter(
                 ExtractedField.id == field_id,
@@ -2168,7 +2252,9 @@ class AccountingToolset:
         )
         candidate_rows = (
             self._db_session.query(ExtractedField)
-            .join(DocumentExtraction, DocumentExtraction.id == ExtractedField.document_extraction_id)
+            .join(
+                DocumentExtraction, DocumentExtraction.id == ExtractedField.document_extraction_id
+            )
             .filter(
                 DocumentExtraction.document_id == target_document_id,
                 DocumentExtraction.version_no == source_extraction.version_no,
@@ -2188,7 +2274,8 @@ class AccountingToolset:
             return candidate_rows[0].id
         if not candidate_rows:
             raise ValueError(
-                "The reopened working version does not contain a carried-forward copy of that extracted field."
+                "The reopened working version does not contain a carried-forward "
+                "copy of that extracted field."
             )
         raise ValueError(
             "The reopened working version contains more than one matching extracted field. "
@@ -2279,7 +2366,8 @@ class AccountingToolset:
             return target_candidates[source_index].id
         if not target_candidates:
             raise ValueError(
-                "The reopened working version does not contain a carried-forward copy of that recommendation."
+                "The reopened working version does not contain a carried-forward "
+                "copy of that recommendation."
             )
         raise ValueError(
             "The reopened working version does not contain a usable copy of that recommendation. "
@@ -2349,7 +2437,8 @@ class AccountingToolset:
             return target_candidates[source_index].entry.id
         if not target_candidates:
             raise ValueError(
-                "The reopened working version does not contain a carried-forward copy of that journal."
+                "The reopened working version does not contain a carried-forward "
+                "copy of that journal."
             )
         raise ValueError(
             "The reopened working version does not contain a usable copy of that journal. "
@@ -2401,7 +2490,8 @@ class AccountingToolset:
             return target_candidates[source_index].id
         if not target_candidates:
             raise ValueError(
-                "The reopened working version does not contain a carried-forward copy of that reconciliation."
+                "The reopened working version does not contain a carried-forward "
+                "copy of that reconciliation."
             )
         raise ValueError(
             "The reopened working version does not contain a usable copy of that reconciliation."
@@ -2437,7 +2527,8 @@ class AccountingToolset:
             return target_candidates[0].id
         if not target_candidates:
             raise ValueError(
-                "The reopened working version does not contain a carried-forward copy of that report run."
+                "The reopened working version does not contain a carried-forward "
+                "copy of that report run."
             )
         raise ValueError(
             "The reopened working version contains more than one matching report run. "
@@ -2472,7 +2563,9 @@ class AccountingToolset:
             raise ValueError("That supporting schedule does not exist in the current close run.")
         source_row = next((row for row in source_schedule.rows if row.id == row_id), None)
         if source_row is None:
-            raise ValueError("That supporting-schedule row does not exist in the current close run.")
+            raise ValueError(
+                "That supporting-schedule row does not exist in the current close run."
+            )
 
         target_workspace = self._supporting_schedule_service.list_workspace(
             close_run_id=target_close_run_id
@@ -2487,7 +2580,8 @@ class AccountingToolset:
         )
         if target_schedule is None:
             raise ValueError(
-                "The reopened working version does not contain a carried-forward copy of that supporting schedule."
+                "The reopened working version does not contain a carried-forward "
+                "copy of that supporting schedule."
             )
         candidates = [
             row
@@ -2498,7 +2592,8 @@ class AccountingToolset:
             return candidates[0].id
         if not candidates:
             raise ValueError(
-                "The reopened working version does not contain a carried-forward copy of that supporting-schedule row."
+                "The reopened working version does not contain a carried-forward "
+                "copy of that supporting-schedule row."
             )
         raise ValueError(
             "The reopened working version contains more than one matching supporting-schedule row. "
@@ -2580,7 +2675,7 @@ def _build_target_deriver(*, target_type: str, field_name: str):
 def _created_at_and_id_sort_key(record: Any) -> tuple[Any, str]:
     """Return a stable ordering key for repository records with created_at/id fields."""
 
-    return getattr(record, "created_at"), str(getattr(record, "id"))
+    return record.created_at, str(record.id)
 
 
 def _stable_json_string(value: object) -> str:

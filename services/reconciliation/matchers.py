@@ -1558,6 +1558,10 @@ class TrialBalanceChecker:
             debit = _parse_amount(acct.get("debit_balance")) or Decimal("0.00")
             credit = _parse_amount(acct.get("credit_balance")) or Decimal("0.00")
             net = debit - credit
+            is_postable = bool(acct.get("is_postable", True))
+
+            if not is_postable:
+                continue
 
             # Check for unusual balance direction
             if account_type in self.NORMAL_DEBIT_TYPES and net < 0:

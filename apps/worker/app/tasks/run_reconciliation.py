@@ -272,6 +272,7 @@ def _seed_balances_from_imported_trial_balance(
             "debit_balance": Decimal(str(line.debit_balance)),
             "credit_balance": Decimal(str(line.credit_balance)),
             "is_active": bool(line.is_active),
+            "is_postable": bool(acct_info.get("is_postable", True)),
         }
 
 
@@ -359,6 +360,7 @@ def _ensure_balance_bucket(
             "debit_balance": Decimal("0.00"),
             "credit_balance": Decimal("0.00"),
             "is_active": True,
+            "is_postable": bool(acct_info.get("is_postable", True)),
         }
     return balances[account_code]
 

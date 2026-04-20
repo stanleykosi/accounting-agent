@@ -415,6 +415,26 @@ class TestBuildJournalDraftFromRecommendation:
         assert spec.lines[1].line_type == "credit"
         spec.validate()
 
+    def test_invoice_rule_evaluation_defaults_offset_to_accounts_payable(self) -> None:
+        """Invoice coding should default to AP, not the root Assets header account."""
+
+        args = self._base_args()
+        args["payload"] = {
+            "rule_evaluation": {
+                "account_code": "6050",
+                "amount": "15480000.00",
+                "treatment": "standard_coding",
+                "dimensions": {},
+            },
+            "amount": "15480000.00",
+            "document_type": "invoice",
+        }
+
+        spec = build_journal_draft_from_recommendation(**args)
+
+        assert spec.lines[1].account_code == "2010"
+        assert spec.lines[1].line_type == "credit"
+
     def test_from_simple_coding(self) -> None:
         """A simple account_code + amount produces a balanced two-line draft."""
         args = self._base_args()

@@ -24,6 +24,7 @@ from uuid import UUID
 
 from services.accounting.dimensions import DimensionHelper, get_dimension_helper
 from services.accounting.rules import AccountingTreatment
+from services.common.enums import DocumentType
 from services.contracts.journal_models import JournalDraftInput, JournalLineInput
 
 
@@ -365,7 +366,10 @@ def _build_from_rule_evaluation(
     treatment = rule_eval.get("treatment", "standard_coding")
     offset_account = rule_eval.get(
         "offset_account",
-        _default_offset_account_for_treatment(treatment),
+        _default_offset_account_for_payload(
+            treatment=treatment,
+            document_type=payload.get("document_type"),
+        ),
     )
 
     suggested_dims = rule_eval.get("dimensions", {})
@@ -444,7 +448,10 @@ def _build_from_simple_coding(
 
     offset_account = payload.get(
         "offset_account",
-        _default_offset_account_for_treatment("standard_coding"),
+        _default_offset_account_for_payload(
+            treatment=AccountingTreatment.STANDARD_CODING.value,
+            document_type=payload.get("document_type"),
+        ),
     )
 
     merged_dims = dimensions.merge_dimensions(
@@ -487,23 +494,35 @@ def _build_from_simple_coding(
     )
 
 
-def _default_offset_account_for_treatment(treatment: str) -> str:
-    """Return a sensible default offset (credit) account for a given treatment type.
+def _default_offset_account_for_payload(
+    *,
+    treatment: str,
+    document_type: Any,
+) -> str:
+    """Return the canonical offset account for one recommendation payload.
 
-    Note: In production, this would be configured per entity from their chart of accounts.
-    For the demo build, we use reasonable Nigerian SME defaults.
+    The current product uses one deterministic default path until entity-specific
+    settlement-account configuration exists. We intentionally avoid non-postable
+    header accounts such as `1000 Assets`.
     """
+    normalized_document_type = str(document_type or "").strip().lower()
+    if treatment == AccountingTreatment.STANDARD_CODING.value or treatment == "standard_coding":
+        document_defaults = {
+            DocumentType.INVOICE.value: "2010",   # Accounts Payable
+            DocumentType.RECEIPT.value: "1010",   # Operating Bank / Cash
+            DocumentType.PAYSLIP.value: "2100",   # Accrued Expenses / Payroll clearing
+        }
+        return document_defaults.get(normalized_document_type, "1010")
+
     treatment_map = {
         AccountingTreatment.ACCRUAL.value: "2100",  # Accrued liabilities
         AccountingTreatment.PREPAYMENT.value: "1400",  # Prepaid expenses
         AccountingTreatment.DEPRECIATION.value: "1590",  # Accumulated depreciation
-        AccountingTreatment.STANDARD_CODING.value: "1000",  # Bank/Cash
         "accrual": "2100",
         "prepayment": "1400",
         "depreciation": "1590",
-        "standard_coding": "1000",
     }
-    return treatment_map.get(treatment, "1000")
+    return treatment_map.get(treatment, "1010")
 
 
 def generate_journal_number(

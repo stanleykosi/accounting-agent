@@ -195,20 +195,7 @@ def _resolve_template_id(
     if active is not None:
         return active.id
 
-    global_template = repo.get_active_global_template()
-    if global_template is not None:
-        return global_template.id
-
-    raise HTTPException(
-        status_code=400,
-        detail={
-            "code": "no_template_available",
-            "message": (
-                "No report template is available for this entity. "
-                "Upload or activate a template before generating reports."
-            ),
-        },
-    )
+    return repo.ensure_active_global_template().id
 
 
 # ---------------------------------------------------------------------------

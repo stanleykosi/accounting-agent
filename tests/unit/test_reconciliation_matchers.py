@@ -707,6 +707,24 @@ class TestTrialBalanceChecker:
         assert len(anomalies) == 1
         assert anomalies[0].anomaly_type == AnomalyType.ZERO_BALANCE_ACTIVE
 
+    def test_non_postable_header_account_is_ignored_for_unusual_balance_checks(self) -> None:
+        """Header/rollup accounts should not produce trial-balance direction noise."""
+
+        balances = [
+            {
+                "account_code": "1000",
+                "account_name": "Assets",
+                "account_type": "asset",
+                "debit_balance": "0.00",
+                "credit_balance": "15480000.00",
+                "is_active": True,
+                "is_postable": False,
+            },
+        ]
+
+        anomalies = self.checker.check_unusual_balances(balances)
+        assert anomalies == []
+
     def test_missing_account_detection(self) -> None:
         balances = [
             {"account_code": "1000", "account_name": "Cash", "account_type": "asset",
