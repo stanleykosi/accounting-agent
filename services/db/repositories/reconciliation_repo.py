@@ -270,7 +270,7 @@ class ReconciliationRepository:
         rec = self._session.get(Reconciliation, reconciliation_id)
         if rec is None:
             return None
-        rec.summary = summary
+        rec.summary = cast(JsonObject, _normalize_json_value(summary))
         self._session.flush()
         return self._to_reconciliation_record(rec)
 
@@ -475,9 +475,12 @@ class ReconciliationRepository:
             total_debits=total_debits,
             total_credits=total_credits,
             is_balanced=is_balanced,
-            account_balances=account_balances,
+            account_balances=cast(JsonObject, _normalize_json_value(account_balances)),
             generated_by_user_id=generated_by_user_id,
-            metadata_payload=metadata_payload or {},
+            metadata_payload=cast(
+                JsonObject,
+                _normalize_json_value(metadata_payload or {}),
+            ),
         )
         self._session.add(snapshot)
         self._session.flush()
@@ -540,7 +543,7 @@ class ReconciliationRepository:
             severity=severity,
             account_code=account_code,
             description=description,
-            details=details,
+            details=cast(JsonObject, _normalize_json_value(details)),
             trial_balance_snapshot_id=trial_balance_snapshot_id,
         )
         self._session.add(anomaly)
@@ -576,6 +579,24 @@ class ReconciliationRepository:
         )
         rows = self._session.scalars(stmt).all()
         return [self._to_anomaly_record(r) for r in rows]
+
+    def count_unresolved_anomalies(
+        self,
+        *,
+        close_run_id: UUID,
+        trial_balance_snapshot_id: UUID | None = None,
+    ) -> int:
+        """Return the unresolved anomaly count for one close run or snapshot."""
+
+        stmt = select(func.count(ReconciliationAnomaly.id)).where(
+            ReconciliationAnomaly.close_run_id == close_run_id,
+            ReconciliationAnomaly.resolved.is_(False),
+        )
+        if trial_balance_snapshot_id is not None:
+            stmt = stmt.where(
+                ReconciliationAnomaly.trial_balance_snapshot_id == trial_balance_snapshot_id
+            )
+        return int(self._session.scalar(stmt) or 0)
 
     def resolve_anomaly(
         self,
@@ -746,3 +767,17 @@ __all__ = [
     "ReconciliationSummaryStats",
     "TrialBalanceSnapshotRecord",
 ]
+
+
+def _normalize_json_value(value: Any) -> Any:
+    """Convert nested Decimal-heavy payloads into JSON-safe canonical primitives."""
+
+    if isinstance(value, Decimal):
+        return str(value)
+    if isinstance(value, dict):
+        return {str(key): _normalize_json_value(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_normalize_json_value(item) for item in value]
+    if isinstance(value, tuple):
+        return [_normalize_json_value(item) for item in value]
+    return value

@@ -18,8 +18,9 @@ Design notes:
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any
 from uuid import UUID
 
 from services.common.enums import (
@@ -170,7 +171,16 @@ class ReconciliationService:
                 )
                 continue
 
-            # Create reconciliation run
+            # Get the appropriate matcher
+            matcher_cls = MATCHER_REGISTRY.get(rec_type)
+            if matcher_cls is None:
+                raise ValueError(
+                    f"No matcher is registered for reconciliation type '{rec_type.value}'."
+                )
+
+            matcher = matcher_cls()
+
+            # Create reconciliation run only after verifying the matcher exists.
             if progress_guard is not None:
                 progress_guard()
             rec_record = self._repo.create_reconciliation(
@@ -178,14 +188,6 @@ class ReconciliationService:
                 reconciliation_type=rec_type,
                 created_by_user_id=created_by_user_id,
             )
-
-            # Get the appropriate matcher
-            matcher_cls = MATCHER_REGISTRY.get(rec_type)
-            if matcher_cls is None:
-                logger.error("No matcher registered for reconciliation type %s.", rec_type.value)
-                continue
-
-            matcher = matcher_cls()
 
             # Run matching
             match_results = matcher.match(
@@ -340,6 +342,33 @@ class ReconciliationService:
             )
             anomaly_records.append(record)
 
+        if progress_guard is not None:
+            progress_guard()
+        reconciliation = self._repo.create_reconciliation(
+            close_run_id=close_run_id,
+            reconciliation_type=ReconciliationType.TRIAL_BALANCE,
+            created_by_user_id=generated_by_user_id,
+        )
+        summary: JsonObject = {
+            "total_items": len(anomaly_records),
+            "matched_count": 0,
+            "partially_matched_count": 0,
+            "exception_count": len(anomaly_records),
+            "unmatched_count": 0,
+            "pending_disposition_count": len(anomaly_records),
+            "trial_balance_snapshot_id": str(snapshot.id),
+            "snapshot_no": snapshot.snapshot_no,
+            "account_count": len(account_balances),
+            "total_debits": str(snapshot.total_debits),
+            "total_credits": str(snapshot.total_credits),
+            "is_balanced": snapshot.is_balanced,
+        }
+        self._repo.update_reconciliation_summary(reconciliation.id, summary)
+        self._repo.update_reconciliation_status(
+            reconciliation.id,
+            ReconciliationStatus.IN_REVIEW,
+        )
+
         return snapshot
 
     # ------------------------------------------------------------------
@@ -464,6 +493,23 @@ class ReconciliationService:
                     f"reviewer disposition before approval."
                 ),
             )
+
+        if rec.reconciliation_type is ReconciliationType.TRIAL_BALANCE:
+            raw_snapshot_id = rec.summary.get("trial_balance_snapshot_id")
+            snapshot_id = UUID(str(raw_snapshot_id)) if raw_snapshot_id else None
+            unresolved_anomaly_count = self._repo.count_unresolved_anomalies(
+                close_run_id=close_run_id,
+                trial_balance_snapshot_id=snapshot_id,
+            )
+            if unresolved_anomaly_count > 0:
+                return self._repo.update_reconciliation_status(
+                    reconciliation_id,
+                    ReconciliationStatus.BLOCKED,
+                    blocking_reason=(
+                        f"{unresolved_anomaly_count} trial-balance anomaly item(s) "
+                        "still require reviewer resolution before approval."
+                    ),
+                )
 
         # All dispositions recorded — approve
         return self._repo.update_reconciliation_status(

@@ -811,8 +811,6 @@ def _run_reconciliation_task(
     parsed_types = [ReconciliationType(t) for t in reconciliation_types]
 
     config = MatchingConfig(**matching_config) if matching_config else DEFAULT_MATCHING_CONFIG
-    errors: list[str] = []
-
     logger.info(
         "Starting reconciliation for close run %s, types=%s",
         close_run_id,
@@ -851,21 +849,8 @@ def _run_reconciliation_task(
         except Exception as exc:
             msg = f"Failed to load reconciliation source data: {exc}"
             logger.exception(msg)
-            errors.append(msg)
             session.rollback()
-            return _reconciliation_receipt_to_payload(
-                ReconciliationReceipt(
-                    close_run_id=close_run_id,
-                    reconciliation_types=reconciliation_types,
-                    total_items=0,
-                    matched_items=0,
-                    exception_items=0,
-                    unmatched_items=0,
-                    trial_balance_computed=False,
-                    trial_balance_balanced=False,
-                    errors=errors,
-                )
-            )
+            raise RuntimeError(msg) from exc
 
         runnable_types, skipped_guidance = filter_runnable_reconciliation_types(
             requested_types=parsed_types,
@@ -877,13 +862,24 @@ def _run_reconciliation_task(
                 close_run_id,
                 guidance=list(skipped_guidance),
             )
+        matching_types = tuple(
+            reconciliation_type
+            for reconciliation_type in runnable_types
+            if reconciliation_type is not ReconciliationType.TRIAL_BALANCE
+        )
+        trial_balance_requested = ReconciliationType.TRIAL_BALANCE in runnable_types
+        if not matching_types and not trial_balance_requested:
+            session.rollback()
+            raise RuntimeError(
+                "No runnable reconciliation work was available for the requested types."
+            )
 
         # Run reconciliation matching
         try:
-            if runnable_types:
+            if matching_types:
                 output = svc.run_reconciliation(
                     close_run_id=parsed_close_run_id,
-                    reconciliation_types=list(runnable_types),
+                    reconciliation_types=list(matching_types),
                     source_data=source_data,
                     created_by_user_id=parsed_actor_user_id,
                     matching_config=config,
@@ -916,27 +912,14 @@ def _run_reconciliation_task(
         except Exception as exc:
             msg = f"Reconciliation matching failed: {exc}"
             logger.exception(msg)
-            errors.append(msg)
             session.rollback()
-            return _reconciliation_receipt_to_payload(
-                ReconciliationReceipt(
-                    close_run_id=close_run_id,
-                    reconciliation_types=reconciliation_types,
-                    total_items=0,
-                    matched_items=0,
-                    exception_items=0,
-                    unmatched_items=0,
-                    trial_balance_computed=False,
-                    trial_balance_balanced=False,
-                    errors=errors,
-                )
-            )
+            raise RuntimeError(msg) from exc
 
         # Compute trial balance if requested
         trial_balance_computed = False
         trial_balance_balanced = False
 
-        if ReconciliationType.TRIAL_BALANCE in runnable_types:
+        if trial_balance_requested:
             try:
                 ensure_reconciliation_phase()
                 account_balances = _compute_account_balances(session, parsed_close_run_id)
@@ -974,28 +957,29 @@ def _run_reconciliation_task(
             except Exception as exc:
                 msg = f"Trial balance computation failed: {exc}"
                 logger.exception(msg)
-                errors.append(msg)
+                session.rollback()
+                raise RuntimeError(msg) from exc
 
-        # Commit all successful mutations before closing the session
-        if not errors or output.total_items > 0 or trial_balance_computed:
-            try:
-                ensure_reconciliation_phase()
-                session.commit()
-                job_context.checkpoint(
-                    step="persist_reconciliation_results",
-                    state={
-                        "total_items": output.total_items,
-                        "matched_items": output.matched_items,
-                    },
-                )
-            except JobCancellationRequestedError:
-                session.rollback()
-                raise
-            except Exception as exc:
-                msg = f"Failed to commit reconciliation results: {exc}"
-                logger.exception(msg)
-                session.rollback()
-                errors.append(msg)
+        # Commit all successful mutations before closing the session.
+        try:
+            ensure_reconciliation_phase()
+            session.commit()
+            job_context.checkpoint(
+                step="persist_reconciliation_results",
+                state={
+                    "total_items": output.total_items,
+                    "matched_items": output.matched_items,
+                    "trial_balance_computed": trial_balance_computed,
+                },
+            )
+        except JobCancellationRequestedError:
+            session.rollback()
+            raise
+        except Exception as exc:
+            msg = f"Failed to commit reconciliation results: {exc}"
+            logger.exception(msg)
+            session.rollback()
+            raise RuntimeError(msg) from exc
 
     receipt = ReconciliationReceipt(
         close_run_id=close_run_id,
@@ -1006,7 +990,7 @@ def _run_reconciliation_task(
         unmatched_items=output.unmatched_items,
         trial_balance_computed=trial_balance_computed,
         trial_balance_balanced=trial_balance_balanced,
-        errors=errors,
+        errors=[],
     )
 
     logger.info(

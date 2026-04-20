@@ -602,3 +602,114 @@ def test_compute_account_balances_uses_trial_balance_import_plus_journal_adjustm
     assert balances_by_code["1000"]["debit_balance"] == Decimal("5000.00")
     assert balances_by_code["1000"]["credit_balance"] == Decimal("200.00")
     assert balances_by_code["6100"]["debit_balance"] == Decimal("200.00")
+
+
+def test_run_reconciliation_task_raises_when_trial_balance_computation_fails(
+    monkeypatch,
+) -> None:
+    """Worker execution should fail instead of silently completing when TB computation breaks."""
+
+    class _DummySession:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def commit(self) -> None:
+            return None
+
+        def rollback(self) -> None:
+            return None
+
+    class _DummyJobContext:
+        def ensure_not_canceled(self) -> None:
+            return None
+
+        def checkpoint(self, *, step: str, state: dict | None = None) -> dict:
+            return {"current_step": step, "state": state or {}}
+
+    class _FakeService:
+        def __init__(self, repository, matching_config=None) -> None:
+            del repository, matching_config
+
+        def run_reconciliation(self, **kwargs):
+            del kwargs
+            return run_reconciliation_task.ReconciliationRunOutput(
+                reconciliations=[],
+                all_items=[],
+                trial_balance=None,
+                anomalies=[],
+                total_items=0,
+                matched_items=0,
+                exception_items=0,
+                unmatched_items=0,
+            )
+
+        def compute_trial_balance(self, **kwargs):
+            del kwargs
+            raise ValueError("snapshot write blew up")
+
+    monkeypatch.setattr(
+        run_reconciliation_task,
+        "get_session_factory",
+        lambda: (lambda: _DummySession()),
+    )
+    monkeypatch.setattr(
+        run_reconciliation_task,
+        "ensure_close_run_active_phase",
+        lambda **kwargs: None,
+    )
+    monkeypatch.setattr(
+        run_reconciliation_task,
+        "_build_reconciliation_source_data",
+        lambda session, close_run_id, reconciliation_types: {
+            run_reconciliation_task.ReconciliationType.TRIAL_BALANCE: {
+                "source_items": [{"account_code": "1000"}],
+                "counterparts": [],
+            }
+        },
+    )
+    monkeypatch.setattr(
+        run_reconciliation_task,
+        "filter_runnable_reconciliation_types",
+        lambda **kwargs: ((run_reconciliation_task.ReconciliationType.TRIAL_BALANCE,), ()),
+    )
+    monkeypatch.setattr(
+        run_reconciliation_task,
+        "_compute_account_balances",
+        lambda session, close_run_id: [
+            {
+                "account_code": "1000",
+                "account_name": "Cash",
+                "account_type": "asset",
+                "debit_balance": Decimal("100.00"),
+                "credit_balance": Decimal("0.00"),
+                "is_active": True,
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        run_reconciliation_task,
+        "_load_coa_accounts",
+        lambda session, close_run_id: {"1000": {"account_code": "1000"}},
+    )
+    monkeypatch.setattr(
+        run_reconciliation_task,
+        "ReconciliationRepository",
+        lambda session: object(),
+    )
+    monkeypatch.setattr(run_reconciliation_task, "ReconciliationService", _FakeService)
+
+    try:
+        run_reconciliation_task._run_reconciliation_task(
+            close_run_id=str(uuid4()),
+            reconciliation_types=[run_reconciliation_task.ReconciliationType.TRIAL_BALANCE.value],
+            actor_user_id=None,
+            matching_config=None,
+            job_context=_DummyJobContext(),
+        )
+    except RuntimeError as exc:
+        assert "Trial balance computation failed" in str(exc)
+    else:
+        raise AssertionError("trial-balance failures must surface as explicit job errors")
