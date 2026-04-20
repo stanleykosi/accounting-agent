@@ -179,6 +179,31 @@ def test_reconciliation_gate_mentions_pending_reconciliation_execution() -> None
     assert "bank_reconciliation" in reconciliation.blocking_reason
 
 
+def test_reconciliation_gate_mentions_run_approval_after_exceptions_clear() -> None:
+    """Reconciliation should say approval is still needed when runs exist but are not approved."""
+
+    reconciliation_active = _existing_states(
+        completed=(
+            WorkflowPhase.COLLECTION,
+            WorkflowPhase.PROCESSING,
+        ),
+        active=WorkflowPhase.RECONCILIATION,
+    )
+
+    blocked = evaluate_phase_gates(
+        phase_states=reconciliation_active,
+        signals=PhaseGateSignals(
+            pending_reconciliation_approval_count=2,
+        ),
+    )
+
+    reconciliation = blocked[2]
+
+    assert reconciliation.status is CloseRunPhaseStatus.BLOCKED
+    assert reconciliation.blocking_reason is not None
+    assert "awaiting approval" in reconciliation.blocking_reason
+
+
 def test_signoff_readiness_requires_prior_phases_and_blocks_open_review_items() -> None:
     """Ensure Review / Sign-off is only ready after upstream phases and review blockers clear."""
 

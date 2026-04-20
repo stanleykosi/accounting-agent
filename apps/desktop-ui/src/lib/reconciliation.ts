@@ -104,11 +104,13 @@ export type ReconciliationReviewWorkspaceData = {
     accountCount: number;
   } | null;
   queueCounts: {
-    unresolved: number;
+    needsDecision: number;
     matched: number;
     exception: number;
     unmatched: number;
-    anomalyUnresolved: number;
+    actionableAnomalies: number;
+    informationalAnomalies: number;
+    pendingRunApprovals: number;
   };
 };
 
@@ -406,10 +408,16 @@ export async function readReconciliationReviewWorkspace(
     }
   }
 
-  const unresolvedAnomalyCount = anomalies.filter((a) => !a.resolved).length;
+  const actionableAnomalyCount = anomalies.filter(
+    (a) => !a.resolved && a.severity !== "info",
+  ).length;
+  const informationalAnomalyCount = anomalies.filter(
+    (a) => !a.resolved && a.severity === "info",
+  ).length;
+  const pendingRunApprovals = reconciliations.filter((r) => r.status !== "approved").length;
 
   const queueCounts = {
-    unresolved: allItems.filter(
+    needsDecision: allItems.filter(
       (i) => i.requiresDisposition && i.disposition === null,
     ).length,
     matched: allItems.filter((i) => i.matchStatus === "matched").length,
@@ -417,7 +425,9 @@ export async function readReconciliationReviewWorkspace(
       (i) => i.matchStatus === "exception" || i.matchStatus === "unmatched",
     ).length,
     unmatched: allItems.filter((i) => i.matchStatus === "unmatched").length,
-    anomalyUnresolved: unresolvedAnomalyCount,
+    actionableAnomalies: actionableAnomalyCount,
+    informationalAnomalies: informationalAnomalyCount,
+    pendingRunApprovals,
   };
 
   return {

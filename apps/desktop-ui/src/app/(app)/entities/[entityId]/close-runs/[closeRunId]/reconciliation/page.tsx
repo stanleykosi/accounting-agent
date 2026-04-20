@@ -210,6 +210,39 @@ export default function CloseRunReconciliationPage({
     () => workspaceData?.anomalies.filter((a) => !a.resolved) ?? [],
     [workspaceData],
   );
+  const actionableAnomalies = useMemo(
+    () => unresolvedAnomalies.filter((anomaly) => anomaly.severity !== "info"),
+    [unresolvedAnomalies],
+  );
+  const informationalAnomalies = useMemo(
+    () => unresolvedAnomalies.filter((anomaly) => anomaly.severity === "info"),
+    [unresolvedAnomalies],
+  );
+  const itemsByReconciliationId = useMemo(() => {
+    const buckets = new Map<string, ReconciliationReviewWorkspaceData["items"]>();
+    for (const item of workspaceData?.items ?? []) {
+      const existing = buckets.get(item.reconciliationId) ?? [];
+      buckets.set(item.reconciliationId, [...existing, item]);
+    }
+    return buckets;
+  }, [workspaceData?.items]);
+  const nextActions = useMemo(
+    () =>
+      buildNextActionList({
+        actionableAnomalyCount: actionableAnomalies.length,
+        informationalAnomalyCount: informationalAnomalies.length,
+        needsDecisionCount: workspaceData?.queueCounts.needsDecision ?? 0,
+        pendingRunApprovalCount: workspaceData?.queueCounts.pendingRunApprovals ?? 0,
+        hasReconciliationRuns: (workspaceData?.reconciliations.length ?? 0) > 0,
+      }),
+    [
+      actionableAnomalies.length,
+      informationalAnomalies.length,
+      workspaceData?.queueCounts.needsDecision,
+      workspaceData?.queueCounts.pendingRunApprovals,
+      workspaceData?.reconciliations.length,
+    ],
+  );
 
   const handleFilterChange = useCallback((filter: ReconciliationReviewFilter): void => {
     setActiveFilter(filter);
@@ -343,11 +376,18 @@ export default function CloseRunReconciliationPage({
           </dl>
 
           <div className="document-metric-row">
-            <MetricChip label="Unresolved" value={workspaceData.queueCounts.unresolved} />
-            <MetricChip label="Matched" value={workspaceData.queueCounts.matched} />
-            <MetricChip label="Exceptions" value={workspaceData.queueCounts.exception} />
-            <MetricChip label="Unmatched" value={workspaceData.queueCounts.unmatched} />
-            <MetricChip label="Unresolved anomalies" value={workspaceData.queueCounts.anomalyUnresolved} />
+            <MetricChip label="Needs decision" value={workspaceData.queueCounts.needsDecision} />
+            <MetricChip label="Unmatched bank lines" value={workspaceData.queueCounts.unmatched} />
+            <MetricChip label="Auto-matched" value={workspaceData.queueCounts.matched} />
+            <MetricChip label="TB findings" value={workspaceData.queueCounts.actionableAnomalies} />
+            <MetricChip
+              label="Info observations"
+              value={workspaceData.queueCounts.informationalAnomalies}
+            />
+            <MetricChip
+              label="Runs to approve"
+              value={workspaceData.queueCounts.pendingRunApprovals}
+            />
           </div>
 
           <p className="form-helper" style={{ marginTop: "16px" }}>
@@ -450,6 +490,16 @@ export default function CloseRunReconciliationPage({
         </div>
       ) : null}
 
+      <SurfaceCard title="What To Do Next" subtitle="Plain-language checklist">
+        <div className="dashboard-row-list">
+          {nextActions.map((action) => (
+            <article className="dashboard-row" key={action}>
+              <p className="form-helper">{action}</p>
+            </article>
+          ))}
+        </div>
+      </SurfaceCard>
+
       <SurfaceCard title="Reconciliation Runs" subtitle={`${workspaceData.reconciliations.length} run(s)`}>
         {workspaceData.reconciliations.length === 0 ? (
           <p className="form-helper">
@@ -467,15 +517,23 @@ export default function CloseRunReconciliationPage({
                       {formatReconciliationTypeLabel(reconciliation.reconciliationType)}
                     </strong>
                     <p className="close-run-row-meta">
-                      {reconciliation.status.replaceAll("_", " ")} • {reconciliation.itemCount} item(s)
+                      {reconciliation.status.replaceAll("_", " ")} •{" "}
+                      {describeRunItemCount({
+                        actionableAnomalyCount: actionableAnomalies.length,
+                        informationalAnomalyCount: informationalAnomalies.length,
+                        items: itemsByReconciliationId.get(reconciliation.id) ?? [],
+                        reconciliationType: reconciliation.reconciliationType,
+                      })}
                     </p>
                   </div>
                 </div>
                 <p className="form-helper">
-                  {reconciliation.blockingReason ??
-                    (reconciliation.status === "approved"
-                      ? "This reconciliation run is approved."
-                      : "Review the generated queue and approve this run when its exceptions are resolved.")}
+                  {describeReconciliationRunAction({
+                    actionableAnomalyCount: actionableAnomalies.length,
+                    informationalAnomalyCount: informationalAnomalies.length,
+                    items: itemsByReconciliationId.get(reconciliation.id) ?? [],
+                    reconciliation,
+                  })}
                 </p>
                 <div className="close-run-link-row">
                   <button
@@ -519,7 +577,7 @@ export default function CloseRunReconciliationPage({
             <strong className="close-run-row-title">05. Reconcile key accounts</strong>
             <p className="form-helper">
               {workspaceData.bankReconciliationAvailable
-                ? "Bank reconciliation and other key balance controls run through this workspace and its exception queue."
+                ? "Review only the bank items that still need a decision. Automatically matched rows are already handled."
                 : "Detailed bank reconciliation is not currently applicable because this run has no ledger-side data to match against. This workspace still handles applicable schedules and control checks."}
             </p>
           </article>
@@ -527,15 +585,15 @@ export default function CloseRunReconciliationPage({
             <strong className="close-run-row-title">06. Update supporting schedules</strong>
             <p className="form-helper">
               Fixed asset register, loan amortisation, accrual tracker, and budget-vs-actual
-              workpapers are now maintained in a dedicated Step 06 editor and then fed into this
-              reconciliation workspace.
+              workpapers are maintained in the Step 06 editor. They only become blocking here if
+              you actually add rows that still need review.
             </p>
           </article>
           <article className="dashboard-row">
             <strong className="close-run-row-title">07. Run and review trial balance</strong>
             <p className="form-helper">
               {workspaceData.trialBalanceReviewAvailable
-                ? "Debits versus credits, anomalies, and unexplained variances must be cleared here before the close run can advance into Reporting."
+                ? "Only warning or blocking trial-balance findings need resolution. Informational observations do not block Reporting."
                 : "Trial-balance review becomes applicable once a trial-balance baseline or ledger-side transaction set exists for the run."}
             </p>
           </article>
@@ -581,16 +639,18 @@ export default function CloseRunReconciliationPage({
                   <div>
                     <strong className="close-run-row-title">{schedule.label}</strong>
                     <p className="close-run-row-meta">
-                      {run === null ? "Not run yet" : formatReconciliationTypeLabel(run.reconciliationType)}
+                      {run === null
+                        ? "No schedule rows provided"
+                        : formatReconciliationTypeLabel(run.reconciliationType)}
                     </p>
                   </div>
                   <span className="close-run-row-meta">
-                    {run === null ? "Pending" : run.status.replaceAll("_", " ")}
+                    {run === null ? "Not blocking" : run.status.replaceAll("_", " ")}
                   </span>
                 </div>
                 <p className="form-helper">
                   {run === null
-                    ? "Maintain this workpaper in the Step 06 editor, then run reconciliation to surface exceptions."
+                    ? "No rows have been added for this workpaper, so it is not blocking this run."
                     : run.blockingReason ?? "Schedule checks are available in the reconciliation review queue."}
                 </p>
                 <div className="close-run-link-row">
@@ -645,10 +705,13 @@ export default function CloseRunReconciliationPage({
       )}
 
       {/* Anomalies */}
-      {unresolvedAnomalies.length > 0 && (
-        <SurfaceCard title="Unresolved Anomalies" subtitle={`${unresolvedAnomalies.length} items requiring investigation`}>
+      {actionableAnomalies.length > 0 && (
+        <SurfaceCard
+          title="Trial Balance Findings To Resolve"
+          subtitle={`${actionableAnomalies.length} warning/blocking finding(s)`}
+        >
           <div className="anomaly-list">
-            {unresolvedAnomalies.map((anomaly) => (
+            {actionableAnomalies.map((anomaly) => (
               <AnomalyRow
                 key={anomaly.id}
                 anomaly={anomaly}
@@ -663,10 +726,47 @@ export default function CloseRunReconciliationPage({
         </SurfaceCard>
       )}
 
+      {informationalAnomalies.length > 0 && (
+        <SurfaceCard
+          title="Informational Observations"
+          subtitle={`${informationalAnomalies.length} non-blocking note(s)`}
+        >
+          <div className="status-banner info" role="status" style={{ marginBottom: "16px" }}>
+            These observations are informational only. They do not need resolution before you
+            approve the trial-balance run.
+          </div>
+          <div className="dashboard-row-list">
+            {informationalAnomalies.map((anomaly) => (
+              <article className="dashboard-row" key={anomaly.id}>
+                <div className="close-run-row-header">
+                  <div>
+                    <strong className="close-run-row-title">
+                      {anomaly.accountCode ? `Account ${anomaly.accountCode}` : "Observation"}
+                    </strong>
+                    <p className="close-run-row-meta">
+                      {anomaly.anomalyType.replaceAll("_", " ")}
+                    </p>
+                  </div>
+                  <span className="close-run-row-meta">Info only</span>
+                </div>
+                <p className="form-helper">{anomaly.description}</p>
+              </article>
+            ))}
+          </div>
+        </SurfaceCard>
+      )}
+
       <ReviewLayout
         className="reconciliation-review-grid"
         main={
-          <SurfaceCard title="Match Review Queue" subtitle={`${visibleItems.length} items`}>
+          <SurfaceCard
+            title="Bank Match Review Queue"
+            subtitle={`${visibleItems.length} item(s)`}
+          >
+            <p className="form-helper" style={{ marginBottom: "16px" }}>
+              Review only the rows marked <strong>Needs Action</strong>. Matched rows are shown
+              for traceability and do not need a decision.
+            </p>
             <MatchReviewTable
               activeFilter={activeFilter}
               items={visibleItems}
@@ -882,6 +982,88 @@ function formatOperatingModeLabel(mode: string): string {
     default:
       return "Source documents only";
   }
+}
+
+function buildNextActionList(input: {
+  actionableAnomalyCount: number;
+  informationalAnomalyCount: number;
+  needsDecisionCount: number;
+  pendingRunApprovalCount: number;
+  hasReconciliationRuns: boolean;
+}): string[] {
+  if (!input.hasReconciliationRuns) {
+    return ["Run reconciliation to generate the bank-match queue and trial-balance review."];
+  }
+
+  const actions: string[] = [];
+  if (input.needsDecisionCount > 0) {
+    actions.push(
+      `Review ${input.needsDecisionCount} bank reconciliation item(s) in the queue and record a disposition for each one.`,
+    );
+  }
+  if (input.actionableAnomalyCount > 0) {
+    actions.push(
+      `Resolve ${input.actionableAnomalyCount} trial-balance warning/blocking finding(s) in the findings panel.`,
+    );
+  }
+  if (input.informationalAnomalyCount > 0) {
+    actions.push(
+      `${input.informationalAnomalyCount} informational observation(s) are shown below for awareness only and do not block approval.`,
+    );
+  }
+  if (
+    input.pendingRunApprovalCount > 0 &&
+    input.needsDecisionCount === 0 &&
+    input.actionableAnomalyCount === 0
+  ) {
+    actions.push(
+      `Approve ${input.pendingRunApprovalCount} reconciliation run(s), then advance to Reporting.`,
+    );
+  }
+  if (actions.length === 0) {
+    actions.push("This reconciliation workspace is clear. Approve the runs and advance to Reporting.");
+  }
+  return actions;
+}
+
+function describeRunItemCount(input: {
+  actionableAnomalyCount: number;
+  informationalAnomalyCount: number;
+  items: ReconciliationReviewWorkspaceData["items"];
+  reconciliationType: string;
+}): string {
+  if (input.reconciliationType === "trial_balance") {
+    return `${input.actionableAnomalyCount} actionable finding(s), ${input.informationalAnomalyCount} info observation(s)`;
+  }
+  return `${input.items.length} item(s)`;
+}
+
+function describeReconciliationRunAction(input: {
+  actionableAnomalyCount: number;
+  informationalAnomalyCount: number;
+  items: ReconciliationReviewWorkspaceData["items"];
+  reconciliation: ReconciliationReviewWorkspaceData["reconciliations"][number];
+}): string {
+  if (input.reconciliation.status === "approved") {
+    return "This reconciliation run is approved.";
+  }
+  if (input.reconciliation.reconciliationType === "trial_balance") {
+    if (input.actionableAnomalyCount > 0) {
+      return `${input.actionableAnomalyCount} warning/blocking finding(s) still need resolution before you approve this run. ${input.informationalAnomalyCount} additional info observation(s) do not block approval.`;
+    }
+    return "No blocking trial-balance findings remain. Approve this run when you are satisfied with the review.";
+  }
+
+  const needsDecisionCount = input.items.filter(
+    (item) => item.requiresDisposition && item.disposition === null,
+  ).length;
+  const matchedCount = input.items.filter(
+    (item) => item.matchStatus === "matched" || item.matchStatus === "partially_matched",
+  ).length;
+  if (needsDecisionCount > 0) {
+    return `${needsDecisionCount} bank item(s) still need a reviewer decision. ${matchedCount} row(s) matched automatically.`;
+  }
+  return "No pending bank-match decisions remain. Approve this run when you are satisfied with the review.";
 }
 
 /**

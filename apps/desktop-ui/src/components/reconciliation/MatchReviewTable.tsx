@@ -19,7 +19,7 @@ type MatchReviewTableProps = {
   activeFilter: ReconciliationReviewFilter;
   items: ReadonlyArray<ReconciliationItemSummary>;
   queueCounts: {
-    unresolved: number;
+    needsDecision: number;
     matched: number;
     exception: number;
     unmatched: number;
@@ -33,7 +33,7 @@ type MatchReviewTableProps = {
 
 const FILTER_TABS: ReadonlyArray<{ key: ReconciliationReviewFilter; label: string }> = [
   { key: "all", label: "All" },
-  { key: "unresolved", label: "Unresolved" },
+  { key: "unresolved", label: "Needs Action" },
   { key: "matched", label: "Matched" },
   { key: "exception", label: "Exceptions" },
   { key: "unmatched", label: "Unmatched" },
@@ -242,11 +242,11 @@ function DispositionBadge({ disposition }: Readonly<{ disposition: string }>): R
  */
 function getTabCount(
   key: ReconciliationReviewFilter,
-  counts: { unresolved: number; matched: number; exception: number; unmatched: number },
+  counts: { needsDecision: number; matched: number; exception: number; unmatched: number },
 ): number {
   switch (key) {
     case "unresolved":
-      return counts.unresolved;
+      return counts.needsDecision;
     case "matched":
       return counts.matched;
     case "exception":

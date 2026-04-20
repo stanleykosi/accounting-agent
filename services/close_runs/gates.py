@@ -50,6 +50,7 @@ class PhaseGateSignals:
     wrong_period_document_count: int = 0
     unresolved_processing_item_count: int = 0
     unresolved_reconciliation_exception_count: int = 0
+    pending_reconciliation_approval_count: int = 0
     missing_reconciliation_types: tuple[str, ...] = ()
     missing_supporting_schedules: tuple[str, ...] = ()
     pending_supporting_schedule_review_count: int = 0
@@ -377,6 +378,7 @@ def _build_blocking_reason(*, phase: WorkflowPhase, signals: PhaseGateSignals) -
         phase is WorkflowPhase.RECONCILIATION
         and (
             signals.unresolved_reconciliation_exception_count > 0
+            or signals.pending_reconciliation_approval_count > 0
             or bool(signals.missing_reconciliation_types)
             or signals.pending_supporting_schedule_review_count > 0
             or bool(signals.missing_supporting_schedules)
@@ -386,6 +388,11 @@ def _build_blocking_reason(*, phase: WorkflowPhase, signals: PhaseGateSignals) -
         if signals.unresolved_reconciliation_exception_count > 0:
             blockers.append(
                 f"{signals.unresolved_reconciliation_exception_count} unresolved exception(s)"
+            )
+        if signals.pending_reconciliation_approval_count > 0:
+            blockers.append(
+                f"{signals.pending_reconciliation_approval_count} "
+                "reconciliation run(s) awaiting approval"
             )
         if signals.missing_reconciliation_types:
             blockers.append(

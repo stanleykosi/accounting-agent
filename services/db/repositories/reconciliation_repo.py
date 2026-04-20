@@ -585,6 +585,7 @@ class ReconciliationRepository:
         *,
         close_run_id: UUID,
         trial_balance_snapshot_id: UUID | None = None,
+        include_informational: bool = True,
     ) -> int:
         """Return the unresolved anomaly count for one close run or snapshot."""
 
@@ -596,6 +597,8 @@ class ReconciliationRepository:
             stmt = stmt.where(
                 ReconciliationAnomaly.trial_balance_snapshot_id == trial_balance_snapshot_id
             )
+        if not include_informational:
+            stmt = stmt.where(ReconciliationAnomaly.severity != "info")
         return int(self._session.scalar(stmt) or 0)
 
     def resolve_anomaly(

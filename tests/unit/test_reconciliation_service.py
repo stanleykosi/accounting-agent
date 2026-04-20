@@ -156,9 +156,11 @@ class _FakeReconciliationRepository:
         *,
         close_run_id: UUID,
         trial_balance_snapshot_id: UUID | None = None,
+        include_informational: bool = True,
     ) -> int:
         assert close_run_id == self.close_run_id
         assert trial_balance_snapshot_id == self.snapshot.id
+        assert include_informational is False
         return self.unresolved_anomaly_count
 
 

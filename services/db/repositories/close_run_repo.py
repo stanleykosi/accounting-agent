@@ -1640,6 +1640,7 @@ class CloseRunRepository:
             sorted(applicable_reconciliation_types.difference(existing_reconciliation_types))
         )
         unresolved_reconciliation_exception_count = 0
+        pending_reconciliation_approval_count = 0
         if reconciliation_rows:
             reconciliation_ids = tuple(row.id for row in reconciliation_rows)
             unresolved_reconciliation_exception_count += self._db_session.execute(
@@ -1653,10 +1654,13 @@ class CloseRunRepository:
                 select(func.count(ReconciliationAnomaly.id)).where(
                     ReconciliationAnomaly.close_run_id == close_run_id,
                     ReconciliationAnomaly.resolved.is_(False),
+                    ReconciliationAnomaly.severity != "info",
                 )
             ).scalar_one()
-            unresolved_reconciliation_exception_count += sum(
-                1 for row in reconciliation_rows if row.status != "approved"
+            pending_reconciliation_approval_count += sum(
+                1
+                for row in reconciliation_rows
+                if row.status in {"draft", "in_review", "blocked"}
             )
 
         latest_completed_report_run = (
@@ -1768,6 +1772,7 @@ class CloseRunRepository:
             wrong_period_document_count=len(wrong_period_document_ids),
             unresolved_processing_item_count=unresolved_processing_item_count,
             unresolved_reconciliation_exception_count=unresolved_reconciliation_exception_count,
+            pending_reconciliation_approval_count=pending_reconciliation_approval_count,
             missing_reconciliation_types=missing_reconciliation_types,
             missing_supporting_schedules=tuple(sorted(missing_supporting_schedules)),
             pending_supporting_schedule_review_count=pending_supporting_schedule_review_count,

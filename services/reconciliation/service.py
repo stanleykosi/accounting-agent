@@ -500,6 +500,7 @@ class ReconciliationService:
             unresolved_anomaly_count = self._repo.count_unresolved_anomalies(
                 close_run_id=close_run_id,
                 trial_balance_snapshot_id=snapshot_id,
+                include_informational=False,
             )
             if unresolved_anomaly_count > 0:
                 return self._repo.update_reconciliation_status(

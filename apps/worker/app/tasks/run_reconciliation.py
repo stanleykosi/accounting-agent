@@ -923,12 +923,10 @@ def _run_reconciliation_task(
             try:
                 ensure_reconciliation_phase()
                 account_balances = _compute_account_balances(session, parsed_close_run_id)
-                coa_accounts = _load_coa_accounts(session, parsed_close_run_id)
 
                 snapshot = svc.compute_trial_balance(
                     close_run_id=parsed_close_run_id,
                     account_balances=account_balances,
-                    expected_account_codes=set(coa_accounts.keys()),
                     generated_by_user_id=parsed_actor_user_id,
                     progress_guard=ensure_reconciliation_phase,
                 )
