@@ -1679,38 +1679,35 @@ class CloseRunRepository:
         if latest_completed_report_run is None:
             missing_required_reports.extend(("report_excel", "report_pdf", "approved_commentary"))
         else:
-            artifact_types = {
-                str(artifact_ref.get("type") or "").strip()
-                for artifact_ref in (
-                    latest_completed_report_run.artifact_refs
-                    if isinstance(latest_completed_report_run.artifact_refs, list)
-                    else []
+            active_commentary_rows = self._db_session.execute(
+                select(ReportCommentary.section_key, ReportCommentary.status).where(
+                    ReportCommentary.report_run_id == latest_completed_report_run.id,
+                    ReportCommentary.superseded_by_id.is_(None),
+                    ReportCommentary.status.in_(
+                        (
+                            CommentaryStatus.DRAFT.value,
+                            CommentaryStatus.UNDER_REVIEW.value,
+                            CommentaryStatus.APPROVED.value,
+                        )
+                    ),
                 )
-                if isinstance(artifact_ref, dict)
-            }
-            if "report_excel" not in artifact_types:
-                missing_required_reports.append("report_excel")
-            if "report_pdf" not in artifact_types:
-                missing_required_reports.append("report_pdf")
-
-            approved_commentary_sections = {
-                row.section_key
-                for row in self._db_session.execute(
-                    select(ReportCommentary.section_key).where(
-                        ReportCommentary.report_run_id == latest_completed_report_run.id,
-                        ReportCommentary.status == CommentaryStatus.APPROVED.value,
-                    )
-                ).all()
-            }
-            for section_key in (
-                "profit_and_loss",
-                "balance_sheet",
-                "cash_flow",
-                "budget_variance",
-                "kpi_dashboard",
-            ):
-                if section_key not in approved_commentary_sections:
-                    missing_required_reports.append(f"commentary:{section_key}")
+            ).all()
+            missing_required_reports.extend(
+                _build_missing_required_reports(
+                    artifact_refs=(
+                        latest_completed_report_run.artifact_refs
+                        if isinstance(latest_completed_report_run.artifact_refs, list)
+                        else []
+                    ),
+                    active_commentary_rows=tuple(
+                        (
+                            str(row.section_key).strip(),
+                            str(row.status).strip(),
+                        )
+                        for row in active_commentary_rows
+                    ),
+                )
+            )
 
         completed_exports = tuple(
             self._db_session.execute(
@@ -2163,6 +2160,37 @@ def _collect_storage_keys_from_json_list(payload: object) -> tuple[str, ...]:
                 storage_keys.append(value.strip())
 
     return tuple(storage_keys)
+
+
+def _build_missing_required_reports(
+    *,
+    artifact_refs: list[object],
+    active_commentary_rows: tuple[tuple[str, str], ...],
+) -> tuple[str, ...]:
+    """Return the canonical reporting blockers for one completed report run."""
+
+    missing_required_reports: list[str] = []
+    artifact_types = {
+        str(artifact_ref.get("type") or "").strip()
+        for artifact_ref in artifact_refs
+        if isinstance(artifact_ref, dict)
+    }
+    if "report_excel" not in artifact_types:
+        missing_required_reports.append("report_excel")
+    if "report_pdf" not in artifact_types:
+        missing_required_reports.append("report_pdf")
+
+    blocking_commentary_sections = sorted(
+        {
+            section_key
+            for section_key, status in active_commentary_rows
+            if section_key and status != CommentaryStatus.APPROVED.value
+        }
+    )
+    missing_required_reports.extend(
+        f"commentary:{section_key}" for section_key in blocking_commentary_sections
+    )
+    return tuple(missing_required_reports)
 
 
 def _build_reopened_journal_number(*, source_journal_number: str, target_version_no: int) -> str:
