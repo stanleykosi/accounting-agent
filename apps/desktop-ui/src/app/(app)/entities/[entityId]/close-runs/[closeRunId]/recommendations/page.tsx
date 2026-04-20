@@ -228,7 +228,9 @@ export default function RecommendationsPage({
             </button>
             <p className="form-helper">
               Recommendation generation runs asynchronously for eligible documents in this close
-              run. Review and journal materialization happen below.
+              run. Approving a recommendation creates a journal draft below. Processing clears
+              only when the imported GL already represents the source document or the resulting
+              journal has been applied.
             </p>
           </div>
         </SurfaceCard>
@@ -266,6 +268,14 @@ export default function RecommendationsPage({
                       {recommendation.status.replaceAll("_", " ")} • Confidence{" "}
                       {Math.round(recommendation.confidence * 100)}%
                     </p>
+                    {recommendation.source_document_filename ? (
+                      <p className="form-helper">
+                        Source document: {recommendation.source_document_filename}
+                        {recommendation.source_document_type
+                          ? ` • ${recommendation.source_document_type.replaceAll("_", " ")}`
+                          : ""}
+                      </p>
+                    ) : null}
                   </div>
                 </div>
                 <p className="form-helper">{recommendation.reasoning_summary}</p>

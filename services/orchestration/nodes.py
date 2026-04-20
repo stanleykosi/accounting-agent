@@ -15,10 +15,14 @@ Design notes:
 
 from __future__ import annotations
 
+import re
+from datetime import date
+from decimal import Decimal
 from typing import Any
 
 from services.accounting.rules import (
     AccountingRuleEvaluation,
+    AccountingTreatment,
     ChartAccount,
     RuleEngineError,
     TransactionContext,
@@ -39,6 +43,116 @@ from services.model_gateway.prompts import (
 )
 
 logger = get_logger(__name__)
+
+
+_GENERIC_ACCOUNT_NAME_TOKENS = frozenset(
+    {
+        "account",
+        "accounts",
+        "bank",
+        "cash",
+        "cost",
+        "current",
+        "expense",
+        "expenses",
+        "other",
+        "payable",
+        "receivable",
+        "the",
+    }
+)
+_FIELD_NAMES_BY_DOCUMENT_TYPE: dict[DocumentType, dict[str, tuple[str, ...]]] = {
+    DocumentType.INVOICE: {
+        "amount": ("total", "amount_due", "subtotal"),
+        "date": ("invoice_date", "due_date"),
+        "counterparty": ("vendor_name", "customer_name"),
+        "description": ("notes", "invoice_number", "related_contract_number"),
+        "currency": ("currency",),
+    },
+    DocumentType.RECEIPT: {
+        "amount": ("total", "subtotal"),
+        "date": ("receipt_date",),
+        "counterparty": ("vendor_name", "customer_name"),
+        "description": ("notes", "receipt_number"),
+        "currency": ("currency",),
+    },
+    DocumentType.PAYSLIP: {
+        "amount": ("net_pay", "gross_pay", "basic_salary"),
+        "date": ("pay_date", "pay_period_end", "pay_period_start"),
+        "counterparty": ("employee_name", "employer_name"),
+        "description": ("employee_id", "department", "pay_period_end", "pay_period_start"),
+        "currency": ("currency",),
+    },
+}
+_GENERIC_FIELD_FALLBACKS: dict[str, tuple[str, ...]] = {
+    "amount": (
+        "total",
+        "amount_due",
+        "subtotal",
+        "net_pay",
+        "gross_pay",
+        "basic_salary",
+    ),
+    "date": (
+        "invoice_date",
+        "receipt_date",
+        "pay_date",
+        "due_date",
+        "pay_period_end",
+        "pay_period_start",
+    ),
+    "counterparty": ("vendor_name", "customer_name", "employee_name", "employer_name"),
+    "description": (
+        "notes",
+        "invoice_number",
+        "receipt_number",
+        "employee_id",
+        "department",
+        "related_contract_number",
+    ),
+    "currency": ("currency",),
+}
+_COA_KEYWORD_EXTENSIONS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("salaries and wages", ("salary", "salaries", "wages", "payroll", "payslip", "employee")),
+    ("payroll taxes", ("paye", "pension", "tax", "deduction", "remittance")),
+    (
+        "professional fees",
+        ("audit", "assurance", "retainer", "consulting", "advisory", "legal", "fieldwork"),
+    ),
+    (
+        "freight and logistics",
+        (
+            "freight",
+            "logistics",
+            "distribution",
+            "customs",
+            "clearing",
+            "demurrage",
+            "port",
+            "haulage",
+            "linehaul",
+            "line haul",
+        ),
+    ),
+    ("software and cloud", ("software", "cloud", "erp", "crm", "wms", "subscription", "license")),
+    (
+        "marketing activation",
+        ("marketing", "activation", "promoter", "visibility", "booth", "retail"),
+    ),
+    (
+        "connectivity expense",
+        ("connectivity", "internet", "mpls", "circuit", "circuits", "network", "bandwidth"),
+    ),
+    ("security expense", ("security", "guard", "guards", "response", "access", "perimeter")),
+    ("warehouse rent", ("warehouse", "rent", "lease")),
+    ("diesel and power", ("diesel", "generator", "power", "fuel")),
+    ("insurance expense", ("insurance", "premium", "cover")),
+    ("utilities expense", ("utilities", "utility", "electricity", "water")),
+    ("repairs and maintenance", ("repair", "repairs", "maintenance", "overhaul", "servicing")),
+    ("staff welfare and travel", ("travel", "welfare", "flight", "hotel", "lodging")),
+    ("bank charges", ("bank", "charges", "fee", "fees")),
+    ("interest expense", ("interest", "loan")),
+)
 
 
 class NodeError(ValueError):
@@ -132,8 +246,19 @@ def evaluate_deterministic_rules(state: dict[str, Any]) -> dict[str, Any]:
             "deterministic_rule_no_match",
             reason=str(error),
         )
-        # No rule matched: model reasoning will fill the gap
-        deterministic_result = {"matched": False, "reason": str(error)}
+        heuristic_result = _infer_heuristic_rule_evaluation(context_data)
+        if heuristic_result is not None:
+            deterministic_result = heuristic_result
+            logger.debug(
+                "deterministic_rule_fell_back_to_coa_keyword_heuristic",
+                account_code=heuristic_result.get("account_code"),
+                confidence=str(heuristic_result.get("confidence")),
+            )
+        else:
+            deterministic_result = {
+                "matched": False,
+                "reasons": [str(error)],
+            }
     except Exception as error:
         logger.error("deterministic_rule_evaluation_error", error=str(error))
         errors.append(f"Deterministic rule evaluation failed: {error}")
@@ -402,43 +527,20 @@ def _build_coa_accounts(raw_accounts: list[dict[str, Any]]) -> tuple[ChartAccoun
 
 def _build_transaction_context(context_data: dict[str, Any]) -> TransactionContext:
     """Build a deterministic TransactionContext from the recommendation context."""
-    from datetime import date
+    document_type = _resolve_document_type(context_data)
 
-    extracted = context_data.get("extracted_fields", {})
-
-    # Parse amount from extracted fields
-    amount_value = extracted.get("total", {}).get("value", "0")
-    try:
-        from decimal import Decimal
-
-        amount = Decimal(str(amount_value))
-    except Exception:
-        amount = Decimal("0")
-
-    # Determine transaction date
-    date_str = extracted.get("date", {}).get("value", "")
-    try:
-        transaction_date = date.fromisoformat(str(date_str))
-    except (ValueError, TypeError):
-        transaction_date = date.today()
-
-    # Determine document type
-    doc_type = context_data.get("document_type", DocumentType.UNKNOWN)
-    if isinstance(doc_type, str):
-        try:
-            doc_type = DocumentType(doc_type)
-        except ValueError:
-            doc_type = DocumentType.UNKNOWN
-
-    # Determine vendor name
-    vendor_name = extracted.get("vendor", {}).get("value")
+    amount = _resolve_transaction_amount(context_data)
+    transaction_date = _resolve_transaction_date(context_data)
+    counterparty_name = _resolve_counterparty_name(context_data)
+    description = _resolve_transaction_description(context_data)
 
     return TransactionContext(
         amount=amount,
         transaction_date=transaction_date,
         period=_build_period_boundary(context_data),
-        document_type=doc_type,
-        vendor_name=str(vendor_name) if vendor_name else None,
+        document_type=document_type,
+        vendor_name=counterparty_name,
+        description=description,
     )
 
 
@@ -487,15 +589,12 @@ def _render_gl_coding_prompt(
     deterministic_result: dict[str, Any] | None,
 ) -> tuple[str, str]:
     """Render the GL coding explanation prompt with context variables."""
-    extracted = context_data.get("extracted_fields", {})
     coa_source = context_data.get("coa_source", "fallback_nigerian_sme")
 
-    amount = extracted.get("total", {}).get("value", "0")
-    currency = extracted.get("currency", {}).get("value", "NGN")
-    vendor = extracted.get("vendor", {}).get("value", "Unknown")
-    doc_type = context_data.get("document_type", DocumentType.UNKNOWN)
-    if isinstance(doc_type, DocumentType):
-        doc_type = doc_type.value
+    amount = _resolve_transaction_amount(context_data)
+    currency = _resolve_currency(context_data)
+    counterparty = _resolve_counterparty_name(context_data) or "Unknown"
+    doc_type = _resolve_document_type(context_data).value
 
     # Use deterministic result if available, otherwise fall back to "no rule matched"
     if deterministic_result and deterministic_result.get("matched"):
@@ -517,7 +616,7 @@ def _render_gl_coding_prompt(
 
     return GL_CODING_EXPLANATION_PROMPT.render(
         document_type=doc_type,
-        vendor_name=str(vendor),
+        vendor_name=counterparty,
         amount=str(amount),
         currency=str(currency),
         deterministic_rule=rule_info,
@@ -549,8 +648,12 @@ def _build_recommendation_payload(
     model_reasoning: dict[str, Any] | None,
 ) -> dict[str, Any]:
     """Merge deterministic and model outputs into the recommendation payload."""
+    amount = _resolve_transaction_amount(context)
+    document_type = _resolve_document_type(context).value
     payload: dict[str, Any] = {
         "deterministic_result": deterministic_result,
+        "amount": str(amount),
+        "document_type": document_type,
     }
 
     if model_reasoning:
@@ -566,14 +669,28 @@ def _build_recommendation_payload(
     if deterministic_result.get("matched"):
         payload["suggested_account_code"] = deterministic_result["account_code"]
         payload["suggested_account_name"] = deterministic_result["account_name"]
+        payload["account_code"] = deterministic_result["account_code"]
+        payload["account_name"] = deterministic_result["account_name"]
         payload["account_type"] = deterministic_result["account_type"]
         payload["treatment"] = deterministic_result["treatment"]
         payload["dimensions"] = deterministic_result.get("dimensions", {})
         payload["risk_level"] = deterministic_result.get("risk_level", "medium")
-    elif model_reasoning:
-        # Model must suggest an account when no rule matched
+        payload["rule_evaluation"] = {
+            "account_code": deterministic_result["account_code"],
+            "account_name": deterministic_result["account_name"],
+            "account_type": deterministic_result["account_type"],
+            "confidence": deterministic_result.get("confidence"),
+            "dimensions": deterministic_result.get("dimensions", {}),
+            "treatment": deterministic_result.get(
+                "treatment",
+                AccountingTreatment.STANDARD_CODING.value,
+            ),
+            "risk_level": deterministic_result.get("risk_level", "medium"),
+            "rule_type": deterministic_result.get("rule_type", "unknown"),
+            "amount": str(amount),
+        }
+    else:
         payload["risk_level"] = "high"
-        payload["reasoning_summary"] = model_reasoning.get("reasoning_summary", "")
 
     payload["reasoning_summary"] = ""
     if model_reasoning is not None:
@@ -586,6 +703,277 @@ def _build_recommendation_payload(
             payload["reasoning_summary"] = "No reasoning available."
 
     return payload
+
+
+def _resolve_document_type(context_data: dict[str, Any]) -> DocumentType:
+    """Resolve the canonical document type from recommendation context."""
+
+    raw_value = context_data.get("document_type", DocumentType.UNKNOWN)
+    if isinstance(raw_value, DocumentType):
+        return raw_value
+    if isinstance(raw_value, str):
+        try:
+            return DocumentType(raw_value)
+        except ValueError:
+            return DocumentType.UNKNOWN
+    return DocumentType.UNKNOWN
+
+
+def _field_names_for(
+    *,
+    document_type: DocumentType,
+    category: str,
+) -> tuple[str, ...]:
+    """Return canonical field names for one logical extraction category."""
+
+    typed_names = _FIELD_NAMES_BY_DOCUMENT_TYPE.get(document_type, {}).get(category, ())
+    generic_names = _GENERIC_FIELD_FALLBACKS.get(category, ())
+    return typed_names + tuple(
+        field_name for field_name in generic_names if field_name not in typed_names
+    )
+
+
+def _pick_first_present_field_value(
+    *,
+    context_data: dict[str, Any],
+    category: str,
+) -> Any:
+    """Return the first non-empty extracted field value for one logical category."""
+
+    extracted = context_data.get("extracted_fields", {})
+    if not isinstance(extracted, dict):
+        return None
+    document_type = _resolve_document_type(context_data)
+    for field_name in _field_names_for(document_type=document_type, category=category):
+        value = extracted.get(field_name)
+        if value is not None and value != "":
+            return value
+    return None
+
+
+def _resolve_transaction_amount(context_data: dict[str, Any]) -> Decimal:
+    """Resolve a positive recommendation amount from extracted fields."""
+
+    raw_value = _pick_first_present_field_value(context_data=context_data, category="amount")
+    if raw_value is None or raw_value == "":
+        return Decimal("0.00")
+    try:
+        return Decimal(str(raw_value).replace(",", ""))
+    except Exception:
+        return Decimal("0.00")
+
+
+def _resolve_transaction_date(context_data: dict[str, Any]) -> date:
+    """Resolve the transaction date, defaulting safely inside the close-run period."""
+
+    raw_value = _pick_first_present_field_value(context_data=context_data, category="date")
+    if raw_value is not None and raw_value != "":
+        try:
+            return date.fromisoformat(str(raw_value))
+        except (TypeError, ValueError):
+            pass
+
+    period_start = context_data.get("period_start")
+    if isinstance(period_start, date):
+        return period_start
+    try:
+        return date.fromisoformat(str(period_start))
+    except (TypeError, ValueError):
+        return date.today()
+
+
+def _resolve_counterparty_name(context_data: dict[str, Any]) -> str | None:
+    """Resolve the most relevant vendor/customer/employee name from extracted fields."""
+
+    raw_value = _pick_first_present_field_value(context_data=context_data, category="counterparty")
+    if raw_value is None or raw_value == "":
+        return None
+    return str(raw_value).strip() or None
+
+
+def _resolve_currency(context_data: dict[str, Any]) -> str:
+    """Resolve the extracted currency or fall back to NGN."""
+
+    raw_value = _pick_first_present_field_value(context_data=context_data, category="currency")
+    if raw_value is None or raw_value == "":
+        return "NGN"
+    return str(raw_value).strip().upper() or "NGN"
+
+
+def _resolve_transaction_description(context_data: dict[str, Any]) -> str | None:
+    """Resolve a grounded free-text description surface for heuristic matching."""
+
+    parts: list[str] = []
+    counterparty = _resolve_counterparty_name(context_data)
+    if counterparty:
+        parts.append(counterparty)
+
+    extracted_description = _pick_first_present_field_value(
+        context_data=context_data,
+        category="description",
+    )
+    if extracted_description is not None and extracted_description != "":
+        parts.append(str(extracted_description))
+
+    line_items = context_data.get("line_items", [])
+    if isinstance(line_items, list):
+        for item in line_items[:8]:
+            if not isinstance(item, dict):
+                continue
+            description = item.get("description")
+            if description is not None and description != "":
+                parts.append(str(description))
+
+    resolved = " ".join(part.strip() for part in parts if isinstance(part, str) and part.strip())
+    return resolved or None
+
+
+def _infer_heuristic_rule_evaluation(context_data: dict[str, Any]) -> dict[str, Any] | None:
+    """Infer a grounded deterministic account match from COA names and extracted text."""
+
+    coa_accounts = _build_coa_accounts(context_data.get("coa_accounts", []))
+    if not coa_accounts:
+        return None
+
+    document_type = _resolve_document_type(context_data)
+    document_text = _resolve_transaction_description(context_data) or ""
+    normalized_text = _normalize_text(document_text)
+    document_tokens = set(_keyword_tokens(normalized_text))
+    if not document_tokens and document_type != DocumentType.PAYSLIP:
+        return None
+
+    ranked_candidates: list[tuple[ChartAccount, float, tuple[str, ...], tuple[str, ...]]] = []
+    for account in coa_accounts:
+        if not account.is_active:
+            continue
+        score, matched_keywords, reasons = _score_account_candidate(
+            account=account,
+            document_type=document_type,
+            normalized_text=normalized_text,
+            document_tokens=document_tokens,
+        )
+        if score <= 0:
+            continue
+        ranked_candidates.append((account, score, matched_keywords, reasons))
+
+    if not ranked_candidates:
+        return None
+
+    ranked_candidates.sort(key=lambda item: item[1], reverse=True)
+    best_account, best_score, matched_keywords, reasons = ranked_candidates[0]
+    second_score = ranked_candidates[1][1] if len(ranked_candidates) > 1 else 0.0
+    if best_score < 2.0:
+        return None
+
+    confidence = _heuristic_confidence_for(
+        document_type=document_type,
+        best_score=best_score,
+        score_margin=best_score - second_score,
+    )
+    return {
+        "matched": True,
+        "account_code": best_account.account_code,
+        "account_name": best_account.account_name,
+        "account_type": best_account.account_type.value,
+        "confidence": confidence,
+        "dimensions": {},
+        "treatment": AccountingTreatment.STANDARD_CODING.value,
+        "rule_type": "coa_keyword_heuristic",
+        "reasons": list(reasons),
+        "risk_level": RiskLevel.MEDIUM.value if confidence < 0.85 else RiskLevel.LOW.value,
+        "approval_level": "standard",
+        "matched_keywords": list(matched_keywords),
+    }
+
+
+def _score_account_candidate(
+    *,
+    account: ChartAccount,
+    document_type: DocumentType,
+    normalized_text: str,
+    document_tokens: set[str],
+) -> tuple[float, tuple[str, ...], tuple[str, ...]]:
+    """Score one COA account against the extracted document text."""
+
+    matched_keywords: list[str] = []
+    score = 0.0
+
+    for keyword in _account_keywords_for(account.account_name):
+        if " " in keyword:
+            if keyword in normalized_text:
+                score += 2.0
+                matched_keywords.append(keyword)
+        elif keyword in document_tokens:
+            score += 1.0
+            matched_keywords.append(keyword)
+
+    if document_type == DocumentType.PAYSLIP and any(
+        token in _normalize_text(account.account_name) for token in ("salary", "salaries", "wages")
+    ):
+        score += 4.0
+        matched_keywords.append("payslip")
+
+    matched_keywords = list(dict.fromkeys(matched_keywords))
+    if not matched_keywords:
+        return 0.0, (), ()
+
+    reasons = [
+        (
+            f"COA keyword heuristic matched {', '.join(matched_keywords[:4])} to "
+            f"{account.account_code} {account.account_name}."
+        )
+    ]
+    if document_type == DocumentType.PAYSLIP:
+        reasons.append(
+            "Payslip documents normally map to payroll expense unless payroll "
+            "control review overrides them."
+        )
+    return score, tuple(matched_keywords), tuple(reasons)
+
+
+def _account_keywords_for(account_name: str) -> tuple[str, ...]:
+    """Build the normalized keyword surface for one COA account name."""
+
+    normalized_name = _normalize_text(account_name)
+    base_keywords = [
+        token
+        for token in _keyword_tokens(normalized_name)
+        if token not in _GENERIC_ACCOUNT_NAME_TOKENS and len(token) >= 4
+    ]
+    extended_keywords: list[str] = []
+    for account_name_signal, keywords in _COA_KEYWORD_EXTENSIONS:
+        if account_name_signal in normalized_name:
+            extended_keywords.extend(keywords)
+    return tuple(dict.fromkeys(base_keywords + extended_keywords))
+
+
+def _heuristic_confidence_for(
+    *,
+    document_type: DocumentType,
+    best_score: float,
+    score_margin: float,
+) -> float:
+    """Compute a stable confidence score for COA keyword heuristic matches."""
+
+    if document_type == DocumentType.PAYSLIP and best_score >= 4.0:
+        return 0.93
+
+    confidence = 0.64 + min(best_score, 5.0) * 0.05 + min(max(score_margin, 0.0), 3.0) * 0.03
+    return round(min(confidence, 0.92), 4)
+
+
+def _normalize_text(value: Any) -> str:
+    """Normalize one value into lowercase text suitable for keyword matching."""
+
+    if value is None:
+        return ""
+    return re.sub(r"[^a-z0-9]+", " ", str(value).lower()).strip()
+
+
+def _keyword_tokens(value: str) -> tuple[str, ...]:
+    """Tokenize normalized text into unique keywords."""
+
+    return tuple(dict.fromkeys(token for token in value.split() if token))
 
 
 def _compute_aggregate_confidence(

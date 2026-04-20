@@ -74,6 +74,8 @@ class ImportedGeneralLedgerLineCandidate:
     line_no: int
     posting_date: date
     amount: Decimal
+    account_code: str
+    account_name: str
     reference: str | None
     external_ref: str | None
     description: str | None
@@ -84,7 +86,15 @@ class ImportedGeneralLedgerLineCandidate:
 
         return _compact_text(
             " ".join(
-                part for part in (self.reference, self.external_ref, self.description) if part
+                part
+                for part in (
+                    self.account_code,
+                    self.account_name,
+                    self.reference,
+                    self.external_ref,
+                    self.description,
+                )
+                if part
             )
         )
 
@@ -94,7 +104,15 @@ class ImportedGeneralLedgerLineCandidate:
 
         return _normalize_text(
             " ".join(
-                part for part in (self.reference, self.external_ref, self.description) if part
+                part
+                for part in (
+                    self.account_code,
+                    self.account_name,
+                    self.reference,
+                    self.external_ref,
+                    self.description,
+                )
+                if part
             )
         )
 
@@ -161,6 +179,16 @@ def evaluate_document_imported_gl_representation(
         )
 
     field_values = _load_extracted_field_values(latest_extraction=latest_extraction)
+    payroll_batch_result = _evaluate_payroll_batch_representation(
+        session=session,
+        close_run_id=close_run_id,
+        document_id=document_id,
+        document_type=DocumentType(document.document_type),
+        field_values=field_values,
+        imported_gl_candidates=resolved_candidates,
+    )
+    if payroll_batch_result is not None:
+        return payroll_batch_result
     return _evaluate_document_fields_against_imported_gl(
         document_id=document_id,
         document_type=DocumentType(document.document_type),
@@ -225,6 +253,8 @@ def load_imported_gl_line_candidates(
             line_no=row.line_no,
             posting_date=row.posting_date,
             amount=_resolve_line_amount(row.debit_amount, row.credit_amount),
+            account_code=row.account_code,
+            account_name=row.account_name,
             reference=row.reference,
             external_ref=row.external_ref,
             description=row.description,
@@ -345,6 +375,82 @@ def _evaluate_document_fields_against_imported_gl(
     )
 
 
+def _evaluate_payroll_batch_representation(
+    *,
+    session: Session,
+    close_run_id: UUID,
+    document_id: UUID,
+    document_type: DocumentType,
+    field_values: dict[str, Any],
+    imported_gl_candidates: tuple[ImportedGeneralLedgerLineCandidate, ...],
+) -> ImportedLedgerRepresentationResult | None:
+    """Suppress approved payslips when a bound imported GL already carries a payroll batch."""
+
+    if document_type is not DocumentType.PAYSLIP:
+        return None
+
+    target_pay_date = _coerce_date(field_values.get("pay_date"))
+    target_net_pay = _coerce_decimal(field_values.get("net_pay"))
+    if target_pay_date is None or target_net_pay is None or target_net_pay <= Decimal("0.00"):
+        return None
+
+    approved_payslip_ids = tuple(
+        row.id
+        for row in session.execute(
+            select(Document.id).where(
+                Document.close_run_id == close_run_id,
+                Document.status == "approved",
+                Document.document_type == DocumentType.PAYSLIP.value,
+            )
+        ).all()
+    )
+    if len(approved_payslip_ids) < 2:
+        return None
+
+    batch_document_ids: list[UUID] = []
+    batch_total = Decimal("0.00")
+    for approved_payslip_id in approved_payslip_ids:
+        extraction = _load_latest_extraction(
+            session=session,
+            document_id=approved_payslip_id,
+        )
+        if extraction is None:
+            continue
+        extraction_fields = _load_extracted_field_values(latest_extraction=extraction)
+        pay_date = _coerce_date(extraction_fields.get("pay_date"))
+        net_pay = _coerce_decimal(extraction_fields.get("net_pay"))
+        if pay_date != target_pay_date or net_pay is None or net_pay <= Decimal("0.00"):
+            continue
+        batch_document_ids.append(approved_payslip_id)
+        batch_total += net_pay.quantize(_AMOUNT_TOLERANCE)
+
+    if document_id not in batch_document_ids or len(batch_document_ids) < 2:
+        return None
+
+    for candidate in imported_gl_candidates:
+        if abs(candidate.amount - batch_total) > _AMOUNT_TOLERANCE:
+            continue
+        if not _looks_like_payroll_batch_line(candidate):
+            continue
+        if abs((candidate.posting_date - target_pay_date).days) > _DATE_WINDOW_DAYS:
+            continue
+        return ImportedLedgerRepresentationResult(
+            document_id=document_id,
+            represented_in_imported_gl=True,
+            status="represented_in_imported_gl",
+            reason=(
+                "The imported general ledger already contains the payroll batch that "
+                "covers approved payslips for this pay date."
+            ),
+            matched_line_no=candidate.line_no,
+            matched_reference=candidate.reference or candidate.external_ref,
+            matched_description=candidate.description,
+            matched_posting_date=candidate.posting_date,
+        )
+
+    return None
+
+
 def _load_latest_extraction(
     *,
     session: Session,
@@ -409,7 +515,7 @@ def _resolve_line_amount(debit_amount: Any, credit_amount: Any) -> Decimal:
 def _coerce_decimal(value: Any) -> Decimal | None:
     """Convert one JSON-like value into a positive-or-zero Decimal when possible."""
 
-    if value in {None, ""}:
+    if value is None or value == "":
         return None
     try:
         return Decimal(str(value).replace(",", ""))
@@ -420,7 +526,7 @@ def _coerce_decimal(value: Any) -> Decimal | None:
 def _coerce_date(value: Any) -> date | None:
     """Coerce one JSON-like value into a date."""
 
-    if value in {None, ""}:
+    if value is None or value == "":
         return None
     if isinstance(value, date):
         return value
@@ -454,6 +560,22 @@ def _name_tokens(value: Any) -> tuple[str, ...]:
         token
         for token in dict.fromkeys(normalized.split())
         if len(token) >= 4 and token not in _STOP_WORD_TOKENS
+    )
+
+
+def _looks_like_payroll_batch_line(candidate: ImportedGeneralLedgerLineCandidate) -> bool:
+    """Return whether one imported GL line clearly looks like a payroll batch posting."""
+
+    search_text = candidate.normalized_search_text
+    return any(
+        signal in search_text
+        for signal in (
+            "salary batch",
+            "march payroll",
+            "payroll",
+            "salaries and wages",
+            "salary",
+        )
     )
 
 

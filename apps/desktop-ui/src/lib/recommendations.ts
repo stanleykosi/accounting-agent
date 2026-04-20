@@ -16,6 +16,8 @@ export type RecommendationSummary = {
   rule_version: string;
   schema_version: string;
   status: string;
+  source_document_filename: string | null;
+  source_document_type: string | null;
   updated_at: string;
 };
 

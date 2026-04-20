@@ -112,10 +112,10 @@ def sample_context(sample_coa_accounts: list[CoaAccountRef]) -> RecommendationCo
         period_end=date(2025, 1, 31),
         document_type=DocumentType.INVOICE,
         extracted_fields={
-            "total": {"value": "50000.00", "confidence": 0.95},
-            "vendor": {"value": "Acme Supplies Ltd", "confidence": 0.90},
-            "date": {"value": "2025-01-15", "confidence": 0.98},
-            "currency": {"value": "NGN", "confidence": 1.0},
+            "total": "50000.00",
+            "vendor_name": "Acme Supplies Ltd",
+            "invoice_date": "2025-01-15",
+            "currency": "NGN",
         },
         line_items=[
             {
@@ -204,6 +204,7 @@ class TestEvaluateDeterministicRules:
         det = result["deterministic_result"]
         assert det is not None
         assert det.get("matched") is False
+        assert det.get("reasons") == ["No deterministic GL coding rule matched this transaction."]
 
     def test_configured_rule_produces_match(
         self, sample_context: RecommendationContext
@@ -220,6 +221,106 @@ class TestEvaluateDeterministicRules:
         result = evaluate_deterministic_rules(state)
         # The node should always produce a deterministic_result entry
         assert result["deterministic_result"] is not None
+
+    def test_payslip_heuristic_matches_salary_account(self) -> None:
+        """Payslip contexts should map to payroll expense when the COA supports it."""
+
+        context = RecommendationContext(
+            close_run_id=uuid4(),
+            document_id=uuid4(),
+            entity_id=uuid4(),
+            period_start=date(2026, 3, 1),
+            period_end=date(2026, 3, 31),
+            document_type=DocumentType.PAYSLIP,
+            extracted_fields={
+                "employee_name": "Adaobi Nwosu",
+                "employee_id": "EMP-1001",
+                "pay_date": "2026-03-25",
+                "net_pay": "650000.00",
+                "gross_pay": "820000.00",
+            },
+            line_items=[],
+            coa_accounts=[
+                CoaAccountRef(
+                    account_code="6010",
+                    account_name="Salaries and Wages",
+                    account_type=AccountType.EXPENSE,
+                    is_active=True,
+                ),
+                CoaAccountRef(
+                    account_code="6080",
+                    account_name="Professional Fees",
+                    account_type=AccountType.EXPENSE,
+                    is_active=True,
+                ),
+            ],
+            coa_source="uploaded",
+            autonomy_mode=AutonomyMode.HUMAN_REVIEW,
+            confidence_threshold=0.7,
+        )
+
+        result = evaluate_deterministic_rules(
+            {"context": context.model_dump(mode="json"), "errors": []}
+        )
+
+        det = result["deterministic_result"]
+        assert det is not None
+        assert det["matched"] is True
+        assert det["account_code"] == "6010"
+        assert det["confidence"] >= 0.9
+
+    def test_invoice_keyword_heuristic_matches_professional_fees(self) -> None:
+        """Invoice line-item keywords should map to the closest COA expense account."""
+
+        context = RecommendationContext(
+            close_run_id=uuid4(),
+            document_id=uuid4(),
+            entity_id=uuid4(),
+            period_start=date(2026, 3, 1),
+            period_end=date(2026, 3, 31),
+            document_type=DocumentType.INVOICE,
+            extracted_fields={
+                "vendor_name": "Oceanic Assurance Partners",
+                "invoice_date": "2026-03-21",
+                "invoice_number": "OAP-9004",
+                "total": "8500000.00",
+                "notes": "Quarter-end audit retainer",
+            },
+            line_items=[
+                {
+                    "description": "Quarter-end audit fieldwork retainer",
+                    "amount": "8500000.00",
+                    "line_no": 1,
+                }
+            ],
+            coa_accounts=[
+                CoaAccountRef(
+                    account_code="6050",
+                    account_name="Freight and Logistics",
+                    account_type=AccountType.EXPENSE,
+                    is_active=True,
+                ),
+                CoaAccountRef(
+                    account_code="6080",
+                    account_name="Professional Fees",
+                    account_type=AccountType.EXPENSE,
+                    is_active=True,
+                ),
+            ],
+            coa_source="uploaded",
+            autonomy_mode=AutonomyMode.HUMAN_REVIEW,
+            confidence_threshold=0.7,
+        )
+
+        result = evaluate_deterministic_rules(
+            {"context": context.model_dump(mode="json"), "errors": []}
+        )
+
+        det = result["deterministic_result"]
+        assert det is not None
+        assert det["matched"] is True
+        assert det["account_code"] == "6080"
+        assert det["reasons"][0].startswith("COA keyword heuristic matched")
 
 
 # ---------------------------------------------------------------------------

@@ -193,6 +193,55 @@ def list_recommendations(
     )
     repo = RecommendationJournalRepository(db_session=db_session)
     recommendations = repo.list_recommendations_for_close_run(close_run_id=close_run_id)
+    document_ids = tuple(
+        recommendation.document_id
+        for recommendation in recommendations
+        if recommendation.document_id is not None
+    )
+    represented_documents = (
+        evaluate_documents_imported_gl_representation(
+            session=db_session,
+            close_run_id=close_run_id,
+            document_ids=document_ids,
+        )
+        if document_ids
+        else {}
+    )
+    recommendation_ids = tuple(recommendation.id for recommendation in recommendations)
+    journaled_recommendation_ids = {
+        recommendation_id
+        for recommendation_id, in db_session.query(JournalEntry.recommendation_id)
+        .filter(
+            JournalEntry.close_run_id == close_run_id,
+            JournalEntry.recommendation_id.in_(recommendation_ids) if recommendation_ids else False,
+            JournalEntry.superseded_by_id.is_(None),
+        )
+        .all()
+        if recommendation_id is not None
+    }
+    recommendations = tuple(
+        recommendation
+        for recommendation in recommendations
+        if not (
+            recommendation.document_id is not None
+            and recommendation.id not in journaled_recommendation_ids
+            and represented_documents.get(recommendation.document_id) is not None
+            and represented_documents[recommendation.document_id].represented_in_imported_gl
+        )
+    )
+    document_ids = tuple(
+        recommendation.document_id
+        for recommendation in recommendations
+        if recommendation.document_id is not None
+    )
+    documents_by_id: dict[UUID, Document] = {}
+    if document_ids:
+        document_rows = (
+            db_session.query(Document)
+            .filter(Document.id.in_(document_ids))
+            .all()
+        )
+        documents_by_id = {document.id: document for document in document_rows}
     return {
         "recommendations": [
             {
@@ -208,6 +257,16 @@ def list_recommendations(
                 "schema_version": rec.schema_version,
                 "created_at": rec.created_at.isoformat(),
                 "updated_at": rec.updated_at.isoformat(),
+                "source_document_filename": (
+                    documents_by_id[rec.document_id].original_filename
+                    if rec.document_id is not None and rec.document_id in documents_by_id
+                    else None
+                ),
+                "source_document_type": (
+                    documents_by_id[rec.document_id].document_type
+                    if rec.document_id is not None and rec.document_id in documents_by_id
+                    else None
+                ),
             }
             for rec in recommendations
         ]
