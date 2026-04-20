@@ -117,69 +117,6 @@ def list_exports(
         _raise_export_http_error(error)
 
 
-@router.get(
-    "/{export_id}",
-    response_model=ExportDetail,
-    summary="Read one export detail",
-)
-def read_export_detail(
-    entity_id: UUID,
-    close_run_id: UUID,
-    export_id: UUID,
-    export_service: ExportServiceDependency,
-    auth_context: RequestAuthDependency,
-) -> ExportDetail:
-    """Return one export record with full manifest and evidence-pack details."""
-
-    try:
-        return export_service.read_export_detail(
-            actor_user=_to_entity_user(auth_context),
-            entity_id=entity_id,
-            close_run_id=close_run_id,
-            export_id=export_id,
-        )
-    except ExportServiceError as error:
-        _raise_export_http_error(error)
-
-
-@router.post(
-    "/{export_id}/distribute",
-    response_model=ExportDetail,
-    summary="Record management distribution for one export",
-)
-def distribute_export(
-    entity_id: UUID,
-    close_run_id: UUID,
-    export_id: UUID,
-    db_session: DatabaseSessionDependency,
-    export_service: ExportServiceDependency,
-    body: DistributeExportRequest,
-    auth_context: RequestAuthDependency,
-) -> ExportDetail:
-    """Record one stakeholder release event for a completed export package."""
-
-    require_active_close_run_phase(
-        actor_user=_to_entity_user(auth_context),
-        entity_id=entity_id,
-        close_run_id=close_run_id,
-        required_phase=WorkflowPhase.REVIEW_SIGNOFF,
-        action_label="Management distribution",
-        db_session=db_session,
-    )
-    try:
-        return export_service.distribute_export(
-            actor_user=_to_entity_user(auth_context),
-            entity_id=entity_id,
-            close_run_id=close_run_id,
-            export_id=export_id,
-            request=body,
-            source_surface=AuditSourceSurface.DESKTOP,
-            trace_id=None,
-        )
-    except ExportServiceError as error:
-        _raise_export_http_error(error)
-
-
 @router.post(
     "/evidence-pack",
     response_model=EvidencePackBundle,
@@ -310,6 +247,69 @@ def preview_evidence_pack_idempotency_key(
         close_run_id=str(close_run_id),
         artifact_type=ArtifactType.EVIDENCE_PACK.value,
     )
+
+
+@router.get(
+    "/{export_id}",
+    response_model=ExportDetail,
+    summary="Read one export detail",
+)
+def read_export_detail(
+    entity_id: UUID,
+    close_run_id: UUID,
+    export_id: UUID,
+    export_service: ExportServiceDependency,
+    auth_context: RequestAuthDependency,
+) -> ExportDetail:
+    """Return one export record with full manifest and evidence-pack details."""
+
+    try:
+        return export_service.read_export_detail(
+            actor_user=_to_entity_user(auth_context),
+            entity_id=entity_id,
+            close_run_id=close_run_id,
+            export_id=export_id,
+        )
+    except ExportServiceError as error:
+        _raise_export_http_error(error)
+
+
+@router.post(
+    "/{export_id}/distribute",
+    response_model=ExportDetail,
+    summary="Record management distribution for one export",
+)
+def distribute_export(
+    entity_id: UUID,
+    close_run_id: UUID,
+    export_id: UUID,
+    db_session: DatabaseSessionDependency,
+    export_service: ExportServiceDependency,
+    body: DistributeExportRequest,
+    auth_context: RequestAuthDependency,
+) -> ExportDetail:
+    """Record one stakeholder release event for a completed export package."""
+
+    require_active_close_run_phase(
+        actor_user=_to_entity_user(auth_context),
+        entity_id=entity_id,
+        close_run_id=close_run_id,
+        required_phase=WorkflowPhase.REVIEW_SIGNOFF,
+        action_label="Management distribution",
+        db_session=db_session,
+    )
+    try:
+        return export_service.distribute_export(
+            actor_user=_to_entity_user(auth_context),
+            entity_id=entity_id,
+            close_run_id=close_run_id,
+            export_id=export_id,
+            request=body,
+            source_surface=AuditSourceSurface.DESKTOP,
+            trace_id=None,
+        )
+    except ExportServiceError as error:
+        _raise_export_http_error(error)
 
 
 def _to_entity_user(session_result: AuthenticatedUserContext) -> EntityUserRecord:
