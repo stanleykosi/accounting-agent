@@ -14,6 +14,7 @@ import Link from "next/link";
 import { DispositionPanel } from "../../../../../../../components/reconciliation/DispositionPanel";
 import { MatchReviewTable } from "../../../../../../../components/reconciliation/MatchReviewTable";
 import {
+  approveReconciliation,
   type DispositionActionValue,
   type ReconciliationAnomalySummary,
   type ReconciliationRunResponse,
@@ -70,11 +71,13 @@ export default function CloseRunReconciliationPage({
   const [workspaceData, setWorkspaceData] = useState<ReconciliationReviewWorkspaceData | null>(null);
   const [evidenceDrawer, setEvidenceDrawer] = useState<EvidenceDrawerState>(defaultEvidenceDrawerState);
   const [isQueueingRun, setIsQueueingRun] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [isApprovingReconciliationId, setIsApprovingReconciliationId] = useState<string | null>(null);
   const [queuedRun, setQueuedRun] = useState<ReconciliationRunResponse | null>(null);
   const [resolutionNotes, setResolutionNotes] = useState<Record<string, string>>({});
 
-  useEffect(() => {
-    void loadWorkspace({
+  const refreshWorkspace = useCallback(async (): Promise<void> => {
+    await loadWorkspace({
       closeRunId,
       entityId,
       onError: setErrorMessage,
@@ -85,6 +88,40 @@ export default function CloseRunReconciliationPage({
       onLoadingChange: setIsLoading,
     });
   }, [closeRunId, entityId]);
+
+  useEffect(() => {
+    void refreshWorkspace();
+  }, [refreshWorkspace]);
+
+  const handleRefreshWorkspace = useCallback(async (): Promise<void> => {
+    setIsRefreshing(true);
+    try {
+      await refreshWorkspace();
+    } finally {
+      setIsRefreshing(false);
+    }
+  }, [refreshWorkspace]);
+
+  const handleApproveReconciliation = useCallback(
+    async (reconciliationId: string): Promise<void> => {
+      setIsApprovingReconciliationId(reconciliationId);
+      try {
+        await approveReconciliation(
+          entityId,
+          closeRunId,
+          reconciliationId,
+          "Approved in reconciliation workspace",
+        );
+        setErrorMessage(null);
+        await refreshWorkspace();
+      } catch (error: unknown) {
+        setErrorMessage(resolveReconciliationErrorMessage(error));
+      } finally {
+        setIsApprovingReconciliationId(null);
+      }
+    },
+    [closeRunId, entityId, refreshWorkspace],
+  );
 
   const visibleItems = useMemo(
     () =>
@@ -138,15 +175,9 @@ export default function CloseRunReconciliationPage({
       }
       await submitDispositionItem(entityId, closeRunId, itemId, disposition, reason);
       // Refresh workspace to reflect the disposition
-      void loadWorkspace({
-        closeRunId,
-        entityId,
-        onError: setErrorMessage,
-        onLoaded: setWorkspaceData,
-        onLoadingChange: setIsLoading,
-      });
+      await refreshWorkspace();
     },
-    [workspaceData, entityId, closeRunId],
+    [workspaceData, entityId, closeRunId, refreshWorkspace],
   );
 
   const handleResolveAnomaly = useCallback(
@@ -157,16 +188,9 @@ export default function CloseRunReconciliationPage({
       }
       await resolveAnomaly(entityId, closeRunId, anomalyId, note);
       setResolutionNotes((prev) => ({ ...prev, [anomalyId]: "" }));
-      // Refresh workspace
-      void loadWorkspace({
-        closeRunId,
-        entityId,
-        onError: setErrorMessage,
-        onLoaded: setWorkspaceData,
-        onLoadingChange: setIsLoading,
-      });
+      await refreshWorkspace();
     },
-    [entityId, closeRunId, resolutionNotes],
+    [entityId, closeRunId, refreshWorkspace, resolutionNotes],
   );
 
   const handleRunReconciliation = useCallback(async (): Promise<void> => {
@@ -175,12 +199,15 @@ export default function CloseRunReconciliationPage({
       const result = await runReconciliation(entityId, closeRunId);
       setQueuedRun(result);
       setErrorMessage(null);
+      window.setTimeout(() => {
+        void refreshWorkspace();
+      }, 1500);
     } catch (error: unknown) {
       setErrorMessage(resolveReconciliationErrorMessage(error));
     } finally {
       setIsQueueingRun(false);
     }
-  }, [closeRunId, entityId]);
+  }, [closeRunId, entityId, refreshWorkspace]);
 
   if (isLoading) {
     return (
@@ -260,19 +287,31 @@ export default function CloseRunReconciliationPage({
           </p>
 
           <div className="integration-action-stack" style={{ marginTop: "16px" }}>
-            <button
-              className="primary-button"
-              disabled={isQueueingRun}
-              onClick={() => {
-                void handleRunReconciliation();
-              }}
-              type="button"
-            >
-              {isQueueingRun ? "Queueing..." : "Run reconciliation"}
-            </button>
+            <div className="close-run-link-row">
+              <button
+                className="primary-button"
+                disabled={isQueueingRun}
+                onClick={() => {
+                  void handleRunReconciliation();
+                }}
+                type="button"
+              >
+                {isQueueingRun ? "Queueing..." : "Run reconciliation"}
+              </button>
+              <button
+                className="secondary-button"
+                disabled={isRefreshing}
+                onClick={() => {
+                  void handleRefreshWorkspace();
+                }}
+                type="button"
+              >
+                {isRefreshing ? "Refreshing..." : "Refresh workspace"}
+              </button>
+            </div>
             <p className="form-helper">
-              Queue the full reconciliation engine for this period. Existing review queues update
-              as new matches, exceptions, and anomalies are produced.
+              Queue the full reconciliation engine for this period. Once the runs appear below,
+              clear any exceptions and approve each reconciliation run to unblock Reporting.
             </p>
           </div>
         </SurfaceCard>
@@ -288,6 +327,57 @@ export default function CloseRunReconciliationPage({
             : `Reconciliation job queued: ${queuedRun.job_id}${queuedRun.message ? ` — ${queuedRun.message}` : ""}`}
         </div>
       ) : null}
+
+      <SurfaceCard title="Reconciliation Runs" subtitle={`${workspaceData.reconciliations.length} run(s)`}>
+        {workspaceData.reconciliations.length === 0 ? (
+          <p className="form-helper">
+            No reconciliation runs exist yet. Click <strong>Run reconciliation</strong>, wait for
+            the worker to finish, then refresh this workspace.
+          </p>
+        ) : (
+          <div className="dashboard-row-list">
+            {workspaceData.reconciliations.map((reconciliation) => (
+              <article className="dashboard-row" key={reconciliation.id}>
+                <div className="close-run-row-header">
+                  <div>
+                    <strong className="close-run-row-title">
+                      {formatReconciliationTypeLabel(reconciliation.reconciliationType)}
+                    </strong>
+                    <p className="close-run-row-meta">
+                      {reconciliation.status.replaceAll("_", " ")} • {reconciliation.itemCount} item(s)
+                    </p>
+                  </div>
+                </div>
+                <p className="form-helper">
+                  {reconciliation.blockingReason ??
+                    (reconciliation.status === "approved"
+                      ? "This reconciliation run is approved."
+                      : "Review the generated queue and approve this run when its exceptions are resolved.")}
+                </p>
+                <div className="close-run-link-row">
+                  <button
+                    className="secondary-button"
+                    disabled={
+                      reconciliation.status === "approved" ||
+                      isApprovingReconciliationId === reconciliation.id
+                    }
+                    onClick={() => {
+                      void handleApproveReconciliation(reconciliation.id);
+                    }}
+                    type="button"
+                  >
+                    {isApprovingReconciliationId === reconciliation.id
+                      ? "Approving..."
+                      : reconciliation.status === "approved"
+                        ? "Approved"
+                        : "Approve run"}
+                  </button>
+                </div>
+              </article>
+            ))}
+          </div>
+        )}
+      </SurfaceCard>
 
       {workspaceData.reconciliations.length === 0 &&
       workspaceData.items.length === 0 &&
