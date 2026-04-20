@@ -18,6 +18,7 @@ from uuid import UUID
 
 from apps.worker.app.celery_app import ObservedTask
 from services.common.enums import JobStatus
+from services.common.logging import get_logger
 from services.common.types import JsonObject, JsonValue, utc_now
 from services.db.session import get_session_factory
 from services.jobs.retry_policy import (
@@ -30,6 +31,7 @@ from services.jobs.service import JobRecord, JobService
 from services.observability.context import current_trace_metadata
 
 TJobServiceReturn = TypeVar("TJobServiceReturn")
+LOGGER = get_logger(__name__)
 
 
 @dataclass(slots=True)
@@ -126,18 +128,35 @@ class TrackedJobTask(ObservedTask):
         job_id = UUID(str(self.request.id))
         job_record = self._mark_running(job_id=job_id, attempt_count=self.request.retries + 1)
         context = JobRuntimeContext(task=self, job_record=job_record)
+        LOGGER.info(
+            "Tracked job execution started.",
+            job_id=str(job_id),
+            task_name=self.name,
+            attempt_count=self.request.retries + 1,
+        )
 
         try:
             context.ensure_not_canceled()
             result = runner(context)
             result_payload = _coerce_json_object(result)
             self._mark_completed(job_id=job_id, result_payload=result_payload)
+            LOGGER.info(
+                "Tracked job execution completed.",
+                job_id=str(job_id),
+                task_name=self.name,
+            )
             return result
         except JobCancellationRequestedError as error:
             self._mark_canceled(
                 job_id=job_id,
                 failure_reason=error.message,
                 failure_details=error.details,
+            )
+            LOGGER.warning(
+                "Tracked job execution canceled.",
+                job_id=str(job_id),
+                task_name=self.name,
+                reason=error.message,
             )
             return {
                 "job_id": str(job_id),
@@ -149,6 +168,12 @@ class TrackedJobTask(ObservedTask):
                 job_id=job_id,
                 blocking_reason=error.message,
                 failure_details=error.details,
+            )
+            LOGGER.warning(
+                "Tracked job execution blocked.",
+                job_id=str(job_id),
+                task_name=self.name,
+                reason=error.message,
             )
             return {
                 "job_id": str(job_id),
@@ -192,6 +217,12 @@ class TrackedJobTask(ObservedTask):
                     failure_details=decision.failure_details,
                     dead_letter=decision.dead_letter,
                 )
+            LOGGER.exception(
+                "Tracked job execution failed.",
+                job_id=str(job_id),
+                task_name=self.name,
+                reason=decision.failure_reason,
+            )
             raise
 
     def _mark_running(self, *, job_id: UUID, attempt_count: int) -> JobRecord:

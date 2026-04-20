@@ -9,10 +9,16 @@ Dependencies: Reconciliation API helpers, review components, and shared UI surfa
 
 import { EvidenceDrawer, ReviewLayout, SurfaceCard } from "@accounting-ai-agent/ui";
 import type { EvidenceDrawerReference } from "@accounting-ai-agent/ui";
-import { use, useCallback, useEffect, useMemo, useState, type ReactElement } from "react";
+import { use, useCallback, useEffect, useMemo, useRef, useState, type ReactElement } from "react";
 import Link from "next/link";
 import { DispositionPanel } from "../../../../../../../components/reconciliation/DispositionPanel";
 import { MatchReviewTable } from "../../../../../../../components/reconciliation/MatchReviewTable";
+import {
+  type JobDetail,
+  JobApiError,
+  listEntityJobs,
+  readJobDetail,
+} from "../../../../../../../lib/jobs";
 import {
   approveReconciliation,
   type DispositionActionValue,
@@ -74,7 +80,10 @@ export default function CloseRunReconciliationPage({
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isApprovingReconciliationId, setIsApprovingReconciliationId] = useState<string | null>(null);
   const [queuedRun, setQueuedRun] = useState<ReconciliationRunResponse | null>(null);
+  const [jobErrorMessage, setJobErrorMessage] = useState<string | null>(null);
+  const [reconciliationJob, setReconciliationJob] = useState<JobDetail | null>(null);
   const [resolutionNotes, setResolutionNotes] = useState<Record<string, string>>({});
+  const handledTerminalJobKeyRef = useRef<string | null>(null);
 
   const refreshWorkspace = useCallback(async (): Promise<void> => {
     await loadWorkspace({
@@ -93,14 +102,73 @@ export default function CloseRunReconciliationPage({
     void refreshWorkspace();
   }, [refreshWorkspace]);
 
+  const refreshReconciliationJob = useCallback(
+    async (preferredJobId?: string | null): Promise<JobDetail | null> => {
+      try {
+        const jobs = await listEntityJobs(entityId, { closeRunId });
+        const reconciliationJobs = jobs.filter(
+          (job) => job.task_name === "reconciliation.execute_close_run",
+        );
+        const selectedJob =
+          (preferredJobId
+            ? reconciliationJobs.find((job) => job.id === preferredJobId)
+            : null) ?? reconciliationJobs[0] ?? null;
+        if (selectedJob === null) {
+          setReconciliationJob(null);
+          setJobErrorMessage(null);
+          return null;
+        }
+        const detail = await readJobDetail(entityId, selectedJob.id);
+        setReconciliationJob(detail);
+        setJobErrorMessage(null);
+        return detail;
+      } catch (error: unknown) {
+        setJobErrorMessage(resolveJobErrorMessage(error));
+        return null;
+      }
+    },
+    [closeRunId, entityId],
+  );
+
+  useEffect(() => {
+    void refreshReconciliationJob();
+  }, [refreshReconciliationJob]);
+
+  useEffect(() => {
+    if (reconciliationJob === null || !isActiveJobStatus(reconciliationJob.status)) {
+      return;
+    }
+    const timeoutId = window.setTimeout(() => {
+      void refreshReconciliationJob(reconciliationJob.id);
+    }, 2000);
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [reconciliationJob, refreshReconciliationJob]);
+
+  useEffect(() => {
+    if (reconciliationJob === null || !isTerminalJobStatus(reconciliationJob.status)) {
+      return;
+    }
+    const terminalKey = `${reconciliationJob.id}:${reconciliationJob.status}:${reconciliationJob.updated_at}`;
+    if (handledTerminalJobKeyRef.current === terminalKey) {
+      return;
+    }
+    handledTerminalJobKeyRef.current = terminalKey;
+    void refreshWorkspace();
+  }, [reconciliationJob, refreshWorkspace]);
+
   const handleRefreshWorkspace = useCallback(async (): Promise<void> => {
     setIsRefreshing(true);
     try {
-      await refreshWorkspace();
+      await Promise.all([
+        refreshWorkspace(),
+        refreshReconciliationJob(reconciliationJob?.id ?? queuedRun?.job_id ?? null),
+      ]);
     } finally {
       setIsRefreshing(false);
     }
-  }, [refreshWorkspace]);
+  }, [queuedRun?.job_id, reconciliationJob?.id, refreshReconciliationJob, refreshWorkspace]);
 
   const handleApproveReconciliation = useCallback(
     async (reconciliationId: string): Promise<void> => {
@@ -199,15 +267,16 @@ export default function CloseRunReconciliationPage({
       const result = await runReconciliation(entityId, closeRunId);
       setQueuedRun(result);
       setErrorMessage(null);
-      window.setTimeout(() => {
-        void refreshWorkspace();
-      }, 1500);
+      handledTerminalJobKeyRef.current = null;
+      if (result.job_id) {
+        await refreshReconciliationJob(result.job_id);
+      }
     } catch (error: unknown) {
       setErrorMessage(resolveReconciliationErrorMessage(error));
     } finally {
       setIsQueueingRun(false);
     }
-  }, [closeRunId, entityId, refreshWorkspace]);
+  }, [closeRunId, entityId, refreshReconciliationJob]);
 
   if (isLoading) {
     return (
@@ -290,13 +359,17 @@ export default function CloseRunReconciliationPage({
             <div className="close-run-link-row">
               <button
                 className="primary-button"
-                disabled={isQueueingRun}
+                disabled={isQueueingRun || (reconciliationJob !== null && isActiveJobStatus(reconciliationJob.status))}
                 onClick={() => {
                   void handleRunReconciliation();
                 }}
                 type="button"
               >
-                {isQueueingRun ? "Queueing..." : "Run reconciliation"}
+                {isQueueingRun
+                  ? "Queueing..."
+                  : reconciliationJob !== null && isActiveJobStatus(reconciliationJob.status)
+                    ? "Reconciliation running..."
+                    : "Run reconciliation"}
               </button>
               <button
                 className="secondary-button"
@@ -318,21 +391,71 @@ export default function CloseRunReconciliationPage({
       </section>
 
       {queuedRun ? (
-        <div
-          className={`status-banner ${queuedRun.status === "not_applicable" ? "warning" : "success"}`}
-          role="status"
+        queuedRun.status === "not_applicable" ? (
+          <div className="status-banner warning" role="status">
+            {queuedRun.message ?? "No applicable reconciliation work was detected for this run."}
+          </div>
+        ) : null
+      ) : null}
+
+      {jobErrorMessage ? (
+        <div className="status-banner danger" role="alert">
+          {jobErrorMessage}
+        </div>
+      ) : null}
+
+      {reconciliationJob ? (
+        <SurfaceCard
+          title="Reconciliation Job"
+          subtitle={reconciliationJob.task_name}
         >
-          {queuedRun.status === "not_applicable"
-            ? (queuedRun.message ?? "No applicable reconciliation work was detected for this run.")
-            : `Reconciliation job queued: ${queuedRun.job_id}${queuedRun.message ? ` — ${queuedRun.message}` : ""}`}
+          <dl className="entity-meta-grid reconciliation-summary-grid">
+            <div>
+              <dt>Status</dt>
+              <dd>{reconciliationJob.status.replaceAll("_", " ")}</dd>
+            </div>
+            <div>
+              <dt>Attempt</dt>
+              <dd>
+                {reconciliationJob.attempt_count} / {reconciliationJob.max_retries + 1}
+              </dd>
+            </div>
+            <div>
+              <dt>Current step</dt>
+              <dd>{formatCheckpointStepLabel(reconciliationJob.checkpoint_payload)}</dd>
+            </div>
+            <div>
+              <dt>Last update</dt>
+              <dd>{formatTimestamp(reconciliationJob.updated_at)}</dd>
+            </div>
+          </dl>
+          <div
+            className={`status-banner ${resolveJobStatusTone(reconciliationJob.status)}`}
+            role={reconciliationJob.status === "failed" || reconciliationJob.status === "blocked" ? "alert" : "status"}
+          >
+            {describeReconciliationJob(reconciliationJob)}
+          </div>
+          <div className="close-run-action-row" style={{ marginTop: "16px" }}>
+            <Link
+              className="secondary-button"
+              href={`/entities/${entityId}/close-runs/${closeRunId}/jobs`}
+            >
+              Open job monitor
+            </Link>
+          </div>
+        </SurfaceCard>
+      ) : queuedRun?.job_id ? (
+        <div className="status-banner info" role="status">
+          Reconciliation job queued: {queuedRun.job_id}. Waiting for the worker to start this run.
         </div>
       ) : null}
 
       <SurfaceCard title="Reconciliation Runs" subtitle={`${workspaceData.reconciliations.length} run(s)`}>
         {workspaceData.reconciliations.length === 0 ? (
           <p className="form-helper">
-            No reconciliation runs exist yet. Click <strong>Run reconciliation</strong>, wait for
-            the worker to finish, then refresh this workspace.
+            {reconciliationJob !== null && isActiveJobStatus(reconciliationJob.status)
+              ? `The reconciliation worker is still ${reconciliationJob.status}. This list refreshes automatically when the job finishes.`
+              : "No reconciliation runs exist yet. Click Run reconciliation to queue the control engine for this period."}
           </p>
         ) : (
           <div className="dashboard-row-list">
@@ -678,6 +801,74 @@ function resolveReconciliationErrorMessage(error: unknown): string {
     return error.message;
   }
   return "The reconciliation action failed. Retry the request.";
+}
+
+function resolveJobErrorMessage(error: unknown): string {
+  if (error instanceof JobApiError) {
+    return error.message;
+  }
+  if (error instanceof Error) {
+    return error.message;
+  }
+  return "Failed to read the reconciliation job status. Open the close-run job monitor for details.";
+}
+
+function isActiveJobStatus(status: string): boolean {
+  return status === "queued" || status === "running";
+}
+
+function isTerminalJobStatus(status: string): boolean {
+  return status === "completed" || status === "failed" || status === "blocked" || status === "canceled";
+}
+
+function resolveJobStatusTone(status: string): "success" | "warning" | "danger" | "info" {
+  switch (status) {
+    case "completed":
+      return "success";
+    case "blocked":
+    case "failed":
+      return "danger";
+    case "canceled":
+      return "warning";
+    default:
+      return "info";
+  }
+}
+
+function formatCheckpointStepLabel(checkpointPayload: Record<string, unknown>): string {
+  const rawStep = checkpointPayload.current_step;
+  if (typeof rawStep !== "string" || rawStep.trim().length === 0) {
+    return "Worker has not recorded a checkpoint yet.";
+  }
+  return rawStep.replaceAll("_", " ");
+}
+
+function describeReconciliationJob(job: JobDetail): string {
+  const reason = job.blocking_reason ?? job.failure_reason;
+  if (reason) {
+    return reason;
+  }
+  if (job.status === "completed") {
+    return "The reconciliation worker finished. The workspace refreshes automatically when new runs land.";
+  }
+  if (job.status === "canceled") {
+    return "The reconciliation job was canceled before completion.";
+  }
+  return `The reconciliation worker is ${job.status}. Current step: ${formatCheckpointStepLabel(job.checkpoint_payload)}.`;
+}
+
+function formatTimestamp(value: string | null): string {
+  if (!value) {
+    return "Not recorded yet";
+  }
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return value;
+  }
+  return parsed.toLocaleString("en-GB", {
+    dateStyle: "medium",
+    timeStyle: "short",
+  });
 }
 
 function formatOperatingModeLabel(mode: string): string {

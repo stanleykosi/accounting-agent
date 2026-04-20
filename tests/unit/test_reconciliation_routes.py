@@ -13,12 +13,14 @@ from uuid import uuid4
 import pytest
 from apps.api.app.routes import reconciliation as reconciliation_route
 from services.common.enums import (
+    JobStatus,
     ReconciliationStatus,
     ReconciliationType,
     SupportingScheduleStatus,
     SupportingScheduleType,
 )
 from services.db.repositories.reconciliation_repo import ReconciliationRecord
+from services.jobs.task_names import TaskName
 
 
 class _FakeScalarResult:
@@ -103,7 +105,10 @@ def test_list_reconciliations_keeps_existing_rows_visible_when_inputs_disappear(
     monkeypatch.setattr(
         reconciliation_route,
         "_require_close_run_access",
-        lambda **kwargs: (SimpleNamespace(id=uuid4(), email="ops@example.com", full_name="Ops"), True),
+        lambda **kwargs: (
+            SimpleNamespace(id=uuid4(), email="ops@example.com", full_name="Ops"),
+            True,
+        ),
     )
     monkeypatch.setattr(
         reconciliation_route,
@@ -130,3 +135,79 @@ def test_list_reconciliations_keeps_existing_rows_visible_when_inputs_disappear(
     assert len(response.reconciliations) == 1
     assert response.reconciliations[0].id == str(record.id)
     assert response.reconciliations[0].reconciliation_type is ReconciliationType.FIXED_ASSETS
+
+
+def test_queue_reconciliation_run_reuses_existing_active_job(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Queueing reconciliation twice should reuse the existing active job."""
+
+    entity_id = uuid4()
+    close_run_id = uuid4()
+    actor_user_id = uuid4()
+    existing_job_id = uuid4()
+
+    monkeypatch.setattr(
+        reconciliation_route,
+        "_require_close_run_access",
+        lambda **kwargs: (
+            SimpleNamespace(id=entity_id, email="ops@example.com", full_name="Ops"),
+            True,
+        ),
+    )
+    monkeypatch.setattr(
+        reconciliation_route,
+        "require_active_close_run_phase",
+        lambda **kwargs: None,
+    )
+    monkeypatch.setattr(
+        reconciliation_route,
+        "_resolve_requested_reconciliation_types",
+        lambda **kwargs: (
+            (ReconciliationType.BANK_RECONCILIATION, ReconciliationType.TRIAL_BALANCE),
+            (),
+            None,
+        ),
+    )
+
+    fake_job_service = SimpleNamespace(
+        list_jobs_for_user=lambda **kwargs: [
+            SimpleNamespace(
+                id=existing_job_id,
+                task_name=TaskName.RECONCILIATION_EXECUTE_CLOSE_RUN.value,
+                status=JobStatus.RUNNING,
+                blocking_reason=None,
+            )
+        ],
+        dispatch_job=lambda **kwargs: (_ for _ in ()).throw(
+            AssertionError("queue_reconciliation_run should not dispatch a duplicate active job")
+        ),
+    )
+    monkeypatch.setattr(
+        reconciliation_route,
+        "JobService",
+        lambda db_session: fake_job_service,
+    )
+
+    response = reconciliation_route.queue_reconciliation_run(
+        entity_id=entity_id,
+        close_run_id=close_run_id,
+        payload=reconciliation_route.RunReconciliationRequest(reconciliation_types=None),
+        request=SimpleNamespace(state=SimpleNamespace(request_id="req-123")),
+        response=SimpleNamespace(),
+        settings=SimpleNamespace(),
+        auth_service=SimpleNamespace(),
+        db_session=_FakeDbSession(approved_bank_statement_count=1),
+        task_dispatcher=SimpleNamespace(),
+        auth_context=SimpleNamespace(
+            user=SimpleNamespace(
+                id=actor_user_id,
+                email="ops@example.com",
+                full_name="Ops",
+            )
+        ),
+    )
+
+    assert response.job_id == str(existing_job_id)
+    assert response.status == JobStatus.RUNNING.value
+    assert "already recorded" in (response.message or "")

@@ -14,17 +14,25 @@ from services.common.settings import AppSettings, get_settings
 from sqlalchemy import Engine, create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
+DATABASE_CONNECT_TIMEOUT_SECONDS = 5
+DATABASE_POOL_TIMEOUT_SECONDS = 5
+
 
 @lru_cache(maxsize=4)
 def _build_engine(database_url: str, echo_sql: bool, preferred_hostaddr: str | None) -> Engine:
     """Create and cache one SQLAlchemy engine per canonical database configuration."""
 
-    connect_args = {"hostaddr": preferred_hostaddr} if preferred_hostaddr is not None else {}
+    connect_args: dict[str, object] = {}
+    if database_url.startswith("postgresql"):
+        connect_args["connect_timeout"] = DATABASE_CONNECT_TIMEOUT_SECONDS
+        if preferred_hostaddr is not None:
+            connect_args["hostaddr"] = preferred_hostaddr
     return create_engine(
         database_url,
         connect_args=connect_args,
         echo=echo_sql,
         pool_pre_ping=True,
+        pool_timeout=DATABASE_POOL_TIMEOUT_SECONDS,
     )
 
 def get_session_factory(*, settings: AppSettings | None = None) -> sessionmaker[Session]:

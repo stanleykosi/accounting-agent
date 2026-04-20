@@ -27,6 +27,16 @@ export type JobSummary = {
   updated_at: string;
 };
 
+export type JobDetail = JobSummary & {
+  actor_user_id: string | null;
+  canceled_by_user_id: string | null;
+  checkpoint_payload: Record<string, unknown>;
+  failure_details: Record<string, unknown> | null;
+  payload: Record<string, unknown>;
+  result_payload: Record<string, unknown> | null;
+  trace_id: string | null;
+};
+
 export class JobApiError extends Error {
   constructor(
     message: string,
@@ -82,6 +92,12 @@ export async function listEntityJobs(
     { method: "GET" },
   );
   return payload.jobs;
+}
+
+export async function readJobDetail(entityId: string, jobId: string): Promise<JobDetail> {
+  return requestJson<JobDetail>(buildEntityProxyPath(entityId, ["jobs", jobId]), {
+    method: "GET",
+  });
 }
 
 export async function cancelJob(entityId: string, jobId: string, reason: string): Promise<void> {

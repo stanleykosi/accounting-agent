@@ -39,6 +39,7 @@ from services.auth.service import (
 )
 from services.common.enums import (
     DEFAULT_RECONCILIATION_EXECUTION_TYPES,
+    JobStatus,
     MatchStatus,
     ReconciliationSourceType,
     ReconciliationStatus,
@@ -340,6 +341,34 @@ def queue_reconciliation_run(
             message=message or NO_APPLICABLE_RECONCILIATION_WORK_MESSAGE,
         )
     job_service = JobService(db_session=db_session)
+    existing_job = next(
+        (
+            job
+            for job in job_service.list_jobs_for_user(
+                entity_id=entity_id,
+                user_id=session_result.user.id,
+                close_run_id=close_run_id,
+                statuses=(JobStatus.QUEUED, JobStatus.RUNNING, JobStatus.BLOCKED),
+            )
+            if job.task_name == TaskName.RECONCILIATION_EXECUTE_CLOSE_RUN.value
+        ),
+        None,
+    )
+    if existing_job is not None:
+        reuse_message = (
+            "A reconciliation execution is already recorded for this close run. "
+            "Use the existing job status instead of queueing another run."
+        )
+        if existing_job.status is JobStatus.BLOCKED and existing_job.blocking_reason:
+            reuse_message = existing_job.blocking_reason
+        return ReconciliationRunResponse(
+            job_id=str(existing_job.id),
+            task_name=existing_job.task_name,
+            status=existing_job.status.value,
+            reconciliation_types=applicable_types,
+            skipped_types=skipped_types,
+            message=reuse_message,
+        )
     try:
         job = job_service.dispatch_job(
             dispatcher=task_dispatcher,

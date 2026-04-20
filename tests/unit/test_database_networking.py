@@ -1,6 +1,7 @@
 """
-Purpose: Verify hosted PostgreSQL connections prefer reachable IPv4 routes when DNS also exposes IPv6.
-Scope: Database settings hostaddr resolution, startup healthcheck wiring, and SQLAlchemy engine wiring.
+Purpose: Verify hosted PostgreSQL connections prefer reachable IPv4 routes.
+Scope: Cover settings hostaddr resolution, startup healthcheck wiring,
+and SQLAlchemy engine wiring.
 Dependencies: Shared settings, runtime checks, and DB session helpers.
 """
 
@@ -8,8 +9,8 @@ from __future__ import annotations
 
 from typing import Any
 
-import services.common.settings as settings_module
 import services.common.runtime_checks as runtime_checks_module
+import services.common.settings as settings_module
 import services.db.session as session_module
 from services.common.settings import AppSettings
 
@@ -134,8 +135,12 @@ def test_session_factory_builds_engine_with_resolved_hostaddr(monkeypatch) -> No
     assert create_engine_calls == [
         {
             "database_url": settings.database.sqlalchemy_url,
-            "connect_args": {"hostaddr": "192.0.2.44"},
+            "connect_args": {
+                "connect_timeout": 5,
+                "hostaddr": "192.0.2.44",
+            },
             "echo": False,
             "pool_pre_ping": True,
+            "pool_timeout": 5,
         }
     ]
