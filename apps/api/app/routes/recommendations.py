@@ -229,6 +229,18 @@ def list_recommendations(
             and represented_documents[recommendation.document_id].represented_in_imported_gl
         )
     )
+    deduped_recommendations: list[Any] = []
+    seen_document_recommendation_keys: set[tuple[str | None, str]] = set()
+    for recommendation in recommendations:
+        dedupe_key = (
+            str(recommendation.document_id) if recommendation.document_id is not None else None,
+            recommendation.recommendation_type,
+        )
+        if dedupe_key in seen_document_recommendation_keys:
+            continue
+        seen_document_recommendation_keys.add(dedupe_key)
+        deduped_recommendations.append(recommendation)
+    recommendations = tuple(deduped_recommendations)
     document_ids = tuple(
         recommendation.document_id
         for recommendation in recommendations

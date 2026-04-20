@@ -41,6 +41,10 @@ class _FakeQuery:
         del args, kwargs
         return self
 
+    def order_by(self, *args, **kwargs):
+        del args, kwargs
+        return self
+
     def first(self):
         return None
 
@@ -311,6 +315,111 @@ def test_force_regeneration_supersedes_prior_recommendation_state() -> None:
     assert refreshed_replacement.superseded_by_id is None
     assert refreshed_journal is not None
     assert refreshed_journal.status == ReviewStatus.SUPERSEDED.value
+
+
+def test_persist_recommendation_skips_duplicate_active_document_recommendation(monkeypatch) -> None:
+    """Persistence should no-op when a concurrent active recommendation already exists."""
+
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    tables = [
+        CloseRun.__table__,
+        Recommendation.__table__,
+    ]
+    Base.metadata.create_all(engine, tables=tables)
+    session_factory = sessionmaker(bind=engine)
+
+    close_run_id = uuid4()
+    document_id = uuid4()
+    entity_id = uuid4()
+    existing_recommendation_id = uuid4()
+
+    with session_factory() as session:
+        session.add(
+            CloseRun(
+                id=close_run_id,
+                entity_id=entity_id,
+                period_start=date(2026, 3, 1),
+                period_end=date(2026, 3, 31),
+                status="draft",
+                reporting_currency="USD",
+                current_version_no=1,
+                opened_by_user_id=uuid4(),
+                approved_by_user_id=None,
+                approved_at=None,
+                archived_at=None,
+                reopened_from_close_run_id=None,
+            )
+        )
+        session.add(
+            Recommendation(
+                id=existing_recommendation_id,
+                close_run_id=close_run_id,
+                document_id=document_id,
+                recommendation_type="gl_coding",
+                status=ReviewStatus.PENDING_REVIEW.value,
+                payload={"account_code": "6050"},
+                confidence=0.77,
+                reasoning_summary="Existing recommendation",
+                evidence_links=[],
+                prompt_version="prompt-v1",
+                rule_version="rules-v1",
+                schema_version="1.0.0",
+            )
+        )
+        session.commit()
+
+    monkeypatch.setattr(
+        recommendation_task_module,
+        "get_session_factory",
+        lambda: session_factory,
+    )
+    monkeypatch.setattr(
+        recommendation_task_module,
+        "ensure_close_run_active_phase",
+        lambda **kwargs: None,
+    )
+
+    context = RecommendationContext(
+        close_run_id=close_run_id,
+        document_id=document_id,
+        entity_id=entity_id,
+        period_start="2026-03-01",
+        period_end="2026-03-31",
+        document_type=None,
+        extracted_fields={},
+        line_items=[],
+        coa_accounts=[],
+        coa_source="uploaded",
+        autonomy_mode="human_review",
+        confidence_threshold=0.7,
+    )
+
+    receipt = recommendation_task_module._persist_recommendation(
+        recommendation_data={
+            "close_run_id": close_run_id,
+            "document_id": document_id,
+            "recommendation_type": "gl_coding",
+            "payload": {"account_code": "6080"},
+            "confidence": 0.81,
+            "reasoning_summary": "Replacement recommendation",
+            "evidence_links": [],
+            "prompt_version": "test-prompt",
+            "rule_version": "test-rules",
+            "schema_version": "1.0.0",
+        },
+        routed_status=ReviewStatus.PENDING_REVIEW.value,
+        context=context,
+        actor_user_id=uuid4(),
+        force=False,
+        trace_id="trace-duplicate",
+    )
+
+    with session_factory() as session:
+        recommendation_rows = session.query(Recommendation).all()
+
+    assert receipt.recommendation_id == str(existing_recommendation_id)
+    assert receipt.status == "existing_recommendation"
+    assert len(recommendation_rows) == 1
 
 
 def test_force_regeneration_blocks_when_prior_applied_journal_exists() -> None:

@@ -448,6 +448,35 @@ def _persist_recommendation(
             close_run_id=context.close_run_id,
             required_phase=WorkflowPhase.PROCESSING,
         )
+        if not force and context.document_id is not None:
+            existing_recommendation = (
+                db.query(Recommendation)
+                .filter(
+                    Recommendation.close_run_id == context.close_run_id,
+                    Recommendation.document_id == context.document_id,
+                    Recommendation.superseded_by_id.is_(None),
+                    Recommendation.status != ReviewStatus.SUPERSEDED.value,
+                )
+                .order_by(Recommendation.created_at.desc(), Recommendation.id.desc())
+                .first()
+            )
+            if existing_recommendation is not None:
+                logger.info(
+                    "recommendation_persistence_skipped_existing_active_recommendation",
+                    close_run_id=str(context.close_run_id),
+                    document_id=str(context.document_id),
+                    recommendation_id=str(existing_recommendation.id),
+                )
+                return RecommendationReceipt(
+                    recommendation_id=str(existing_recommendation.id),
+                    status="existing_recommendation",
+                    confidence=float(existing_recommendation.confidence),
+                    model_used=bool(
+                        isinstance(existing_recommendation.payload, dict)
+                        and existing_recommendation.payload.get("model_reasoning") is not None
+                    ),
+                    errors=["An active recommendation already exists for this document."],
+                )
         recommendation = Recommendation(
             close_run_id=context.close_run_id,
             document_id=context.document_id,
