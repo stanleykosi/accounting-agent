@@ -633,6 +633,10 @@ def test_run_reconciliation_task_raises_when_trial_balance_computation_fails(
         def __init__(self, repository, matching_config=None) -> None:
             del repository, matching_config
 
+        def reset_reconciliation_state(self, **kwargs) -> None:
+            del kwargs
+            return None
+
         def run_reconciliation(self, **kwargs):
             del kwargs
             return run_reconciliation_task.ReconciliationRunOutput(
@@ -713,3 +717,167 @@ def test_run_reconciliation_task_raises_when_trial_balance_computation_fails(
         assert "Trial balance computation failed" in str(exc)
     else:
         raise AssertionError("trial-balance failures must surface as explicit job errors")
+
+
+def test_run_reconciliation_task_resets_prior_state_before_rerun(
+    monkeypatch,
+) -> None:
+    """Canonical reruns should replace prior reconciliation artifacts before rebuilding them."""
+
+    class _DummySession:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def commit(self) -> None:
+            return None
+
+        def rollback(self) -> None:
+            return None
+
+    class _DummyJobContext:
+        def __init__(self) -> None:
+            self.checkpoints: list[str] = []
+
+        def ensure_not_canceled(self) -> None:
+            return None
+
+        def checkpoint(self, *, step: str, state: dict | None = None) -> dict:
+            del state
+            self.checkpoints.append(step)
+            return {"current_step": step}
+
+    call_log: list[tuple[str, tuple[str, ...], bool]] = []
+
+    class _FakeService:
+        def __init__(self, repository, matching_config=None) -> None:
+            del repository, matching_config
+
+        def reset_reconciliation_state(
+            self,
+            *,
+            close_run_id,
+            reconciliation_types,
+            clear_trial_balance,
+        ) -> None:
+            del close_run_id
+            call_log.append(
+                (
+                    "reset",
+                    tuple(
+                        reconciliation_type.value
+                        for reconciliation_type in reconciliation_types
+                    ),
+                    clear_trial_balance,
+                )
+            )
+
+        def run_reconciliation(self, **kwargs):
+            call_log.append(
+                (
+                    "run",
+                    tuple(
+                        reconciliation_type.value
+                        for reconciliation_type in kwargs["reconciliation_types"]
+                    ),
+                    False,
+                )
+            )
+            return run_reconciliation_task.ReconciliationRunOutput(
+                reconciliations=[],
+                all_items=[],
+                trial_balance=None,
+                anomalies=[],
+                total_items=0,
+                matched_items=0,
+                exception_items=0,
+                unmatched_items=0,
+            )
+
+        def compute_trial_balance(self, **kwargs):
+            del kwargs
+            call_log.append(("trial_balance", ("trial_balance",), True))
+            return types.SimpleNamespace(
+                is_balanced=True,
+                total_debits=Decimal("100.00"),
+                total_credits=Decimal("100.00"),
+            )
+
+    monkeypatch.setattr(
+        run_reconciliation_task,
+        "get_session_factory",
+        lambda: (lambda: _DummySession()),
+    )
+    monkeypatch.setattr(
+        run_reconciliation_task,
+        "ensure_close_run_active_phase",
+        lambda **kwargs: None,
+    )
+    monkeypatch.setattr(
+        run_reconciliation_task,
+        "_build_reconciliation_source_data",
+        lambda session, close_run_id, reconciliation_types: {
+            run_reconciliation_task.ReconciliationType.BANK_RECONCILIATION: {
+                "source_items": [{"ref": "bank:1", "amount": "100.00"}],
+                "counterparts": [{"ref": "ledger:1", "amount": "100.00"}],
+            },
+            run_reconciliation_task.ReconciliationType.TRIAL_BALANCE: {
+                "source_items": [{"account_code": "1000"}],
+                "counterparts": [],
+            },
+        },
+    )
+    monkeypatch.setattr(
+        run_reconciliation_task,
+        "filter_runnable_reconciliation_types",
+        lambda **kwargs: (
+            (
+                run_reconciliation_task.ReconciliationType.BANK_RECONCILIATION,
+                run_reconciliation_task.ReconciliationType.TRIAL_BALANCE,
+            ),
+            (),
+        ),
+    )
+    monkeypatch.setattr(
+        run_reconciliation_task,
+        "_compute_account_balances",
+        lambda session, close_run_id: [
+            {
+                "account_code": "1000",
+                "account_name": "Cash",
+                "account_type": "asset",
+                "debit_balance": Decimal("100.00"),
+                "credit_balance": Decimal("0.00"),
+                "is_active": True,
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        run_reconciliation_task,
+        "ReconciliationRepository",
+        lambda session: object(),
+    )
+    monkeypatch.setattr(run_reconciliation_task, "ReconciliationService", _FakeService)
+
+    job_context = _DummyJobContext()
+    run_reconciliation_task._run_reconciliation_task(
+        close_run_id=str(uuid4()),
+        reconciliation_types=[
+            run_reconciliation_task.ReconciliationType.BANK_RECONCILIATION.value,
+            run_reconciliation_task.ReconciliationType.TRIAL_BALANCE.value,
+        ],
+        actor_user_id=None,
+        matching_config=None,
+        job_context=job_context,
+    )
+
+    assert call_log[0] == (
+        "reset",
+        ("bank_reconciliation", "trial_balance"),
+        True,
+    )
+    assert call_log[1] == ("run", ("bank_reconciliation",), False)
+    assert call_log[2] == ("trial_balance", ("trial_balance",), True)
+    assert "reset_reconciliation_state" in job_context.checkpoints

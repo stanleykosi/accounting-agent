@@ -249,6 +249,22 @@ class ReconciliationService:
             unmatched_items=total_unmatched,
         )
 
+    def reset_reconciliation_state(
+        self,
+        *,
+        close_run_id: UUID,
+        reconciliation_types: tuple[ReconciliationType, ...],
+        clear_trial_balance: bool,
+    ) -> None:
+        """Replace prior persisted reconciliation artifacts with a fresh canonical rerun."""
+
+        self._repo.clear_reconciliations(
+            close_run_id=close_run_id,
+            reconciliation_types=reconciliation_types,
+        )
+        if clear_trial_balance:
+            self._repo.clear_trial_balance_artifacts(close_run_id=close_run_id)
+
     # ------------------------------------------------------------------
     # Trial balance
     # ------------------------------------------------------------------

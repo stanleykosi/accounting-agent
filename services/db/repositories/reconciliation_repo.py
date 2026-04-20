@@ -28,7 +28,7 @@ from services.db.models.reconciliation import (
     ReconciliationItem,
     TrialBalanceSnapshot,
 )
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 
@@ -274,6 +274,41 @@ class ReconciliationRepository:
         self._session.flush()
         return self._to_reconciliation_record(rec)
 
+    def clear_reconciliations(
+        self,
+        *,
+        close_run_id: UUID,
+        reconciliation_types: tuple[ReconciliationType, ...],
+    ) -> int:
+        """Delete existing reconciliation runs and items for the supplied types."""
+
+        if not reconciliation_types:
+            return 0
+        type_values = tuple(
+            reconciliation_type.value for reconciliation_type in reconciliation_types
+        )
+        reconciliation_ids = tuple(
+            self._session.scalars(
+                select(Reconciliation.id).where(
+                    Reconciliation.close_run_id == close_run_id,
+                    Reconciliation.reconciliation_type.in_(type_values),
+                )
+            )
+        )
+        if not reconciliation_ids:
+            return 0
+
+        self._session.execute(
+            delete(ReconciliationItem).where(
+                ReconciliationItem.reconciliation_id.in_(reconciliation_ids)
+            )
+        )
+        deleted_count = self._session.execute(
+            delete(Reconciliation).where(Reconciliation.id.in_(reconciliation_ids))
+        ).rowcount or 0
+        self._session.flush()
+        return int(deleted_count)
+
     # ------------------------------------------------------------------
     # Reconciliation items
     # ------------------------------------------------------------------
@@ -485,6 +520,25 @@ class ReconciliationRepository:
         self._session.add(snapshot)
         self._session.flush()
         return self._to_snapshot_record(snapshot)
+
+    def clear_trial_balance_artifacts(
+        self,
+        *,
+        close_run_id: UUID,
+    ) -> None:
+        """Delete all persisted trial-balance snapshots and anomalies for one close run."""
+
+        self._session.execute(
+            delete(ReconciliationAnomaly).where(
+                ReconciliationAnomaly.close_run_id == close_run_id
+            )
+        )
+        self._session.execute(
+            delete(TrialBalanceSnapshot).where(
+                TrialBalanceSnapshot.close_run_id == close_run_id
+            )
+        )
+        self._session.flush()
 
     def get_latest_trial_balance(
         self,

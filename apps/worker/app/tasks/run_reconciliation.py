@@ -874,6 +874,35 @@ def _run_reconciliation_task(
                 "No runnable reconciliation work was available for the requested types."
             )
 
+        reset_types = matching_types + (
+            (ReconciliationType.TRIAL_BALANCE,) if trial_balance_requested else ()
+        )
+        try:
+            ensure_reconciliation_phase()
+            svc.reset_reconciliation_state(
+                close_run_id=parsed_close_run_id,
+                reconciliation_types=reset_types,
+                clear_trial_balance=trial_balance_requested,
+            )
+            job_context.checkpoint(
+                step="reset_reconciliation_state",
+                state={
+                    "reconciliation_types": [
+                        reconciliation_type.value for reconciliation_type in reset_types
+                    ],
+                    "clear_trial_balance": trial_balance_requested,
+                },
+            )
+            ensure_reconciliation_phase()
+        except JobCancellationRequestedError:
+            session.rollback()
+            raise
+        except Exception as exc:
+            msg = f"Failed to reset reconciliation state for rerun: {exc}"
+            logger.exception(msg)
+            session.rollback()
+            raise RuntimeError(msg) from exc
+
         # Run reconciliation matching
         try:
             if matching_types:
