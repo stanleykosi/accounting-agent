@@ -233,6 +233,11 @@ export default function CloseRunReportsPage({
                   Created {formatTimestamp(run.created_at)}
                   {run.completed_at ? ` • Completed ${formatTimestamp(run.completed_at)}` : ""}
                 </p>
+                {run.failure_reason ? (
+                  <p className="form-helper" role="alert">
+                    Failure reason: {run.failure_reason}
+                  </p>
+                ) : null}
                 <div className="close-run-link-row">
                   <button
                     className="secondary-button"
@@ -256,9 +261,16 @@ export default function CloseRunReportsPage({
           {reportRunDetail === null ? (
             <p className="form-helper">Select a report run to inspect generated artifacts.</p>
           ) : reportRunDetail.artifact_refs.length === 0 ? (
-            <p className="form-helper">
-              No artifacts are attached yet. This run may still be processing or may have failed.
-            </p>
+            <>
+              <p className="form-helper">
+                No artifacts are attached yet. This run may still be processing or may have failed.
+              </p>
+              {reportRunDetail.failure_reason ? (
+                <p className="form-helper" role="alert">
+                  Failure reason: {reportRunDetail.failure_reason}
+                </p>
+              ) : null}
+            </>
           ) : (
             <div className="dashboard-row-list">
               {reportRunDetail.artifact_refs.map((artifactRef, index) => (

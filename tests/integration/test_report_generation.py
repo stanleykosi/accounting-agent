@@ -16,7 +16,7 @@ Design notes:
 from __future__ import annotations
 
 import io
-from datetime import date
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from uuid import UUID
 
@@ -309,6 +309,33 @@ class TestExcelReportGeneration:
 
         assert result.has_commentary is False, "Commentary flag should be False"
         assert result.section_count == 1, "Only P&L section should be present"
+
+    def test_excel_report_accepts_aware_generated_at_timestamp(
+        self,
+        sample_close_run_id: UUID,
+        sample_period_start: date,
+        sample_period_end: date,
+        sample_p_and_l_data: dict,
+    ) -> None:
+        """Excel generation must normalize aware timestamps before writing the cover sheet."""
+
+        input_data = ExcelReportInput(
+            close_run_id=sample_close_run_id,
+            entity_name="Test Entity Ltd",
+            period_start=sample_period_start,
+            period_end=sample_period_end,
+            currency_code="NGN",
+            p_and_l=sample_p_and_l_data,
+            balance_sheet={},
+            cash_flow={},
+            budget_variance={},
+            kpi_dashboard={},
+            generated_at=datetime(2026, 4, 20, 18, 2, tzinfo=UTC),
+        )
+
+        result = build_excel_report_pack(input_data)
+
+        assert result.payload, "Aware timestamps must not break Excel generation"
 
 
 # ---------------------------------------------------------------------------
