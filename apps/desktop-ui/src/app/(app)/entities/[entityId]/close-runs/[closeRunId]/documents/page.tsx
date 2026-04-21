@@ -45,6 +45,22 @@ type QueueFilterDefinition = {
   label: string;
 };
 
+type PendingDocumentAction =
+  | {
+      action: "delete";
+      documentId: string;
+      title: string;
+      description: string;
+      confirmLabel: string;
+    }
+  | {
+      action: "reparse";
+      documentId: string;
+      title: string;
+      description: string;
+      confirmLabel: string;
+    };
+
 const filterDefinitions: readonly QueueFilterDefinition[] = [
   { filter: "all", label: "All Documents" },
   { filter: "low_confidence", label: "Low Confidence" },
@@ -69,6 +85,9 @@ export default function CloseRunDocumentsPage({
   const [isUploadDialogOpen, setIsUploadDialogOpen] = useState(false);
   const [isUploadingDocuments, setIsUploadingDocuments] = useState(false);
   const [operationMessage, setOperationMessage] = useState<string | null>(null);
+  const [pendingDocumentAction, setPendingDocumentAction] = useState<PendingDocumentAction | null>(
+    null,
+  );
   const [reparseMutationDocumentId, setReparseMutationDocumentId] = useState<string | null>(null);
   const [reviewMutationDocumentId, setReviewMutationDocumentId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
@@ -83,12 +102,16 @@ export default function CloseRunDocumentsPage({
     }
   }, []);
 
-  const refreshWorkspace = useCallback(async (): Promise<void> => {
-    await loadWorkspace({
-      closeRunId,
-      entityId,
-      onError: setErrorMessage,
-      onLoaded: (nextWorkspace) => {
+  const refreshWorkspace = useCallback(
+    async (options?: Readonly<{ showLoading?: boolean }>): Promise<void> => {
+      const showLoading = options?.showLoading ?? true;
+      if (showLoading) {
+        setIsLoading(true);
+      }
+      setErrorMessage(null);
+
+      try {
+        const nextWorkspace = await readDocumentReviewWorkspace(entityId, closeRunId);
         setWorkspaceData(nextWorkspace);
         setExpandedDocumentId((currentExpandedDocumentId) =>
           currentExpandedDocumentId !== null &&
@@ -96,14 +119,38 @@ export default function CloseRunDocumentsPage({
             ? currentExpandedDocumentId
             : null,
         );
-      },
-      onLoadingChange: setIsLoading,
-    });
-  }, [closeRunId, entityId]);
+      } catch (error: unknown) {
+        if (error instanceof DocumentReviewApiError) {
+          setErrorMessage(error.message);
+        } else {
+          setErrorMessage("Failed to load the document review queue. Reload and try again.");
+        }
+      } finally {
+        if (showLoading) {
+          setIsLoading(false);
+        }
+      }
+    },
+    [closeRunId, entityId],
+  );
 
   useEffect(() => {
-    void refreshWorkspace();
+    void refreshWorkspace({ showLoading: true });
   }, [refreshWorkspace]);
+
+  useEffect(() => {
+    if (operationMessage === null) {
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      setOperationMessage(null);
+    }, 3200);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [operationMessage]);
 
   useEffect(() => {
     if (!isUploadDialogOpen) {
@@ -159,20 +206,29 @@ export default function CloseRunDocumentsPage({
       setOperationMessage(null);
 
       try {
-        await persistDocumentReviewDecision(entityId, closeRunId, documentId, "approved", undefined, {
-          authorized: true,
-          complete: true,
-          period: true,
-        });
+        const result = await persistDocumentReviewDecision(
+          entityId,
+          closeRunId,
+          documentId,
+          "approved",
+          undefined,
+          {
+            authorized: true,
+            complete: true,
+            period: true,
+          },
+        );
+        setWorkspaceData((currentWorkspace) =>
+          replaceWorkspaceDocument(currentWorkspace, result.document),
+        );
         setOperationMessage("Document approved.");
-        await refreshWorkspace();
       } catch (error: unknown) {
         setErrorMessage(resolveDocumentReviewErrorMessage(error));
       } finally {
         setReviewMutationDocumentId(null);
       }
     },
-    [closeRunId, entityId, refreshWorkspace],
+    [closeRunId, entityId],
   );
 
   const handleRejectDocument = useCallback(
@@ -181,20 +237,27 @@ export default function CloseRunDocumentsPage({
       setOperationMessage(null);
 
       try {
-        await persistDocumentReviewDecision(entityId, closeRunId, documentId, "rejected");
+        const result = await persistDocumentReviewDecision(
+          entityId,
+          closeRunId,
+          documentId,
+          "rejected",
+        );
+        setWorkspaceData((currentWorkspace) =>
+          replaceWorkspaceDocument(currentWorkspace, result.document),
+        );
         setOperationMessage("Document rejected.");
-        await refreshWorkspace();
       } catch (error: unknown) {
         setErrorMessage(resolveDocumentReviewErrorMessage(error));
       } finally {
         setReviewMutationDocumentId(null);
       }
     },
-    [closeRunId, entityId, refreshWorkspace],
+    [closeRunId, entityId],
   );
 
   const handleDeleteDocument = useCallback(
-    async (documentId: string): Promise<void> => {
+    (documentId: string): void => {
       const document =
         workspaceData?.items.find((candidate) => candidate.id === documentId) ?? null;
       if (document === null) {
@@ -202,37 +265,21 @@ export default function CloseRunDocumentsPage({
         return;
       }
 
-      const confirmed = window.confirm(
-        `Delete ${document.originalFilename} from this close run? This removes the uploaded file and linked extraction data.`,
-      );
-      if (!confirmed) {
-        return;
-      }
-
-      setDeleteMutationDocumentId(documentId);
-      setOperationMessage(null);
-
-      try {
-        const result = await deleteSourceDocument(entityId, closeRunId, documentId);
-        setOperationMessage(
-          result.deletedDocumentCount === 1
-            ? `${result.deletedDocumentFilename} was deleted from the close run.`
-            : `${result.deletedDocumentFilename} and ${
-                result.deletedDocumentCount - 1
-              } linked document(s) were deleted.`,
-        );
-        await refreshWorkspace();
-      } catch (error: unknown) {
-        setErrorMessage(resolveDocumentReviewErrorMessage(error));
-      } finally {
-        setDeleteMutationDocumentId(null);
-      }
+      setPendingDocumentAction({
+        action: "delete",
+        confirmLabel: "Delete document",
+        description:
+          `Delete ${document.originalFilename} from this close run? This removes the uploaded `
+          + "file and linked extraction data.",
+        documentId,
+        title: "Delete document",
+      });
     },
-    [closeRunId, entityId, refreshWorkspace, workspaceData],
+    [workspaceData],
   );
 
   const handleReparseDocument = useCallback(
-    async (documentId: string): Promise<void> => {
+    (documentId: string): void => {
       const document =
         workspaceData?.items.find((candidate) => candidate.id === documentId) ?? null;
       if (document === null) {
@@ -240,27 +287,17 @@ export default function CloseRunDocumentsPage({
         return;
       }
 
-      const confirmed = window.confirm(
-        `Reparse ${document.originalFilename}? This clears the current extraction and queues a fresh parse.`,
-      );
-      if (!confirmed) {
-        return;
-      }
-
-      setReparseMutationDocumentId(documentId);
-      setOperationMessage(null);
-
-      try {
-        const result = await reparseSourceDocument(entityId, closeRunId, documentId);
-        setOperationMessage(`${result.reparsedDocumentFilename} was queued for reparsing.`);
-        await refreshWorkspace();
-      } catch (error: unknown) {
-        setErrorMessage(resolveDocumentReviewErrorMessage(error));
-      } finally {
-        setReparseMutationDocumentId(null);
-      }
+      setPendingDocumentAction({
+        action: "reparse",
+        confirmLabel: "Reparse document",
+        description:
+          `Reparse ${document.originalFilename}? This clears the current extraction and queues `
+          + "a fresh parse.",
+        documentId,
+        title: "Reparse document",
+      });
     },
-    [closeRunId, entityId, refreshWorkspace, workspaceData],
+    [workspaceData],
   );
 
   const handleUploadSelection = useCallback(
@@ -299,9 +336,9 @@ export default function CloseRunDocumentsPage({
               unsupportedCount,
             ),
           );
-          await refreshWorkspace();
+          await refreshWorkspace({ showLoading: false });
         } catch (error: unknown) {
-          await refreshWorkspace();
+          await refreshWorkspace({ showLoading: false });
           setUploadDialogErrorMessage(
             uploadResult.uploadedCount === 1
               ? "The document uploaded, but parsing could not start automatically. Retry the upload."
@@ -342,6 +379,59 @@ export default function CloseRunDocumentsPage({
 
     setIsUploadDialogOpen(false);
     setUploadDialogErrorMessage(null);
+  };
+
+  const closePendingDocumentAction = (): void => {
+    if (
+      pendingDocumentAction !== null &&
+      (deleteMutationDocumentId === pendingDocumentAction.documentId ||
+        reparseMutationDocumentId === pendingDocumentAction.documentId)
+    ) {
+      return;
+    }
+
+    setPendingDocumentAction(null);
+  };
+
+  const confirmPendingDocumentAction = async (): Promise<void> => {
+    if (pendingDocumentAction === null) {
+      return;
+    }
+
+    setOperationMessage(null);
+    setErrorMessage(null);
+
+    if (pendingDocumentAction.action === "delete") {
+      setDeleteMutationDocumentId(pendingDocumentAction.documentId);
+      try {
+        await deleteSourceDocument(entityId, closeRunId, pendingDocumentAction.documentId);
+        setWorkspaceData((currentWorkspace) =>
+          removeWorkspaceDocument(currentWorkspace, pendingDocumentAction.documentId),
+        );
+        setPendingDocumentAction(null);
+        setOperationMessage("Document deleted.");
+      } catch (error: unknown) {
+        setErrorMessage(resolveDocumentReviewErrorMessage(error));
+      } finally {
+        setDeleteMutationDocumentId(null);
+      }
+      return;
+    }
+
+    setReparseMutationDocumentId(pendingDocumentAction.documentId);
+    try {
+      await reparseSourceDocument(entityId, closeRunId, pendingDocumentAction.documentId);
+      setWorkspaceData((currentWorkspace) =>
+        markWorkspaceDocumentReparsing(currentWorkspace, pendingDocumentAction.documentId),
+      );
+      setPendingDocumentAction(null);
+      setOperationMessage("Document queued for reparsing.");
+      void refreshWorkspace({ showLoading: false });
+    } catch (error: unknown) {
+      setErrorMessage(resolveDocumentReviewErrorMessage(error));
+    } finally {
+      setReparseMutationDocumentId(null);
+    }
   };
 
   if (isLoading) {
@@ -681,16 +771,20 @@ export default function CloseRunDocumentsPage({
             <input
               accept=".pdf,.csv,.xlsx,.xls,.xlsm"
               className="sr-only"
+              hidden
               multiple
               onChange={handleUploadInputChange}
               ref={fileInputRef}
+              tabIndex={-1}
               type="file"
             />
             <input
               className="sr-only"
+              hidden
               multiple
               onChange={handleUploadInputChange}
               ref={setDirectoryPickerRef}
+              tabIndex={-1}
               type="file"
             />
 
@@ -708,32 +802,64 @@ export default function CloseRunDocumentsPage({
           </div>
         </div>
       ) : null}
+
+      {pendingDocumentAction ? (
+        <div
+          aria-modal="true"
+          className="quartz-modal-backdrop"
+          onClick={closePendingDocumentAction}
+          role="dialog"
+        >
+          <div
+            className="quartz-modal-card"
+            onClick={(event) => event.stopPropagation()}
+            role="document"
+          >
+            <div className="quartz-section-header quartz-section-header-tight">
+              <div>
+                <h2 className="quartz-section-title">{pendingDocumentAction.title}</h2>
+                <p className="quartz-page-subtitle">{pendingDocumentAction.description}</p>
+              </div>
+              <button
+                aria-label="Close"
+                className="quartz-icon-button"
+                onClick={closePendingDocumentAction}
+                type="button"
+              >
+                <QuartzIcon name="dismiss" />
+              </button>
+            </div>
+
+            <div className="quartz-form-row quartz-modal-actions">
+              <button
+                className="secondary-button"
+                onClick={closePendingDocumentAction}
+                type="button"
+              >
+                Cancel
+              </button>
+              <button
+                className="primary-button"
+                disabled={
+                  deleteMutationDocumentId === pendingDocumentAction.documentId ||
+                  reparseMutationDocumentId === pendingDocumentAction.documentId
+                }
+                onClick={() => {
+                  void confirmPendingDocumentAction();
+                }}
+                type="button"
+              >
+                {deleteMutationDocumentId === pendingDocumentAction.documentId ||
+                reparseMutationDocumentId === pendingDocumentAction.documentId
+                  ? "Saving..."
+                  : pendingDocumentAction.confirmLabel}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
-}
-
-async function loadWorkspace(options: {
-  closeRunId: string;
-  entityId: string;
-  onError: (message: string | null) => void;
-  onLoaded: (workspace: DocumentReviewWorkspaceData) => void;
-  onLoadingChange: (isLoading: boolean) => void;
-}): Promise<void> {
-  options.onLoadingChange(true);
-  options.onError(null);
-
-  try {
-    const workspace = await readDocumentReviewWorkspace(options.entityId, options.closeRunId);
-    options.onLoaded(workspace);
-  } catch (error: unknown) {
-    if (error instanceof DocumentReviewApiError) {
-      options.onError(error.message);
-    } else {
-      options.onError("Failed to load the document review queue. Reload and try again.");
-    }
-  } finally {
-    options.onLoadingChange(false);
-  }
 }
 
 function buildUploadOperationMessage(
@@ -756,6 +882,87 @@ function buildUploadOperationMessage(
         ? " 1 unsupported file was skipped."
         : ` ${unsupportedCount} unsupported files were skipped.`;
   return `${uploadLabel}; ${parseLabel}.${unsupportedLabel}`;
+}
+
+function replaceWorkspaceDocument(
+  workspace: Readonly<DocumentReviewWorkspaceData> | null,
+  nextDocument: Readonly<DocumentReviewQueueItem>,
+): DocumentReviewWorkspaceData | null {
+  if (workspace === null) {
+    return null;
+  }
+
+  return rebuildWorkspaceData(
+    workspace,
+    workspace.items.map((item) => (item.id === nextDocument.id ? nextDocument : item)),
+  );
+}
+
+function removeWorkspaceDocument(
+  workspace: Readonly<DocumentReviewWorkspaceData> | null,
+  documentId: string,
+): DocumentReviewWorkspaceData | null {
+  if (workspace === null) {
+    return null;
+  }
+
+  return rebuildWorkspaceData(
+    workspace,
+    workspace.items.filter((item) => item.id !== documentId),
+  );
+}
+
+function markWorkspaceDocumentReparsing(
+  workspace: Readonly<DocumentReviewWorkspaceData> | null,
+  documentId: string,
+): DocumentReviewWorkspaceData | null {
+  if (workspace === null) {
+    return null;
+  }
+
+  const now = new Date().toISOString();
+  return rebuildWorkspaceData(
+    workspace,
+    workspace.items.map((item) =>
+      item.id === documentId
+        ? {
+            ...item,
+            extractedFields: [],
+            hasException: false,
+            issueSeverity: null,
+            issueTypes: [],
+            latestExtraction: null,
+            openIssues: [],
+            primaryIssueReason: "Reparsing in progress",
+            status: "processing",
+            updatedAt: now,
+          }
+        : item,
+    ),
+  );
+}
+
+function rebuildWorkspaceData(
+  workspace: Readonly<DocumentReviewWorkspaceData>,
+  items: readonly DocumentReviewQueueItem[],
+): DocumentReviewWorkspaceData {
+  return {
+    ...workspace,
+    items,
+    queueCounts: buildWorkspaceQueueCounts(items),
+  };
+}
+
+function buildWorkspaceQueueCounts(
+  items: readonly DocumentReviewQueueItem[],
+): DocumentReviewWorkspaceData["queueCounts"] {
+  return {
+    all: items.length,
+    blocked: filterDocumentReviewItems(items, "blocked").length,
+    duplicate: filterDocumentReviewItems(items, "duplicate").length,
+    low_confidence: filterDocumentReviewItems(items, "low_confidence").length,
+    wrong_period: filterDocumentReviewItems(items, "wrong_period").length,
+  };
 }
 
 function resolveDocumentReviewErrorMessage(error: unknown): string {
