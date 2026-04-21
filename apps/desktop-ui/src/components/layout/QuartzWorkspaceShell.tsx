@@ -3,7 +3,13 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useMemo, useState, useTransition, type ReactElement, type ReactNode } from "react";
-import { logoutUser } from "../../lib/auth/client";
+import {
+  isSessionAuthError,
+  logoutUser,
+  readCurrentSession,
+  readCurrentSessionSnapshot,
+  type AuthSessionResponse,
+} from "../../lib/auth/client";
 import { readDashboardBootstrapSnapshot } from "../../lib/dashboard";
 import {
   buildRememberedCloseContext,
@@ -17,9 +23,6 @@ import { QuartzIcon, type QuartzIconName } from "./QuartzIcons";
 
 type QuartzWorkspaceShellProps = Readonly<{
   children: ReactNode;
-  userEmail: string;
-  userFullName: string;
-  userInitials: string;
 }>;
 
 type NavItem = Readonly<{
@@ -31,13 +34,11 @@ type NavItem = Readonly<{
 
 export function QuartzWorkspaceShell({
   children,
-  userEmail,
-  userFullName,
-  userInitials,
 }: QuartzWorkspaceShellProps): ReactElement {
   const pathname = usePathname();
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
+  const [session, setSession] = useState<AuthSessionResponse | null>(() => readCurrentSessionSnapshot());
   const [rememberedCloseContext, setRememberedCloseContext] =
     useState<RememberedCloseContext | null>(null);
 
@@ -90,6 +91,14 @@ export function QuartzWorkspaceShell({
     ],
     [fallbackCloseContext?.overviewHref, pathname],
   );
+  const userIdentity = useMemo(
+    () => ({
+      email: session?.user.email ?? "Session syncing...",
+      fullName: session?.user.full_name ?? "Authenticated Operator",
+      initials: session ? buildOperatorInitials(session) : "AA",
+    }),
+    [session],
+  );
 
   useEffect(() => {
     if (closeContext !== null) {
@@ -109,19 +118,26 @@ export function QuartzWorkspaceShell({
   }, []);
 
   useEffect(() => {
-    const prefetchTargets = new Set<string>([
-      "/",
-      "/entities",
-      settingsHref,
-      ...navItems.map((item) => item.href),
-    ]);
+    let isActive = true;
 
-    prefetchTargets.forEach((href) => {
-      if (href !== pathname) {
-        router.prefetch(href);
-      }
-    });
-  }, [navItems, pathname, router, settingsHref]);
+    void readCurrentSession()
+      .then((nextSession) => {
+        if (isActive) {
+          setSession(nextSession);
+        }
+      })
+      .catch((error: unknown) => {
+        if (!isActive || isSessionAuthError(error)) {
+          return;
+        }
+
+        setSession((currentSession) => currentSession);
+      });
+
+    return () => {
+      isActive = false;
+    };
+  }, []);
 
   const handleLogout = (): void => {
     startTransition(async () => {
@@ -203,10 +219,10 @@ export function QuartzWorkspaceShell({
 
           <div className="quartz-topbar-right">
             <div className="quartz-user-pill">
-              <span className="quartz-user-initials">{userInitials}</span>
+              <span className="quartz-user-initials">{userIdentity.initials}</span>
               <div>
-                <strong>{userFullName}</strong>
-                <span>{userEmail}</span>
+                <strong>{userIdentity.fullName}</strong>
+                <span>{userIdentity.email}</span>
               </div>
             </div>
           </div>
@@ -224,6 +240,23 @@ export function QuartzWorkspaceShell({
       </div>
     </div>
   );
+}
+
+function buildOperatorInitials(session: Readonly<AuthSessionResponse>): string {
+  const nameParts = session.user.full_name
+    .split(/\s+/u)
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0);
+  const initials = nameParts
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase() ?? "")
+    .join("");
+
+  if (initials.length > 0) {
+    return initials;
+  }
+
+  return session.user.email.slice(0, 2).toUpperCase();
 }
 
 function resolveCloseContext(pathname: string): {

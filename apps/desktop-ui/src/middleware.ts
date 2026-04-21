@@ -1,17 +1,14 @@
 /*
-Purpose: Enforce protected desktop route access and validate browser sessions at navigation time.
-Scope: Redirect anonymous users to login, keep stale cookies from causing redirect loops, and forward validated session data to protected layouts.
+Purpose: Enforce protected desktop route access with one canonical cookie gate.
+Scope: Redirect anonymous users to login, preserve local runtime setup routing, and only validate sessions on the login screen handoff.
 Dependencies: Next.js middleware APIs and the canonical desktop auth session helpers.
 */
 
 import { NextResponse, type NextRequest } from "next/server";
 import {
   AUTH_COOKIE_NAME,
-  AUTH_SESSION_HEADER_NAME,
   buildLoginRedirectPath,
   resolvePostLoginPath,
-  serializeSessionHeader,
-  toSessionRedirectReason,
   validateSessionCookie,
 } from "./lib/auth/session";
 import { isHostedFrontendRuntime } from "./lib/runtime";
@@ -22,8 +19,8 @@ const SETUP_PATH = "/setup";
 /**
  * Purpose: Guard protected workspace routes and bounce authenticated operators away from the login screen.
  * Inputs: The current incoming Next.js request.
- * Outputs: A redirect, a cookie-clearing recovery response, or a forwarded protected request.
- * Behavior: Uses the canonical FastAPI session endpoint as the single source of truth for browser session validity.
+ * Outputs: A redirect, a cookie-clearing recovery response, or the admitted protected request.
+ * Behavior: Uses cookie presence as the protected-route gate so route loads do not depend on a server-side auth roundtrip.
  */
 export async function middleware(request: NextRequest): Promise<NextResponse> {
   const { pathname } = request.nextUrl;
@@ -53,33 +50,25 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
     return redirectToLogin(request, "auth-required");
   }
 
-  const validationResult = await validateSessionCookie(request.headers.get("cookie"));
-  if (!validationResult.ok) {
-    if (isLoginPath) {
-      const response = NextResponse.next();
-      response.cookies.delete(AUTH_COOKIE_NAME);
-      return response;
-    }
-
-    return redirectToLogin(request, toSessionRedirectReason(validationResult.error));
-  }
-
   if (isLoginPath) {
-    const nextPath = resolvePostLoginPath(request.nextUrl.searchParams.get("next"));
-    const response = NextResponse.redirect(new URL(nextPath, request.url));
-    applyRotatedCookie(response, validationResult.setCookieHeader);
-    return response;
+    try {
+      const validationResult = await validateSessionCookie(request.headers.get("cookie"));
+      if (!validationResult.ok) {
+        const response = NextResponse.next();
+        response.cookies.delete(AUTH_COOKIE_NAME);
+        return response;
+      }
+
+      const nextPath = resolvePostLoginPath(request.nextUrl.searchParams.get("next"));
+      const response = NextResponse.redirect(new URL(nextPath, request.url));
+      applyRotatedCookie(response, validationResult.setCookieHeader);
+      return response;
+    } catch {
+      return NextResponse.next();
+    }
   }
 
-  const forwardedHeaders = new Headers(request.headers);
-  forwardedHeaders.set(AUTH_SESSION_HEADER_NAME, serializeSessionHeader(validationResult.session));
-  const response = NextResponse.next({
-    request: {
-      headers: forwardedHeaders,
-    },
-  });
-  applyRotatedCookie(response, validationResult.setCookieHeader);
-  return response;
+  return NextResponse.next();
 }
 
 export const config = {

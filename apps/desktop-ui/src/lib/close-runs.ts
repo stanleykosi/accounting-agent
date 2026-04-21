@@ -152,6 +152,13 @@ export class CloseRunApiError extends Error {
 
 const ENTITIES_PROXY_BASE_PATH = "/api/entities";
 const CLOSE_RUN_READ_CACHE_TTL_MS = 30_000;
+const WORKFLOW_PHASE_ORDER: readonly WorkflowPhase[] = [
+  "collection",
+  "processing",
+  "reconciliation",
+  "reporting",
+  "review_signoff",
+];
 
 /**
  * Purpose: Read all close runs for one entity workspace through the same-origin proxy.
@@ -570,12 +577,30 @@ function parseCloseRunSummary(payload: unknown): CloseRunSummary {
     updatedAt: asString(payload.updated_at),
     workflowState: {
       activePhase: asOptionalWorkflowPhase(workflowStatePayload.active_phase),
-      phaseStates: workflowStatePayload.phase_states.map((phaseState) =>
-        parsePhaseStateSummary(phaseState),
+      phaseStates: normalizePhaseStates(
+        workflowStatePayload.phase_states.map((phaseState) => parsePhaseStateSummary(phaseState)),
+        asOptionalWorkflowPhase(workflowStatePayload.active_phase),
       ),
       status: asCloseRunStatus(workflowStatePayload.status),
     },
   };
+}
+
+function normalizePhaseStates(
+  phaseStates: readonly CloseRunPhaseStateSummary[],
+  activePhase: WorkflowPhase | null,
+): readonly CloseRunPhaseStateSummary[] {
+  const phaseStateMap = new Map(phaseStates.map((phaseState) => [phaseState.phase, phaseState]));
+
+  return WORKFLOW_PHASE_ORDER.map(
+    (phase): CloseRunPhaseStateSummary =>
+      phaseStateMap.get(phase) ?? {
+        blockingReason: null,
+        completedAt: null,
+        phase,
+        status: activePhase === phase ? "in_progress" : "not_started",
+      },
+  );
 }
 
 function parseOperatingModeSummary(payload: Record<string, unknown>): CloseRunOperatingModeSummary {

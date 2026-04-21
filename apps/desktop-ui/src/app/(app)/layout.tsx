@@ -1,76 +1,30 @@
 /*
 Purpose: Render the protected desktop application shell for authenticated operators.
-Scope: Session-aware chrome, operator identity display, long-session recovery, and logout access.
-Dependencies: Next.js request headers, middleware-forwarded auth session data, and auth client components.
+Scope: Cookie-gated workspace chrome, client-side session recovery, and logout access.
+Dependencies: The shared session heartbeat and Quartz workspace shell components.
 */
 
-import { headers } from "next/headers";
-import { redirect } from "next/navigation";
 import type { ReactElement, ReactNode } from "react";
 import { SessionHeartbeat } from "../../components/auth/SessionHeartbeat";
 import { QuartzWorkspaceShell } from "../../components/layout/QuartzWorkspaceShell";
-import {
-  AUTH_SESSION_HEADER_NAME,
-  DEFAULT_WORKSPACE_PATH,
-  buildLoginRedirectPath,
-  deserializeSessionHeader,
-  getOperatorInitials,
-  toSessionRedirectReason,
-  validateSessionCookie,
-} from "../../lib/auth/session";
 
 type ProtectedAppLayoutProps = {
   children: ReactNode;
 };
 
 /**
- * Purpose: Wrap protected pages in the canonical authenticated desktop shell.
+ * Purpose: Wrap protected pages in the canonical desktop shell after middleware admits the request.
  * Inputs: The route segment content for authenticated workspace pages.
- * Outputs: A session-aware layout with operator identity, navigation, and logout controls.
- * Behavior: Fails closed by redirecting to login when middleware did not provide a validated session header.
+ * Outputs: A cookie-gated layout with client-side session validation and recovery.
+ * Behavior: Keeps protected navigation independent from server-side auth roundtrips so route loads stay resilient.
  */
-export default async function ProtectedAppLayout({
+export default function ProtectedAppLayout({
   children,
-}: Readonly<ProtectedAppLayoutProps>): Promise<ReactElement> {
-  const requestHeaders = await headers();
-  const forwardedSession = deserializeSessionHeader(requestHeaders.get(AUTH_SESSION_HEADER_NAME));
-  const session =
-    forwardedSession ??
-    (await (async () => {
-      const validationResult = await validateSessionCookie(requestHeaders.get("cookie"));
-      if (!validationResult.ok) {
-        redirect(
-          buildLoginRedirectPath({
-            nextPath: DEFAULT_WORKSPACE_PATH,
-            reason: toSessionRedirectReason(validationResult.error),
-          }),
-        );
-      }
-
-      return validationResult.session;
-    })());
-
-  if (session === null) {
-    redirect(
-      buildLoginRedirectPath({
-        nextPath: DEFAULT_WORKSPACE_PATH,
-        reason: "auth-required",
-      }),
-    );
-  }
-
-  const operatorInitials = getOperatorInitials(session);
-
+}: Readonly<ProtectedAppLayoutProps>): ReactElement {
   return (
     <>
       <SessionHeartbeat />
-      <QuartzWorkspaceShell
-        userEmail={session.user.email}
-        userFullName={session.user.full_name}
-        userInitials={operatorInitials}
-      >
-        {children}
-      </QuartzWorkspaceShell>
+      <QuartzWorkspaceShell>{children}</QuartzWorkspaceShell>
     </>
   );
 }

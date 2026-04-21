@@ -73,6 +73,15 @@ export class AuthApiError extends Error {
 }
 
 const AUTH_PROXY_BASE_PATH = "/api/auth";
+const SESSION_CACHE_TTL_MS = 15_000;
+
+type CachedSessionEntry = Readonly<{
+  expiresAt: number;
+  value: AuthSessionResponse;
+}>;
+
+let cachedSessionEntry: CachedSessionEntry | null = null;
+let inFlightSessionRequest: Promise<AuthSessionResponse> | null = null;
 
 /**
  * Purpose: Register a new local operator account through the Next.js auth proxy.
@@ -83,10 +92,12 @@ const AUTH_PROXY_BASE_PATH = "/api/auth";
 export async function registerUser(
   payload: Readonly<RegistrationInput>,
 ): Promise<AuthSessionResponse> {
-  return authRequest<AuthSessionResponse>("/register", {
+  const session = await authRequest<AuthSessionResponse>("/register", {
     body: JSON.stringify(payload),
     method: "POST",
   });
+  writeCachedSession(session);
+  return session;
 }
 
 /**
@@ -96,10 +107,12 @@ export async function registerUser(
  * Behavior: Uses the same proxy path as registration so browser requests remain same-origin.
  */
 export async function loginUser(payload: Readonly<LoginInput>): Promise<AuthSessionResponse> {
-  return authRequest<AuthSessionResponse>("/login", {
+  const session = await authRequest<AuthSessionResponse>("/login", {
     body: JSON.stringify(payload),
     method: "POST",
   });
+  writeCachedSession(session);
+  return session;
 }
 
 /**
@@ -108,10 +121,50 @@ export async function loginUser(payload: Readonly<LoginInput>): Promise<AuthSess
  * Outputs: The active user and session metadata when the cookie remains valid.
  * Behavior: Surfaces structured auth failures so UI callers can recover deterministically.
  */
-export async function readCurrentSession(): Promise<AuthSessionResponse> {
-  return authRequest<AuthSessionResponse>("/session", {
+export async function readCurrentSession(options?: {
+  forceRefresh?: boolean;
+}): Promise<AuthSessionResponse> {
+  if (!options?.forceRefresh) {
+    const snapshot = readCurrentSessionSnapshot();
+    if (snapshot !== null) {
+      return snapshot;
+    }
+
+    if (inFlightSessionRequest !== null) {
+      return inFlightSessionRequest;
+    }
+  }
+
+  const nextRequest = authRequest<AuthSessionResponse>("/session", {
     method: "GET",
-  });
+  })
+    .then((session) => {
+      writeCachedSession(session);
+      return session;
+    })
+    .finally(() => {
+      if (inFlightSessionRequest === nextRequest) {
+        inFlightSessionRequest = null;
+      }
+    });
+
+  inFlightSessionRequest = nextRequest;
+  return nextRequest;
+}
+
+/**
+ * Purpose: Read the freshest in-memory authenticated session without issuing network I/O.
+ * Inputs: None.
+ * Outputs: The cached session payload when it is still fresh, otherwise null.
+ * Behavior: Supports one canonical client-side auth identity read across the shell and heartbeat.
+ */
+export function readCurrentSessionSnapshot(): AuthSessionResponse | null {
+  if (cachedSessionEntry === null || cachedSessionEntry.expiresAt <= Date.now()) {
+    cachedSessionEntry = null;
+    return null;
+  }
+
+  return cachedSessionEntry.value;
 }
 
 /**
@@ -121,9 +174,11 @@ export async function readCurrentSession(): Promise<AuthSessionResponse> {
  * Behavior: Treats logout as idempotent and still clears the server-side session when present.
  */
 export async function logoutUser(): Promise<LogoutResponse> {
-  return authRequest<LogoutResponse>("/logout", {
+  const response = await authRequest<LogoutResponse>("/logout", {
     method: "POST",
   });
+  clearCachedSession();
+  return response;
 }
 
 /**
@@ -261,6 +316,18 @@ async function authRequest<TResponse>(
   }
 
   return parseAuthSessionResponse(payload) as TResponse;
+}
+
+function writeCachedSession(session: Readonly<AuthSessionResponse>): void {
+  cachedSessionEntry = {
+    expiresAt: Date.now() + SESSION_CACHE_TTL_MS,
+    value: session,
+  };
+}
+
+function clearCachedSession(): void {
+  cachedSessionEntry = null;
+  inFlightSessionRequest = null;
 }
 
 async function parseJsonPayload(response: Response): Promise<unknown> {

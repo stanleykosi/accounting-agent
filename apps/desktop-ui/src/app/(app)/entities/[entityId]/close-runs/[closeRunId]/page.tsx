@@ -489,10 +489,12 @@ function buildMissionWorkstreamRows(
   );
 
   return workflowPhaseOrder.map((phase) => {
-    const phaseState = phaseStateMap.get(phase);
-    if (phaseState === undefined) {
-      throw new Error(`Missing phase state for ${phase}.`);
-    }
+    const phaseState = phaseStateMap.get(phase) ?? {
+      blockingReason: null,
+      completedAt: null,
+      phase,
+      status: activePhase === phase ? "in_progress" : ("not_started" as const),
+    };
 
     return {
       detail: resolveWorkstreamDetail(phase, phaseState, closeRun),

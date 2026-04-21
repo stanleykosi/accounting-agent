@@ -49,6 +49,8 @@ export function SessionHeartbeat(): ReactElement | null {
   });
 
   useEffect(() => {
+    void refreshSession();
+
     const intervalId = window.setInterval(() => {
       void refreshSession();
     }, HEARTBEAT_INTERVAL_MS);
