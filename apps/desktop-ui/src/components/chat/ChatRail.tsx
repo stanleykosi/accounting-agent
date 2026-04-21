@@ -131,11 +131,18 @@ export function ChatRail({
       setPendingTurn(null);
 
       try {
+        const nextThreadTitle = buildNewThreadTitle({
+          closeRunId,
+          selectedThread,
+          threads,
+          workspace,
+        });
         const response = await createChatThread(
           closeRunId
             ? {
                 close_run_id: closeRunId,
                 entity_id: entityId,
+                title: nextThreadTitle ?? "Close run chat",
               }
             : {
                 entity_id: entityId,
@@ -162,7 +169,7 @@ export function ChatRail({
         setIsCreatingThread(false);
       }
     },
-    [closeRunId, entityId, loadThreadWorkspace],
+    [closeRunId, entityId, loadThreadWorkspace, selectedThread, threads, workspace],
   );
 
   useEffect(() => {
@@ -796,6 +803,24 @@ function formatMessageTime(value: string): string {
     hour: "numeric",
     minute: "2-digit",
   }).format(parsed);
+}
+
+function buildNewThreadTitle(options: {
+  closeRunId: string | undefined;
+  selectedThread: ChatThreadSummary | null;
+  threads: readonly ChatThreadSummary[];
+  workspace: ChatThreadWorkspace | null;
+}): string | undefined {
+  if (!options.closeRunId) {
+    return undefined;
+  }
+
+  const periodLabel =
+    options.selectedThread?.grounding.period_label ??
+    options.workspace?.grounding.period_label ??
+    "Close run";
+  const threadNumber = options.threads.length + 1;
+  return `${periodLabel} chat ${threadNumber}`;
 }
 
 const workbenchShellStyle = {
