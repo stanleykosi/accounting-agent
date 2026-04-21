@@ -16,6 +16,15 @@ export const AUTH_COOKIE_NAME =
   process.env.ACCOUNTING_AGENT_SESSION_COOKIE_NAME ?? "accounting_agent_session";
 export const AUTH_SESSION_HEADER_NAME = "x-accounting-auth-session";
 export const DEFAULT_WORKSPACE_PATH = "/";
+const SESSION_VALIDATION_CACHE_TTL_MS = 10_000;
+
+type CachedSessionValidationEntry = Readonly<{
+  expiresAt: number;
+  result: SessionValidationResult;
+}>;
+
+const sessionValidationCache = new Map<string, CachedSessionValidationEntry>();
+const inFlightSessionValidationCache = new Map<string, Promise<SessionValidationResult>>();
 
 export type SessionRedirectReason = "auth-required" | "session-expired" | "user-disabled";
 
@@ -52,7 +61,30 @@ export async function validateSessionCookie(
     };
   }
 
-  const response = await fetch(buildBackendAuthUrl("/session"), {
+  const sessionToken = extractSessionToken(cookieHeader);
+  if (sessionToken === null) {
+    return {
+      error: new AuthApiError({
+        code: "session_required",
+        message: "Sign in to continue.",
+        statusCode: 401,
+      }),
+      ok: false,
+      setCookieHeader: null,
+    };
+  }
+
+  const cachedResult = readCachedSessionValidation(sessionToken);
+  if (cachedResult !== null) {
+    return cachedResult;
+  }
+
+  const inFlightValidation = inFlightSessionValidationCache.get(sessionToken);
+  if (inFlightValidation !== undefined) {
+    return inFlightValidation;
+  }
+
+  const nextValidation = fetch(buildBackendAuthUrl("/session"), {
     cache: "no-store",
     headers: {
       Accept: "application/json",
@@ -60,23 +92,32 @@ export async function validateSessionCookie(
     },
     method: "GET",
     redirect: "manual",
-  });
+  })
+    .then(async (response) => {
+      const payload = await parseJsonPayload(response);
+      const setCookieHeader = response.headers.get("set-cookie");
+      if (!response.ok) {
+        return {
+          error: buildAuthApiError(response.status, payload),
+          ok: false,
+          setCookieHeader,
+        } satisfies SessionValidationResult;
+      }
 
-  const payload = await parseJsonPayload(response);
-  const setCookieHeader = response.headers.get("set-cookie");
-  if (!response.ok) {
-    return {
-      error: buildAuthApiError(response.status, payload),
-      ok: false,
-      setCookieHeader,
-    };
-  }
+      const result = {
+        ok: true,
+        session: parseAuthSessionResponse(payload),
+        setCookieHeader,
+      } satisfies SessionValidationResult;
+      writeCachedSessionValidation(sessionToken, result);
+      return result;
+    })
+    .finally(() => {
+      inFlightSessionValidationCache.delete(sessionToken);
+    });
 
-  return {
-    ok: true,
-    session: parseAuthSessionResponse(payload),
-    setCookieHeader,
-  };
+  inFlightSessionValidationCache.set(sessionToken, nextValidation);
+  return nextValidation;
 }
 
 /**
@@ -213,4 +254,55 @@ function sanitizeInternalPath(nextPath: string | null | undefined): string | nul
   }
 
   return nextPath;
+}
+
+function readCachedSessionValidation(sessionToken: string): SessionValidationResult | null {
+  clearExpiredSessionValidationCache();
+  const cachedEntry = sessionValidationCache.get(sessionToken);
+  if (cachedEntry === undefined || cachedEntry.expiresAt <= Date.now()) {
+    sessionValidationCache.delete(sessionToken);
+    return null;
+  }
+
+  return cachedEntry.result;
+}
+
+function writeCachedSessionValidation(
+  sessionToken: string,
+  result: SessionValidationResult,
+): void {
+  clearExpiredSessionValidationCache();
+  sessionValidationCache.set(sessionToken, {
+    expiresAt: Date.now() + SESSION_VALIDATION_CACHE_TTL_MS,
+    result,
+  });
+}
+
+function clearExpiredSessionValidationCache(): void {
+  const now = Date.now();
+  for (const [sessionToken, cachedEntry] of sessionValidationCache.entries()) {
+    if (cachedEntry.expiresAt <= now) {
+      sessionValidationCache.delete(sessionToken);
+    }
+  }
+}
+
+function extractSessionToken(cookieHeader: string): string | null {
+  const cookieSegments = cookieHeader.split(";");
+  for (const segment of cookieSegments) {
+    const [rawName, ...rawValueParts] = segment.split("=");
+    if (typeof rawName !== "string") {
+      continue;
+    }
+
+    const cookieName = rawName.trim();
+    if (cookieName !== AUTH_COOKIE_NAME) {
+      continue;
+    }
+
+    const cookieValue = rawValueParts.join("=").trim();
+    return cookieValue.length > 0 ? cookieValue : null;
+  }
+
+  return null;
 }

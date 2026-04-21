@@ -15,6 +15,8 @@ import {
   buildLoginRedirectPath,
   deserializeSessionHeader,
   getOperatorInitials,
+  toSessionRedirectReason,
+  validateSessionCookie,
 } from "../../lib/auth/session";
 
 type ProtectedAppLayoutProps = {
@@ -31,7 +33,23 @@ export default async function ProtectedAppLayout({
   children,
 }: Readonly<ProtectedAppLayoutProps>): Promise<ReactElement> {
   const requestHeaders = await headers();
-  const session = deserializeSessionHeader(requestHeaders.get(AUTH_SESSION_HEADER_NAME));
+  const forwardedSession = deserializeSessionHeader(requestHeaders.get(AUTH_SESSION_HEADER_NAME));
+  const session =
+    forwardedSession ??
+    (await (async () => {
+      const validationResult = await validateSessionCookie(requestHeaders.get("cookie"));
+      if (!validationResult.ok) {
+        redirect(
+          buildLoginRedirectPath({
+            nextPath: DEFAULT_WORKSPACE_PATH,
+            reason: toSessionRedirectReason(validationResult.error),
+          }),
+        );
+      }
+
+      return validationResult.session;
+    })());
+
   if (session === null) {
     redirect(
       buildLoginRedirectPath({
