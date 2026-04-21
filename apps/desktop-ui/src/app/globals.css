@@ -2381,6 +2381,10 @@ a {
   box-shadow: 0 20px 48px rgba(17, 24, 39, 0.16);
 }
 
+.quartz-modal-card-wide {
+  width: min(100%, 760px);
+}
+
 .quartz-icon-button {
   display: inline-flex;
   width: 36px;
@@ -2404,6 +2408,15 @@ a {
 
 .quartz-modal-actions {
   justify-content: flex-end;
+}
+
+.quartz-inline-note {
+  padding: 12px 14px;
+  border: 1px solid rgba(69, 97, 123, 0.16);
+  background: rgba(255, 255, 255, 0.72);
+  color: var(--quartz-muted);
+  font-size: 0.84rem;
+  line-height: 1.5;
 }
 
 .quartz-form-label {
@@ -2432,6 +2445,12 @@ a {
 
 .quartz-form-row {
   justify-content: space-between;
+}
+
+.quartz-toolbar-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .quartz-toolbar-search {
@@ -2596,6 +2615,10 @@ a {
   grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
+.quartz-kpi-grid-triple {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
 .quartz-portfolio-summary-grid {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
@@ -2612,6 +2635,103 @@ a {
 
 .quartz-kpi-tile:last-child {
   border-right: 0;
+}
+
+.quartz-upload-dataset-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.quartz-upload-dataset-card {
+  display: grid;
+  gap: 6px;
+  padding: 14px 16px;
+  border: 1px solid var(--quartz-border);
+  background: var(--quartz-surface-low);
+  color: var(--text-strong);
+  cursor: pointer;
+  text-align: left;
+  transition:
+    border-color 180ms ease,
+    background-color 180ms ease,
+    color 180ms ease;
+}
+
+.quartz-upload-dataset-card strong {
+  font-size: 0.92rem;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.quartz-upload-dataset-card:hover {
+  border-color: rgba(69, 97, 123, 0.28);
+  background: rgba(69, 97, 123, 0.06);
+}
+
+.quartz-upload-dataset-card.active {
+  border-color: rgba(69, 97, 123, 0.28);
+  background: rgba(69, 97, 123, 0.09);
+}
+
+.quartz-upload-dataset-meta {
+  color: var(--quartz-muted);
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+
+.quartz-upload-panel {
+  display: grid;
+  gap: 16px;
+  padding: 20px;
+  border: 1px solid var(--quartz-border);
+  background: var(--quartz-surface-low);
+}
+
+.quartz-upload-panel-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.quartz-upload-panel-title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 1.1rem;
+  font-weight: 500;
+  letter-spacing: -0.03em;
+}
+
+.quartz-upload-panel-meta {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.quartz-upload-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--quartz-border);
+  background: var(--quartz-surface);
+  color: var(--quartz-muted);
+  font-size: 0.74rem;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  overflow-wrap: anywhere;
+}
+
+.quartz-upload-file-field input[type="file"] {
+  width: 100%;
+  border: 1px dashed rgba(69, 97, 123, 0.2);
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.78);
+  color: var(--text-strong);
+  font: inherit;
+  padding: 16px;
 }
 
 .quartz-kpi-tile.highlight {
@@ -3675,6 +3795,18 @@ a {
 
   .quartz-comparison-grid {
     grid-template-columns: 1fr;
+  }
+
+  .quartz-upload-dataset-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .quartz-upload-panel-header {
+    flex-direction: column;
+  }
+
+  .quartz-upload-panel-meta {
+    justify-content: flex-start;
   }
 
   .quartz-comparison-pane + .quartz-comparison-pane {
