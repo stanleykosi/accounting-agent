@@ -47,10 +47,6 @@ export function QuartzWorkspaceShell({
     [closeContext, rememberedCloseContext],
   );
   const breadcrumbs = useMemo(() => resolveBreadcrumbs(pathname), [pathname]);
-  const workspaceAction = useMemo(
-    () => resolveWorkspaceAction(pathname, closeContext),
-    [closeContext, pathname],
-  );
   const navItems = useMemo<readonly NavItem[]>(
     () => [
       {
@@ -99,19 +95,14 @@ export function QuartzWorkspaceShell({
   }, []);
 
   useEffect(() => {
-    const prefetchTargets = new Set<string>([
-      "/",
-      "/entities",
-      workspaceAction.href,
-      ...navItems.map((item) => item.href),
-    ]);
+    const prefetchTargets = new Set<string>(["/", "/entities", ...navItems.map((item) => item.href)]);
 
     prefetchTargets.forEach((href) => {
       if (href !== pathname) {
         router.prefetch(href);
       }
     });
-  }, [navItems, pathname, router, workspaceAction.href]);
+  }, [navItems, pathname, router]);
 
   const handleLogout = (): void => {
     startTransition(async () => {
@@ -153,6 +144,16 @@ export function QuartzWorkspaceShell({
             <QuartzIcon className="quartz-nav-icon" name="settings" />
             <span>Setup</span>
           </Link>
+          <button
+            className="quartz-nav-button"
+            disabled={isPending}
+            onClick={handleLogout}
+            title="Sign out"
+            type="button"
+          >
+            <QuartzIcon className="quartz-nav-icon" name="logout" />
+            <span>{isPending ? "Signing out" : "Sign out"}</span>
+          </button>
         </div>
       </aside>
 
@@ -177,21 +178,6 @@ export function QuartzWorkspaceShell({
           </div>
 
           <div className="quartz-topbar-right">
-            <Link className="quartz-toolbar-button" href={workspaceAction.href}>
-              {workspaceAction.label}
-            </Link>
-            <button
-              className="quartz-toolbar-button primary"
-              disabled={isPending}
-              onClick={handleLogout}
-              type="button"
-            >
-              {isPending ? "Signing out..." : "Sign out"}
-            </button>
-            <div className="quartz-topbar-icons" aria-hidden="true">
-              <QuartzIcon className="quartz-topbar-icon" name="bell" />
-              <QuartzIcon className="quartz-topbar-icon" name="help" />
-            </div>
             <div className="quartz-user-pill">
               <span className="quartz-user-initials">{userInitials}</span>
               <div>
@@ -304,7 +290,7 @@ function resolveBreadcrumbs(pathname: string): readonly { href: string; label: s
 
 function resolveCloseRunWorkspaceLabel(pathname: string): string | null {
   if (/\/close-runs\/[^/]+\/documents$/u.test(pathname)) {
-    return "Inputs Workspace";
+    return "Document Workspace";
   }
 
   if (/\/close-runs\/[^/]+\/recommendations$/u.test(pathname)) {
@@ -328,31 +314,4 @@ function resolveCloseRunWorkspaceLabel(pathname: string): string | null {
   }
 
   return null;
-}
-
-function resolveWorkspaceAction(
-  pathname: string,
-  closeContext: ReturnType<typeof resolveCloseContext>,
-): {
-  href: string;
-  label: string;
-} {
-  if (closeContext) {
-    return {
-      href: closeContext.overviewHref,
-      label: "Mission Control",
-    };
-  }
-
-  if (pathname === "/entities/new") {
-    return {
-      href: "/entities",
-      label: "Entity Directory",
-    };
-  }
-
-  return {
-    href: "/entities/new",
-    label: "Create Workspace",
-  };
 }

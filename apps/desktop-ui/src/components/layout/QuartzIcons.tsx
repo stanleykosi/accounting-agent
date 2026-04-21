@@ -11,6 +11,7 @@ export type QuartzIconName =
   | "entities"
   | "filter"
   | "folder"
+  | "logout"
   | "help"
   | "portfolio"
   | "refresh"
@@ -124,6 +125,18 @@ export function QuartzIcon({ name, ...props }: Readonly<QuartzIconProps>): React
         <svg fill="none" viewBox="0 0 24 24" {...props}>
           <path
             d="M3 7.5A1.5 1.5 0 014.5 6H9l1.6 2H19.5A1.5 1.5 0 0121 9.5v7A1.5 1.5 0 0119.5 18h-15A1.5 1.5 0 013 16.5v-9z"
+            stroke="currentColor"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth="1.8"
+          />
+        </svg>
+      );
+    case "logout":
+      return (
+        <svg fill="none" viewBox="0 0 24 24" {...props}>
+          <path
+            d="M10 5H6a2 2 0 00-2 2v10a2 2 0 002 2h4M14 16l4-4-4-4M18 12H9"
             stroke="currentColor"
             strokeLinecap="round"
             strokeLinejoin="round"
