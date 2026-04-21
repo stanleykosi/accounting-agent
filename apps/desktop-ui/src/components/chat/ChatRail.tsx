@@ -60,7 +60,22 @@ export function ChatRail({
   const [isCreatingThread, setIsCreatingThread] = useState(false);
   const [isLoadingThread, setIsLoadingThread] = useState(false);
   const isCreatingThreadRef = useRef(false);
+  const selectedThreadRef = useRef<ChatThreadSummary | null>(null);
+  const threadsRef = useRef<readonly ChatThreadSummary[]>([]);
+  const workspaceRef = useRef<ChatThreadWorkspace | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    selectedThreadRef.current = selectedThread;
+  }, [selectedThread]);
+
+  useEffect(() => {
+    threadsRef.current = threads;
+  }, [threads]);
+
+  useEffect(() => {
+    workspaceRef.current = workspace;
+  }, [workspace]);
 
   const loadThreads = useCallback(async (): Promise<ChatThreadSummary[]> => {
     const response = await listChatThreads(
@@ -133,9 +148,9 @@ export function ChatRail({
       try {
         const nextThreadTitle = buildNewThreadTitle({
           closeRunId,
-          selectedThread,
-          threads,
-          workspace,
+          selectedThread: selectedThreadRef.current,
+          threads: threadsRef.current,
+          workspace: workspaceRef.current,
         });
         const response = await createChatThread(
           closeRunId
@@ -169,7 +184,7 @@ export function ChatRail({
         setIsCreatingThread(false);
       }
     },
-    [closeRunId, entityId, loadThreadWorkspace, selectedThread, threads, workspace],
+    [closeRunId, entityId, loadThreadWorkspace],
   );
 
   useEffect(() => {
