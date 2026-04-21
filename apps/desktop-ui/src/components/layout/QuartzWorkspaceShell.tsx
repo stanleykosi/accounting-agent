@@ -2,8 +2,17 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useMemo, useTransition, type ReactElement, type ReactNode } from "react";
+import { useEffect, useMemo, useState, useTransition, type ReactElement, type ReactNode } from "react";
 import { logoutUser } from "../../lib/auth/client";
+import { readDashboardBootstrapSnapshot } from "../../lib/dashboard";
+import {
+  buildRememberedCloseContext,
+  deriveRememberedCloseContextFromDashboardEntries,
+  readRememberedCloseContext,
+  subscribeRememberedCloseContext,
+  type RememberedCloseContext,
+  writeRememberedCloseContext,
+} from "../../lib/workspace-navigation";
 import { QuartzIcon, type QuartzIconName } from "./QuartzIcons";
 
 type QuartzWorkspaceShellProps = Readonly<{
@@ -29,8 +38,14 @@ export function QuartzWorkspaceShell({
   const pathname = usePathname();
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
+  const [rememberedCloseContext, setRememberedCloseContext] =
+    useState<RememberedCloseContext | null>(null);
 
   const closeContext = useMemo(() => resolveCloseContext(pathname), [pathname]);
+  const fallbackCloseContext = useMemo(
+    () => closeContext ?? rememberedCloseContext ?? resolveFallbackCloseContext(),
+    [closeContext, rememberedCloseContext],
+  );
   const breadcrumbs = useMemo(() => resolveBreadcrumbs(pathname), [pathname]);
   const workspaceAction = useMemo(
     () => resolveWorkspaceAction(pathname, closeContext),
@@ -51,20 +66,52 @@ export function QuartzWorkspaceShell({
         label: "Entities",
       },
       {
-        href: closeContext?.overviewHref ?? "/",
+        href: fallbackCloseContext?.overviewHref ?? "/entities",
         icon: "close",
         isActive: pathname.includes("/close-runs/") && !pathname.endsWith("/chat"),
         label: "Close",
       },
       {
-        href: closeContext?.chatHref ?? "/",
+        href: fallbackCloseContext?.chatHref ?? "/entities",
         icon: "assistant",
         isActive: pathname.endsWith("/chat"),
         label: "Assistant",
       },
     ],
-    [closeContext?.chatHref, closeContext?.overviewHref, pathname],
+    [fallbackCloseContext?.chatHref, fallbackCloseContext?.overviewHref, pathname],
   );
+
+  useEffect(() => {
+    if (closeContext !== null) {
+      const nextContext = buildRememberedCloseContext(closeContext.entityId, closeContext.closeRunId);
+      setRememberedCloseContext(nextContext);
+      writeRememberedCloseContext(nextContext);
+      return;
+    }
+
+    setRememberedCloseContext(readRememberedCloseContext() ?? resolveFallbackCloseContext());
+  }, [closeContext, pathname]);
+
+  useEffect(() => {
+    return subscribeRememberedCloseContext((context) => {
+      setRememberedCloseContext(context);
+    });
+  }, []);
+
+  useEffect(() => {
+    const prefetchTargets = new Set<string>([
+      "/",
+      "/entities",
+      workspaceAction.href,
+      ...navItems.map((item) => item.href),
+    ]);
+
+    prefetchTargets.forEach((href) => {
+      if (href !== pathname) {
+        router.prefetch(href);
+      }
+    });
+  }, [navItems, pathname, router, workspaceAction.href]);
 
   const handleLogout = (): void => {
     startTransition(async () => {
@@ -163,6 +210,8 @@ export function QuartzWorkspaceShell({
 
 function resolveCloseContext(pathname: string): {
   chatHref: string;
+  closeRunId: string;
+  entityId: string;
   overviewHref: string;
 } | null {
   const match = pathname.match(/^\/entities\/([^/]+)\/close-runs\/([^/]+)/u);
@@ -172,10 +221,23 @@ function resolveCloseContext(pathname: string): {
 
   const entityId = match[1];
   const closeRunId = match[2];
+  if (typeof entityId !== "string" || typeof closeRunId !== "string") {
+    return null;
+  }
+
   return {
     chatHref: `/entities/${entityId}/close-runs/${closeRunId}/chat`,
+    closeRunId,
+    entityId,
     overviewHref: `/entities/${entityId}/close-runs/${closeRunId}`,
   };
+}
+
+function resolveFallbackCloseContext(): RememberedCloseContext | null {
+  const dashboardSnapshot = readDashboardBootstrapSnapshot();
+  return dashboardSnapshot === null
+    ? null
+    : deriveRememberedCloseContextFromDashboardEntries(dashboardSnapshot);
 }
 
 function resolveBreadcrumbs(pathname: string): readonly { href: string; label: string }[] {

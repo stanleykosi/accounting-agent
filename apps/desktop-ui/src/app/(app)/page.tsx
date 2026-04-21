@@ -24,6 +24,10 @@ import {
   type DashboardEntityRuns,
 } from "../../lib/dashboard";
 import { EntityApiError, type EntitySummary } from "../../lib/entities/api";
+import {
+  deriveRememberedCloseContextFromDashboardEntries,
+  writeRememberedCloseContext,
+} from "../../lib/workspace-navigation";
 
 type DashboardRow = {
   closeRun: CloseRunSummary;
@@ -42,19 +46,21 @@ type FocusedEntityRow = Readonly<{
 
 export default function DashboardPage(): ReactElement {
   const router = useRouter();
+  const dashboardSnapshot = readDashboardBootstrapSnapshot();
   const [dashboardData, setDashboardData] = useState<readonly DashboardEntityRuns[]>(
-    () => readDashboardBootstrapSnapshot() ?? [],
+    () => dashboardSnapshot ?? [],
   );
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [isLoading, setIsLoading] = useState(() => readDashboardBootstrapSnapshot() === null);
+  const [isLoading, setIsLoading] = useState(() => dashboardSnapshot === null);
 
   useEffect(() => {
     void loadDashboard({
       onError: setErrorMessage,
       onLoaded: setDashboardData,
       onLoadingChange: setIsLoading,
+      showLoading: dashboardSnapshot === null,
     });
-  }, []);
+  }, [dashboardSnapshot]);
 
   useEffect(() => {
     if (!isLoading && errorMessage === null && dashboardData.length === 0) {
@@ -87,6 +93,13 @@ export default function DashboardPage(): ReactElement {
     },
     [dashboardData],
   );
+
+  useEffect(() => {
+    const preferredCloseContext = deriveRememberedCloseContextFromDashboardEntries(dashboardData);
+    if (preferredCloseContext !== null) {
+      writeRememberedCloseContext(preferredCloseContext);
+    }
+  }, [dashboardData]);
 
   const recentActivityRows = useMemo<readonly DashboardActivityRow[]>(
     () =>
@@ -281,15 +294,20 @@ async function loadDashboard(options: {
   onError: (message: string | null) => void;
   onLoaded: (value: readonly DashboardEntityRuns[]) => void;
   onLoadingChange: (value: boolean) => void;
+  showLoading: boolean;
 }): Promise<void> {
-  options.onLoadingChange(true);
+  if (options.showLoading) {
+    options.onLoadingChange(true);
+  }
   try {
     options.onLoaded(await readDashboardBootstrap());
     options.onError(null);
   } catch (error: unknown) {
     options.onError(resolveDashboardErrorMessage(error));
   } finally {
-    options.onLoadingChange(false);
+    if (options.showLoading) {
+      options.onLoadingChange(false);
+    }
   }
 }
 

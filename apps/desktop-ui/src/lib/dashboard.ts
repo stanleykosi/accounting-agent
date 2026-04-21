@@ -10,6 +10,7 @@ import {
   invalidateClientCacheByPrefix,
   loadClientCachedValue,
   readClientCacheSnapshot,
+  writeClientCacheValue,
 } from "./client-cache";
 import type { EntitySummary } from "./entities/api";
 
@@ -24,6 +25,7 @@ type DashboardBootstrapPayload = Readonly<{
 
 const DASHBOARD_BOOTSTRAP_PATH = "/api/dashboard/bootstrap";
 const DASHBOARD_CACHE_TTL_MS = 30_000;
+const ENTITY_LIST_CACHE_PATH = "/api/entities";
 
 /**
  * Purpose: Load the portfolio bootstrap in one same-origin request.
@@ -76,10 +78,32 @@ async function requestDashboardBootstrap(): Promise<DashboardBootstrapPayload> {
         throw new Error(resolveDashboardBootstrapErrorMessage(payload, response.status));
       }
 
-      return payload as DashboardBootstrapPayload;
+      const normalizedPayload = payload as DashboardBootstrapPayload;
+      primeDashboardDerivedCaches(normalizedPayload);
+      return normalizedPayload;
     },
     DASHBOARD_CACHE_TTL_MS,
   );
+}
+
+function primeDashboardDerivedCaches(payload: Readonly<DashboardBootstrapPayload>): void {
+  writeClientCacheValue(
+    ENTITY_LIST_CACHE_PATH,
+    {
+      entities: payload.entries.map((entry) => entry.entity),
+    },
+    DASHBOARD_CACHE_TTL_MS,
+  );
+
+  payload.entries.forEach((entry) => {
+    writeClientCacheValue(
+      `/api/entities/${encodeURIComponent(entry.entity.id)}/close-runs`,
+      {
+        close_runs: entry.closeRuns,
+      },
+      DASHBOARD_CACHE_TTL_MS,
+    );
+  });
 }
 
 function resolveDashboardBootstrapErrorMessage(

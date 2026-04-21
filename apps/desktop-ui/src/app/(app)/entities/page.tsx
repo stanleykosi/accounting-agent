@@ -9,26 +9,50 @@ Dependencies: React hooks, Next.js links, and the entity API helpers.
 import Link from "next/link";
 import { useEffect, useState, type ReactElement } from "react";
 import { QuartzIcon } from "../../../components/layout/QuartzIcons";
+import { readDashboardBootstrap, readDashboardBootstrapSnapshot } from "../../../lib/dashboard";
 import {
   EntityApiError,
   listEntities,
   readEntityListSnapshot,
   type EntitySummary,
 } from "../../../lib/entities/api";
+import {
+  deriveRememberedCloseContextFromDashboardEntries,
+  writeRememberedCloseContext,
+} from "../../../lib/workspace-navigation";
 
 export default function EntitiesPage(): ReactElement {
+  const entityListSnapshot = readEntityListSnapshot();
   const [entities, setEntities] = useState<readonly EntitySummary[]>(
-    () => readEntityListSnapshot()?.entities ?? [],
+    () => entityListSnapshot?.entities ?? [],
   );
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [isLoading, setIsLoading] = useState(() => readEntityListSnapshot() === null);
+  const [isLoading, setIsLoading] = useState(() => entityListSnapshot === null);
 
   useEffect(() => {
     void loadEntities({
       onError: setErrorMessage,
       onLoaded: setEntities,
       onLoadingChange: setIsLoading,
+      showLoading: entityListSnapshot === null,
     });
+  }, [entityListSnapshot]);
+
+  useEffect(() => {
+    if (readDashboardBootstrapSnapshot() !== null) {
+      return;
+    }
+
+    void readDashboardBootstrap()
+      .then((entries) => {
+        const preferredCloseContext = deriveRememberedCloseContextFromDashboardEntries(entries);
+        if (preferredCloseContext !== null) {
+          writeRememberedCloseContext(preferredCloseContext);
+        }
+      })
+      .catch(() => {
+        // Keep entity directory responsive even when dashboard prewarm fails.
+      });
   }, []);
 
   return (
@@ -166,17 +190,24 @@ async function loadEntities(options: {
   onError: (message: string | null) => void;
   onLoaded: (entities: readonly EntitySummary[]) => void;
   onLoadingChange: (value: boolean) => void;
+  showLoading: boolean;
 }): Promise<void> {
-  options.onLoadingChange(true);
+  if (options.showLoading) {
+    options.onLoadingChange(true);
+  }
   try {
     const response = await listEntities();
     options.onLoaded(response.entities);
     options.onError(null);
   } catch (error: unknown) {
-    options.onLoaded([]);
+    if (options.showLoading) {
+      options.onLoaded([]);
+    }
     options.onError(resolveEntityErrorMessage(error));
   } finally {
-    options.onLoadingChange(false);
+    if (options.showLoading) {
+      options.onLoadingChange(false);
+    }
   }
 }
 
