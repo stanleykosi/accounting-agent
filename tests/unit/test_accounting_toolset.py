@@ -55,8 +55,8 @@ class _FakeDocumentRepository:
         return self.documents_by_close_run_id[close_run_id]
 
 
-def test_requires_human_approval_when_auto_tool_would_reopen_released_run() -> None:
-    """Auto tools should stage for approval before reopening a released close run."""
+def test_operational_chat_tools_execute_directly_even_when_scope_must_reopen() -> None:
+    """The chat surface is the approval surface for normal operational requests."""
 
     actor = EntityUserRecord(id=uuid4(), email="ops@example.com", full_name="Finance Ops")
     close_run_id = uuid4()
@@ -75,11 +75,11 @@ def test_requires_human_approval_when_auto_tool_would_reopen_released_run() -> N
         context=_build_execution_context(actor=actor, close_run_id=close_run_id),
     )
 
-    assert requires_approval is True
+    assert requires_approval is False
 
 
-def test_requires_human_approval_when_auto_tool_would_rewind_phase() -> None:
-    """Auto tools should stage for approval before rewinding to an earlier phase."""
+def test_operational_chat_tools_execute_directly_even_when_scope_must_rewind() -> None:
+    """Normal chat requests should not stage just because the runtime must rewind scope."""
 
     actor = EntityUserRecord(id=uuid4(), email="ops@example.com", full_name="Finance Ops")
     close_run_id = uuid4()
@@ -98,11 +98,11 @@ def test_requires_human_approval_when_auto_tool_would_rewind_phase() -> None:
         context=_build_execution_context(actor=actor, close_run_id=close_run_id),
     )
 
-    assert requires_approval is True
+    assert requires_approval is False
 
 
-def test_auto_tool_remains_unblocked_when_scope_is_already_mutable() -> None:
-    """Auto tools should continue executing immediately when no scope adjustment is needed."""
+def test_operational_chat_tools_execute_directly_in_mutable_scope() -> None:
+    """Operational tools should continue executing immediately in the working scope."""
 
     actor = EntityUserRecord(id=uuid4(), email="ops@example.com", full_name="Finance Ops")
     close_run_id = uuid4()
@@ -122,6 +122,46 @@ def test_auto_tool_remains_unblocked_when_scope_is_already_mutable() -> None:
     )
 
     assert requires_approval is False
+
+
+def test_signoff_and_distribution_actions_still_stage_for_confirmation() -> None:
+    """Governed release actions should still require an explicit confirmation step."""
+
+    actor = EntityUserRecord(id=uuid4(), email="ops@example.com", full_name="Finance Ops")
+    close_run_id = uuid4()
+    toolset = _make_toolset(
+        close_run_service=_FakeCloseRunService(
+            close_run=SimpleNamespace(
+                status=CloseRunStatus.REOPENED,
+                workflow_state=SimpleNamespace(active_phase=WorkflowPhase.REVIEW_SIGNOFF),
+            )
+        )
+    )
+
+    assert (
+        toolset.requires_human_approval_for_invocation(
+            tool_name="approve_close_run",
+            tool_arguments={},
+            context=_build_execution_context(actor=actor, close_run_id=close_run_id),
+        )
+        is True
+    )
+    assert (
+        toolset.requires_human_approval_for_invocation(
+            tool_name="archive_close_run",
+            tool_arguments={},
+            context=_build_execution_context(actor=actor, close_run_id=close_run_id),
+        )
+        is True
+    )
+    assert (
+        toolset.requires_human_approval_for_invocation(
+            tool_name="distribute_export",
+            tool_arguments={"export_id": str(uuid4())},
+            context=_build_execution_context(actor=actor, close_run_id=close_run_id),
+        )
+        is True
+    )
 
 
 def test_resolve_document_id_for_scope_preserves_duplicate_upload_order() -> None:
@@ -217,6 +257,76 @@ def test_create_close_run_tool_uses_canonical_contract_validation() -> None:
     assert close_run_service.create_call["duplicate_period_reason"] is None
     assert result["created_close_run_id"] == str(created_close_run_id)
     assert result["active_phase"] == WorkflowPhase.COLLECTION.value
+
+
+def test_delete_workspace_rejects_current_workspace_scope() -> None:
+    """Deleting the current workspace from its own chat should fail fast with recovery guidance."""
+
+    actor = EntityUserRecord(id=uuid4(), email="ops@example.com", full_name="Finance Ops")
+    workspace_id = uuid4()
+    toolset = _make_toolset()
+
+    with pytest.raises(ValueError) as error:
+        toolset._delete_workspace(
+            {"workspace_id": str(workspace_id)},
+            AgentExecutionContext(
+                actor=actor,
+                entity_id=workspace_id,
+                close_run_id=None,
+                source_close_run_id=None,
+                thread_id=uuid4(),
+                trace_id=None,
+                source_surface=None,
+            ),
+        )
+
+    assert "switch to another workspace chat first" in str(error.value).lower()
+
+
+def test_delete_close_run_returns_canonical_result_payload() -> None:
+    """Delete-close-run tool calls should expose the deleted scope in a stable shape."""
+
+    actor = EntityUserRecord(id=uuid4(), email="ops@example.com", full_name="Finance Ops")
+    entity_id = uuid4()
+    close_run_id = uuid4()
+
+    class _FakeCloseRunDeleteService:
+        def __init__(self) -> None:
+            self.delete_call: dict[str, object] | None = None
+
+        def delete_close_run(self, **kwargs):
+            self.delete_call = kwargs
+            return SimpleNamespace(
+                deleted_close_run_id=str(close_run_id),
+                deleted_document_count=2,
+                deleted_recommendation_count=3,
+                deleted_journal_count=1,
+                deleted_report_run_count=1,
+                deleted_thread_count=1,
+                canceled_job_count=0,
+            )
+
+    delete_service = _FakeCloseRunDeleteService()
+    toolset = _make_toolset(close_run_delete_service=delete_service)
+
+    result = toolset._delete_close_run(
+        {},
+        AgentExecutionContext(
+            actor=actor,
+            entity_id=entity_id,
+            close_run_id=close_run_id,
+            source_close_run_id=None,
+            thread_id=uuid4(),
+            trace_id=None,
+            source_surface=None,
+        ),
+    )
+
+    assert delete_service.delete_call is not None
+    assert delete_service.delete_call["entity_id"] == entity_id
+    assert delete_service.delete_call["close_run_id"] == close_run_id
+    assert result["deleted_close_run_id"] == str(close_run_id)
+    assert result["deleted_document_count"] == 2
 
 
 def test_queue_recommendation_jobs_skips_bank_statements(
@@ -339,14 +449,20 @@ def _make_toolset(
     *,
     close_run_service: object | None = None,
     document_repository: object | None = None,
+    close_run_delete_service: object | None = None,
+    entity_service: object | None = None,
+    entity_delete_service: object | None = None,
 ) -> AccountingToolset:
     """Build an AccountingToolset with only the collaborators this test suite needs."""
 
     return AccountingToolset(
         db_session=SimpleNamespace(),
         close_run_service=close_run_service or _FakeCloseRunService(close_run=SimpleNamespace()),
+        close_run_delete_service=close_run_delete_service or SimpleNamespace(),
         document_review_service=SimpleNamespace(),
         document_repository=document_repository or SimpleNamespace(),
+        entity_service=entity_service or SimpleNamespace(),
+        entity_delete_service=entity_delete_service or SimpleNamespace(),
         export_service=SimpleNamespace(),
         job_service=SimpleNamespace(),
         recommendation_service=SimpleNamespace(),

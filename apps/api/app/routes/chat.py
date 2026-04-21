@@ -66,6 +66,7 @@ from services.chat.action_router import ChatActionRouter
 from services.chat.grounding import ChatGroundingService
 from services.chat.proposed_changes import ProposedChangesService
 from services.chat.service import ChatService, ChatServiceError
+from services.close_runs.delete_service import CloseRunDeleteService
 from services.close_runs.service import CloseRunService
 from services.coa.service import CoaRepository, CoaService, CoaServiceError
 from services.common.enums import WorkflowPhase
@@ -95,6 +96,8 @@ from services.documents.upload_service import (
     DocumentUploadServiceError,
     UploadFilePayload,
 )
+from services.entity.delete_service import EntityDeleteService
+from services.entity.service import EntityService
 from services.exports.service import ExportService
 from services.jobs.service import JobService
 from services.model_gateway.client import ModelGateway
@@ -189,11 +192,14 @@ def get_chat_action_executor(
     document_repo = DocumentRepository(db_session=db_session)
     report_repo = ReportRepository(db_session=db_session)
     recommendation_repo = RecommendationJournalRepository(db_session=db_session)
+    job_service = JobService(db_session=db_session)
+    storage_repository = StorageRepository()
     audit_service = AuditService(db_session=db_session)
     export_service = ExportService(
         db_session=db_session,
         report_repository=report_repo,
     )
+    close_run_service = CloseRunService(repository=close_run_repo)
 
     return ChatActionExecutor(
         db_session=db_session,
@@ -201,19 +207,30 @@ def get_chat_action_executor(
         action_repository=action_repo,
         grounding_service=grounding_service,
         entity_repository=entity_repo,
-        close_run_service=CloseRunService(repository=close_run_repo),
+        close_run_service=close_run_service,
+        close_run_delete_service=CloseRunDeleteService(
+            repository=close_run_repo,
+            storage_repository=storage_repository,
+            job_service=job_service,
+        ),
         close_run_repository=close_run_repo,
         document_review_service=DocumentReviewService(
             db_session=db_session,
             repository=document_repo,
         ),
         document_repository=document_repo,
+        entity_service=EntityService(repository=entity_repo),
+        entity_delete_service=EntityDeleteService(
+            repository=entity_repo,
+            storage_repository=storage_repository,
+            job_service=job_service,
+        ),
         recommendation_service=RecommendationApplyService(
             repository=recommendation_repo,
             audit_service=audit_service,
             db_session=db_session,
             integration_repository=IntegrationRepository(db_session=db_session),
-            storage_repository=StorageRepository(),
+            storage_repository=storage_repository,
         ),
         recommendation_repository=recommendation_repo,
         reconciliation_service=ReconciliationService(
@@ -224,7 +241,7 @@ def get_chat_action_executor(
         report_repository=report_repo,
         export_service=export_service,
         model_gateway=model_gateway,
-        job_service=JobService(db_session=db_session),
+        job_service=job_service,
         task_dispatcher=task_dispatcher,
     )
 

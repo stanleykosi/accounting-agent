@@ -17,7 +17,7 @@ from services.coa.service import CoaRepository
 from services.db.models.coa import CoaSetSource
 from services.db.repositories.chat_action_repo import ChatActionRepository
 from services.db.repositories.document_repo import DocumentRepository
-from services.db.repositories.entity_repo import EntityUserRecord
+from services.db.repositories.entity_repo import EntityRepository, EntityUserRecord
 from services.db.repositories.recommendation_journal_repo import RecommendationJournalRepository
 from services.db.repositories.reconciliation_repo import ReconciliationRepository
 from services.db.repositories.report_repo import ReportRepository
@@ -46,6 +46,7 @@ class AccountingWorkspaceContextBuilder(WorkspaceContextBuilder):
         close_run_service: CloseRunService,
         coa_repository: CoaRepository,
         document_repository: DocumentRepository,
+        entity_repository: EntityRepository,
         export_service: ExportService,
         job_service: JobService,
         reconciliation_repository: ReconciliationRepository,
@@ -57,6 +58,7 @@ class AccountingWorkspaceContextBuilder(WorkspaceContextBuilder):
         self._close_run_service = close_run_service
         self._coa_repo = coa_repository
         self._document_repo = document_repository
+        self._entity_repo = entity_repository
         self._export_service = export_service
         self._job_service = job_service
         self._reconciliation_repo = reconciliation_repository
@@ -82,6 +84,57 @@ class AccountingWorkspaceContextBuilder(WorkspaceContextBuilder):
             "entity_id": str(entity_id),
             "close_run_id": str(close_run_id) if close_run_id else None,
         }
+        entity_access = self._entity_repo.get_entity_for_user(
+            entity_id=entity_id,
+            user_id=actor_user.id,
+        )
+        if entity_access is None:
+            raise ValueError("The entity workspace is not accessible to the current operator.")
+        snapshot["workspace"] = {
+            "id": str(entity_access.entity.id),
+            "name": entity_access.entity.name,
+            "legal_name": entity_access.entity.legal_name,
+            "base_currency": entity_access.entity.base_currency,
+            "country_code": entity_access.entity.country_code,
+            "timezone": entity_access.entity.timezone,
+            "accounting_standard": entity_access.entity.accounting_standard,
+            "autonomy_mode": entity_access.entity.autonomy_mode.value,
+            "status": entity_access.entity.status.value,
+        }
+        accessible_workspaces = self._entity_repo.list_entities_for_user(user_id=actor_user.id)
+        snapshot["accessible_workspaces"] = [
+            {
+                "id": str(access.entity.id),
+                "name": access.entity.name,
+                "legal_name": access.entity.legal_name,
+                "base_currency": access.entity.base_currency,
+                "country_code": access.entity.country_code,
+                "timezone": access.entity.timezone,
+                "accounting_standard": access.entity.accounting_standard,
+                "autonomy_mode": access.entity.autonomy_mode.value,
+                "status": access.entity.status.value,
+            }
+            for access in accessible_workspaces[:20]
+        ]
+        entity_close_runs = self._close_run_service.list_close_runs_for_entity(
+            actor_user=actor_user,
+            entity_id=entity_id,
+        )
+        snapshot["entity_close_runs"] = [
+            {
+                "id": close_run.id,
+                "status": close_run.status.value,
+                "period_label": close_run.period_label,
+                "reporting_currency": close_run.reporting_currency,
+                "version_no": close_run.current_version_no,
+                "active_phase": (
+                    close_run.workflow_state.active_phase.value
+                    if close_run.workflow_state.active_phase is not None
+                    else None
+                ),
+            }
+            for close_run in entity_close_runs.close_runs[:20]
+        ]
         snapshot["coa"] = self._build_coa_snapshot(entity_id=entity_id)
         if close_run_id is None:
             snapshot["readiness"] = _build_readiness_summary(
@@ -168,6 +221,9 @@ class AccountingWorkspaceContextBuilder(WorkspaceContextBuilder):
             close_run_id=close_run_id
         )
         document_summary = _count_by_key(row.document.status.value for row in documents)
+        document_filename_by_id = {
+            row.document.id: row.document.original_filename for row in documents
+        }
         snapshot["documents"] = [
             {
                 "id": str(row.document.id),
@@ -178,6 +234,16 @@ class AccountingWorkspaceContextBuilder(WorkspaceContextBuilder):
                 "auto_transaction_match_status": _read_document_auto_transaction_match_status(
                     row.latest_extraction
                 ),
+                "open_issues": [
+                    {
+                        "id": str(issue.id),
+                        "issue_type": issue.issue_type,
+                        "severity": issue.severity,
+                        "status": issue.status,
+                        "details": dict(issue.details),
+                    }
+                    for issue in row.open_issues[:5]
+                ],
                 "fields": [
                     {
                         "id": str(field.id),
@@ -227,6 +293,11 @@ class AccountingWorkspaceContextBuilder(WorkspaceContextBuilder):
                 "document_id": (
                     str(recommendation.document_id) if recommendation.document_id else None
                 ),
+                "document_filename": (
+                    document_filename_by_id.get(recommendation.document_id)
+                    if recommendation.document_id is not None
+                    else None
+                ),
                 "reasoning_summary": recommendation.reasoning_summary,
             }
             for recommendation in recommendations[:25]
@@ -273,6 +344,59 @@ class AccountingWorkspaceContextBuilder(WorkspaceContextBuilder):
         snapshot["reconciliation_summary"] = _count_by_key(
             reconciliation.status.value for reconciliation in reconciliations
         )
+        reconciliation_type_by_id = {
+            reconciliation.id: reconciliation.reconciliation_type.value
+            for reconciliation in reconciliations
+        }
+        reconciliation_items: list[dict[str, Any]] = []
+        for reconciliation in reconciliations[:10]:
+            items = self._reconciliation_repo.list_items(
+                reconciliation_id=reconciliation.id,
+                requires_disposition=True,
+            )
+            for item in items[:10]:
+                reconciliation_items.append(
+                    {
+                        "id": str(item.id),
+                        "reconciliation_id": str(item.reconciliation_id),
+                        "reconciliation_type": reconciliation_type_by_id.get(
+                            item.reconciliation_id
+                        ),
+                        "source_type": item.source_type,
+                        "source_ref": item.source_ref,
+                        "match_status": item.match_status.value,
+                        "amount": str(item.amount),
+                        "difference_amount": str(item.difference_amount),
+                        "explanation": item.explanation,
+                        "requires_disposition": item.requires_disposition,
+                        "disposition": (
+                            item.disposition.value if item.disposition is not None else None
+                        ),
+                        "disposition_reason": item.disposition_reason,
+                        "dimensions": dict(item.dimensions),
+                        "period_date": item.period_date,
+                    }
+                )
+                if len(reconciliation_items) >= 30:
+                    break
+            if len(reconciliation_items) >= 30:
+                break
+        snapshot["reconciliation_items"] = reconciliation_items
+        snapshot["reconciliation_anomalies"] = [
+            {
+                "id": str(anomaly.id),
+                "anomaly_type": anomaly.anomaly_type.value,
+                "severity": anomaly.severity,
+                "account_code": anomaly.account_code,
+                "description": anomaly.description,
+                "details": dict(anomaly.details),
+                "resolved": anomaly.resolved,
+            }
+            for anomaly in self._reconciliation_repo.list_anomalies(
+                close_run_id=close_run_id,
+                resolved=False,
+            )[:20]
+        ]
 
         supporting_schedules = self._supporting_schedule_service.list_workspace(
             close_run_id=close_run_id
@@ -315,6 +439,26 @@ class AccountingWorkspaceContextBuilder(WorkspaceContextBuilder):
             for run in report_runs[:10]
         ]
         snapshot["report_summary"] = _count_by_key(run.status.value for run in report_runs)
+        commentary: list[dict[str, Any]] = []
+        for run in report_runs[:5]:
+            for record in self._report_repo.list_commentary_for_report_run(
+                report_run_id=run.id
+            )[:10]:
+                commentary.append(
+                    {
+                        "id": str(record.id),
+                        "report_run_id": str(record.report_run_id),
+                        "report_version_no": run.version_no,
+                        "section_key": record.section_key,
+                        "status": record.status.value,
+                        "body": record.body,
+                    }
+                )
+                if len(commentary) >= 20:
+                    break
+            if len(commentary) >= 20:
+                break
+        snapshot["commentary"] = commentary
 
         jobs = self._job_service.list_jobs_for_user(
             entity_id=entity_id,

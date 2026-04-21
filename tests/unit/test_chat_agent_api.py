@@ -8,12 +8,29 @@ Dependencies: FastAPI TestClient, chat route dependencies, and strict chat contr
 from __future__ import annotations
 
 import asyncio
-from io import BytesIO
 import sys
-from datetime import datetime, timezone
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from io import BytesIO
 from types import ModuleType, SimpleNamespace
 from uuid import uuid4
 
+from apps.api.app.routes.request_auth import AuthenticatedRequestContext
+from fastapi import Response
+from services.contracts.chat_models import (
+    AgentCoaSummary,
+    AgentMemorySummary,
+    AgentRunPhaseState,
+    AgentRunReadiness,
+    AgentToolManifestItem,
+    AgentTraceRecord,
+    ChatThreadWorkspaceResponse,
+    GroundingContext,
+)
+from services.db.models.auth import UserStatus
+from services.db.repositories.auth_repo import AuthUserRecord
+from starlette.datastructures import UploadFile
+from starlette.requests import Request
 
 _ORIGINAL_MODULES: dict[str, ModuleType | None] = {}
 
@@ -153,6 +170,8 @@ _install_service_stub(
 _install_service_stub(
     "services.reconciliation.service",
     ReconciliationService=_dummy_class("ReconciliationService"),
+    ReconciliationDispositionOutput=_dummy_class("ReconciliationDispositionOutput"),
+    ReconciliationRunOutput=_dummy_class("ReconciliationRunOutput"),
 )
 _install_service_stub(
     "services.reporting.service",
@@ -163,24 +182,6 @@ try:
     from apps.api.app.routes import chat as chat_routes
 finally:
     _restore_temporary_modules()
-
-from apps.api.app.routes.request_auth import AuthenticatedRequestContext
-from dataclasses import dataclass
-from fastapi import HTTPException, Response
-from starlette.datastructures import UploadFile
-from starlette.requests import Request
-from services.contracts.chat_models import (
-    AgentCoaSummary,
-    AgentMemorySummary,
-    AgentRunReadiness,
-    AgentRunPhaseState,
-    AgentToolManifestItem,
-    AgentTraceRecord,
-    ChatThreadWorkspaceResponse,
-    GroundingContext,
-)
-from services.db.models.auth import UserStatus
-from services.db.repositories.auth_repo import AuthUserRecord
 
 
 @dataclass(frozen=True, slots=True)
@@ -200,7 +201,7 @@ class FakeChatActionExecutor:
     """Provide deterministic chat-executor responses for API route tests."""
 
     def __init__(self) -> None:
-        now = datetime.now(tz=timezone.utc)
+        now = datetime.now(tz=UTC)
         self.workspace = ChatThreadWorkspaceResponse(
             thread_id=str(uuid4()),
             grounding=GroundingContext(
@@ -260,7 +261,10 @@ class FakeChatActionExecutor:
             tools=(
                 AgentToolManifestItem(
                     name="generate_reports",
-                    prompt_signature="generate_reports(template_id?, generate_commentary?, use_llm_commentary?)",
+                    prompt_signature=(
+                        "generate_reports(template_id?, generate_commentary?, "
+                        "use_llm_commentary?)"
+                    ),
                     description="Create a report run and queue report generation.",
                     intent="report_action",
                     requires_human_approval=False,
@@ -576,7 +580,7 @@ def test_chat_mcp_initialize_and_list_tools(monkeypatch) -> None:
 
 
 def test_chat_mcp_tool_call_executes_through_shared_executor(monkeypatch) -> None:
-    """Ensure MCP tools/call uses the shared deterministic executor and returns structured content."""
+    """Ensure MCP `tools/call` uses the shared executor and returns structured content."""
 
     del monkeypatch
     executor = FakeChatActionExecutor()
@@ -754,7 +758,9 @@ def test_chat_action_route_uses_shared_agent_lane_for_plain_conversation(monkeyp
     assert executor.sent_action_message["source_surface"] == "desktop"
 
 
-def test_chat_action_attachment_route_reports_partial_success_when_follow_up_fails(monkeypatch) -> None:
+def test_chat_action_attachment_route_reports_partial_success_when_follow_up_fails(
+    monkeypatch,
+) -> None:
     """Ensure successful attachment ingestion is not reported as a hard failure."""
 
     _install_browser_auth_stub(monkeypatch)

@@ -9,7 +9,7 @@ workflow services.
 
 from __future__ import annotations
 
-import json
+import re
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
@@ -30,9 +30,10 @@ from services.agents.models import (
 from services.agents.policy import ExecutionPolicy
 from services.auth.service import serialize_uuid
 from services.chat.grounding import ChatGroundingService, GroundingContextRecord
+from services.close_runs.delete_service import CloseRunDeleteService
 from services.close_runs.service import CloseRunService, CloseRunServiceError
 from services.coa.service import CoaRepository, CoaService
-from services.common.enums import CloseRunStatus, WorkflowPhase
+from services.common.enums import CloseRunStatus, ReportSectionKey, WorkflowPhase
 from services.common.types import utc_now
 from services.contracts.chat_models import (
     AgentCoaSummary,
@@ -62,6 +63,8 @@ from services.documents.review_service import (
     DocumentReviewService,
     DocumentReviewServiceError,
 )
+from services.entity.delete_service import EntityDeleteService, EntityDeleteServiceError
+from services.entity.service import EntityService, EntityServiceError
 from services.exports.service import ExportService, ExportServiceError
 from services.jobs.service import JobService, JobServiceError
 from services.model_gateway.client import ModelGateway
@@ -136,9 +139,12 @@ class ChatActionExecutor:
         grounding_service: ChatGroundingService,
         entity_repository: EntityRepository,
         close_run_service: CloseRunService,
+        close_run_delete_service: CloseRunDeleteService,
         close_run_repository: CloseRunRepository,
         document_review_service: DocumentReviewService,
         document_repository: DocumentRepository,
+        entity_service: EntityService,
+        entity_delete_service: EntityDeleteService,
         recommendation_service: RecommendationApplyService,
         recommendation_repository: RecommendationJournalRepository,
         reconciliation_service: ReconciliationService,
@@ -155,6 +161,8 @@ class ChatActionExecutor:
         self._action_repo = action_repository
         self._grounding = grounding_service
         self._entity_repo = entity_repository
+        self._entity_service = entity_service
+        self._entity_delete_service = entity_delete_service
         self._close_run_service = close_run_service
         self._coa_service = CoaService(repository=CoaRepository(db_session=db_session))
 
@@ -163,6 +171,7 @@ class ChatActionExecutor:
             close_run_service=close_run_service,
             coa_repository=CoaRepository(db_session=db_session),
             document_repository=document_repository,
+            entity_repository=entity_repository,
             export_service=export_service,
             job_service=job_service,
             reconciliation_repository=reconciliation_repository,
@@ -175,8 +184,11 @@ class ChatActionExecutor:
         self._toolset = AccountingToolset(
             db_session=db_session,
             close_run_service=close_run_service,
+            close_run_delete_service=close_run_delete_service,
             document_review_service=document_review_service,
             document_repository=document_repository,
+            entity_service=entity_service,
+            entity_delete_service=entity_delete_service,
             export_service=export_service,
             job_service=job_service,
             recommendation_service=recommendation_service,
@@ -235,6 +247,17 @@ class ChatActionExecutor:
                 content=content,
                 grounding=grounding,
             )
+            pre_action_snapshot = self._snapshot_for_thread(
+                actor_user=actor_user,
+                entity_id=entity_id,
+                close_run_id=thread.close_run_id,
+                thread_id=thread_id,
+            )
+            planning = self._hydrate_planning_result(
+                planning=planning,
+                snapshot=pre_action_snapshot,
+                operator_content=content,
+            )
             action = self._resolve_action(planning=planning)
             execution_context = self._build_execution_context(
                 actor_user=actor_user,
@@ -247,12 +270,6 @@ class ChatActionExecutor:
             )
 
             if action is None:
-                snapshot = self._snapshot_for_thread(
-                    actor_user=actor_user,
-                    entity_id=entity_id,
-                    close_run_id=thread.close_run_id,
-                    thread_id=thread_id,
-                )
                 assistant_message = self._chat_repo.create_message(
                     thread_id=thread_id,
                     role="assistant",
@@ -265,7 +282,7 @@ class ChatActionExecutor:
                         mode="planner",
                         tool_name=None,
                         action_status="read_only",
-                        summary=snapshot.get("progress_summary"),
+                        summary=pre_action_snapshot.get("progress_summary"),
                     ),
                 )
                 self._update_thread_memory(
@@ -276,7 +293,7 @@ class ChatActionExecutor:
                     tool_name=None,
                     action_status="read_only",
                     trace_id=trace_id,
-                    snapshot=snapshot,
+                    snapshot=pre_action_snapshot,
                 )
                 self._chat_repo.commit()
                 return ChatExecutionOutcome(
@@ -316,9 +333,14 @@ class ChatActionExecutor:
             final_record = record
             applied_result: dict[str, Any] | None = None
             if requires_human_approval:
-                assistant_content = (
-                    f"{assistant_content}\n\n"
-                    "This action is staged for approval before the system applies it."
+                assistant_content = _compose_assistant_content(
+                    assistant_response=assistant_content,
+                    handoff_message=None,
+                    result_summary=(
+                        "I have the change ready and I'm holding it for confirmation "
+                        "before I apply it."
+                    ),
+                    next_step=None,
                 )
             else:
                 applied_result = self._execute_action(
@@ -338,18 +360,21 @@ class ChatActionExecutor:
                     status="applied",
                     applied_result=applied_result,
                 ) or record
-                assistant_content = (
-                    f"{assistant_content}\n\n"
-                    f"{_format_scope_handoff_message(handoff_message)}"
-                    f"{_format_execution_result(applied_result)}"
+                snapshot = self._snapshot_for_thread(
+                    actor_user=actor_user,
+                    entity_id=entity_id,
+                    close_run_id=thread.close_run_id,
+                    thread_id=thread_id,
+                )
+                assistant_content = _compose_assistant_content(
+                    assistant_response=assistant_content,
+                    handoff_message=handoff_message,
+                    result_summary=_format_execution_result(applied_result),
+                    next_step=_format_next_step(snapshot),
                 )
 
-            snapshot = self._snapshot_for_thread(
-                actor_user=actor_user,
-                entity_id=entity_id,
-                close_run_id=thread.close_run_id,
-                thread_id=thread_id,
-            )
+            if applied_result is None:
+                snapshot = pre_action_snapshot
 
             assistant_message = self._chat_repo.create_message(
                 thread_id=thread_id,
@@ -373,7 +398,7 @@ class ChatActionExecutor:
                 thread_id=thread_id,
                 existing_payload=thread.context_payload,
                 operator_message=content,
-                assistant_response=action.planning.assistant_response,
+                assistant_response=assistant_content,
                 tool_name=action.tool.name,
                 action_status="pending" if requires_human_approval else "applied",
                 trace_id=trace_id,
@@ -386,16 +411,7 @@ class ChatActionExecutor:
                 action_plan=final_record,
                 is_read_only=False,
             )
-        except (
-            ChatActionExecutionError,
-            DocumentReviewServiceError,
-            RecommendationApplyError,
-            CloseRunServiceError,
-            ExportServiceError,
-            ReportServiceError,
-            JobServiceError,
-            SupportingScheduleServiceError,
-        ):
+        except ChatActionExecutionError:
             self._db_session.rollback()
             raise
         except Exception as error:
@@ -508,6 +524,16 @@ class ChatActionExecutor:
                 payload.get("assistant_response"),
                 applied_result,
                 handoff_message=handoff_message,
+                snapshot=(
+                    self._snapshot_for_thread(
+                        actor_user=actor_user,
+                        entity_id=entity_id,
+                        close_run_id=thread.close_run_id,
+                        thread_id=thread_id,
+                    )
+                    if thread is not None
+                    else None
+                ),
             ),
             message_type="action",
             linked_action_id=updated.id,
@@ -858,15 +884,7 @@ class ChatActionExecutor:
                 summary=summary,
                 result=applied_result,
             )
-        except (
-            ChatActionExecutionError,
-            DocumentReviewServiceError,
-            RecommendationApplyError,
-            CloseRunServiceError,
-            ExportServiceError,
-            ReportServiceError,
-            JobServiceError,
-        ):
+        except ChatActionExecutionError:
             self._db_session.rollback()
             raise
         except Exception as error:
@@ -1009,16 +1027,44 @@ class ChatActionExecutor:
             applied_result=applied_result,
             key="created_close_run_id",
         )
+        deleted_close_run_id = _optional_uuid_from_result(
+            applied_result=applied_result,
+            key="deleted_close_run_id",
+        )
         target_close_run_id = reopened_close_run_id or created_close_run_id
-        if target_close_run_id is None:
+        if target_close_run_id is None and deleted_close_run_id is None:
             return grounding, thread, None
+
+        previous_close_run_id = thread.close_run_id
+        if deleted_close_run_id is not None:
+            if previous_close_run_id != deleted_close_run_id:
+                return grounding, thread, None
+            entity_grounding = self._grounding.resolve_context(
+                entity_id=entity_id,
+                close_run_id=None,
+                user_id=actor_user.id,
+            )
+            updated_payload = {
+                **thread.context_payload,
+                **self._grounding.build_context_payload(context=entity_grounding.context),
+            }
+            updated_thread = self._chat_repo.update_thread_scope(
+                thread_id=thread_id,
+                close_run_id=None,
+                context_payload=updated_payload,
+            )
+            self._action_repo.supersede_pending_actions_for_close_run_scope(
+                thread_id=thread_id,
+                close_run_id=deleted_close_run_id,
+            )
+            handoff_message = _build_scope_handoff_message(applied_result=applied_result)
+            return entity_grounding, updated_thread or thread, handoff_message
 
         reopened_grounding = self._grounding.resolve_context(
             entity_id=entity_id,
             close_run_id=target_close_run_id,
             user_id=actor_user.id,
         )
-        previous_close_run_id = thread.close_run_id
         updated_payload = {
             **thread.context_payload,
             **self._grounding.build_context_payload(context=reopened_grounding.context),
@@ -1274,10 +1320,24 @@ class ChatActionExecutor:
                 f"Current UTC date: {utc_now().date().isoformat()}.",
                 "You are fully aware of the current system state described below.",
                 (
-                    "Treat this as one dynamic agent surface: answer directly when the "
-                    "operator needs analysis, and select a deterministic tool only when "
-                    "the request clearly asks to change workflow state or trigger an "
-                    "available operation."
+                    "This chat is the operator's primary control surface for the accounting "
+                    "workflow. Act on the operator's behalf whenever their intent is clear "
+                    "and the requested operation is available."
+                ),
+                (
+                    "Never tell the operator to use an internal tool name. Never say things "
+                    "like 'use the review_document tool' or 'call create_close_run'. If you "
+                    "can do the work here, do it here."
+                ),
+                (
+                    "When the operator asks for a change, prefer taking the action over "
+                    "describing the action. If identifiers are implicit but there is one "
+                    "clear candidate in the current workspace state or recent conversation, "
+                    "resolve it yourself."
+                ),
+                (
+                    "Only ask a clarifying question when more than one plausible target fits "
+                    "the request or when a required value truly cannot be inferred."
                 ),
                 (
                     "Treat natural outcome-oriented phrasing as actionable when it clearly "
@@ -1291,8 +1351,7 @@ class ChatActionExecutor:
                 ),
                 (
                     "If the operator wants to revisit a released close run to make more "
-                    "changes, you may use the reopen tool when the current run is already "
-                    "approved, exported, or archived."
+                    "changes, you may reopen it and continue inside the same thread."
                 ),
                 (
                     "When a requested change belongs in an earlier workflow phase, you may "
@@ -1306,15 +1365,43 @@ class ChatActionExecutor:
                 ),
                 (
                     "If the operator says an uploaded document was a mistake, use the ignore "
-                    "document tool when the snapshot shows one clear matching document. If more "
-                    "than one document could match, ask one short clarifying question."
+                    "document action when the snapshot shows one clear matching document. If "
+                    "more than one document could match, ask one short clarifying question."
+                ),
+                (
+                    "You can directly review documents, correct extracted values, approve or "
+                    "reject recommendations, approve or reject journals, apply journals, "
+                    "disposition reconciliation exceptions, resolve reconciliation anomalies, "
+                    "update commentary, and approve commentary when the request is clear."
+                ),
+                (
+                    "If there is exactly one clear pending recommendation, journal, "
+                    "reconciliation item, anomaly, or commentary section in scope, treat "
+                    "phrases like 'approve it', 'reject it', 'apply it', 'resolve it', or "
+                    "'update that commentary' as permission to act without making the operator "
+                    "repeat identifiers."
+                ),
+                (
+                    "When a rejection or reconciliation disposition requires a reason and the "
+                    "operator did not supply one, use a concise audit-safe reason based on the "
+                    "operator instruction instead of blocking on formality."
                 ),
                 (
                     "When the operator asks to start a new or fresh close run, use the "
-                    "create_close_run tool with explicit ISO period_start and period_end values. "
-                    "Resolve relative phrases like 'this month', 'next month', or named months "
-                    "against the current UTC date above. If the intended period is still "
-                    "ambiguous, ask one short clarifying question."
+                    "create_close_run action with explicit ISO period_start and period_end "
+                    "values. Resolve relative phrases like 'this month', 'next month', or "
+                    "named months against the current UTC date above. If the intended period "
+                    "is still ambiguous, ask one short clarifying question."
+                ),
+                (
+                    "You can also create workspaces, update workspace settings, delete mutable "
+                    "close runs, and delete other accessible workspaces through chat when the "
+                    "request is explicit and the target is clear."
+                ),
+                (
+                    "If the operator asks to delete the workspace anchoring this exact chat "
+                    "thread, tell them to switch to another workspace chat first so you can "
+                    "delete it safely without dropping the current conversation scope."
                 ),
                 (
                     "If the operator explicitly wants another open run for the same period, set "
@@ -1322,80 +1409,73 @@ class ChatActionExecutor:
                     "Otherwise do not create a duplicate run."
                 ),
                 (
-                    "You only have the capabilities listed in Available tools and the "
-                    "workspace snapshot. Do not claim hidden abilities, external access, "
-                    "or background jobs that are not represented there."
+                    "Choose mode=tool when the operator is asking you to make a change, "
+                    "trigger a workflow step, approve or reject work, generate an artifact, "
+                    "or otherwise do something the registered actions can accomplish."
                 ),
                 (
-                    "Choose mode=tool only when the request asks to change workflow "
-                    "state or trigger a deterministic workflow."
-                ),
-                (
-                    "Choose mode=read_only for analysis, explanation, status "
-                    "narration, missing identifiers, or ambiguous requests."
+                    "Choose mode=read_only for analysis, explanation, status narration, "
+                    "missing identifiers, or ambiguous requests."
                 ),
                 (
                     "Greetings, status checks, and help requests should still return a "
                     "useful read_only response grounded in the current workspace."
                 ),
                 (
-                    "When choosing a tool, use only the registered deterministic "
-                    "tools and include JSON-safe arguments."
+                    "When you choose mode=tool, use only the registered deterministic "
+                    "actions and include JSON-safe arguments."
                 ),
                 (
-                    "If a required identifier is missing, do not invent it. Respond "
-                    "in read_only mode and say exactly what identifier is needed."
+                    "If a required identifier is missing and there is no single clear target in "
+                    "the snapshot, do not invent it. Respond in read_only mode and ask one "
+                    "short clarifying question."
                 ),
                 (
-                    "When you choose a tool, explain in plain operator language what you are "
-                    "about to change, why it fits the current workflow state, and what "
-                    "happens next."
+                    "If the operator says 'approve it', 'reject it', 'ignore it', 'run it', or "
+                    "'do that', resolve the pronoun against the latest clear item from the "
+                    "workspace snapshot or recent turns instead of pushing the operator to name "
+                    "the identifier again."
                 ),
                 (
-                    "If the operator states a desired outcome but multiple actions could fit, "
-                    "do not guess. Respond in read_only mode with one short clarifying question."
+                    "For document approvals, when the operator clearly instructs you to approve "
+                    "the document, treat that instruction as confirmation to complete the review "
+                    "unless the workspace state makes the target ambiguous."
                 ),
                 (
-                    "Keep the operator oriented: mention completed phases, the active phase, "
-                    "pending approvals, and in-flight processing whenever that helps them "
-                    "understand what the system is doing."
+                    "Keep the tone natural and teammate-like. Default to short conversational "
+                    "paragraphs. Avoid markdown bullets, bold markers, tables, or rigid "
+                    "templates unless the operator explicitly asks for structure."
                 ),
                 (
-                    "If the operator asks what you can do next, summarize the available "
-                    "tools, approvals, blockers, and workflow steps from the current "
-                    "workspace snapshot."
+                    "When you choose mode=tool, the assistant_response must be brief and "
+                    "operator-facing. Say what you are doing for the operator in one or two "
+                    "plain sentences. Do not mention internal tool names, JSON fields, or "
+                    "implementation details."
                 ),
                 (
-                    "If a requested change would move the workflow backward or invalidate an "
-                    "earlier gate, say that clearly so the operator understands why the agent "
-                    "is rewinding or staging review."
+                    "You only have the capabilities listed in Available tools and the "
+                    "workspace snapshot. Do not claim hidden abilities, external access, "
+                    "or background jobs that are not represented there."
                 ),
                 (
-                    "Use progress_summary, coa summary, readiness blockers, workflow phase "
-                    "states, recent jobs, exports, and recent actions to explain current "
-                    "state and next steps."
+                    "Use progress_summary, document details, open issues, coa summary, "
+                    "readiness blockers, workflow phase states, recent jobs, exports, and "
+                    "recent actions to explain current state and suggest the next move."
                 ),
                 (
-                    "If the active chart of accounts is missing, do not choose a tool for "
-                    "recommendation generation, journals, reconciliation, reporting, or "
-                    "exports. Respond in read_only mode and ask the operator to upload a "
-                    "production COA from the workbench or Chart of Accounts page."
+                    "If the active chart of accounts is missing, do not choose an action for "
+                    "recommendation generation, journals, reconciliation, reporting, or exports. "
+                    "Respond in read_only mode and ask the operator to upload a production COA "
+                    "from the entity workspace first."
                 ),
                 (
-                    "If the active chart of accounts is fallback-only, you may explain "
-                    "state, parsing, and intake progress, but for precision-sensitive "
-                    "coding, journals, reconciliation, reporting, and sign-off you should "
-                    "direct the operator to upload a production COA first if they want "
-                    "entity-specific mapping."
-                ),
-                (
-                    "If source documents are missing, direct the operator to the "
-                    "intake controls in the workbench and explain that parsing starts "
+                    "If source documents are missing, tell the operator they can upload them "
+                    "through chat or from the document workspace and that parsing starts "
                     "automatically after upload."
                 ),
                 (
-                    "High-risk state changes stage for approval; low-risk operational "
-                    "generation actions may execute immediately."
+                    "High-stakes sign-off and release actions may still require confirmation. "
+                    "Most operational requests should be handled directly."
                 ),
             ]
         )
@@ -1429,6 +1509,18 @@ class ChatActionExecutor:
                 action=action,
                 execution_context=execution_context,
             )
+        except (
+            DocumentReviewServiceError,
+            RecommendationApplyError,
+            CloseRunServiceError,
+            EntityServiceError,
+            EntityDeleteServiceError,
+            ExportServiceError,
+            ReportServiceError,
+            JobServiceError,
+            SupportingScheduleServiceError,
+        ) as error:
+            raise _coerce_execution_error(error) from error
         except AgentKernelError as error:
             raise ChatActionExecutionError(
                 status_code=422,
@@ -1441,6 +1533,92 @@ class ChatActionExecutor:
                 code=ChatActionExecutionErrorCode.INVALID_ACTION_PLAN,
                 message=str(error),
             ) from error
+
+    def _hydrate_planning_result(
+        self,
+        *,
+        planning: AgentPlanningResult,
+        snapshot: dict[str, Any],
+        operator_content: str,
+    ) -> AgentPlanningResult:
+        """Normalize operator-facing text and fill missing low-ambiguity tool arguments."""
+
+        normalized_response = _normalize_operator_facing_text(planning.assistant_response)
+        if planning.mode != "tool" or planning.tool_name is None:
+            return planning.model_copy(update={"assistant_response": normalized_response})
+
+        tool_arguments = dict(planning.tool_arguments)
+        if planning.tool_name == "review_document":
+            tool_arguments = _hydrate_review_document_arguments(
+                tool_arguments=tool_arguments,
+                snapshot=snapshot,
+                operator_content=operator_content,
+            )
+        elif planning.tool_name == "ignore_document":
+            document_id = _resolve_document_id_from_snapshot(
+                snapshot=snapshot,
+                operator_content=operator_content,
+                preferred_statuses=("needs_review", "uploaded", "processing", "parsed"),
+            )
+            if document_id is not None and not isinstance(tool_arguments.get("document_id"), str):
+                tool_arguments["document_id"] = document_id
+        elif planning.tool_name in {"approve_recommendation", "reject_recommendation"}:
+            tool_arguments = _hydrate_recommendation_arguments(
+                tool_name=planning.tool_name,
+                tool_arguments=tool_arguments,
+                snapshot=snapshot,
+                operator_content=operator_content,
+            )
+        elif planning.tool_name in {"approve_journal", "apply_journal", "reject_journal"}:
+            tool_arguments = _hydrate_journal_arguments(
+                tool_name=planning.tool_name,
+                tool_arguments=tool_arguments,
+                snapshot=snapshot,
+                operator_content=operator_content,
+            )
+        elif planning.tool_name in {
+            "approve_reconciliation",
+            "disposition_reconciliation_item",
+            "resolve_reconciliation_anomaly",
+        }:
+            tool_arguments = _hydrate_reconciliation_arguments(
+                tool_name=planning.tool_name,
+                tool_arguments=tool_arguments,
+                snapshot=snapshot,
+                operator_content=operator_content,
+            )
+        elif planning.tool_name in {"update_commentary", "approve_commentary"}:
+            tool_arguments = _hydrate_commentary_arguments(
+                tool_name=planning.tool_name,
+                tool_arguments=tool_arguments,
+                snapshot=snapshot,
+                operator_content=operator_content,
+            )
+        elif planning.tool_name == "create_workspace":
+            tool_arguments = _hydrate_create_workspace_arguments(
+                tool_arguments=tool_arguments,
+                snapshot=snapshot,
+            )
+        elif planning.tool_name in {"update_workspace", "delete_workspace"}:
+            tool_arguments = _hydrate_workspace_arguments(
+                tool_name=planning.tool_name,
+                tool_arguments=tool_arguments,
+                snapshot=snapshot,
+                operator_content=operator_content,
+            )
+        elif planning.tool_name == "delete_close_run":
+            tool_arguments = _hydrate_delete_close_run_arguments(
+                tool_arguments=tool_arguments,
+                snapshot=snapshot,
+                operator_content=operator_content,
+            )
+
+        return planning.model_copy(
+            update={
+                "assistant_response": normalized_response,
+                "tool_arguments": tool_arguments,
+            }
+        )
 
     def _planning_from_payload(
         self,
@@ -1490,7 +1668,7 @@ class ChatActionExecutor:
 def _format_execution_result(applied_result: dict[str, Any]) -> str:
     """Render a compact assistant-visible execution summary from tool output."""
 
-    return f"Execution result:\n```json\n{json.dumps(applied_result, indent=2, default=str)}\n```"
+    return _humanize_applied_result(applied_result)
 
 
 def _format_approval_message(
@@ -1498,18 +1676,1155 @@ def _format_approval_message(
     applied_result: dict[str, Any],
     *,
     handoff_message: str | None = None,
+    snapshot: dict[str, Any] | None = None,
 ) -> str:
     """Render the assistant follow-up after a human-approved action executes."""
 
     base = (
-        assistant_response
+        _normalize_operator_facing_text(assistant_response)
         if isinstance(assistant_response, str)
         else "Approved action executed."
     )
-    return (
-        f"{base}\n\n"
-        f"{_format_scope_handoff_message(handoff_message)}"
-        f"{_format_execution_result(applied_result)}"
+    return _compose_assistant_content(
+        assistant_response=base,
+        handoff_message=handoff_message,
+        result_summary=_format_execution_result(applied_result),
+        next_step=_format_next_step(snapshot),
+    )
+
+
+def _compose_assistant_content(
+    *,
+    assistant_response: str | None,
+    handoff_message: str | None,
+    result_summary: str | None,
+    next_step: str | None,
+) -> str:
+    """Join the user-facing response, scope notes, result summary, and suggested next step."""
+
+    parts = [
+        _normalize_operator_facing_text(assistant_response),
+        _normalize_operator_facing_text(handoff_message) if handoff_message else None,
+        _normalize_operator_facing_text(result_summary) if result_summary else None,
+        _normalize_operator_facing_text(next_step) if next_step else None,
+    ]
+    unique_parts: list[str] = []
+    for part in parts:
+        if not part:
+            continue
+        if part in unique_parts:
+            continue
+        unique_parts.append(part)
+    return "\n\n".join(unique_parts)
+
+
+def _normalize_operator_facing_text(value: object) -> str:
+    """Strip rigid markdown formatting so chat replies read like normal assistant text."""
+
+    if not isinstance(value, str):
+        return ""
+    normalized = value.replace("\r\n", "\n").strip()
+    if not normalized:
+        return ""
+
+    normalized = normalized.replace("**", "").replace("__", "").replace("`", "")
+    cleaned_lines: list[str] = []
+    previous_blank = False
+    for raw_line in normalized.split("\n"):
+        line = raw_line.strip()
+        if not line:
+            if not previous_blank:
+                cleaned_lines.append("")
+            previous_blank = True
+            continue
+        previous_blank = False
+        line = re.sub(r"^#{1,6}\s*", "", line)
+        line = re.sub(r"^[-*•]\s+", "", line)
+        cleaned_lines.append(line)
+    return "\n".join(cleaned_lines).strip()
+
+
+def _hydrate_review_document_arguments(
+    *,
+    tool_arguments: dict[str, Any],
+    snapshot: dict[str, Any],
+    operator_content: str,
+) -> dict[str, Any]:
+    """Fill the common document-review arguments when the target is unambiguous."""
+
+    hydrated = dict(tool_arguments)
+    decision = hydrated.get("decision")
+    if not isinstance(decision, str):
+        inferred_decision = _infer_document_review_decision(operator_content)
+        if inferred_decision is not None:
+            hydrated["decision"] = inferred_decision
+            decision = inferred_decision
+
+    if not isinstance(hydrated.get("document_id"), str):
+        document_id = _resolve_document_id_from_snapshot(
+            snapshot=snapshot,
+            operator_content=operator_content,
+            preferred_statuses=("needs_review", "parsed", "uploaded", "processing"),
+        )
+        if document_id is not None:
+            hydrated["document_id"] = document_id
+
+    if isinstance(decision, str) and decision.strip().lower() == "approved":
+        hydrated.setdefault("verified_complete", True)
+        hydrated.setdefault("verified_authorized", True)
+        hydrated.setdefault("verified_period", True)
+
+    return hydrated
+
+
+def _infer_document_review_decision(operator_content: str) -> str | None:
+    """Infer the intended review decision from one short operator instruction."""
+
+    normalized = _searchable_text(operator_content)
+    if any(token in normalized for token in ("approve", "approved", "ok it", "accept")):
+        return "approved"
+    if any(token in normalized for token in ("reject", "rejected", "decline")):
+        return "rejected"
+    if any(
+        token in normalized
+        for token in ("needs info", "need info", "more info", "request info")
+    ):
+        return "needs_info"
+    return None
+
+
+def _resolve_document_id_from_snapshot(
+    *,
+    snapshot: dict[str, Any],
+    operator_content: str,
+    preferred_statuses: tuple[str, ...],
+) -> str | None:
+    """Resolve one document identifier from the snapshot when the target is clear."""
+
+    documents = snapshot.get("documents")
+    if not isinstance(documents, list):
+        return None
+
+    records = [record for record in documents if isinstance(record, dict)]
+    if not records:
+        return None
+
+    normalized_content = _searchable_text(operator_content)
+    filename_matches = [
+        record
+        for record in records
+        if isinstance(record.get("filename"), str)
+        and _filename_matches_text(str(record["filename"]), normalized_content)
+    ]
+    if len(filename_matches) == 1 and isinstance(filename_matches[0].get("id"), str):
+        return str(filename_matches[0]["id"])
+
+    preferred = [
+        record
+        for record in records
+        if str(record.get("status") or "") in preferred_statuses
+    ]
+    if len(preferred) == 1 and isinstance(preferred[0].get("id"), str):
+        return str(preferred[0]["id"])
+    return None
+
+
+def _hydrate_recommendation_arguments(
+    *,
+    tool_name: str,
+    tool_arguments: dict[str, Any],
+    snapshot: dict[str, Any],
+    operator_content: str,
+) -> dict[str, Any]:
+    """Resolve clear recommendation targets and rejection reasons from the snapshot."""
+
+    hydrated = dict(tool_arguments)
+    if not isinstance(hydrated.get("recommendation_id"), str):
+        recommendation_id = _resolve_recommendation_id_from_snapshot(
+            snapshot=snapshot,
+            operator_content=operator_content,
+            preferred_statuses=("pending_review", "draft"),
+        )
+        if recommendation_id is not None:
+            hydrated["recommendation_id"] = recommendation_id
+
+    if tool_name == "reject_recommendation" and not isinstance(hydrated.get("reason"), str):
+        hydrated["reason"] = _extract_reason_from_operator_content(
+            operator_content=operator_content,
+            fallback="Rejected by operator instruction in chat.",
+        )
+    return hydrated
+
+
+def _resolve_recommendation_id_from_snapshot(
+    *,
+    snapshot: dict[str, Any],
+    operator_content: str,
+    preferred_statuses: tuple[str, ...],
+) -> str | None:
+    """Resolve one recommendation identifier from the snapshot when the target is clear."""
+
+    recommendations = snapshot.get("recommendations")
+    if not isinstance(recommendations, list):
+        return None
+
+    records = [record for record in recommendations if isinstance(record, dict)]
+    if not records:
+        return None
+
+    normalized_content = _searchable_text(operator_content)
+    filename_matches = [
+        record
+        for record in records
+        if isinstance(record.get("document_filename"), str)
+        and _filename_matches_text(str(record["document_filename"]), normalized_content)
+    ]
+    if len(filename_matches) == 1 and isinstance(filename_matches[0].get("id"), str):
+        return str(filename_matches[0]["id"])
+
+    reasoning_matches = [
+        record
+        for record in records
+        if isinstance(record.get("reasoning_summary"), str)
+        and _text_value_matches_text(str(record["reasoning_summary"]), normalized_content)
+    ]
+    if len(reasoning_matches) == 1 and isinstance(reasoning_matches[0].get("id"), str):
+        return str(reasoning_matches[0]["id"])
+
+    preferred = [
+        record
+        for record in records
+        if str(record.get("status") or "") in preferred_statuses
+    ]
+    if len(preferred) == 1 and isinstance(preferred[0].get("id"), str):
+        return str(preferred[0]["id"])
+    if len(records) == 1 and isinstance(records[0].get("id"), str):
+        return str(records[0]["id"])
+    return None
+
+
+def _hydrate_journal_arguments(
+    *,
+    tool_name: str,
+    tool_arguments: dict[str, Any],
+    snapshot: dict[str, Any],
+    operator_content: str,
+) -> dict[str, Any]:
+    """Resolve clear journal targets, posting defaults, and rejection reasons."""
+
+    hydrated = dict(tool_arguments)
+    preferred_statuses = (
+        ("approved",)
+        if tool_name == "apply_journal"
+        else ("pending_review", "draft")
+    )
+    if not isinstance(hydrated.get("journal_id"), str):
+        journal_id = _resolve_journal_id_from_snapshot(
+            snapshot=snapshot,
+            operator_content=operator_content,
+            preferred_statuses=preferred_statuses,
+        )
+        if journal_id is not None:
+            hydrated["journal_id"] = journal_id
+
+    if tool_name == "apply_journal" and not isinstance(hydrated.get("posting_target"), str):
+        hydrated["posting_target"] = _infer_journal_posting_target(operator_content)
+
+    if tool_name == "reject_journal" and not isinstance(hydrated.get("reason"), str):
+        hydrated["reason"] = _extract_reason_from_operator_content(
+            operator_content=operator_content,
+            fallback="Rejected by operator instruction in chat.",
+        )
+    return hydrated
+
+
+def _resolve_journal_id_from_snapshot(
+    *,
+    snapshot: dict[str, Any],
+    operator_content: str,
+    preferred_statuses: tuple[str, ...],
+) -> str | None:
+    """Resolve one journal identifier from the snapshot when the target is clear."""
+
+    journals = snapshot.get("journals")
+    if not isinstance(journals, list):
+        return None
+
+    records = [record for record in journals if isinstance(record, dict)]
+    if not records:
+        return None
+
+    normalized_content = _searchable_text(operator_content)
+    explicit_matches = [
+        record
+        for record in records
+        if (
+            isinstance(record.get("journal_number"), str)
+            and _text_value_matches_text(str(record["journal_number"]), normalized_content)
+        )
+        or (
+            isinstance(record.get("description"), str)
+            and _text_value_matches_text(str(record["description"]), normalized_content)
+        )
+    ]
+    if len(explicit_matches) == 1 and isinstance(explicit_matches[0].get("id"), str):
+        return str(explicit_matches[0]["id"])
+
+    preferred = [
+        record
+        for record in records
+        if str(record.get("status") or "") in preferred_statuses
+    ]
+    if len(preferred) == 1 and isinstance(preferred[0].get("id"), str):
+        return str(preferred[0]["id"])
+    if len(records) == 1 and isinstance(records[0].get("id"), str):
+        return str(records[0]["id"])
+    return None
+
+
+def _hydrate_reconciliation_arguments(
+    *,
+    tool_name: str,
+    tool_arguments: dict[str, Any],
+    snapshot: dict[str, Any],
+    operator_content: str,
+) -> dict[str, Any]:
+    """Resolve clear reconciliation targets, dispositions, and reviewer reasons."""
+
+    hydrated = dict(tool_arguments)
+    if tool_name == "approve_reconciliation":
+        if not isinstance(hydrated.get("reconciliation_id"), str):
+            reconciliation_id = _resolve_reconciliation_id_from_snapshot(
+                snapshot=snapshot,
+                operator_content=operator_content,
+                preferred_statuses=("in_review", "blocked", "draft"),
+            )
+            if reconciliation_id is not None:
+                hydrated["reconciliation_id"] = reconciliation_id
+        return hydrated
+
+    if tool_name == "disposition_reconciliation_item":
+        if not isinstance(hydrated.get("item_id"), str):
+            item_id = _resolve_reconciliation_item_id_from_snapshot(
+                snapshot=snapshot,
+                operator_content=operator_content,
+            )
+            if item_id is not None:
+                hydrated["item_id"] = item_id
+        if not isinstance(hydrated.get("disposition"), str):
+            disposition = _infer_reconciliation_disposition(operator_content)
+            if disposition is not None:
+                hydrated["disposition"] = disposition
+        if not isinstance(hydrated.get("reason"), str):
+            disposition_value = hydrated.get("disposition")
+            fallback = (
+                f"Marked as {str(disposition_value).replace('_', ' ')} by operator instruction."
+                if isinstance(disposition_value, str)
+                else "Disposition recorded by operator instruction in chat."
+            )
+            hydrated["reason"] = _extract_reason_from_operator_content(
+                operator_content=operator_content,
+                fallback=fallback,
+            )
+        return hydrated
+
+    if not isinstance(hydrated.get("anomaly_id"), str):
+        anomaly_id = _resolve_reconciliation_anomaly_id_from_snapshot(
+            snapshot=snapshot,
+            operator_content=operator_content,
+        )
+        if anomaly_id is not None:
+            hydrated["anomaly_id"] = anomaly_id
+    if not isinstance(hydrated.get("resolution_note"), str):
+        hydrated["resolution_note"] = _extract_reason_from_operator_content(
+            operator_content=operator_content,
+            fallback="Resolved by operator instruction in chat.",
+        )
+    return hydrated
+
+
+def _resolve_reconciliation_id_from_snapshot(
+    *,
+    snapshot: dict[str, Any],
+    operator_content: str,
+    preferred_statuses: tuple[str, ...],
+) -> str | None:
+    """Resolve one reconciliation identifier from the snapshot when the target is clear."""
+
+    reconciliations = snapshot.get("reconciliations")
+    if not isinstance(reconciliations, list):
+        return None
+
+    records = [record for record in reconciliations if isinstance(record, dict)]
+    if not records:
+        return None
+
+    normalized_content = _searchable_text(operator_content)
+    type_matches = [
+        record
+        for record in records
+        if isinstance(record.get("type"), str)
+        and _text_value_matches_text(
+            str(record["type"]).replace("_", " "),
+            normalized_content,
+        )
+    ]
+    if len(type_matches) == 1 and isinstance(type_matches[0].get("id"), str):
+        return str(type_matches[0]["id"])
+
+    preferred = [
+        record
+        for record in records
+        if str(record.get("status") or "") in preferred_statuses
+    ]
+    if len(preferred) == 1 and isinstance(preferred[0].get("id"), str):
+        return str(preferred[0]["id"])
+    if len(records) == 1 and isinstance(records[0].get("id"), str):
+        return str(records[0]["id"])
+    return None
+
+
+def _resolve_reconciliation_item_id_from_snapshot(
+    *,
+    snapshot: dict[str, Any],
+    operator_content: str,
+) -> str | None:
+    """Resolve one reconciliation item identifier from the snapshot when the target is clear."""
+
+    items = snapshot.get("reconciliation_items")
+    if not isinstance(items, list):
+        return None
+
+    records = [record for record in items if isinstance(record, dict)]
+    if not records:
+        return None
+
+    normalized_content = _searchable_text(operator_content)
+    explicit_matches = [
+        record
+        for record in records
+        if (
+            isinstance(record.get("source_ref"), str)
+            and _text_value_matches_text(str(record["source_ref"]), normalized_content)
+        )
+        or (
+            isinstance(record.get("explanation"), str)
+            and _text_value_matches_text(str(record["explanation"]), normalized_content)
+        )
+    ]
+    if len(explicit_matches) == 1 and isinstance(explicit_matches[0].get("id"), str):
+        return str(explicit_matches[0]["id"])
+
+    pending = [
+        record
+        for record in records
+        if bool(record.get("requires_disposition")) and record.get("disposition") is None
+    ]
+    if len(pending) == 1 and isinstance(pending[0].get("id"), str):
+        return str(pending[0]["id"])
+    if len(records) == 1 and isinstance(records[0].get("id"), str):
+        return str(records[0]["id"])
+    return None
+
+
+def _resolve_reconciliation_anomaly_id_from_snapshot(
+    *,
+    snapshot: dict[str, Any],
+    operator_content: str,
+) -> str | None:
+    """Resolve one reconciliation anomaly identifier from the snapshot when the target is clear."""
+
+    anomalies = snapshot.get("reconciliation_anomalies")
+    if not isinstance(anomalies, list):
+        return None
+
+    records = [record for record in anomalies if isinstance(record, dict)]
+    if not records:
+        return None
+
+    normalized_content = _searchable_text(operator_content)
+    explicit_matches = [
+        record
+        for record in records
+        if (
+            isinstance(record.get("description"), str)
+            and _text_value_matches_text(str(record["description"]), normalized_content)
+        )
+        or (
+            isinstance(record.get("account_code"), str)
+            and _text_value_matches_text(str(record["account_code"]), normalized_content)
+        )
+    ]
+    if len(explicit_matches) == 1 and isinstance(explicit_matches[0].get("id"), str):
+        return str(explicit_matches[0]["id"])
+    if len(records) == 1 and isinstance(records[0].get("id"), str):
+        return str(records[0]["id"])
+    return None
+
+
+def _hydrate_commentary_arguments(
+    *,
+    tool_name: str,
+    tool_arguments: dict[str, Any],
+    snapshot: dict[str, Any],
+    operator_content: str,
+) -> dict[str, Any]:
+    """Resolve clear commentary targets from the snapshot for update and approval steps."""
+
+    hydrated = dict(tool_arguments)
+    if not isinstance(hydrated.get("report_run_id"), str):
+        report_run_id = _resolve_report_run_id_from_snapshot(snapshot=snapshot)
+        if report_run_id is not None:
+            hydrated["report_run_id"] = report_run_id
+
+    report_run_id = hydrated.get("report_run_id")
+    if not isinstance(hydrated.get("section_key"), str):
+        section_key = _resolve_commentary_section_from_snapshot(
+            snapshot=snapshot,
+            operator_content=operator_content,
+            report_run_id=report_run_id if isinstance(report_run_id, str) else None,
+            prefer_unapproved=tool_name == "approve_commentary",
+        )
+        if section_key is not None:
+            hydrated["section_key"] = section_key
+    return hydrated
+
+
+def _resolve_report_run_id_from_snapshot(*, snapshot: dict[str, Any]) -> str | None:
+    """Resolve the latest report run identifier from the snapshot when appropriate."""
+
+    report_runs = snapshot.get("report_runs")
+    if not isinstance(report_runs, list) or not report_runs:
+        return None
+
+    records = [record for record in report_runs if isinstance(record, dict)]
+    if not records:
+        return None
+    if isinstance(records[0].get("id"), str):
+        return str(records[0]["id"])
+    return None
+
+
+def _resolve_commentary_section_from_snapshot(
+    *,
+    snapshot: dict[str, Any],
+    operator_content: str,
+    report_run_id: str | None,
+    prefer_unapproved: bool,
+) -> str | None:
+    """Resolve one commentary section key from the snapshot when the target is clear."""
+
+    commentary = snapshot.get("commentary")
+    if not isinstance(commentary, list):
+        return None
+
+    records = [
+        record
+        for record in commentary
+        if isinstance(record, dict)
+        and (
+            report_run_id is None
+            or str(record.get("report_run_id") or "") == report_run_id
+        )
+    ]
+    if not records:
+        return None
+
+    normalized_content = _searchable_text(operator_content)
+    explicit_matches = [
+        record
+        for record in records
+        if isinstance(record.get("section_key"), str)
+        and _commentary_section_matches_text(
+            section_key=str(record["section_key"]),
+            normalized_text=normalized_content,
+        )
+    ]
+    if len(explicit_matches) == 1 and isinstance(explicit_matches[0].get("section_key"), str):
+        return str(explicit_matches[0]["section_key"])
+
+    if prefer_unapproved:
+        pending = [
+            record
+            for record in records
+            if str(record.get("status") or "") != "approved"
+        ]
+        if len(pending) == 1 and isinstance(pending[0].get("section_key"), str):
+            return str(pending[0]["section_key"])
+
+    unique_sections = {
+        str(record["section_key"])
+        for record in records
+        if isinstance(record.get("section_key"), str)
+    }
+    if len(unique_sections) == 1:
+        return next(iter(unique_sections))
+    return None
+
+
+def _hydrate_create_workspace_arguments(
+    *,
+    tool_arguments: dict[str, Any],
+    snapshot: dict[str, Any],
+) -> dict[str, Any]:
+    """Fill missing workspace-creation defaults from the current workspace snapshot."""
+
+    hydrated = dict(tool_arguments)
+    workspace = snapshot.get("workspace")
+    if not isinstance(workspace, dict):
+        return hydrated
+
+    if not isinstance(hydrated.get("base_currency"), str) and isinstance(
+        workspace.get("base_currency"), str
+    ):
+        hydrated["base_currency"] = workspace["base_currency"]
+    if not isinstance(hydrated.get("country_code"), str) and isinstance(
+        workspace.get("country_code"), str
+    ):
+        hydrated["country_code"] = workspace["country_code"]
+    if not isinstance(hydrated.get("timezone"), str) and isinstance(
+        workspace.get("timezone"), str
+    ):
+        hydrated["timezone"] = workspace["timezone"]
+    if not isinstance(hydrated.get("autonomy_mode"), str) and isinstance(
+        workspace.get("autonomy_mode"), str
+    ):
+        hydrated["autonomy_mode"] = workspace["autonomy_mode"]
+    return hydrated
+
+
+def _hydrate_workspace_arguments(
+    *,
+    tool_name: str,
+    tool_arguments: dict[str, Any],
+    snapshot: dict[str, Any],
+    operator_content: str,
+) -> dict[str, Any]:
+    """Resolve workspace targets and defaults from the current snapshot."""
+
+    hydrated = dict(tool_arguments)
+    workspace_id = hydrated.get("workspace_id")
+    if not isinstance(workspace_id, str):
+        resolved_workspace_id = _resolve_workspace_id_from_snapshot(
+            snapshot=snapshot,
+            operator_content=operator_content,
+        )
+        if resolved_workspace_id is not None:
+            hydrated["workspace_id"] = resolved_workspace_id
+    if tool_name == "update_workspace" and not isinstance(hydrated.get("workspace_id"), str):
+        workspace = snapshot.get("workspace")
+        if isinstance(workspace, dict) and isinstance(workspace.get("id"), str):
+            hydrated["workspace_id"] = str(workspace["id"])
+    return hydrated
+
+
+def _resolve_workspace_id_from_snapshot(
+    *,
+    snapshot: dict[str, Any],
+    operator_content: str,
+) -> str | None:
+    """Resolve one workspace identifier from the snapshot when the target is clear."""
+
+    normalized_content = _searchable_text(operator_content)
+    workspaces = snapshot.get("accessible_workspaces")
+    current_workspace = snapshot.get("workspace")
+    records = (
+        [record for record in workspaces if isinstance(record, dict)]
+        if isinstance(workspaces, list)
+        else []
+    )
+    if isinstance(current_workspace, dict):
+        records = [current_workspace, *records]
+    deduped_records: list[dict[str, Any]] = []
+    seen_ids: set[str] = set()
+    for record in records:
+        record_id = record.get("id")
+        if not isinstance(record_id, str) or record_id in seen_ids:
+            continue
+        seen_ids.add(record_id)
+        deduped_records.append(record)
+    records = deduped_records
+
+    if not records:
+        return None
+
+    explicit_matches = [
+        record
+        for record in records
+        if (
+            isinstance(record.get("name"), str)
+            and _workspace_name_matches_text(str(record["name"]), normalized_content)
+        )
+        or (
+            isinstance(record.get("legal_name"), str)
+            and _workspace_name_matches_text(str(record["legal_name"]), normalized_content)
+        )
+    ]
+    if len(explicit_matches) == 1 and isinstance(explicit_matches[0].get("id"), str):
+        return str(explicit_matches[0]["id"])
+
+    if any(
+        phrase in normalized_content
+        for phrase in ("this workspace", "current workspace", "this entity", "current entity")
+    ) and isinstance(current_workspace, dict) and isinstance(current_workspace.get("id"), str):
+        return str(current_workspace["id"])
+
+    if len(records) == 1 and isinstance(records[0].get("id"), str):
+        return str(records[0]["id"])
+    return None
+
+
+def _hydrate_delete_close_run_arguments(
+    *,
+    tool_arguments: dict[str, Any],
+    snapshot: dict[str, Any],
+    operator_content: str,
+) -> dict[str, Any]:
+    """Resolve one close run identifier from the current snapshot when the target is clear."""
+
+    hydrated = dict(tool_arguments)
+    if isinstance(hydrated.get("close_run_id"), str):
+        return hydrated
+
+    resolved_close_run_id = _resolve_close_run_id_from_snapshot(
+        snapshot=snapshot,
+        operator_content=operator_content,
+    )
+    if resolved_close_run_id is not None:
+        hydrated["close_run_id"] = resolved_close_run_id
+    return hydrated
+
+
+def _resolve_close_run_id_from_snapshot(
+    *,
+    snapshot: dict[str, Any],
+    operator_content: str,
+) -> str | None:
+    """Resolve one close run identifier from the workspace snapshot when the target is clear."""
+
+    close_runs = snapshot.get("entity_close_runs")
+    if not isinstance(close_runs, list):
+        return None
+
+    records = [record for record in close_runs if isinstance(record, dict)]
+    if not records:
+        return None
+
+    normalized_content = _searchable_text(operator_content)
+    explicit_matches = [
+        record
+        for record in records
+        if (
+            isinstance(record.get("period_label"), str)
+            and _text_value_matches_text(str(record["period_label"]), normalized_content)
+        )
+        or (
+            isinstance(record.get("active_phase"), str)
+            and _text_value_matches_text(
+                str(record["active_phase"]).replace("_", " "),
+                normalized_content,
+            )
+        )
+    ]
+    if len(explicit_matches) == 1 and isinstance(explicit_matches[0].get("id"), str):
+        return str(explicit_matches[0]["id"])
+
+    current_close_run_id = snapshot.get("close_run_id")
+    if any(
+        phrase in normalized_content
+        for phrase in ("this close run", "current close run", "this run", "current run")
+    ) and isinstance(current_close_run_id, str):
+        return current_close_run_id
+
+    if len(records) == 1 and isinstance(records[0].get("id"), str):
+        return str(records[0]["id"])
+    return None
+
+
+def _text_value_matches_text(value: str, normalized_text: str) -> bool:
+    """Return whether a text field is clearly referenced in free-form operator text."""
+
+    normalized_value = _searchable_text(value)
+    if not normalized_value:
+        return False
+    if normalized_value in normalized_text:
+        return True
+    tokens = [token for token in normalized_value.split() if len(token) > 2]
+    if len(tokens) < 2:
+        return False
+    return all(token in normalized_text for token in tokens[:4])
+
+
+def _workspace_name_matches_text(value: str, normalized_text: str) -> bool:
+    """Return whether a workspace name is clearly referenced without requiring suffixes."""
+
+    normalized_value = _searchable_text(value)
+    if not normalized_value:
+        return False
+    if normalized_value in normalized_text:
+        return True
+
+    tokens = [
+        token
+        for token in normalized_value.split()
+        if len(token) > 2 and token not in {"ltd", "limited", "plc", "inc", "llc"}
+    ]
+    if len(tokens) < 2:
+        return False
+    return all(token in normalized_text for token in tokens[:3])
+
+
+def _infer_journal_posting_target(operator_content: str) -> str:
+    """Infer the canonical journal posting target from one operator instruction."""
+
+    normalized = _searchable_text(operator_content)
+    if any(token in normalized for token in ("erp", "package", "external", "export")):
+        return "external_erp_package"
+    return "internal_ledger"
+
+
+def _infer_reconciliation_disposition(operator_content: str) -> str | None:
+    """Infer the intended reconciliation disposition from one operator instruction."""
+
+    normalized = _searchable_text(operator_content)
+    if "accepted as is" in normalized or "accept as is" in normalized:
+        return "accepted_as_is"
+    if "pending info" in normalized or "need more info" in normalized:
+        return "pending_info"
+    if "escalat" in normalized:
+        return "escalated"
+    if "adjust" in normalized:
+        return "adjusted"
+    if any(token in normalized for token in ("resolve", "resolved", "clear it")):
+        return "resolved"
+    return None
+
+
+def _extract_reason_from_operator_content(
+    *,
+    operator_content: str,
+    fallback: str,
+) -> str:
+    """Extract a concise reason clause from operator text or return a canonical fallback."""
+
+    normalized = operator_content.strip()
+    if not normalized:
+        return fallback
+
+    match = re.search(r"\b(?:because|due to|since|as)\b\s+(.+)$", normalized, re.IGNORECASE)
+    if match is not None:
+        reason = match.group(1).strip(" .,:;")
+        if reason:
+            return reason
+    return fallback
+
+
+def _commentary_section_matches_text(*, section_key: str, normalized_text: str) -> bool:
+    """Return whether one commentary section is clearly referenced in free-form text."""
+
+    aliases = {
+        ReportSectionKey.PROFIT_AND_LOSS.value: (
+            "profit and loss",
+            "p and l",
+            "income statement",
+        ),
+        ReportSectionKey.BALANCE_SHEET.value: (
+            "balance sheet",
+            "statement of financial position",
+        ),
+        ReportSectionKey.CASH_FLOW.value: (
+            "cash flow",
+            "cashflow",
+        ),
+        ReportSectionKey.BUDGET_VARIANCE.value: (
+            "budget variance",
+            "variance",
+        ),
+        ReportSectionKey.KPI_DASHBOARD.value: (
+            "kpi",
+            "dashboard",
+            "metrics",
+        ),
+    }
+    for alias in aliases.get(section_key, (section_key.replace("_", " "),)):
+        if _searchable_text(alias) in normalized_text:
+            return True
+    return False
+
+
+def _filename_matches_text(filename: str, normalized_text: str) -> bool:
+    """Return whether a filename is clearly referenced in free-form operator text."""
+
+    normalized_filename = _searchable_text(filename)
+    if normalized_filename and normalized_filename in normalized_text:
+        return True
+    stem = normalized_filename.rsplit(".", 1)[0]
+    stem_tokens = [token for token in stem.split() if len(token) > 2]
+    if len(stem_tokens) < 2:
+        return False
+    return all(token in normalized_text for token in stem_tokens[:4])
+
+
+def _searchable_text(value: object) -> str:
+    """Normalize text for substring matching across chat commands and filenames."""
+
+    if not isinstance(value, str):
+        return ""
+    lowered = value.lower().replace("\u2011", "-").replace("_", " ")
+    return re.sub(r"[^a-z0-9.]+", " ", lowered).strip()
+
+
+def _humanize_applied_result(applied_result: dict[str, Any]) -> str:
+    """Summarize one tool result in plain operator language."""
+
+    tool_name = applied_result.get("tool")
+    if not isinstance(tool_name, str):
+        return "I finished that step."
+
+    if tool_name == "review_document":
+        filename = _optional_result_text(applied_result, "document_filename") or "the document"
+        decision = _optional_result_text(applied_result, "decision") or "reviewed"
+        if decision == "approved":
+            return f"I approved {filename} for this close run."
+        if decision == "rejected":
+            return f"I marked {filename} as rejected."
+        if decision == "needs_info":
+            return f"I left {filename} in review and flagged it for more information."
+        return f"I updated the review decision for {filename}."
+
+    if tool_name == "ignore_document":
+        filename = _optional_result_text(applied_result, "document_filename") or "the document"
+        return f"I marked {filename} as ignored for this close run."
+
+    if tool_name == "correct_extracted_field":
+        return "I saved the extraction correction and returned the document to review."
+
+    if tool_name == "create_workspace":
+        workspace_name = _optional_result_text(applied_result, "workspace_name")
+        if workspace_name is not None:
+            return f"I created the {workspace_name} workspace."
+        return "I created the new workspace."
+
+    if tool_name == "update_workspace":
+        workspace_name = _optional_result_text(applied_result, "workspace_name")
+        if workspace_name is not None:
+            return f"I updated the {workspace_name} workspace settings."
+        return "I updated the workspace settings."
+
+    if tool_name == "delete_workspace":
+        workspace_name = _optional_result_text(applied_result, "deleted_workspace_name")
+        if workspace_name is not None:
+            return f"I deleted the {workspace_name} workspace."
+        return "I deleted that workspace."
+
+    if tool_name == "create_close_run":
+        period_start = _optional_result_text(applied_result, "period_start")
+        period_end = _optional_result_text(applied_result, "period_end")
+        if period_start and period_end:
+            return f"I started a new close run for {period_start} to {period_end}."
+        return "I started a new close run."
+
+    if tool_name == "delete_close_run":
+        return "I deleted that close run."
+
+    if tool_name == "advance_close_run":
+        active_phase = _optional_result_text(applied_result, "active_phase")
+        if active_phase is not None:
+            return f"I moved the close run into {_format_phase_label(active_phase)}."
+        return "I advanced the close run."
+
+    if tool_name == "rewind_close_run":
+        active_phase = _optional_result_text(applied_result, "active_phase")
+        if active_phase is not None:
+            return f"I moved the close run back to {_format_phase_label(active_phase)}."
+        return "I moved the close run back to the earlier workflow step you asked for."
+
+    if tool_name == "reopen_close_run":
+        version_no = applied_result.get("version_no")
+        if isinstance(version_no, int):
+            return f"I reopened this close run as working version {version_no}."
+        return "I reopened this close run as a working version."
+
+    if tool_name == "approve_close_run":
+        return "I approved this close run."
+
+    if tool_name == "archive_close_run":
+        return "I archived this close run."
+
+    if tool_name == "generate_recommendations":
+        queued_count = applied_result.get("queued_count")
+        if isinstance(queued_count, int):
+            return (
+                f"I queued recommendation generation for {queued_count} document"
+                f"{'' if queued_count == 1 else 's'}."
+            )
+        return "I queued recommendation generation."
+
+    if tool_name == "run_reconciliation":
+        return "I started reconciliation for this close run."
+
+    if tool_name == "generate_reports":
+        return "I started report generation for this close run."
+
+    if tool_name == "generate_export":
+        return "I generated the export package for this close run."
+
+    if tool_name == "assemble_evidence_pack":
+        return "I assembled the evidence pack for this close run."
+
+    if tool_name == "distribute_export":
+        recipient = _optional_result_text(applied_result, "recipient_name")
+        if recipient is not None:
+            return f"I recorded the export distribution for {recipient}."
+        return "I recorded the export distribution."
+
+    if tool_name == "update_commentary":
+        section_key = _optional_result_text(applied_result, "section_key")
+        if section_key is not None:
+            return f"I updated the {_format_report_section_label(section_key)} commentary."
+        return "I updated the report commentary."
+
+    if tool_name == "approve_commentary":
+        section_key = _optional_result_text(applied_result, "section_key")
+        if section_key is not None:
+            return f"I approved the {_format_report_section_label(section_key)} commentary."
+        return "I approved the report commentary."
+
+    if tool_name == "approve_recommendation":
+        if _optional_result_text(applied_result, "journal_id") is not None:
+            return "I approved that recommendation and created the journal draft."
+        return "I approved that recommendation."
+
+    if tool_name == "reject_recommendation":
+        return "I rejected that recommendation."
+
+    if tool_name == "approve_journal":
+        journal_number = _optional_result_text(applied_result, "journal_number")
+        if journal_number is not None:
+            return f"I approved journal {journal_number}."
+        return "I approved that journal draft."
+
+    if tool_name == "apply_journal":
+        journal_number = _optional_result_text(applied_result, "journal_number")
+        posting_target = _optional_result_text(applied_result, "posting_target")
+        target_suffix = (
+            f" through {posting_target.replace('_', ' ')}"
+            if posting_target is not None
+            else ""
+        )
+        if journal_number is not None:
+            return f"I applied journal {journal_number}{target_suffix}."
+        return f"I applied that journal{target_suffix}."
+
+    if tool_name == "reject_journal":
+        journal_number = _optional_result_text(applied_result, "journal_number")
+        if journal_number is not None:
+            return f"I rejected journal {journal_number}."
+        return "I rejected that journal draft."
+
+    if tool_name == "approve_reconciliation":
+        status = _optional_result_text(applied_result, "status")
+        reconciliation_type = _optional_result_text(applied_result, "reconciliation_type")
+        if status == "blocked":
+            if reconciliation_type is not None:
+                return (
+                    f"I tried to approve the {reconciliation_type.replace('_', ' ')} "
+                    "reconciliation, but it is still blocked."
+                )
+            return "I tried to approve that reconciliation, but it is still blocked."
+        if reconciliation_type is not None:
+            return (
+                f"I approved the {reconciliation_type.replace('_', ' ')} reconciliation."
+            )
+        return "I approved that reconciliation."
+
+    if tool_name == "disposition_reconciliation_item":
+        source_ref = _optional_result_text(applied_result, "source_ref")
+        disposition = _optional_result_text(applied_result, "disposition")
+        if source_ref is not None and disposition is not None:
+            return (
+                f"I marked reconciliation item {source_ref} as "
+                f"{disposition.replace('_', ' ')}."
+            )
+        return "I recorded the reconciliation disposition."
+
+    if tool_name == "resolve_reconciliation_anomaly":
+        description = _optional_result_text(applied_result, "description")
+        if description is not None:
+            return f"I resolved the reconciliation anomaly: {description}."
+        return "I resolved that reconciliation anomaly."
+
+    summary = _summarize_applied_result(applied_result)
+    if summary is not None:
+        return summary[:1].upper() + summary[1:] + ("." if not summary.endswith(".") else "")
+    return f"I completed the {tool_name.replace('_', ' ')} step."
+
+
+def _format_next_step(snapshot: dict[str, Any] | None) -> str | None:
+    """Return one short next-step suggestion from the post-action snapshot."""
+
+    if snapshot is None:
+        return None
+    readiness = snapshot.get("readiness")
+    if not isinstance(readiness, dict):
+        return None
+    next_actions = readiness.get("next_actions")
+    if not isinstance(next_actions, list):
+        return None
+    for action in next_actions:
+        if not isinstance(action, str):
+            continue
+        cleaned = action.strip()
+        if not cleaned or cleaned.startswith("Ask the agent"):
+            continue
+        return f"Next, I can {_lowercase_leading_character(cleaned)}"
+    return None
+
+
+def _lowercase_leading_character(value: str) -> str:
+    """Lowercase the first letter of a sentence while preserving the rest."""
+
+    if not value:
+        return value
+    return value[:1].lower() + value[1:]
+
+
+def _optional_result_text(applied_result: dict[str, Any], key: str) -> str | None:
+    """Return one string result field when present."""
+
+    value = applied_result.get(key)
+    return value if isinstance(value, str) and value.strip() else None
+
+
+def _format_report_section_label(section_key: str) -> str:
+    """Return a human-readable label for one canonical report section key."""
+
+    for section in ReportSectionKey:
+        if section.value == section_key:
+            return section.label
+    return section_key.replace("_", " ")
+
+
+def _coerce_execution_error(error: Exception) -> ChatActionExecutionError:
+    """Map one domain error into the canonical chat-execution error contract."""
+
+    if isinstance(error, ChatActionExecutionError):
+        return error
+
+    status_code = getattr(error, "status_code", 422)
+    message = (
+        getattr(error, "message", str(error)).strip()
+        or "The requested action could not be completed."
+    )
+    code = (
+        ChatActionExecutionErrorCode.INVALID_ACTION_PLAN
+        if status_code < 500
+        else ChatActionExecutionErrorCode.EXECUTION_FAILED
+    )
+    return ChatActionExecutionError(
+        status_code=status_code,
+        code=code,
+        message=message,
     )
 
 
@@ -1547,6 +2862,8 @@ def _summarize_applied_result(applied_result: dict[str, Any] | None) -> str | No
             parts.append(f"started close run version {version_no}")
         else:
             parts.append("started a new close run")
+    elif isinstance(applied_result.get("deleted_close_run_id"), str):
+        parts.append("deleted the close run")
 
     rewound_from_phase = applied_result.get("rewound_from_phase")
     active_phase = applied_result.get("active_phase")
@@ -1588,6 +2905,7 @@ def _build_scope_handoff_message(*, applied_result: dict[str, Any]) -> str | Non
 
     reopened_close_run_id = applied_result.get("reopened_close_run_id")
     created_close_run_id = applied_result.get("created_close_run_id")
+    deleted_close_run_id = applied_result.get("deleted_close_run_id")
     reopened_from_status = applied_result.get("reopened_from_status")
     version_no = applied_result.get("version_no")
     rewound_from_phase = applied_result.get("rewound_from_phase")
@@ -1618,6 +2936,10 @@ def _build_scope_handoff_message(*, applied_result: dict[str, Any]) -> str | Non
             )
         else:
             notes.append(f"I started a new close run{period_suffix}.")
+    elif isinstance(deleted_close_run_id, str):
+        notes.append(
+            "I moved this thread back to the workspace scope because that close run is gone."
+        )
 
     if isinstance(rewound_from_phase, str) and isinstance(active_phase, str):
         notes.append(
@@ -1625,7 +2947,9 @@ def _build_scope_handoff_message(*, applied_result: dict[str, Any]) -> str | Non
             f"back to {_format_phase_label(active_phase)} so this request could be applied."
         )
     elif (
-        isinstance(reopened_close_run_id, str) or isinstance(created_close_run_id, str)
+        isinstance(reopened_close_run_id, str)
+        or isinstance(created_close_run_id, str)
+        or isinstance(deleted_close_run_id, str)
     ) and isinstance(active_phase, str):
         notes.append(
             f"The active phase in that working version is {_format_phase_label(active_phase)}."

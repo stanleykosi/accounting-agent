@@ -16,12 +16,14 @@ from uuid import UUID
 from services.accounting.recommendation_apply import ActorContext, RecommendationApplyService
 from services.agents.models import AgentExecutionContext, AgentToolDefinition
 from services.agents.registry import ToolRegistry
+from services.close_runs.delete_service import CloseRunDeleteService
 from services.close_runs.service import CloseRunService
 from services.close_runs.workflow_guards import require_active_phase
 from services.common.enums import (
     CANONICAL_WORKFLOW_PHASES,
     DEFAULT_RECONCILIATION_EXECUTION_TYPES,
     CloseRunStatus,
+    DispositionAction,
     ReconciliationType,
     ReviewStatus,
     SupportingScheduleStatus,
@@ -29,6 +31,7 @@ from services.common.enums import (
     WorkflowPhase,
 )
 from services.contracts.close_run_models import CreateCloseRunRequest
+from services.contracts.entity_models import CreateEntityRequest, UpdateEntityRequest
 from services.contracts.export_models import (
     EXPORT_DELIVERY_CHANNELS,
     CreateExportRequest,
@@ -52,6 +55,8 @@ from services.documents.recommendation_eligibility import (
     GL_CODING_RECOMMENDATION_ELIGIBLE_TYPE_VALUES,
 )
 from services.documents.review_service import DocumentReviewService
+from services.entity.delete_service import EntityDeleteService
+from services.entity.service import EntityService
 from services.exports.service import ExportService
 from services.jobs.service import JobService
 from services.jobs.task_names import TaskName
@@ -77,16 +82,15 @@ _RELEASED_CLOSE_RUN_STATUSES = frozenset(
     }
 )
 
-_AUTO_SCOPE_MUTATION_PHASES: dict[str, WorkflowPhase] = {
-    "generate_recommendations": WorkflowPhase.PROCESSING,
-    "run_reconciliation": WorkflowPhase.RECONCILIATION,
-    "upsert_supporting_schedule_row": WorkflowPhase.RECONCILIATION,
-    "delete_supporting_schedule_row": WorkflowPhase.RECONCILIATION,
-    "generate_reports": WorkflowPhase.REPORTING,
-    "update_commentary": WorkflowPhase.REPORTING,
-    "generate_export": WorkflowPhase.REVIEW_SIGNOFF,
-    "assemble_evidence_pack": WorkflowPhase.REVIEW_SIGNOFF,
-}
+_STAGED_CHAT_CONFIRMATION_TOOLS = frozenset(
+    {
+        "approve_close_run",
+        "archive_close_run",
+        "distribute_export",
+        "delete_close_run",
+        "delete_workspace",
+    }
+)
 
 
 class AccountingToolset:
@@ -97,8 +101,11 @@ class AccountingToolset:
         *,
         db_session: Session,
         close_run_service: CloseRunService,
+        close_run_delete_service: CloseRunDeleteService,
         document_review_service: DocumentReviewService,
         document_repository: DocumentRepository,
+        entity_service: EntityService,
+        entity_delete_service: EntityDeleteService,
         export_service: ExportService,
         job_service: JobService,
         recommendation_service: RecommendationApplyService,
@@ -112,8 +119,11 @@ class AccountingToolset:
     ) -> None:
         self._db_session = db_session
         self._close_run_service = close_run_service
+        self._close_run_delete_service = close_run_delete_service
         self._document_review_service = document_review_service
         self._document_repo = document_repository
+        self._entity_service = entity_service
+        self._entity_delete_service = entity_delete_service
         self._export_service = export_service
         self._job_service = job_service
         self._recommendation_service = recommendation_service
@@ -134,19 +144,114 @@ class AccountingToolset:
     ) -> bool:
         """Resolve whether one concrete tool invocation must stage for approval."""
 
-        del tool_arguments
-        required_phase = _AUTO_SCOPE_MUTATION_PHASES.get(tool_name)
-        if required_phase is None:
-            return True
-        return self._scope_adjustment_requires_human_approval(
-            context=context,
-            required_phase=required_phase,
-        )
+        del tool_arguments, context
+        return tool_name in _STAGED_CHAT_CONFIRMATION_TOOLS
 
     def build_registry(self) -> ToolRegistry:
         """Return the registered accounting tool registry."""
 
         registry = ToolRegistry()
+        self._register(
+            registry=registry,
+            name="create_workspace",
+            prompt_signature=(
+                "create_workspace(name, legal_name?, base_currency?, country_code?, timezone?, "
+                "accounting_standard?, autonomy_mode?)"
+            ),
+            description=(
+                "Create another entity workspace for the current operator with canonical "
+                "workspace settings."
+            ),
+            intent="workflow_action",
+            requires_human_approval=False,
+            executor=self._create_workspace,
+            input_schema=_schema_object(
+                properties={
+                    "name": _string_property("Workspace display name."),
+                    "legal_name": _optional_string_property(
+                        "Optional legal entity name for reporting."
+                    ),
+                    "base_currency": _optional_string_property(
+                        "Optional three-letter base currency code."
+                    ),
+                    "country_code": _optional_string_property(
+                        "Optional two-letter country code."
+                    ),
+                    "timezone": _optional_string_property(
+                        "Optional IANA timezone identifier."
+                    ),
+                    "accounting_standard": _optional_string_property(
+                        "Optional accounting standard label."
+                    ),
+                    "autonomy_mode": _enum_string_property(
+                        values=("human_review", "reduced_interruption"),
+                        description="Optional approval-routing mode for the new workspace.",
+                    ),
+                },
+                required=("name",),
+            ),
+        )
+        self._register(
+            registry=registry,
+            name="update_workspace",
+            prompt_signature=(
+                "update_workspace(workspace_id?, name?, legal_name?, base_currency?, "
+                "country_code?, timezone?, accounting_standard?, autonomy_mode?)"
+            ),
+            description="Update one accessible workspace's settings.",
+            intent="proposed_edit",
+            requires_human_approval=False,
+            executor=self._update_workspace,
+            target_type="workspace",
+            target_id_field="workspace_id",
+            input_schema=_schema_object(
+                properties={
+                    "workspace_id": _uuid_or_null_property(
+                        "Optional workspace UUID. Defaults to the current workspace."
+                    ),
+                    "name": _optional_string_property("Updated workspace display name."),
+                    "legal_name": _optional_string_property(
+                        "Updated legal entity name."
+                    ),
+                    "base_currency": _optional_string_property(
+                        "Updated three-letter base currency code."
+                    ),
+                    "country_code": _optional_string_property(
+                        "Updated two-letter country code."
+                    ),
+                    "timezone": _optional_string_property(
+                        "Updated IANA timezone identifier."
+                    ),
+                    "accounting_standard": _optional_string_property(
+                        "Updated accounting standard label."
+                    ),
+                    "autonomy_mode": _enum_string_property(
+                        values=("human_review", "reduced_interruption"),
+                        description="Updated approval-routing mode for the workspace.",
+                    ),
+                },
+            ),
+        )
+        self._register(
+            registry=registry,
+            name="delete_workspace",
+            prompt_signature="delete_workspace(workspace_id)",
+            description=(
+                "Delete one accessible workspace that is not the workspace anchoring the current "
+                "chat thread."
+            ),
+            intent="workflow_action",
+            requires_human_approval=True,
+            executor=self._delete_workspace,
+            target_type="workspace",
+            target_id_field="workspace_id",
+            input_schema=_schema_object(
+                properties={
+                    "workspace_id": _uuid_property("Workspace UUID to delete."),
+                },
+                required=("workspace_id",),
+            ),
+        )
         self._register(
             registry=registry,
             name="review_document",
@@ -157,7 +262,7 @@ class AccountingToolset:
             ),
             description="Persist a document review decision and update its workflow state.",
             intent="proposed_edit",
-            requires_human_approval=True,
+            requires_human_approval=False,
             executor=self._review_document,
             target_type="document",
             target_id_field="document_id",
@@ -195,7 +300,7 @@ class AccountingToolset:
                 "so the document can be excluded canonically."
             ),
             intent="proposed_edit",
-            requires_human_approval=True,
+            requires_human_approval=False,
             executor=self._ignore_document,
             target_type="document",
             target_id_field="document_id",
@@ -222,7 +327,7 @@ class AccountingToolset:
                 "audit history."
             ),
             intent="proposed_edit",
-            requires_human_approval=True,
+            requires_human_approval=False,
             executor=self._correct_extracted_field,
             target_type="extracted_field",
             target_id_field="field_id",
@@ -248,7 +353,7 @@ class AccountingToolset:
                 "asks to start a new run, a fresh monthly close, or another run for a period."
             ),
             intent="workflow_action",
-            requires_human_approval=True,
+            requires_human_approval=False,
             executor=self._create_close_run,
             input_schema=_schema_object(
                 properties={
@@ -274,6 +379,27 @@ class AccountingToolset:
         )
         self._register(
             registry=registry,
+            name="delete_close_run",
+            prompt_signature="delete_close_run(close_run_id?)",
+            description=(
+                "Delete one mutable close run from the current workspace. Defaults to the "
+                "current close run when the target is unambiguous."
+            ),
+            intent="workflow_action",
+            requires_human_approval=True,
+            executor=self._delete_close_run,
+            target_type="close_run",
+            target_id_field="close_run_id",
+            input_schema=_schema_object(
+                properties={
+                    "close_run_id": _uuid_or_null_property(
+                        "Optional close run UUID to delete."
+                    ),
+                },
+            ),
+        )
+        self._register(
+            registry=registry,
             name="advance_close_run",
             prompt_signature="advance_close_run(target_phase, reason?)",
             description=(
@@ -281,7 +407,7 @@ class AccountingToolset:
                 "checks pass."
             ),
             intent="workflow_action",
-            requires_human_approval=True,
+            requires_human_approval=False,
             executor=self._advance_close_run,
             input_schema=_schema_object(
                 properties={
@@ -305,7 +431,7 @@ class AccountingToolset:
                 "operator can resume or correct upstream work."
             ),
             intent="workflow_action",
-            requires_human_approval=True,
+            requires_human_approval=False,
             executor=self._rewind_close_run,
             input_schema=_schema_object(
                 properties={
@@ -357,7 +483,7 @@ class AccountingToolset:
                 "so the operator can continue making changes."
             ),
             intent="workflow_action",
-            requires_human_approval=True,
+            requires_human_approval=False,
             executor=self._reopen_close_run,
             input_schema=_schema_object(
                 properties={
@@ -395,7 +521,7 @@ class AccountingToolset:
                 "journal draft."
             ),
             intent="approval_request",
-            requires_human_approval=True,
+            requires_human_approval=False,
             executor=self._approve_recommendation,
             target_type="recommendation",
             target_id_field="recommendation_id",
@@ -413,7 +539,7 @@ class AccountingToolset:
             prompt_signature="reject_recommendation(recommendation_id, reason)",
             description="Reject one accounting recommendation with a reviewer reason.",
             intent="approval_request",
-            requires_human_approval=True,
+            requires_human_approval=False,
             executor=self._reject_recommendation,
             target_type="recommendation",
             target_id_field="recommendation_id",
@@ -431,7 +557,7 @@ class AccountingToolset:
             prompt_signature="approve_journal(journal_id, reason?)",
             description="Approve one journal draft for the current close run.",
             intent="approval_request",
-            requires_human_approval=True,
+            requires_human_approval=False,
             executor=self._approve_journal,
             target_type="journal",
             target_id_field="journal_id",
@@ -452,7 +578,7 @@ class AccountingToolset:
                 "external ERP package."
             ),
             intent="approval_request",
-            requires_human_approval=True,
+            requires_human_approval=False,
             executor=self._apply_journal,
             target_type="journal",
             target_id_field="journal_id",
@@ -478,7 +604,7 @@ class AccountingToolset:
             prompt_signature="reject_journal(journal_id, reason)",
             description="Reject one journal draft with a reviewer reason.",
             intent="approval_request",
-            requires_human_approval=True,
+            requires_human_approval=False,
             executor=self._reject_journal,
             target_type="journal",
             target_id_field="journal_id",
@@ -558,7 +684,7 @@ class AccountingToolset:
             prompt_signature="set_supporting_schedule_status(schedule_type, status, note?)",
             description="Review, approve, or mark a Step 6 supporting schedule not applicable.",
             intent="approval_request",
-            requires_human_approval=True,
+            requires_human_approval=False,
             executor=self._set_supporting_schedule_status,
             input_schema=_schema_object(
                 properties={
@@ -589,7 +715,7 @@ class AccountingToolset:
             prompt_signature="approve_reconciliation(reconciliation_id, reason?)",
             description="Approve one reconciliation result after reviewing its disposition.",
             intent="reconciliation_query",
-            requires_human_approval=True,
+            requires_human_approval=False,
             executor=self._approve_reconciliation,
             target_type="reconciliation",
             target_id_field="reconciliation_id",
@@ -599,6 +725,62 @@ class AccountingToolset:
                     "reason": _optional_string_property("Optional approver rationale."),
                 },
                 required=("reconciliation_id",),
+            ),
+        )
+        self._register(
+            registry=registry,
+            name="disposition_reconciliation_item",
+            prompt_signature=(
+                "disposition_reconciliation_item("
+                "item_id, disposition: resolved|adjusted|accepted_as_is|escalated|pending_info, "
+                "reason)"
+            ),
+            description=(
+                "Record the reviewer disposition for one reconciliation exception item."
+            ),
+            intent="reconciliation_query",
+            requires_human_approval=False,
+            executor=self._disposition_reconciliation_item,
+            target_type="reconciliation_item",
+            target_id_field="item_id",
+            input_schema=_schema_object(
+                properties={
+                    "item_id": _uuid_property(
+                        "Reconciliation item UUID that needs reviewer disposition."
+                    ),
+                    "disposition": _enum_string_property(
+                        values=tuple(
+                            disposition.value for disposition in DispositionAction
+                        ),
+                        description="Disposition outcome to persist for the selected item.",
+                    ),
+                    "reason": _string_property(
+                        "Reviewer rationale for the recorded disposition."
+                    ),
+                },
+                required=("item_id", "disposition", "reason"),
+            ),
+        )
+        self._register(
+            registry=registry,
+            name="resolve_reconciliation_anomaly",
+            prompt_signature="resolve_reconciliation_anomaly(anomaly_id, resolution_note)",
+            description=(
+                "Resolve one reconciliation anomaly after the reviewer verifies the issue."
+            ),
+            intent="reconciliation_query",
+            requires_human_approval=False,
+            executor=self._resolve_reconciliation_anomaly,
+            target_type="reconciliation_anomaly",
+            target_id_field="anomaly_id",
+            input_schema=_schema_object(
+                properties={
+                    "anomaly_id": _uuid_property("Reconciliation anomaly UUID to resolve."),
+                    "resolution_note": _string_property(
+                        "Reviewer note explaining why the anomaly is resolved."
+                    ),
+                },
+                required=("anomaly_id", "resolution_note"),
             ),
         )
         self._register(
@@ -729,7 +911,7 @@ class AccountingToolset:
             prompt_signature="approve_commentary(report_run_id, section_key, body?, reason?)",
             description="Approve one commentary section for release in the report run.",
             intent="report_action",
-            requires_human_approval=True,
+            requires_human_approval=False,
             executor=self._approve_commentary,
             target_type="report_run",
             target_id_field="report_run_id",
@@ -828,6 +1010,7 @@ class AccountingToolset:
             result={
                 "tool": "review_document",
                 "document_id": result.document.id,
+                "document_filename": result.document.original_filename,
                 "status": result.document.status.value,
                 "decision": result.decision,
             },
@@ -885,6 +1068,7 @@ class AccountingToolset:
             result={
                 "tool": "ignore_document",
                 "document_id": result.document.id,
+                "document_filename": result.document.original_filename,
                 "status": result.document.status.value,
                 "decision": result.decision,
             },
@@ -942,6 +1126,110 @@ class AccountingToolset:
             },
         )
 
+    def _create_workspace(
+        self,
+        arguments: dict[str, Any],
+        context: AgentExecutionContext,
+    ) -> dict[str, Any]:
+        actor_user = self._require_actor(context)
+        payload = CreateEntityRequest.model_validate(arguments)
+        result = self._entity_service.create_entity(
+            actor_user=actor_user,
+            name=payload.name,
+            legal_name=payload.legal_name,
+            base_currency=payload.base_currency,
+            country_code=payload.country_code,
+            timezone=payload.timezone,
+            accounting_standard=payload.accounting_standard,
+            autonomy_mode=payload.autonomy_mode,
+            source_surface=cast(AuditSourceSurface, context.source_surface),
+            trace_id=context.trace_id,
+        )
+        return {
+            "tool": "create_workspace",
+            "created_workspace_id": result.id,
+            "workspace_id": result.id,
+            "workspace_name": result.name,
+            "base_currency": result.base_currency,
+            "autonomy_mode": result.autonomy_mode.value,
+        }
+
+    def _update_workspace(
+        self,
+        arguments: dict[str, Any],
+        context: AgentExecutionContext,
+    ) -> dict[str, Any]:
+        actor_user = self._require_actor(context)
+        workspace_id = (
+            UUID(_require_string(arguments, "workspace_id"))
+            if isinstance(arguments.get("workspace_id"), str)
+            else context.entity_id
+        )
+        raw_payload = {
+            key: arguments[key]
+            for key in (
+                "name",
+                "legal_name",
+                "base_currency",
+                "country_code",
+                "timezone",
+                "accounting_standard",
+                "autonomy_mode",
+            )
+            if key in arguments
+        }
+        payload = UpdateEntityRequest.model_validate(raw_payload)
+        fields_to_update = frozenset(payload.model_dump(exclude_none=True).keys())
+        result = self._entity_service.update_entity(
+            actor_user=actor_user,
+            entity_id=workspace_id,
+            fields_to_update=fields_to_update,
+            name=payload.name,
+            legal_name=payload.legal_name,
+            base_currency=payload.base_currency,
+            country_code=payload.country_code,
+            timezone=payload.timezone,
+            accounting_standard=payload.accounting_standard,
+            autonomy_mode=payload.autonomy_mode,
+            source_surface=cast(AuditSourceSurface, context.source_surface),
+            trace_id=context.trace_id,
+        )
+        return {
+            "tool": "update_workspace",
+            "workspace_id": result.id,
+            "workspace_name": result.name,
+            "updated_fields": sorted(fields_to_update),
+            "base_currency": result.base_currency,
+            "autonomy_mode": result.autonomy_mode.value,
+        }
+
+    def _delete_workspace(
+        self,
+        arguments: dict[str, Any],
+        context: AgentExecutionContext,
+    ) -> dict[str, Any]:
+        actor_user = self._require_actor(context)
+        workspace_id = UUID(_require_string(arguments, "workspace_id"))
+        if workspace_id == context.entity_id:
+            raise ValueError(
+                "You cannot delete the workspace anchoring this chat thread from inside the same "
+                "workspace chat. Switch to another workspace chat first, then ask me to delete "
+                "this one."
+            )
+        result = self._entity_delete_service.delete_entity(
+            actor_user=actor_user,
+            entity_id=workspace_id,
+        )
+        return {
+            "tool": "delete_workspace",
+            "deleted_workspace_id": result.deleted_entity_id,
+            "deleted_workspace_name": result.deleted_entity_name,
+            "deleted_close_run_count": result.deleted_close_run_count,
+            "deleted_document_count": result.deleted_document_count,
+            "deleted_thread_count": result.deleted_thread_count,
+            "canceled_job_count": result.canceled_job_count,
+        }
+
     def _create_close_run(
         self,
         arguments: dict[str, Any],
@@ -974,6 +1262,36 @@ class AccountingToolset:
             ),
             "status": result.status.value,
             "version_no": result.current_version_no,
+        }
+
+    def _delete_close_run(
+        self,
+        arguments: dict[str, Any],
+        context: AgentExecutionContext,
+    ) -> dict[str, Any]:
+        actor_user = self._require_actor(context)
+        target_close_run_id = (
+            UUID(_require_string(arguments, "close_run_id"))
+            if isinstance(arguments.get("close_run_id"), str)
+            else self._require_close_run_id(
+                context,
+                "Close-run deletion requires a close-run target or a close-run-scoped thread.",
+            )
+        )
+        result = self._close_run_delete_service.delete_close_run(
+            actor_user=actor_user,
+            entity_id=context.entity_id,
+            close_run_id=target_close_run_id,
+        )
+        return {
+            "tool": "delete_close_run",
+            "deleted_close_run_id": result.deleted_close_run_id,
+            "deleted_document_count": result.deleted_document_count,
+            "deleted_recommendation_count": result.deleted_recommendation_count,
+            "deleted_journal_count": result.deleted_journal_count,
+            "deleted_report_run_count": result.deleted_report_run_count,
+            "deleted_thread_count": result.deleted_thread_count,
+            "canceled_job_count": result.canceled_job_count,
         }
 
     def _advance_close_run(
@@ -1535,7 +1853,114 @@ class AccountingToolset:
             result={
                 "tool": "approve_reconciliation",
                 "reconciliation_id": str(reconciliation_id),
+                "reconciliation_type": result.reconciliation_type.value,
                 "status": result.status.value,
+            },
+        )
+
+    def _disposition_reconciliation_item(
+        self,
+        arguments: dict[str, Any],
+        context: AgentExecutionContext,
+    ) -> dict[str, Any]:
+        actor_user = self._require_actor(context)
+        close_run_id = self._require_close_run_id(
+            context,
+            "Reconciliation disposition requires a close-run-scoped thread.",
+        )
+        source_close_run_id = self._source_close_run_id(
+            context=context,
+            current_close_run_id=close_run_id,
+        )
+        reason = _require_string(arguments, "reason")
+        prepared = self._prepare_phase_mutation_scope(
+            actor_user=actor_user,
+            entity_id=context.entity_id,
+            close_run_id=close_run_id,
+            required_phase=WorkflowPhase.RECONCILIATION,
+            action_label="Reconciliation item disposition",
+            workflow_reason=reason,
+            source_surface=cast(AuditSourceSurface, context.source_surface),
+            trace_id=context.trace_id,
+        )
+        item_id = self._resolve_reconciliation_item_id_for_scope(
+            source_close_run_id=source_close_run_id,
+            target_close_run_id=prepared.close_run_id,
+            item_id=UUID(_require_string(arguments, "item_id")),
+        )
+        item = self._reconciliation_service.disposition_item(
+            item_id=item_id,
+            close_run_id=prepared.close_run_id,
+            disposition=DispositionAction(_require_string(arguments, "disposition")),
+            reason=reason,
+            user_id=actor_user.id,
+        )
+        if item is None:
+            raise ValueError("The reconciliation item was not found for this close run.")
+        reconciliation = self._reconciliation_repo.get_reconciliation(item.reconciliation_id)
+        return self._with_scope_metadata(
+            prepared=prepared,
+            result={
+                "tool": "disposition_reconciliation_item",
+                "item_id": str(item.id),
+                "reconciliation_id": str(item.reconciliation_id),
+                "reconciliation_type": (
+                    reconciliation.reconciliation_type.value
+                    if reconciliation is not None
+                    else None
+                ),
+                "source_ref": item.source_ref,
+                "match_status": item.match_status.value,
+                "disposition": item.disposition.value if item.disposition is not None else None,
+            },
+        )
+
+    def _resolve_reconciliation_anomaly(
+        self,
+        arguments: dict[str, Any],
+        context: AgentExecutionContext,
+    ) -> dict[str, Any]:
+        actor_user = self._require_actor(context)
+        close_run_id = self._require_close_run_id(
+            context,
+            "Reconciliation anomaly resolution requires a close-run-scoped thread.",
+        )
+        source_close_run_id = self._source_close_run_id(
+            context=context,
+            current_close_run_id=close_run_id,
+        )
+        resolution_note = _require_string(arguments, "resolution_note")
+        prepared = self._prepare_phase_mutation_scope(
+            actor_user=actor_user,
+            entity_id=context.entity_id,
+            close_run_id=close_run_id,
+            required_phase=WorkflowPhase.RECONCILIATION,
+            action_label="Reconciliation anomaly resolution",
+            workflow_reason=resolution_note,
+            source_surface=cast(AuditSourceSurface, context.source_surface),
+            trace_id=context.trace_id,
+        )
+        anomaly_id = self._resolve_reconciliation_anomaly_id_for_scope(
+            source_close_run_id=source_close_run_id,
+            target_close_run_id=prepared.close_run_id,
+            anomaly_id=UUID(_require_string(arguments, "anomaly_id")),
+        )
+        anomaly = self._reconciliation_service.resolve_anomaly(
+            anomaly_id=anomaly_id,
+            close_run_id=prepared.close_run_id,
+            resolution_note=resolution_note,
+            user_id=actor_user.id,
+        )
+        if anomaly is None:
+            raise ValueError("The reconciliation anomaly was not found for this close run.")
+        return self._with_scope_metadata(
+            prepared=prepared,
+            result={
+                "tool": "resolve_reconciliation_anomaly",
+                "anomaly_id": str(anomaly.id),
+                "severity": anomaly.severity,
+                "account_code": anomaly.account_code,
+                "description": anomaly.description,
             },
         )
 
@@ -1757,6 +2182,8 @@ class AccountingToolset:
             prepared=prepared,
             result={
                 "tool": "update_commentary",
+                "report_run_id": str(commentary.report_run_id),
+                "section_key": commentary.section_key,
                 "commentary_id": commentary.id,
                 "status": commentary.status,
             },
@@ -1805,6 +2232,8 @@ class AccountingToolset:
             prepared=prepared,
             result={
                 "tool": "approve_commentary",
+                "report_run_id": str(commentary.report_run_id),
+                "section_key": commentary.section_key,
                 "commentary_id": commentary.id,
                 "status": commentary.status,
             },
@@ -1847,6 +2276,7 @@ class AccountingToolset:
             target_close_run_id=prepared.close_run_id,
             journal_id=UUID(_require_string(arguments, "journal_id")),
         )
+        journal_record = self._recommendation_repo.get_journal_entry(journal_id=journal_id)
         actor = ActorContext(
             user_id=actor_user.id,
             full_name=actor_user.full_name,
@@ -1891,7 +2321,13 @@ class AccountingToolset:
             result={
                 "tool": tool_name,
                 "journal_id": str(journal_id),
+                "journal_number": (
+                    journal_record.entry.journal_number
+                    if journal_record is not None
+                    else None
+                ),
                 "status": result.final_status.value,
+                "posting_target": arguments.get("posting_target") if action == "apply" else None,
             },
         )
 
@@ -2053,30 +2489,6 @@ class AccountingToolset:
         """Return the original scope used for ID remapping across reopened versions."""
 
         return context.source_close_run_id or current_close_run_id
-
-    def _scope_adjustment_requires_human_approval(
-        self,
-        *,
-        context: AgentExecutionContext,
-        required_phase: WorkflowPhase,
-    ) -> bool:
-        """Return whether invoking one auto tool would reopen or rewind workflow scope."""
-
-        if context.close_run_id is None or not isinstance(context.actor, EntityUserRecord):
-            return False
-
-        close_run = self._close_run_service.get_close_run(
-            actor_user=context.actor,
-            entity_id=context.entity_id,
-            close_run_id=context.close_run_id,
-        )
-        if close_run.status in _RELEASED_CLOSE_RUN_STATUSES:
-            return True
-
-        active_phase = close_run.workflow_state.active_phase
-        if active_phase is None or active_phase is required_phase:
-            return False
-        return _workflow_phase_index(required_phase) < _workflow_phase_index(active_phase)
 
     def _prepare_phase_mutation_scope(
         self,
@@ -2497,6 +2909,123 @@ class AccountingToolset:
             "The reopened working version does not contain a usable copy of that reconciliation."
         )
 
+    def _resolve_reconciliation_item_id_for_scope(
+        self,
+        *,
+        source_close_run_id: UUID,
+        target_close_run_id: UUID,
+        item_id: UUID,
+    ) -> UUID:
+        """Resolve a reconciliation item id within the active mutation scope after a reopen."""
+
+        if source_close_run_id == target_close_run_id:
+            return item_id
+
+        source_item = self._reconciliation_repo.get_item_for_close_run(
+            item_id=item_id,
+            close_run_id=source_close_run_id,
+        )
+        if source_item is None:
+            raise ValueError("That reconciliation item does not exist in the current close run.")
+
+        target_reconciliation_id = self._resolve_reconciliation_id_for_scope(
+            source_close_run_id=source_close_run_id,
+            target_close_run_id=target_close_run_id,
+            reconciliation_id=source_item.reconciliation_id,
+        )
+        source_items = sorted(
+            self._reconciliation_repo.list_items(
+                reconciliation_id=source_item.reconciliation_id,
+            ),
+            key=_created_at_and_id_sort_key,
+        )
+        target_items = sorted(
+            self._reconciliation_repo.list_items(reconciliation_id=target_reconciliation_id),
+            key=_created_at_and_id_sort_key,
+        )
+        source_fingerprint = _build_reconciliation_item_fingerprint(source_item)
+        source_peer_ids = [
+            record.id
+            for record in source_items
+            if _build_reconciliation_item_fingerprint(record) == source_fingerprint
+        ]
+        if item_id not in source_peer_ids:
+            raise ValueError(
+                "That reconciliation item does not map cleanly onto the reopened version."
+            )
+        source_index = source_peer_ids.index(item_id)
+        target_candidates = [
+            record
+            for record in target_items
+            if _build_reconciliation_item_fingerprint(record) == source_fingerprint
+        ]
+        if len(target_candidates) > source_index:
+            return target_candidates[source_index].id
+        if not target_candidates:
+            raise ValueError(
+                "The reopened working version does not contain a carried-forward copy of that "
+                "reconciliation item. Run reconciliation again first."
+            )
+        raise ValueError(
+            "The reopened working version contains more than one matching reconciliation item. "
+            "Ask the agent to use the latest unresolved item."
+        )
+
+    def _resolve_reconciliation_anomaly_id_for_scope(
+        self,
+        *,
+        source_close_run_id: UUID,
+        target_close_run_id: UUID,
+        anomaly_id: UUID,
+    ) -> UUID:
+        """Resolve a reconciliation anomaly id within the active mutation scope after a reopen."""
+
+        if source_close_run_id == target_close_run_id:
+            return anomaly_id
+
+        source_anomaly = self._reconciliation_repo.get_anomaly_for_close_run(
+            anomaly_id=anomaly_id,
+            close_run_id=source_close_run_id,
+        )
+        if source_anomaly is None:
+            raise ValueError("That reconciliation anomaly does not exist in the current close run.")
+
+        source_anomalies = sorted(
+            self._reconciliation_repo.list_anomalies(close_run_id=source_close_run_id),
+            key=_created_at_and_id_sort_key,
+        )
+        target_anomalies = sorted(
+            self._reconciliation_repo.list_anomalies(close_run_id=target_close_run_id),
+            key=_created_at_and_id_sort_key,
+        )
+        source_fingerprint = _build_reconciliation_anomaly_fingerprint(source_anomaly)
+        source_peer_ids = [
+            record.id
+            for record in source_anomalies
+            if _build_reconciliation_anomaly_fingerprint(record) == source_fingerprint
+        ]
+        if anomaly_id not in source_peer_ids:
+            raise ValueError(
+                "That reconciliation anomaly does not map cleanly onto the reopened version."
+            )
+        source_index = source_peer_ids.index(anomaly_id)
+        target_candidates = [
+            record
+            for record in target_anomalies
+            if _build_reconciliation_anomaly_fingerprint(record) == source_fingerprint
+        ]
+        if len(target_candidates) > source_index:
+            return target_candidates[source_index].id
+        if not target_candidates:
+            raise ValueError(
+                "The reopened working version does not contain a carried-forward copy of that "
+                "reconciliation anomaly. Run reconciliation again first."
+            )
+        raise ValueError(
+            "The reopened working version contains more than one matching reconciliation "
+            "anomaly. Ask the agent to use the latest unresolved anomaly."
+        )
+
     def _resolve_report_run_id_for_scope(
         self,
         *,
@@ -2731,6 +3260,36 @@ def _build_reconciliation_fingerprint(reconciliation: Any) -> tuple[str, str, st
         reconciliation.reconciliation_type.value,
         reconciliation.status.value,
         _stable_json_string(reconciliation.summary),
+    )
+
+
+def _build_reconciliation_item_fingerprint(item: Any) -> tuple[Any, ...]:
+    """Return a stable fingerprint for matching reconciliation items across reopen."""
+
+    return (
+        item.source_type,
+        item.source_ref,
+        item.match_status.value,
+        str(item.amount),
+        _stable_json_string(item.matched_to),
+        str(item.difference_amount),
+        item.explanation,
+        item.requires_disposition,
+        _stable_json_string(item.dimensions),
+        item.period_date,
+    )
+
+
+def _build_reconciliation_anomaly_fingerprint(anomaly: Any) -> tuple[Any, ...]:
+    """Return a stable fingerprint for matching reconciliation anomalies across reopen."""
+
+    return (
+        anomaly.anomaly_type.value,
+        anomaly.severity,
+        anomaly.account_code,
+        anomaly.description,
+        _stable_json_string(anomaly.details),
+        anomaly.resolved,
     )
 
 
