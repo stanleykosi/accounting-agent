@@ -8,6 +8,7 @@ Dependencies: Accounting workflow services and repositories only.
 from __future__ import annotations
 
 import json
+from datetime import date
 from typing import Any
 from uuid import UUID
 
@@ -124,7 +125,10 @@ class AccountingWorkspaceContextBuilder(WorkspaceContextBuilder):
             {
                 "id": close_run.id,
                 "status": close_run.status.value,
-                "period_label": close_run.period_label,
+                "period_label": _format_close_run_period_label(
+                    period_start=close_run.period_start,
+                    period_end=close_run.period_end,
+                ),
                 "reporting_currency": close_run.reporting_currency,
                 "version_no": close_run.current_version_no,
                 "active_phase": (
@@ -148,6 +152,7 @@ class AccountingWorkspaceContextBuilder(WorkspaceContextBuilder):
                 schedule_summary={},
                 report_summary={},
                 export_summary={},
+                distribution_summary={},
                 pending_action_count=0,
             )
             snapshot["progress_summary"] = _build_progress_summary(
@@ -161,6 +166,7 @@ class AccountingWorkspaceContextBuilder(WorkspaceContextBuilder):
                 report_summary={},
                 job_summary={},
                 export_summary={},
+                distribution_summary={},
                 evidence_pack=None,
                 pending_action_count=0,
             )
@@ -653,6 +659,16 @@ class AccountingWorkspaceContextBuilder(WorkspaceContextBuilder):
                 for account in active_accounts[:200]
             ],
         }
+
+
+def _format_close_run_period_label(*, period_start: date, period_end: date) -> str:
+    """Return the human-readable close-run period label used across operator snapshots."""
+
+    start_label = period_start.strftime("%b %Y")
+    end_label = period_end.strftime("%b %Y")
+    if start_label == end_label:
+        return start_label
+    return f"{start_label} - {end_label}"
 
 
 def _count_by_key(values: Any) -> dict[str, int]:

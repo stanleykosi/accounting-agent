@@ -6,7 +6,7 @@ Dependencies: React, Next.js navigation, and the same-origin auth proxy client h
 
 "use client";
 
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useEffectEvent, useState, type ReactElement } from "react";
 import { isSessionAuthError, readCurrentSession } from "../../lib/auth/client";
 import { buildLoginRedirectPath } from "../../lib/auth/session";
@@ -22,7 +22,6 @@ const HEARTBEAT_INTERVAL_MS = 5 * 60 * 1_000;
 export function SessionHeartbeat(): ReactElement | null {
   const pathname = usePathname();
   const router = useRouter();
-  const searchParams = useSearchParams();
   const [warningMessage, setWarningMessage] = useState<string | null>(null);
 
   const refreshSession = useEffectEvent(async () => {
@@ -31,7 +30,10 @@ export function SessionHeartbeat(): ReactElement | null {
       setWarningMessage(null);
     } catch (error) {
       if (isSessionAuthError(error)) {
-        const currentPath = buildCurrentPath(pathname, searchParams.toString());
+        const currentPath = buildCurrentPath(
+          pathname,
+          typeof window === "undefined" ? "" : window.location.search,
+        );
         router.replace(
           buildLoginRedirectPath({
             nextPath: currentPath,
@@ -72,5 +74,7 @@ export function SessionHeartbeat(): ReactElement | null {
 }
 
 function buildCurrentPath(pathname: string, queryString: string): string {
-  return queryString.length > 0 ? `${pathname}?${queryString}` : pathname;
+  const normalizedQuery =
+    queryString.startsWith("?") ? queryString.slice(1) : queryString;
+  return normalizedQuery.length > 0 ? `${pathname}?${normalizedQuery}` : pathname;
 }

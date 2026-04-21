@@ -6,6 +6,7 @@ Dependencies: accounting context helpers, chat action executor, and canonical en
 
 from __future__ import annotations
 
+from datetime import date
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -237,6 +238,7 @@ def test_workspace_snapshot_hides_gl_coding_work_for_docs_already_in_imported_gl
     builder = AccountingWorkspaceContextBuilder(
         action_repository=SimpleNamespace(),
         close_run_service=SimpleNamespace(
+            list_close_runs_for_entity=lambda **kwargs: SimpleNamespace(close_runs=()),
             get_close_run=lambda **kwargs: SimpleNamespace(
                 id=close_run_id,
                 status=CloseRunStatus.DRAFT,
@@ -287,8 +289,25 @@ def test_workspace_snapshot_hides_gl_coding_work_for_docs_already_in_imported_gl
                         document_type=DocumentType.INVOICE,
                     ),
                     latest_extraction=None,
+                    open_issues=[],
                 )
             ],
+        ),
+        entity_repository=SimpleNamespace(
+            get_entity_for_user=lambda **kwargs: SimpleNamespace(
+                entity=SimpleNamespace(
+                    id=entity_id,
+                    name="Acme Workspace",
+                    legal_name="Acme Workspace",
+                    base_currency="USD",
+                    country_code="US",
+                    timezone="America/New_York",
+                    accounting_standard="IFRS",
+                    autonomy_mode=SimpleNamespace(value="human_review"),
+                    status=SimpleNamespace(value="active"),
+                )
+            ),
+            list_entities_for_user=lambda **kwargs: [],
         ),
         export_service=SimpleNamespace(
             list_export_summaries=lambda **kwargs: [],
@@ -299,6 +318,8 @@ def test_workspace_snapshot_hides_gl_coding_work_for_docs_already_in_imported_gl
         ),
         reconciliation_repository=SimpleNamespace(
             list_reconciliations=lambda *args, **kwargs: [],
+            list_items=lambda **kwargs: [],
+            list_anomalies=lambda **kwargs: [],
         ),
         recommendation_repository=SimpleNamespace(
             list_recommendations_for_close_run=lambda **kwargs: [],
@@ -328,3 +349,101 @@ def test_workspace_snapshot_hides_gl_coding_work_for_docs_already_in_imported_gl
         "Advance the close run to Reconciliation" in action
         for action in snapshot["readiness"]["next_actions"]
     )
+
+
+def test_workspace_snapshot_derives_entity_close_run_period_labels() -> None:
+    """Workspace snapshots should derive period labels from close-run dates, not removed fields."""
+
+    actor_user = EntityUserRecord(
+        id=uuid4(),
+        email="ops@example.com",
+        full_name="Finance Ops",
+    )
+    entity_id = uuid4()
+    close_run_id = uuid4()
+
+    builder = AccountingWorkspaceContextBuilder(
+        action_repository=SimpleNamespace(
+            list_pending_actions_for_thread=lambda **kwargs: [],
+        ),
+        close_run_service=SimpleNamespace(
+            list_close_runs_for_entity=lambda **kwargs: SimpleNamespace(
+                close_runs=(
+                    SimpleNamespace(
+                        id=close_run_id,
+                        status=CloseRunStatus.DRAFT,
+                        period_start=date(2026, 3, 1),
+                        period_end=date(2026, 3, 31),
+                        reporting_currency="NGN",
+                        current_version_no=1,
+                        workflow_state=SimpleNamespace(active_phase=WorkflowPhase.COLLECTION),
+                    ),
+                ),
+            )
+        ),
+        coa_repository=SimpleNamespace(
+            get_active_set=lambda **kwargs: None,
+            list_accounts_for_set=lambda **kwargs: [],
+        ),
+        document_repository=SimpleNamespace(
+            _db_session=object(),
+            list_documents_for_close_run_with_latest_extraction=lambda **kwargs: [],
+        ),
+        entity_repository=SimpleNamespace(
+            get_entity_for_user=lambda **kwargs: SimpleNamespace(
+                entity=SimpleNamespace(
+                    id=entity_id,
+                    name="Apex Meridian Nigeria Ltd",
+                    legal_name="Apex Meridian Nigeria Ltd",
+                    base_currency="NGN",
+                    country_code="NG",
+                    timezone="Africa/Lagos",
+                    accounting_standard="IFRS",
+                    autonomy_mode=SimpleNamespace(value="human_review"),
+                    status=SimpleNamespace(value="active"),
+                )
+            ),
+            list_entities_for_user=lambda **kwargs: [],
+        ),
+        export_service=SimpleNamespace(
+            list_export_summaries=lambda **kwargs: [],
+            get_latest_evidence_pack=lambda **kwargs: None,
+        ),
+        job_service=SimpleNamespace(
+            list_jobs_for_user=lambda **kwargs: [],
+        ),
+        reconciliation_repository=SimpleNamespace(
+            list_reconciliations=lambda *args, **kwargs: [],
+            list_items=lambda **kwargs: [],
+            list_anomalies=lambda **kwargs: [],
+        ),
+        recommendation_repository=SimpleNamespace(
+            list_recommendations_for_close_run=lambda **kwargs: [],
+            list_journals_for_close_run=lambda **kwargs: [],
+            list_postings_for_journal_ids=lambda **kwargs: {},
+        ),
+        report_repository=SimpleNamespace(
+            list_report_runs_for_close_run=lambda **kwargs: [],
+        ),
+        supporting_schedule_service=SimpleNamespace(
+            list_workspace=lambda **kwargs: [],
+        ),
+    )
+
+    snapshot = builder.build_snapshot(
+        actor=actor_user,
+        entity_id=entity_id,
+        close_run_id=None,
+        thread_id=None,
+    )
+
+    assert snapshot["entity_close_runs"] == [
+        {
+            "id": close_run_id,
+            "status": "draft",
+            "period_label": "Mar 2026",
+            "reporting_currency": "NGN",
+            "version_no": 1,
+            "active_phase": "collection",
+        }
+    ]
