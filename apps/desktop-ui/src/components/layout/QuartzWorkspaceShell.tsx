@@ -273,8 +273,8 @@ function resolveWorkspaceAction(
 } {
   if (closeContext) {
     return {
-      href: closeContext.chatHref,
-      label: "Open Assistant",
+      href: closeContext.overviewHref,
+      label: "Mission Control",
     };
   }
 

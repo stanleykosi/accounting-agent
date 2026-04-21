@@ -7,7 +7,6 @@ Dependencies: Document review API helpers, upload/review components, and shared 
 "use client";
 
 import { EvidenceDrawer } from "@accounting-ai-agent/ui";
-import Link from "next/link";
 import {
   use,
   useCallback,
@@ -19,7 +18,6 @@ import {
 } from "react";
 import { DocumentUploadPanel } from "../../../../../../../components/documents/DocumentUploadPanel";
 import { ExtractionPanel } from "../../../../../../../components/documents/ExtractionPanel";
-import { QuartzAssistantRail } from "../../../../../../../components/layout/QuartzAssistantRail";
 import { QuartzIcon } from "../../../../../../../components/layout/QuartzIcons";
 import {
   deleteSourceDocument,
@@ -422,7 +420,6 @@ export default function CloseRunDocumentsPage({
         <section className="quartz-main-panel">
           <div className="quartz-empty-state">Loading inputs workspace...</div>
         </section>
-        <aside className="quartz-right-rail" />
       </div>
     );
   }
@@ -436,7 +433,6 @@ export default function CloseRunDocumentsPage({
               "The inputs workspace could not be loaded. Verify the entity and close-run IDs, then retry."}
           </div>
         </section>
-        <aside className="quartz-right-rail" />
       </div>
     );
   }
@@ -608,13 +604,6 @@ export default function CloseRunDocumentsPage({
             <article className="quartz-card" id="source-intake">
               <div className="quartz-section-header quartz-section-header-tight">
                 <h2 className="quartz-section-title">Source Intake & Evidence</h2>
-                <Link
-                  className="quartz-filter-link"
-                  href={`/entities/${entityId}/close-runs/${closeRunId}/chat`}
-                >
-                  <QuartzIcon className="quartz-inline-icon" name="assistant" />
-                  Assistant
-                </Link>
               </div>
               <DocumentUploadPanel
                 closeRunId={closeRunId}
@@ -636,63 +625,58 @@ export default function CloseRunDocumentsPage({
             </article>
           </div>
         </section>
-      </section>
+        <section className="quartz-section">
+          <div className="quartz-split-grid quartz-split-grid-halves">
+            <article className="quartz-card ai">
+              <p className="quartz-card-eyebrow secondary">Collection outlook</p>
+              <h3>Inputs are nearing accounting readiness</h3>
+              <p className="form-helper">
+                {readyItemsCount} items are ready to move into recommendations and journals.{" "}
+                {workspaceData.queueCounts.blocked} remain blocked and{" "}
+                {workspaceData.queueCounts.wrong_period} are outside the target period.
+              </p>
+              <div className="quartz-mini-list">
+                <div className="quartz-mini-item">
+                  <strong>
+                    {workspaceData.queueCounts.low_confidence} low-confidence captures
+                  </strong>
+                  <span className="quartz-mini-meta">
+                    These fields still need accountant verification before downstream use.
+                  </span>
+                </div>
+                <div className="quartz-mini-item">
+                  <strong>{workspaceData.queueCounts.duplicate} suspected duplicates</strong>
+                  <span className="quartz-mini-meta">
+                    Remove duplicate evidence before the workflow advances.
+                  </span>
+                </div>
+              </div>
+            </article>
 
-      <QuartzAssistantRail
-        footer={
-          <Link
-            className="primary-button"
-            href={`/entities/${entityId}/close-runs/${closeRunId}/chat`}
-          >
-            Open Assistant Workbench
-          </Link>
-        }
-        subtitle="AI insights & actions"
-      >
-        <article className="quartz-card ai">
-          <p className="quartz-card-eyebrow secondary">Document intelligence</p>
-          <h3>Collection is almost clear</h3>
-          <p className="form-helper">
-            {readyItemsCount} items are ready to move into recommendations and journals.{" "}
-            {workspaceData.queueCounts.blocked} remain blocked and{" "}
-            {workspaceData.queueCounts.wrong_period} are outside the period.
-          </p>
-          <div className="quartz-mini-list">
-            <div className="quartz-mini-item">
-              <strong>{workspaceData.queueCounts.low_confidence} Low confidence</strong>
-              <span className="quartz-mini-meta">Extraction needs reviewer confirmation.</span>
-            </div>
-            <div className="quartz-mini-item">
-              <strong>{workspaceData.queueCounts.duplicate} Duplicates</strong>
-              <span className="quartz-mini-meta">
-                Remove duplicate evidence before the workflow advances.
-              </span>
-            </div>
+            <article className="quartz-card">
+              <p className="quartz-card-eyebrow">Current focus</p>
+              <h3>{selectedDocument?.originalFilename ?? "Select a document"}</h3>
+              <p className="form-helper">
+                {selectedDocument
+                  ? (selectedDocument.primaryIssueReason ??
+                    "This document is ready for accountant review.")
+                  : "Choose a document row to inspect evidence, corrections, and review decisions."}
+              </p>
+              {selectedDocument ? (
+                <div className="quartz-button-row">
+                  <button
+                    className="secondary-button"
+                    onClick={() => handleOpenEvidenceForDocument(selectedDocument.id)}
+                    type="button"
+                  >
+                    Open Evidence
+                  </button>
+                </div>
+              ) : null}
+            </article>
           </div>
-        </article>
-
-        <article className="quartz-card">
-          <p className="quartz-card-eyebrow">Current focus</p>
-          <h3>{selectedDocument?.originalFilename ?? "Select a document"}</h3>
-          <p className="form-helper">
-            {selectedDocument
-              ? (selectedDocument.primaryIssueReason ??
-                "This document is ready for accountant review.")
-              : "Choose a document row to inspect evidence, corrections, and review decisions."}
-          </p>
-          {selectedDocument ? (
-            <div className="quartz-button-row">
-              <button
-                className="secondary-button"
-                onClick={() => handleOpenEvidenceForDocument(selectedDocument.id)}
-                type="button"
-              >
-                Open Evidence
-              </button>
-            </div>
-          ) : null}
-        </article>
-      </QuartzAssistantRail>
+        </section>
+      </section>
     </div>
   );
 }

@@ -2,15 +2,14 @@
 Purpose: Render the Quartz reconciliation workspace for one close run.
 Scope: Run execution, exception triage, quick disposition actions, anomaly review,
        evidence access, and assistant-guided control analysis.
-Dependencies: Close-run context, reconciliation review APIs, job polling, and the
-              shared retractable Quartz assistant rail.
+Dependencies: Close-run context, reconciliation review APIs, job polling, and
+              the shared Quartz workspace styles.
 */
 
 "use client";
 
 import { EvidenceDrawer } from "@accounting-ai-agent/ui";
 import type { EvidenceDrawerReference } from "@accounting-ai-agent/ui";
-import Link from "next/link";
 import { use, useCallback, useEffect, useMemo, useRef, useState, type ReactElement } from "react";
 import {
   CloseRunApiError,
@@ -39,7 +38,6 @@ import {
   runReconciliation,
   submitDispositionItem,
 } from "../../../../../../../lib/reconciliation";
-import { QuartzAssistantRail } from "../../../../../../../components/layout/QuartzAssistantRail";
 
 type CloseRunReconciliationPageProps = {
   params: Promise<{
@@ -372,7 +370,6 @@ export default function CloseRunReconciliationPage({
         <section className="quartz-main-panel">
           <div className="quartz-empty-state">Loading reconciliation workspace...</div>
         </section>
-        <QuartzAssistantRail subtitle="Active copilot" />
       </div>
     );
   }
@@ -385,7 +382,6 @@ export default function CloseRunReconciliationPage({
             {errorMessage ?? "The reconciliation workspace could not be loaded."}
           </div>
         </section>
-        <QuartzAssistantRail subtitle="Active copilot" />
       </div>
     );
   }
@@ -397,7 +393,6 @@ export default function CloseRunReconciliationPage({
     reviewWorkspace.reconciliations.length === 0 && reconciliationJob === null ? "run" : "review";
   const approvalDisposition =
     selectedItem === null ? "resolved" : resolveApprovalDisposition(selectedItem);
-  const assistantWorkbenchHref = `/entities/${entityId}/close-runs/${closeRunId}/chat`;
 
   return (
     <div className="quartz-page quartz-workspace-layout">
@@ -916,56 +911,46 @@ export default function CloseRunReconciliationPage({
                 title={evidenceDrawer.title}
               />
             </article>
+            <article className="quartz-card ai">
+              <p className="quartz-card-eyebrow secondary">Variance analysis</p>
+              <h3>
+                {selectedItem
+                  ? `Difference ${formatAmount(selectedItem.differenceAmount)}`
+                  : "Select an exception"}
+              </h3>
+              <p className="form-helper">
+                {selectedItem?.explanation ??
+                  actionableAnomalies[0]?.description ??
+                  "Select a queue row to inspect the current mismatch, supporting records, and next operational step."}
+              </p>
+            </article>
+
+            <article className="quartz-card">
+              <p className="quartz-card-eyebrow">Confidence</p>
+              <div className="quartz-summary-list">
+                <div className="quartz-summary-row">
+                  <span className="quartz-table-secondary">Match quality</span>
+                  <strong>
+                    {selectedMatch?.confidence !== null && selectedMatch?.confidence !== undefined
+                      ? `${Math.round(selectedMatch.confidence * 100)}%`
+                      : "Rule-based"}
+                  </strong>
+                </div>
+                <div className="quartz-summary-row">
+                  <span className="quartz-table-secondary">Next action</span>
+                  <strong>
+                    {reviewWorkspace.queueCounts.needsDecision > 0
+                      ? "Clear queue"
+                      : reviewWorkspace.queueCounts.pendingRunApprovals > 0
+                        ? "Approve runs"
+                        : "Advance to reporting"}
+                  </strong>
+                </div>
+              </div>
+            </article>
           </div>
         </section>
       </section>
-
-      <QuartzAssistantRail
-        footer={
-          <Link className="primary-button" href={assistantWorkbenchHref}>
-            Open Assistant Workbench
-          </Link>
-        }
-        subtitle="Active copilot"
-      >
-        <article className="quartz-card ai">
-          <p className="quartz-card-eyebrow secondary">Variance analysis</p>
-          <h3>
-            {selectedItem
-              ? `Difference ${formatAmount(selectedItem.differenceAmount)}`
-              : "Select an exception"}
-          </h3>
-          <p className="form-helper">
-            {selectedItem?.explanation ??
-              actionableAnomalies[0]?.description ??
-              "The assistant will summarize the selected reconciliation mismatch and explain the next operational step here."}
-          </p>
-        </article>
-
-        <article className="quartz-card">
-          <p className="quartz-card-eyebrow">Confidence</p>
-          <div className="quartz-summary-list">
-            <div className="quartz-summary-row">
-              <span className="quartz-table-secondary">Match quality</span>
-              <strong>
-                {selectedMatch?.confidence !== null && selectedMatch?.confidence !== undefined
-                  ? `${Math.round(selectedMatch.confidence * 100)}%`
-                  : "Rule-based"}
-              </strong>
-            </div>
-            <div className="quartz-summary-row">
-              <span className="quartz-table-secondary">Next action</span>
-              <strong>
-                {reviewWorkspace.queueCounts.needsDecision > 0
-                  ? "Clear queue"
-                  : reviewWorkspace.queueCounts.pendingRunApprovals > 0
-                    ? "Approve runs"
-                    : "Advance to reporting"}
-              </strong>
-            </div>
-          </div>
-        </article>
-      </QuartzAssistantRail>
     </div>
   );
 }

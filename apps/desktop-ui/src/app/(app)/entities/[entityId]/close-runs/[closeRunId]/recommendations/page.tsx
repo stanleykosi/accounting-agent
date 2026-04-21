@@ -32,7 +32,6 @@ import {
   type JournalSummary,
   type RecommendationSummary,
 } from "../../../../../../../lib/recommendations";
-import { QuartzAssistantRail } from "../../../../../../../components/layout/QuartzAssistantRail";
 
 type RecommendationsPageProps = {
   params: Promise<{
@@ -260,7 +259,6 @@ export default function RecommendationsPage({
         <section className="quartz-main-panel">
           <div className="quartz-empty-state">Loading recommendations and journals...</div>
         </section>
-        <QuartzAssistantRail subtitle="Review context" />
       </div>
     );
   }
@@ -273,7 +271,6 @@ export default function RecommendationsPage({
             {errorMessage ?? "The recommendations workspace could not be loaded."}
           </div>
         </section>
-        <QuartzAssistantRail subtitle="Review context" />
       </div>
     );
   }
@@ -281,7 +278,6 @@ export default function RecommendationsPage({
   const closeRun = workspaceData.closeRunWorkspace.closeRun;
   const entityName = workspaceData.closeRunWorkspace.entity.name;
   const recommendationEvidenceHref = `/entities/${entityId}/close-runs/${closeRunId}/documents`;
-  const assistantWorkbenchHref = `/entities/${entityId}/close-runs/${closeRunId}/chat`;
 
   return (
     <div className="quartz-page quartz-workspace-layout">
@@ -732,55 +728,47 @@ export default function RecommendationsPage({
                 </div>
               ) : null}
             </article>
+            <article className="quartz-card ai">
+              <p className="quartz-card-eyebrow secondary">Treatment rationale</p>
+              <h3>
+                {selectedRecommendation
+                  ? formatLabel(selectedRecommendation.recommendation_type)
+                  : "Awaiting recommendation selection"}
+              </h3>
+              <p className="form-helper">
+                {selectedRecommendation?.reasoning_summary ??
+                  "Select a recommendation to inspect the proposed treatment, evidence posture, and control rationale."}
+              </p>
+            </article>
+
+            <article className="quartz-card">
+              <p className="quartz-card-eyebrow">Impact if approved</p>
+              <div className="quartz-reasoning-list">
+                <div className="quartz-reasoning-item">
+                  <strong>
+                    {selectedJournal
+                      ? `Journal ${selectedJournal.journal_number}`
+                      : "Draft pending"}
+                  </strong>
+                  <span className="quartz-mini-meta">
+                    {selectedJournal
+                      ? `Debits ${selectedJournal.total_debits} • Credits ${selectedJournal.total_credits}`
+                      : "Approving the recommendation will produce or refresh the linked draft journal."}
+                  </span>
+                </div>
+                <div className="quartz-reasoning-item">
+                  <strong>Posting posture</strong>
+                  <span className="quartz-mini-meta">
+                    {closeRun.operatingMode.journalPostingAvailable
+                      ? "This close run can post internally or generate an ERP package after approval."
+                      : "Journal posting is restricted for this operating mode until ledger baselines are available."}
+                  </span>
+                </div>
+              </div>
+            </article>
           </div>
         </section>
       </section>
-
-      <QuartzAssistantRail
-        footer={
-          <Link className="primary-button" href={assistantWorkbenchHref}>
-            Open Assistant Workbench
-          </Link>
-        }
-        subtitle="Active copilot"
-      >
-        <article className="quartz-card ai">
-          <p className="quartz-card-eyebrow secondary">Treatment rationale</p>
-          <h3>
-            {selectedRecommendation
-              ? formatLabel(selectedRecommendation.recommendation_type)
-              : "Awaiting recommendation selection"}
-          </h3>
-          <p className="form-helper">
-            {selectedRecommendation?.reasoning_summary ??
-              "The assistant will summarize the selected recommendation, explain its treatment, and surface any review blockers here."}
-          </p>
-        </article>
-
-        <article className="quartz-card">
-          <p className="quartz-card-eyebrow">Impact if approved</p>
-          <div className="quartz-reasoning-list">
-            <div className="quartz-reasoning-item">
-              <strong>
-                {selectedJournal ? `Journal ${selectedJournal.journal_number}` : "Draft pending"}
-              </strong>
-              <span className="quartz-mini-meta">
-                {selectedJournal
-                  ? `Debits ${selectedJournal.total_debits} • Credits ${selectedJournal.total_credits}`
-                  : "Approving the recommendation will produce or refresh the linked draft journal."}
-              </span>
-            </div>
-            <div className="quartz-reasoning-item">
-              <strong>Posting posture</strong>
-              <span className="quartz-mini-meta">
-                {closeRun.operatingMode.journalPostingAvailable
-                  ? "This close run can post internally or generate an ERP package after approval."
-                  : "Journal posting is restricted for this operating mode until ledger baselines are available."}
-              </span>
-            </div>
-          </div>
-        </article>
-      </QuartzAssistantRail>
     </div>
   );
 }

@@ -181,7 +181,6 @@ export default function EntityWorkspacePage({
         <section className="quartz-main-panel">
           <div className="quartz-empty-state">Loading entity home...</div>
         </section>
-        <aside className="quartz-right-rail" />
       </div>
     );
   }
@@ -194,7 +193,6 @@ export default function EntityWorkspacePage({
             {entityErrorMessage ?? "The entity workspace could not be loaded."}
           </div>
         </section>
-        <aside className="quartz-right-rail" />
       </div>
     );
   }
@@ -473,16 +471,8 @@ export default function EntityWorkspacePage({
         </section>
       </section>
 
-      <aside className="quartz-right-rail">
-        <div className="quartz-right-rail-header">
-          <QuartzIcon className="quartz-inline-icon" name="assistant" />
-          <div>
-            <h2 className="quartz-right-rail-title">Omni-Assistant</h2>
-            <p className="quartz-right-rail-subtitle">Entity intelligence</p>
-          </div>
-        </div>
-
-        <div className="quartz-right-rail-body">
+      <section className="quartz-section">
+        <div className="quartz-split-grid quartz-split-grid-halves">
           <article className="quartz-card ai">
             <p
               className={`quartz-card-eyebrow ${attention?.tone === "warning" ? "error" : "secondary"}`}
@@ -527,41 +517,37 @@ export default function EntityWorkspacePage({
               </div>
             </div>
           </article>
-
-          <article className="quartz-card">
-            <p className="quartz-card-eyebrow">Recent activity</p>
-            <div className="quartz-mini-list">
-              {recentActivityEvents.length === 0 ? (
-                <p className="form-helper">
-                  Uploads, approvals, and routing events will appear here.
-                </p>
-              ) : (
-                recentActivityEvents.map((event) => (
-                  <div className="quartz-mini-item" key={event.id}>
-                    <strong>{event.summary}</strong>
-                    <span className="quartz-mini-meta">
-                      {formatCloseRunDateTime(event.created_at)} via {event.source_surface}
-                    </span>
-                  </div>
-                ))
-              )}
-            </div>
-          </article>
         </div>
+      </section>
 
-        <div className="quartz-right-rail-footer">
-          <Link
-            className="primary-button"
-            href={
-              activeCloseRun
-                ? `/entities/${entity.id}/close-runs/${activeCloseRun.id}/chat`
-                : `/entities/${entity.id}`
-            }
-          >
-            {activeCloseRun ? "Open Assistant" : "Stay in Workspace"}
-          </Link>
-        </div>
-      </aside>
+      <section className="quartz-section">
+        <article className="quartz-card">
+          <div className="quartz-section-header quartz-section-header-tight">
+            <h2 className="quartz-section-title">Recent Activity</h2>
+            {primaryWorkspaceHref ? (
+              <Link className="quartz-filter-link" href={primaryWorkspaceHref}>
+                Continue Workflow
+              </Link>
+            ) : null}
+          </div>
+          <div className="quartz-mini-list">
+            {recentActivityEvents.length === 0 ? (
+              <p className="form-helper">
+                Uploads, approvals, and routing events will appear here.
+              </p>
+            ) : (
+              recentActivityEvents.map((event) => (
+                <div className="quartz-mini-item" key={event.id}>
+                  <strong>{event.summary}</strong>
+                  <span className="quartz-mini-meta">
+                    {formatCloseRunDateTime(event.created_at)} via {event.source_surface}
+                  </span>
+                </div>
+              ))
+            )}
+          </div>
+        </article>
+      </section>
     </div>
   );
 }
@@ -692,14 +678,6 @@ function buildEntityTaskItems(
       label: resolvePrimaryTaskLabel(currentPhase),
       title: resolvePrimaryTaskTitle(currentPhase),
       tone: mapAttentionToneToBadge(attention.tone),
-    },
-    {
-      detail: "Ask grounded questions, inspect evidence, or route into the next control point.",
-      href: `/entities/${entityId}/close-runs/${activeCloseRun.id}/chat`,
-      icon: "assistant",
-      label: "Open",
-      title: "Assistant briefing",
-      tone: "neutral",
     },
     {
       detail: "Return to the full period control tower with lifecycle and release controls.",

@@ -159,16 +159,8 @@ export default function EntitiesPage(): ReactElement {
         </section>
       </section>
 
-      <aside className="quartz-right-rail">
-        <div className="quartz-right-rail-header">
-          <QuartzIcon className="quartz-inline-icon" name="assistant" />
-          <div>
-            <h2 className="quartz-right-rail-title">Omni-Assistant</h2>
-            <p className="quartz-right-rail-subtitle">Portfolio guidance</p>
-          </div>
-        </div>
-
-        <div className="quartz-right-rail-body">
+      <section className="quartz-section">
+        <div className="quartz-split-grid quartz-split-grid-halves">
           <article className="quartz-card ai">
             <p className="quartz-card-eyebrow secondary">Portfolio note</p>
             <h3>Keep workspace creation light</h3>
@@ -179,7 +171,12 @@ export default function EntitiesPage(): ReactElement {
           </article>
 
           <article className="quartz-card">
-            <p className="quartz-card-eyebrow">Recent workspaces</p>
+            <div className="quartz-section-header quartz-section-header-tight">
+              <h2 className="quartz-section-title">Recent Workspaces</h2>
+              <Link className="quartz-filter-link" href="/entities/new">
+                Create Workspace
+              </Link>
+            </div>
             <div className="quartz-mini-list">
               {recentEntities.length === 0 ? (
                 <p className="form-helper">New workspaces will appear here after creation.</p>
@@ -196,13 +193,7 @@ export default function EntitiesPage(): ReactElement {
             </div>
           </article>
         </div>
-
-        <div className="quartz-right-rail-footer">
-          <Link className="primary-button" href="/entities/new">
-            Create Workspace
-          </Link>
-        </div>
-      </aside>
+      </section>
     </div>
   );
 }

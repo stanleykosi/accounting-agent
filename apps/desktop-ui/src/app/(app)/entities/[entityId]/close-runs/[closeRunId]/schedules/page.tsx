@@ -214,11 +214,15 @@ export default function CloseRunSchedulesPage({
     );
     setStatusNotes((previous) => ({
       ...previous,
-      [nextDetail.schedule.scheduleType]: nextDetail.schedule.note ?? previous[nextDetail.schedule.scheduleType] ?? "",
+      [nextDetail.schedule.scheduleType]:
+        nextDetail.schedule.note ?? previous[nextDetail.schedule.scheduleType] ?? "",
     }));
   }
 
-  function beginDraft(scheduleType: SupportingScheduleType, row?: SupportingScheduleDetail["rows"][number]): void {
+  function beginDraft(
+    scheduleType: SupportingScheduleType,
+    row?: SupportingScheduleDetail["rows"][number],
+  ): void {
     setEditingRowIds((previous) => ({
       ...previous,
       [scheduleType]: row?.id ?? null,
@@ -283,7 +287,10 @@ export default function CloseRunSchedulesPage({
     }
   }
 
-  async function handleDeleteRow(scheduleType: SupportingScheduleType, rowId: string): Promise<void> {
+  async function handleDeleteRow(
+    scheduleType: SupportingScheduleType,
+    rowId: string,
+  ): Promise<void> {
     setMutatingScheduleTypes((previous) => ({
       ...previous,
       [scheduleType]: true,
@@ -347,7 +354,8 @@ export default function CloseRunSchedulesPage({
       <div className="app-shell">
         <SurfaceCard title="Loading Supporting Schedules" subtitle="Step 06 workspace">
           <p className="form-helper">
-            Loading standalone supporting schedules for fixed assets, loans, accruals, and budget workpapers...
+            Loading standalone supporting schedules for fixed assets, loans, accruals, and budget
+            workpapers...
           </p>
         </SurfaceCard>
       </div>
@@ -365,14 +373,17 @@ export default function CloseRunSchedulesPage({
             feed the Step 6 control gate and the reconciliation engine directly.
           </p>
           <div className="close-run-action-row">
-            <Link className="secondary-button" href={`/entities/${entityId}/close-runs/${closeRunId}`}>
+            <Link
+              className="secondary-button"
+              href={`/entities/${entityId}/close-runs/${closeRunId}`}
+            >
               Close-run overview
             </Link>
-            <Link className="secondary-button" href={`/entities/${entityId}/close-runs/${closeRunId}/reconciliation`}>
+            <Link
+              className="secondary-button"
+              href={`/entities/${entityId}/close-runs/${closeRunId}/reconciliation`}
+            >
               Reconciliation
-            </Link>
-            <Link className="secondary-button" href={`/entities/${entityId}/close-runs/${closeRunId}/chat`}>
-              Agent workbench
             </Link>
           </div>
         </div>
@@ -419,19 +430,27 @@ export default function CloseRunSchedulesPage({
         <div className="dashboard-row-list">
           <article className="dashboard-row">
             <strong className="close-run-row-title">Fixed asset register</strong>
-            <p className="form-helper">Track cost, accumulated depreciation, NBV, and disposal timing.</p>
+            <p className="form-helper">
+              Track cost, accumulated depreciation, NBV, and disposal timing.
+            </p>
           </article>
           <article className="dashboard-row">
             <strong className="close-run-row-title">Loan amortisation</strong>
-            <p className="form-helper">Track payment schedules, principal, interest, and outstanding balances.</p>
+            <p className="form-helper">
+              Track payment schedules, principal, interest, and outstanding balances.
+            </p>
           </article>
           <article className="dashboard-row">
             <strong className="close-run-row-title">Accrual tracker</strong>
-            <p className="form-helper">Track expected accruals, reversals, and the ledger accounts they reconcile to.</p>
+            <p className="form-helper">
+              Track expected accruals, reversals, and the ledger accounts they reconcile to.
+            </p>
           </article>
           <article className="dashboard-row">
             <strong className="close-run-row-title">Budget vs actual</strong>
-            <p className="form-helper">Track budget workpaper lines and optional dimension ownership for variance reporting.</p>
+            <p className="form-helper">
+              Track budget workpaper lines and optional dimension ownership for variance reporting.
+            </p>
           </article>
         </div>
       </SurfaceCard>
@@ -457,10 +476,13 @@ export default function CloseRunSchedulesPage({
                     <div>
                       <strong className="close-run-row-title">{detail.schedule.label}</strong>
                       <p className="close-run-row-meta">
-                        {detail.schedule.rowCount} row(s) • last updated {formatTimestamp(detail.schedule.updatedAt)}
+                        {detail.schedule.rowCount} row(s) • last updated{" "}
+                        {formatTimestamp(detail.schedule.updatedAt)}
                       </p>
                     </div>
-                    <span className="entity-status-chip">{formatScheduleStatus(detail.schedule.status)}</span>
+                    <span className="entity-status-chip">
+                      {formatScheduleStatus(detail.schedule.status)}
+                    </span>
                   </div>
                   <p className="form-helper">{definition.description}</p>
                 </article>
@@ -530,7 +552,10 @@ export default function CloseRunSchedulesPage({
                   <tbody>
                     {detail.rows.length === 0 ? (
                       <tr>
-                        <td colSpan={definition.tableColumns.length + 1} style={emptyTableCellStyle}>
+                        <td
+                          colSpan={definition.tableColumns.length + 1}
+                          style={emptyTableCellStyle}
+                        >
                           No rows have been added yet.
                         </td>
                       </tr>
@@ -593,7 +618,9 @@ export default function CloseRunSchedulesPage({
                         <strong className="close-run-row-title">
                           {editingRowIds[scheduleType] ? "Edit row" : "New row"}
                         </strong>
-                        <p className="close-run-row-meta">Changes return the schedule to in-review status.</p>
+                        <p className="close-run-row-meta">
+                          Changes return the schedule to in-review status.
+                        </p>
                       </div>
                     </div>
 
@@ -611,7 +638,9 @@ export default function CloseRunSchedulesPage({
                           {field.type === "textarea" ? (
                             <textarea
                               className="workspace-textarea"
-                              onChange={(event) => updateDraft(scheduleType, field.key, event.target.value)}
+                              onChange={(event) =>
+                                updateDraft(scheduleType, field.key, event.target.value)
+                              }
                               placeholder={field.placeholder}
                               rows={3}
                               value={draft[field.key] ?? ""}

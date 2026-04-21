@@ -10,8 +10,6 @@ import { getWorkflowPhaseDefinition, type WorkflowPhase } from "@accounting-ai-a
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { use, useEffect, useState, type ReactElement } from "react";
-import { QuartzAssistantRail } from "../../../../../../components/layout/QuartzAssistantRail";
-import { QuartzIcon } from "../../../../../../components/layout/QuartzIcons";
 import {
   approveCloseRun,
   archiveCloseRun,
@@ -96,7 +94,6 @@ export default function CloseRunOverviewPage({
         <section className="quartz-main-panel">
           <div className="quartz-empty-state">Loading close mission control...</div>
         </section>
-        <aside className="quartz-right-rail" />
       </div>
     );
   }
@@ -109,7 +106,6 @@ export default function CloseRunOverviewPage({
             {errorMessage ?? "The requested close run could not be loaded."}
           </div>
         </section>
-        <aside className="quartz-right-rail" />
       </div>
     );
   }
@@ -256,13 +252,9 @@ export default function CloseRunOverviewPage({
         <section className="quartz-section">
           <div className="quartz-section-header">
             <h2 className="quartz-section-title">Workflow Control Table</h2>
-            <Link
-              className="quartz-filter-link"
-              href={`/entities/${entityId}/close-runs/${closeRun.id}/chat`}
-            >
-              <QuartzIcon className="quartz-inline-icon" name="assistant" />
-              Ask Assistant
-            </Link>
+            <span className="quartz-queue-meta">
+              {workstreamRows.length} governed workstream{workstreamRows.length === 1 ? "" : "s"}
+            </span>
           </div>
 
           <div className="quartz-table-shell">
@@ -350,109 +342,102 @@ export default function CloseRunOverviewPage({
             </article>
           </div>
         </section>
+        <section className="quartz-section">
+          <div className="quartz-split-grid quartz-split-grid-halves">
+            <article className="quartz-card ai">
+              <p
+                className={`quartz-card-eyebrow ${attention.tone === "warning" ? "error" : "secondary"}`}
+              >
+                {attention.tone === "warning" ? "Highest priority" : "Current focus"}
+              </p>
+              <h3>{attention.label}</h3>
+              <p className="form-helper">{attention.detail}</p>
+              <div className="quartz-button-row">
+                <Link className="secondary-button" href={primaryWorkstream.href}>
+                  Investigate
+                </Link>
+              </div>
+            </article>
+
+            <article className="quartz-card">
+              <p className="quartz-card-eyebrow">Operating mode</p>
+              <h3>{formatOperatingModeLabel(closeRun.operatingMode.mode)}</h3>
+              <p className="form-helper">{closeRun.operatingMode.description}</p>
+              <div className="quartz-mini-list">
+                <div className="quartz-mini-item">
+                  <span className="quartz-table-secondary">Journal posting</span>
+                  <strong>
+                    {closeRun.operatingMode.journalPostingAvailable ? "Available" : "Restricted"}
+                  </strong>
+                </div>
+                <div className="quartz-mini-item">
+                  <span className="quartz-table-secondary">Reconciliation depth</span>
+                  <strong>
+                    {closeRun.operatingMode.bankReconciliationAvailable ? "Full" : "Evidence-only"}
+                  </strong>
+                </div>
+              </div>
+            </article>
+          </div>
+        </section>
+
+        <section className="quartz-section">
+          <article className="quartz-card">
+            <p className="quartz-card-eyebrow">Lifecycle controls</p>
+            <div className="quartz-button-stack">
+              <button
+                className="secondary-button"
+                disabled={isMutating || nextPhase === null}
+                onClick={() => {
+                  void handleAdvanceCloseRun();
+                }}
+                type="button"
+              >
+                {isMutating
+                  ? "Saving..."
+                  : nextPhase === null
+                    ? "No phase advance available"
+                    : `Advance to ${getWorkflowPhaseDefinition(nextPhase).label}`}
+              </button>
+
+              <button
+                className="secondary-button"
+                disabled={
+                  isMutating || closeRun.status === "approved" || closeRun.status === "archived"
+                }
+                onClick={() => {
+                  void handleApproveCloseRun();
+                }}
+                type="button"
+              >
+                {isMutating ? "Saving..." : "Approve Close Run"}
+              </button>
+
+              <button
+                className="secondary-button"
+                disabled={isMutating || closeRun.status === "archived"}
+                onClick={() => {
+                  void handleArchiveExistingCloseRun();
+                }}
+                type="button"
+              >
+                {isMutating ? "Saving..." : "Archive Close Run"}
+              </button>
+
+              <button
+                className="secondary-button"
+                disabled={isMutating || !canDeleteCloseRun(closeRun)}
+                onClick={() => {
+                  void handleDeleteCloseRun();
+                }}
+                type="button"
+              >
+                {isMutating ? "Saving..." : "Delete Mutable Close"}
+              </button>
+            </div>
+          </article>
+        </section>
       </section>
-
-      <QuartzAssistantRail
-        footer={
-          <Link
-            className="primary-button"
-            href={`/entities/${entityId}/close-runs/${closeRun.id}/chat`}
-          >
-            Open Assistant Workbench
-          </Link>
-        }
-        subtitle="Period intelligence"
-      >
-        <article className="quartz-card ai">
-          <p
-            className={`quartz-card-eyebrow ${attention.tone === "warning" ? "error" : "secondary"}`}
-          >
-            {attention.tone === "warning" ? "Highest priority" : "Current focus"}
-          </p>
-          <h3>{attention.label}</h3>
-          <p className="form-helper">{attention.detail}</p>
-          <div className="quartz-button-row">
-            <Link className="secondary-button" href={primaryWorkstream.href}>
-              Investigate
-            </Link>
-          </div>
-        </article>
-
-        <article className="quartz-card">
-          <p className="quartz-card-eyebrow">Operating mode</p>
-          <h3>{formatOperatingModeLabel(closeRun.operatingMode.mode)}</h3>
-          <p className="form-helper">{closeRun.operatingMode.description}</p>
-          <div className="quartz-mini-list">
-            <div className="quartz-mini-item">
-              <span className="quartz-table-secondary">Journal posting</span>
-              <strong>
-                {closeRun.operatingMode.journalPostingAvailable ? "Available" : "Restricted"}
-              </strong>
-            </div>
-            <div className="quartz-mini-item">
-              <span className="quartz-table-secondary">Reconciliation depth</span>
-              <strong>
-                {closeRun.operatingMode.bankReconciliationAvailable ? "Full" : "Evidence-only"}
-              </strong>
-            </div>
-          </div>
-        </article>
-
-        <article className="quartz-card">
-          <p className="quartz-card-eyebrow">Lifecycle controls</p>
-          <div className="quartz-button-stack">
-            <button
-              className="secondary-button"
-              disabled={isMutating || nextPhase === null}
-              onClick={() => {
-                void handleAdvanceCloseRun();
-              }}
-              type="button"
-            >
-              {isMutating
-                ? "Saving..."
-                : nextPhase === null
-                  ? "No phase advance available"
-                  : `Advance to ${getWorkflowPhaseDefinition(nextPhase).label}`}
-            </button>
-
-            <button
-              className="secondary-button"
-              disabled={
-                isMutating || closeRun.status === "approved" || closeRun.status === "archived"
-              }
-              onClick={() => {
-                void handleApproveCloseRun();
-              }}
-              type="button"
-            >
-              {isMutating ? "Saving..." : "Approve Close Run"}
-            </button>
-
-            <button
-              className="secondary-button"
-              disabled={isMutating || closeRun.status === "archived"}
-              onClick={() => {
-                void handleArchiveExistingCloseRun();
-              }}
-              type="button"
-            >
-              {isMutating ? "Saving..." : "Archive Close Run"}
-            </button>
-
-            <button
-              className="secondary-button"
-              disabled={isMutating || !canDeleteCloseRun(closeRun)}
-              onClick={() => {
-                void handleDeleteCloseRun();
-              }}
-              type="button"
-            >
-              {isMutating ? "Saving..." : "Delete Mutable Close"}
-            </button>
-          </div>
-        </article>
-      </QuartzAssistantRail>
     </div>
   );
 }

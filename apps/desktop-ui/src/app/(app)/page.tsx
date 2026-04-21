@@ -299,16 +299,8 @@ export default function DashboardPage(): ReactElement {
         ) : null}
       </section>
 
-      <aside className="quartz-right-rail">
-        <div className="quartz-right-rail-header">
-          <QuartzIcon className="quartz-inline-icon" name="assistant" />
-          <div>
-            <h2 className="quartz-right-rail-title">Omni-Assistant</h2>
-            <p className="quartz-right-rail-subtitle">Portfolio intelligence</p>
-          </div>
-        </div>
-
-        <div className="quartz-right-rail-body">
+      <section className="quartz-section">
+        <div className="quartz-split-grid quartz-split-grid-halves">
           {featuredRow ? (
             <article className="quartz-card ai">
               <p className="quartz-card-eyebrow error">Variance detected</p>
@@ -327,7 +319,15 @@ export default function DashboardPage(): ReactElement {
                 </Link>
               </div>
             </article>
-          ) : null}
+          ) : (
+            <article className="quartz-card">
+              <p className="quartz-card-eyebrow secondary">Portfolio note</p>
+              <h3>No urgent close-run escalations</h3>
+              <p className="form-helper">
+                New blocker and review signals will surface here as governed workflows progress.
+              </p>
+            </article>
+          )}
 
           <article className="quartz-card">
             <p className="quartz-card-eyebrow secondary">Pace analysis</p>
@@ -338,33 +338,34 @@ export default function DashboardPage(): ReactElement {
               intervention.
             </p>
           </article>
-
-          <article className="quartz-card">
-            <p className="quartz-card-eyebrow">Recent activity</p>
-            <div className="quartz-mini-list">
-              {recentActivityRows.length === 0 ? (
-                <p className="form-helper">Recent approvals and uploads will appear here.</p>
-              ) : (
-                recentActivityRows.map((activity) => (
-                  <div className="quartz-mini-item" key={activity.lastActivity.id}>
-                    <strong>{activity.lastActivity.summary}</strong>
-                    <span className="quartz-mini-meta">
-                      {activity.entityName} •{" "}
-                      {formatCloseRunDateTime(activity.lastActivity.created_at)}
-                    </span>
-                  </div>
-                ))
-              )}
-            </div>
-          </article>
         </div>
+      </section>
 
-        <div className="quartz-right-rail-footer">
-          <Link className="primary-button" href="/entities">
-            Open Entity Directory
-          </Link>
-        </div>
-      </aside>
+      <section className="quartz-section">
+        <article className="quartz-card">
+          <div className="quartz-section-header quartz-section-header-tight">
+            <h2 className="quartz-section-title">Recent Activity</h2>
+            <Link className="quartz-filter-link" href="/entities">
+              Open Entity Directory
+            </Link>
+          </div>
+          <div className="quartz-mini-list">
+            {recentActivityRows.length === 0 ? (
+              <p className="form-helper">Recent approvals and uploads will appear here.</p>
+            ) : (
+              recentActivityRows.map((activity) => (
+                <div className="quartz-mini-item" key={activity.lastActivity.id}>
+                  <strong>{activity.lastActivity.summary}</strong>
+                  <span className="quartz-mini-meta">
+                    {activity.entityName} •{" "}
+                    {formatCloseRunDateTime(activity.lastActivity.created_at)}
+                  </span>
+                </div>
+              ))
+            )}
+          </div>
+        </article>
+      </section>
     </div>
   );
 }
