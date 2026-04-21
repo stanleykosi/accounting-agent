@@ -1,19 +1,31 @@
 /*
-Purpose: Render the close-run document review queue and evidence-first exception workspace.
-Scope: Queue loading, filter and selection state, side-by-side extraction context, and evidence drawer coordination.
-Dependencies: Document review API helpers, queue/detail components, and shared UI surface/evidence primitives.
+Purpose: Render the Quartz inputs workspace for one close run without losing the existing review actions.
+Scope: Queue loading, search/filter state, selected-document review, evidence access, and source-document intake.
+Dependencies: Document review API helpers, upload/review components, and shared Quartz workspace styles.
 */
 
 "use client";
 
-import { EvidenceDrawer, ReviewLayout, SurfaceCard } from "@accounting-ai-agent/ui";
-import { use, useCallback, useEffect, useMemo, useState, type ReactElement } from "react";
+import { EvidenceDrawer } from "@accounting-ai-agent/ui";
+import Link from "next/link";
+import {
+  use,
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type ChangeEvent,
+  type ReactElement,
+} from "react";
 import { DocumentUploadPanel } from "../../../../../../../components/documents/DocumentUploadPanel";
-import { DocumentReviewTable } from "../../../../../../../components/documents/DocumentReviewTable";
 import { ExtractionPanel } from "../../../../../../../components/documents/ExtractionPanel";
+import { QuartzIcon } from "../../../../../../../components/layout/QuartzIcons";
 import {
   deleteSourceDocument,
+  type DocumentReviewFilter,
+  type DocumentReviewQueueItem,
   type DocumentVerificationChecklist,
+  type DocumentReviewWorkspaceData,
   DocumentReviewApiError,
   filterDocumentReviewItems,
   formatPeriodLabel,
@@ -21,8 +33,6 @@ import {
   persistExtractedFieldCorrection,
   readDocumentReviewWorkspace,
   reparseSourceDocument,
-  type DocumentReviewFilter,
-  type DocumentReviewWorkspaceData,
   type EvidenceReference,
 } from "../../../../../../../lib/documents";
 
@@ -40,6 +50,19 @@ type EvidenceDrawerState = {
   title: string;
 };
 
+type QueueFilterDefinition = {
+  filter: DocumentReviewFilter;
+  label: string;
+};
+
+const filterDefinitions: readonly QueueFilterDefinition[] = [
+  { filter: "all", label: "All Documents" },
+  { filter: "low_confidence", label: "Low Confidence" },
+  { filter: "blocked", label: "Blocked" },
+  { filter: "duplicate", label: "Duplicates" },
+  { filter: "wrong_period", label: "Wrong Period" },
+];
+
 const defaultVerificationChecklist: DocumentVerificationChecklist = {
   authorized: false,
   complete: false,
@@ -53,12 +76,6 @@ const defaultEvidenceDrawerState: EvidenceDrawerState = {
   title: "Evidence references",
 };
 
-/**
- * Purpose: Compose the document exception queue workspace for one entity close run.
- * Inputs: Route params containing entity and close-run UUIDs.
- * Outputs: A client-rendered review workspace with queue table, extraction panel, and evidence drawer.
- * Behavior: Loads queue state from same-origin API routes and persists reviewer decisions and corrections through the backend workflow.
- */
 export default function CloseRunDocumentsPage({
   params,
 }: Readonly<CloseRunDocumentsPageProps>): ReactElement {
@@ -73,12 +90,15 @@ export default function CloseRunDocumentsPage({
   const [operationMessage, setOperationMessage] = useState<string | null>(null);
   const [reparseMutationDocumentId, setReparseMutationDocumentId] = useState<string | null>(null);
   const [reviewMutationDocumentId, setReviewMutationDocumentId] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
   const [selectedDocumentId, setSelectedDocumentId] = useState<string | null>(null);
   const [verificationDrafts, setVerificationDrafts] = useState<
     Record<string, DocumentVerificationChecklist>
   >({});
   const [workspaceData, setWorkspaceData] = useState<DocumentReviewWorkspaceData | null>(null);
-  const [evidenceDrawer, setEvidenceDrawer] = useState<EvidenceDrawerState>(defaultEvidenceDrawerState);
+  const [evidenceDrawer, setEvidenceDrawer] = useState<EvidenceDrawerState>(
+    defaultEvidenceDrawerState,
+  );
 
   const refreshWorkspace = useCallback(async (): Promise<void> => {
     await loadWorkspace({
@@ -106,13 +126,31 @@ export default function CloseRunDocumentsPage({
     void refreshWorkspace();
   }, [refreshWorkspace]);
 
-  const visibleItems = useMemo(
+  const filteredItems = useMemo(
     () =>
-      workspaceData === null
-        ? []
-        : filterDocumentReviewItems(workspaceData.items, activeFilter),
+      workspaceData === null ? [] : filterDocumentReviewItems(workspaceData.items, activeFilter),
     [activeFilter, workspaceData],
   );
+
+  const visibleItems = useMemo(() => {
+    const normalizedSearch = searchQuery.trim().toLowerCase();
+    if (normalizedSearch.length === 0) {
+      return filteredItems;
+    }
+
+    return filteredItems.filter((item) =>
+      [
+        item.originalFilename,
+        item.documentType,
+        item.primaryIssueReason ?? "",
+        item.issueTypes.join(" "),
+        resolveDocumentStatusLabel(item),
+      ]
+        .join(" ")
+        .toLowerCase()
+        .includes(normalizedSearch),
+    );
+  }, [filteredItems, searchQuery]);
 
   const selectedDocument = useMemo(() => {
     if (workspaceData === null || selectedDocumentId === null) {
@@ -131,6 +169,7 @@ export default function CloseRunDocumentsPage({
     if (selectedDocument === null) {
       return null;
     }
+
     return (
       verificationDrafts[selectedDocument.id] ?? deriveVerificationChecklistDraft(selectedDocument)
     );
@@ -141,27 +180,25 @@ export default function CloseRunDocumentsPage({
       ? null
       : formatPeriodLabel(workspaceData.closeRunPeriodStart, workspaceData.closeRunPeriodEnd);
 
-  const handleFilterChange = (filter: DocumentReviewFilter): void => {
-    setActiveFilter(filter);
-    if (workspaceData === null) {
-      return;
-    }
+  const readyItemsCount = useMemo(
+    () =>
+      workspaceData?.items.filter(
+        (item) =>
+          !item.hasException &&
+          item.status !== "uploaded" &&
+          item.status !== "processing" &&
+          item.status !== "failed",
+      ).length ?? 0,
+    [workspaceData],
+  );
 
-    const nextVisibleItems = filterDocumentReviewItems(workspaceData.items, filter);
-    if (nextVisibleItems.length === 0) {
-      return;
-    }
-
-    if (!nextVisibleItems.some((item) => item.id === selectedDocumentId)) {
-      setSelectedDocumentId(nextVisibleItems[0]?.id ?? null);
-    }
-  };
+  const nextException = useMemo(
+    () => workspaceData?.items.find((item) => item.hasException) ?? null,
+    [workspaceData],
+  );
 
   const handleReviewAction = useCallback(
-    async (
-      documentId: string,
-      decision: "approved" | "rejected" | "needs_info",
-    ): Promise<void> => {
+    async (documentId: string, decision: "approved" | "rejected" | "needs_info"): Promise<void> => {
       setReviewMutationDocumentId(documentId);
       setOperationMessage(null);
       try {
@@ -174,9 +211,9 @@ export default function CloseRunDocumentsPage({
           noteDraft.trim().length > 0 ? noteDraft : undefined,
           decision === "approved"
             ? (checklist ??
-              deriveVerificationChecklistDraft(
-                workspaceData?.items.find((item) => item.id === documentId) ?? null,
-              ))
+                deriveVerificationChecklistDraft(
+                  workspaceData?.items.find((item) => item.id === documentId) ?? null,
+                ))
             : checklist,
         );
         setOperationMessage(
@@ -193,7 +230,7 @@ export default function CloseRunDocumentsPage({
           return nextDrafts;
         });
         await refreshWorkspace();
-      } catch (error) {
+      } catch (error: unknown) {
         setErrorMessage(resolveDocumentReviewErrorMessage(error));
       } finally {
         setReviewMutationDocumentId(null);
@@ -229,7 +266,7 @@ export default function CloseRunDocumentsPage({
         setOperationMessage("Field correction saved and the document returned to review.");
         setNoteDraft("");
         await refreshWorkspace();
-      } catch (error) {
+      } catch (error: unknown) {
         setErrorMessage(resolveDocumentReviewErrorMessage(error));
       } finally {
         setFieldMutationId(null);
@@ -261,7 +298,9 @@ export default function CloseRunDocumentsPage({
         setOperationMessage(
           result.deletedDocumentCount === 1
             ? `${result.deletedDocumentFilename} was deleted from the close run.`
-            : `${result.deletedDocumentFilename} and ${result.deletedDocumentCount - 1} linked document(s) were deleted.`,
+            : `${result.deletedDocumentFilename} and ${
+                result.deletedDocumentCount - 1
+              } linked document(s) were deleted.`,
         );
         setNoteDraft("");
         setVerificationDrafts((current) => {
@@ -270,7 +309,7 @@ export default function CloseRunDocumentsPage({
           return nextDrafts;
         });
         await refreshWorkspace();
-      } catch (error) {
+      } catch (error: unknown) {
         setErrorMessage(resolveDocumentReviewErrorMessage(error));
       } finally {
         setDeleteMutationDocumentId(null);
@@ -309,7 +348,7 @@ export default function CloseRunDocumentsPage({
           return nextDrafts;
         });
         await refreshWorkspace();
-      } catch (error) {
+      } catch (error: unknown) {
         setErrorMessage(resolveDocumentReviewErrorMessage(error));
       } finally {
         setReparseMutationDocumentId(null);
@@ -355,6 +394,7 @@ export default function CloseRunDocumentsPage({
       if (selectedDocument === null) {
         return;
       }
+
       setVerificationDrafts((current) => ({
         ...current,
         [selectedDocument.id]: {
@@ -366,133 +406,224 @@ export default function CloseRunDocumentsPage({
     [selectedDocument],
   );
 
+  const handleSelectNextException = (): void => {
+    if (nextException === null) {
+      return;
+    }
+
+    setSelectedDocumentId(nextException.id);
+    setActiveFilter("all");
+  };
+
   if (isLoading) {
     return (
-      <div className="app-shell document-review-page">
-        <SurfaceCard title="Loading Document Queue" subtitle="Close run documents">
-          <p className="form-helper">Loading document review queue, exceptions, and evidence context...</p>
-        </SurfaceCard>
+      <div className="quartz-page quartz-workspace-layout">
+        <section className="quartz-main-panel">
+          <div className="quartz-empty-state">Loading inputs workspace...</div>
+        </section>
+        <aside className="quartz-right-rail" />
       </div>
     );
   }
 
   if (workspaceData === null) {
     return (
-      <div className="app-shell document-review-page">
-        <SurfaceCard title="Document Queue Unavailable" subtitle="Close run documents">
+      <div className="quartz-page quartz-workspace-layout">
+        <section className="quartz-main-panel">
           <div className="status-banner danger" role="alert">
             {errorMessage ??
-              "The document review workspace could not be loaded. Verify the entity and close-run IDs, then retry."}
+              "The inputs workspace could not be loaded. Verify the entity and close-run IDs, then retry."}
           </div>
-        </SurfaceCard>
+        </section>
+        <aside className="quartz-right-rail" />
       </div>
     );
   }
 
   return (
-    <div className="app-shell document-review-page">
-      <section className="hero-grid document-review-hero-grid">
-        <div className="hero-copy">
-          <p className="eyebrow">Document Review Queue</p>
-          <h1>Collection exceptions for evidence-first review.</h1>
-          <p className="lede">
-            Resolve low-confidence, blocked, duplicate, and wrong-period documents before the close
-            run advances from Collection into Processing.
-          </p>
-        </div>
-
-        <SurfaceCard title="Close-run Context" subtitle="Collection phase" tone="accent">
-          <dl className="entity-meta-grid document-review-summary-grid">
-            <div>
-              <dt>Close run</dt>
-              <dd>{workspaceData.closeRunId}</dd>
-            </div>
-            <div>
-              <dt>Period</dt>
-              <dd>{closeRunPeriodLabel}</dd>
-            </div>
-            <div>
-              <dt>Status</dt>
-              <dd>{workspaceData.closeRunStatus.replaceAll("_", " ")}</dd>
-            </div>
-            <div>
-              <dt>Confidence threshold</dt>
-              <dd>{Math.round(workspaceData.confidenceThreshold * 100)}%</dd>
-            </div>
-          </dl>
-
-          <div className="document-metric-row">
-            <MetricChip label="Waiting to parse" value={pendingParseCount} />
-            <MetricChip label="Low confidence" value={workspaceData.queueCounts.low_confidence} />
-            <MetricChip label="Blocked" value={workspaceData.queueCounts.blocked} />
-            <MetricChip label="Duplicate" value={workspaceData.queueCounts.duplicate} />
-            <MetricChip label="Wrong period" value={workspaceData.queueCounts.wrong_period} />
+    <div className="quartz-page quartz-workspace-layout">
+      <section className="quartz-main-panel">
+        <header className="quartz-page-header">
+          <div>
+            <p className="quartz-kpi-label">Current Close • {closeRunPeriodLabel}</p>
+            <h1>Inputs Workspace</h1>
+            <p className="quartz-page-subtitle">
+              Evidence-first intake and issue clearing before the close advances into
+              recommendations and journals.
+            </p>
           </div>
-        </SurfaceCard>
-      </section>
+          <div className="quartz-page-toolbar">
+            <label className="quartz-toolbar-search">
+              <QuartzIcon className="quartz-inline-icon" name="filter" />
+              <input
+                className="text-input"
+                onChange={(event: ChangeEvent<HTMLInputElement>) =>
+                  setSearchQuery(event.target.value)
+                }
+                placeholder="Filter or search documents"
+                type="search"
+                value={searchQuery}
+              />
+            </label>
+            <button
+              className="secondary-button"
+              disabled={nextException === null}
+              onClick={handleSelectNextException}
+              type="button"
+            >
+              Review Next Exception
+            </button>
+            <a className="primary-button" href="#source-intake">
+              Upload Evidence
+            </a>
+          </div>
+        </header>
 
-      {errorMessage ? (
-        <div className="status-banner warning" role="status">
-          {errorMessage}
-        </div>
-      ) : null}
+        {errorMessage ? (
+          <div className="status-banner warning quartz-section" role="status">
+            {errorMessage}
+          </div>
+        ) : null}
 
-      {operationMessage ? (
-        <div className="status-banner success" role="status">
-          {operationMessage}
-        </div>
-      ) : null}
+        {operationMessage ? (
+          <div className="status-banner success quartz-section" role="status">
+            {operationMessage}
+          </div>
+        ) : null}
 
-      <SurfaceCard title="Add Source Documents" subtitle="API-managed upload">
-        <DocumentUploadPanel
-          closeRunId={closeRunId}
-          entityId={entityId}
-          onUploadComplete={async () => {
-            await refreshWorkspace();
-          }}
-          pendingParseCount={pendingParseCount}
-        />
-      </SurfaceCard>
+        <section className="quartz-section">
+          <div className="quartz-filter-chip-row">
+            {filterDefinitions.map((definition) => {
+              const isActive = activeFilter === definition.filter;
+              return (
+                <button
+                  className={isActive ? "quartz-filter-chip active" : "quartz-filter-chip"}
+                  key={definition.filter}
+                  onClick={() => setActiveFilter(definition.filter)}
+                  type="button"
+                >
+                  <span>{definition.label}</span>
+                  <strong>{workspaceData.queueCounts[definition.filter]}</strong>
+                </button>
+              );
+            })}
+          </div>
 
-      <ReviewLayout
-        className="document-review-grid"
-        main={
-          <SurfaceCard title="Exception Queue" subtitle="Review table">
-            <DocumentReviewTable
-              activeFilter={activeFilter}
-              items={visibleItems}
-              onFilterChange={handleFilterChange}
-              onOpenEvidence={handleOpenEvidenceForDocument}
-              onSelectDocument={setSelectedDocumentId}
-              queueCounts={workspaceData.queueCounts}
-              reviewMutationDocumentId={reviewMutationDocumentId}
-              selectedDocumentId={selectedDocumentId}
-            />
-          </SurfaceCard>
-        }
-        side={
-          <div className="document-review-side-column">
-            <SurfaceCard title="Extraction Context" subtitle="Selected document">
+          <div className="quartz-table-shell">
+            <table className="quartz-table">
+              <thead>
+                <tr>
+                  <th>Document Name</th>
+                  <th>Type</th>
+                  <th>Intake Date</th>
+                  <th>Amount (NGN)</th>
+                  <th>Status</th>
+                  <th>Source</th>
+                </tr>
+              </thead>
+              <tbody>
+                {visibleItems.length === 0 ? (
+                  <tr>
+                    <td colSpan={6}>
+                      <div className="quartz-empty-state">
+                        No documents match the current search and filter combination.
+                      </div>
+                    </td>
+                  </tr>
+                ) : (
+                  visibleItems.map((item) => {
+                    const amount = extractDocumentAmount(item);
+                    const statusTone = resolveDocumentStatusTone(item);
+                    const isSelected = selectedDocumentId === item.id;
+
+                    return (
+                      <tr
+                        className={[
+                          item.hasException ? "quartz-table-row error" : "",
+                          isSelected ? "quartz-table-row selected" : "",
+                        ]
+                          .filter(Boolean)
+                          .join(" ")}
+                        key={item.id}
+                        onClick={() => setSelectedDocumentId(item.id)}
+                      >
+                        <td>
+                          <div className="quartz-table-primary">{item.originalFilename}</div>
+                          <div className="quartz-table-secondary">
+                            {item.primaryIssueReason ?? "Ready for accountant review"}
+                          </div>
+                        </td>
+                        <td>{formatLabel(item.documentType)}</td>
+                        <td>{formatDocumentDate(item.createdAt)}</td>
+                        <td className="quartz-table-numeric">{amount ?? "-"}</td>
+                        <td>
+                          <span className={`quartz-status-badge ${statusTone}`}>
+                            {resolveDocumentStatusLabel(item)}
+                          </span>
+                        </td>
+                        <td>{formatSourceChannel(item.sourceChannel)}</td>
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section className="quartz-section">
+          <div className="quartz-split-grid quartz-split-grid-halves">
+            <article className="quartz-card">
+              <div className="quartz-section-header quartz-section-header-tight">
+                <h2 className="quartz-section-title">Selected Document Review</h2>
+                {selectedDocument ? (
+                  <button
+                    className="secondary-button"
+                    onClick={() => handleOpenEvidenceForDocument(selectedDocument.id)}
+                    type="button"
+                  >
+                    View Evidence
+                  </button>
+                ) : null}
+              </div>
               <ExtractionPanel
-                key={selectedDocument?.id ?? "no-document-selected"}
                 actionNote={noteDraft}
                 checklist={selectedChecklist}
                 deleteMutationDocumentId={deleteMutationDocumentId}
                 fieldMutationId={fieldMutationId}
                 onChecklistChange={handleChecklistChange}
                 onDeleteDocument={handleDeleteDocument}
-                onReparseDocument={handleReparseDocument}
-                onOpenEvidence={handleOpenEvidence}
                 onFieldCorrection={handleFieldCorrection}
                 onNoteChange={setNoteDraft}
+                onOpenEvidence={handleOpenEvidence}
+                onReparseDocument={handleReparseDocument}
                 onReviewAction={handleReviewAction}
                 reparseMutationDocumentId={reparseMutationDocumentId}
                 reviewMutationDocumentId={reviewMutationDocumentId}
                 selectedDocument={selectedDocument}
               />
-            </SurfaceCard>
+            </article>
 
-            <SurfaceCard title="Evidence Drawer" subtitle="Source-backed references">
+            <article className="quartz-card" id="source-intake">
+              <div className="quartz-section-header quartz-section-header-tight">
+                <h2 className="quartz-section-title">Source Intake & Evidence</h2>
+                <Link
+                  className="quartz-filter-link"
+                  href={`/entities/${entityId}/close-runs/${closeRunId}/chat`}
+                >
+                  <QuartzIcon className="quartz-inline-icon" name="assistant" />
+                  Assistant
+                </Link>
+              </div>
+              <DocumentUploadPanel
+                closeRunId={closeRunId}
+                entityId={entityId}
+                onUploadComplete={async () => {
+                  await refreshWorkspace();
+                }}
+                pendingParseCount={pendingParseCount}
+              />
+              <div className="quartz-divider quartz-section" />
               <EvidenceDrawer
                 emptyMessage="Select a field or queue row to open source-backed evidence references."
                 isOpen={evidenceDrawer.isOpen}
@@ -501,26 +632,79 @@ export default function CloseRunDocumentsPage({
                 sourceLabel={evidenceDrawer.sourceLabel}
                 title={evidenceDrawer.title}
               />
-              {!evidenceDrawer.isOpen ? (
-                <p className="form-helper">
-                  Open evidence from the queue or extraction panel to inspect source metadata and
-                  confidence traces.
-                </p>
-              ) : null}
-            </SurfaceCard>
+            </article>
           </div>
-        }
-      />
+        </section>
+      </section>
+
+      <aside className="quartz-right-rail">
+        <div className="quartz-right-rail-header">
+          <QuartzIcon className="quartz-inline-icon" name="assistant" />
+          <div>
+            <h2 className="quartz-right-rail-title">Omni-Assistant</h2>
+            <p className="quartz-right-rail-subtitle">AI insights & actions</p>
+          </div>
+        </div>
+
+        <div className="quartz-right-rail-body">
+          <article className="quartz-card ai">
+            <p className="quartz-card-eyebrow secondary">Document intelligence</p>
+            <h3>Collection is almost clear</h3>
+            <p className="form-helper">
+              {readyItemsCount} items are ready to move into recommendations and journals.{" "}
+              {workspaceData.queueCounts.blocked} remain blocked and{" "}
+              {workspaceData.queueCounts.wrong_period} are outside the period.
+            </p>
+            <div className="quartz-mini-list">
+              <div className="quartz-mini-item">
+                <strong>{workspaceData.queueCounts.low_confidence} Low confidence</strong>
+                <span className="quartz-mini-meta">Extraction needs reviewer confirmation.</span>
+              </div>
+              <div className="quartz-mini-item">
+                <strong>{workspaceData.queueCounts.duplicate} Duplicates</strong>
+                <span className="quartz-mini-meta">
+                  Remove duplicate evidence before the workflow advances.
+                </span>
+              </div>
+            </div>
+          </article>
+
+          <article className="quartz-card">
+            <p className="quartz-card-eyebrow">Current focus</p>
+            <h3>{selectedDocument?.originalFilename ?? "Select a document"}</h3>
+            <p className="form-helper">
+              {selectedDocument
+                ? (selectedDocument.primaryIssueReason ??
+                  "This document is ready for accountant review.")
+                : "Choose a document row to inspect evidence, corrections, and review decisions."}
+            </p>
+            {selectedDocument ? (
+              <div className="quartz-button-row">
+                <button
+                  className="secondary-button"
+                  onClick={() => handleOpenEvidenceForDocument(selectedDocument.id)}
+                  type="button"
+                >
+                  Open Evidence
+                </button>
+              </div>
+            ) : null}
+          </article>
+        </div>
+
+        <div className="quartz-right-rail-footer">
+          <Link
+            className="primary-button"
+            href={`/entities/${entityId}/close-runs/${closeRunId}/chat`}
+          >
+            Open Assistant Workbench
+          </Link>
+        </div>
+      </aside>
     </div>
   );
 }
 
-/**
- * Purpose: Fetch and hydrate the document review workspace state for the current route.
- * Inputs: Route identifiers and page-level state update callbacks.
- * Outputs: None; callers receive deterministic state updates through provided callbacks.
- * Behavior: Captures API failures as operator-safe messages while preserving fail-fast diagnostics.
- */
 async function loadWorkspace(options: {
   closeRunId: string;
   entityId: string;
@@ -545,12 +729,6 @@ async function loadWorkspace(options: {
   }
 }
 
-/**
- * Purpose: Pick a stable initial selection for the queue details pane.
- * Inputs: Fully loaded workspace data.
- * Outputs: The document ID that should be focused first, or null when the queue is empty.
- * Behavior: Prioritizes exception rows so reviewers immediately land on actionable items.
- */
 function selectInitialDocumentId(workspace: DocumentReviewWorkspaceData): string | null {
   return workspace.items.find((item) => item.hasException)?.id ?? workspace.items[0]?.id ?? null;
 }
@@ -560,31 +738,11 @@ function resolveDocumentReviewErrorMessage(error: unknown): string {
     if (error.code === "workflow_phase_locked") {
       return "Document review actions are only available during Collection. Rewind the close run to Collection or delete the mutable run to start over.";
     }
+
     return error.message;
   }
 
   return "The requested document review action could not be completed. Retry after refreshing the workspace.";
-}
-
-/**
- * Purpose: Render a compact numeric metric chip for queue summary cards.
- * Inputs: Metric label and integer count value.
- * Outputs: A short inline metric element used in the close-run context card.
- * Behavior: Keeps summary values compact without introducing additional dependency components.
- */
-function MetricChip({
-  label,
-  value,
-}: Readonly<{
-  label: string;
-  value: number;
-}>): ReactElement {
-  return (
-    <div className="document-metric-chip">
-      <span>{label}</span>
-      <strong>{value}</strong>
-    </div>
-  );
 }
 
 function deriveVerificationChecklistDraft(
@@ -593,6 +751,7 @@ function deriveVerificationChecklistDraft(
   if (document === null) {
     return defaultVerificationChecklist;
   }
+
   if (document.status === "approved") {
     return {
       authorized: true,
@@ -600,7 +759,102 @@ function deriveVerificationChecklistDraft(
       period: true,
     };
   }
+
   return {
     ...defaultVerificationChecklist,
   };
+}
+
+function resolveDocumentStatusTone(
+  item: Readonly<DocumentReviewQueueItem>,
+): "error" | "neutral" | "success" | "warning" {
+  if (item.issueSeverity === "blocking") {
+    return "error";
+  }
+  if (item.hasException) {
+    return "warning";
+  }
+  if (item.status === "approved") {
+    return "success";
+  }
+  return "neutral";
+}
+
+function resolveDocumentStatusLabel(item: Readonly<DocumentReviewQueueItem>): string {
+  if (item.issueTypes.length > 0) {
+    return formatLabel(item.issueTypes[0] ?? item.status);
+  }
+
+  switch (item.status) {
+    case "uploaded":
+      return "Queued";
+    case "processing":
+      return "Processing";
+    case "approved":
+      return "Ready";
+    case "failed":
+      return "Failed";
+    default:
+      return formatLabel(item.status);
+  }
+}
+
+function extractDocumentAmount(item: Readonly<DocumentReviewQueueItem>): string | null {
+  const candidateField = item.extractedFields.find((field) =>
+    ["amount", "total", "gross", "net"].some((keyword) =>
+      `${field.fieldName} ${field.label}`.toLowerCase().includes(keyword),
+    ),
+  );
+
+  if (candidateField === undefined) {
+    return item.latestExtraction?.autoTransactionMatch?.matchedAmount ?? null;
+  }
+
+  const candidateValue =
+    typeof candidateField.rawValue === "number"
+      ? candidateField.rawValue
+      : parseNumber(candidateField.value);
+
+  if (candidateValue === null) {
+    return candidateField.value;
+  }
+
+  return new Intl.NumberFormat("en-NG", {
+    maximumFractionDigits: 2,
+    minimumFractionDigits: 2,
+  }).format(candidateValue);
+}
+
+function parseNumber(value: string): number | null {
+  const normalized = value.replaceAll(",", "").replace(/[^\d.-]/gu, "");
+  if (normalized.trim().length === 0) {
+    return null;
+  }
+
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function formatLabel(value: string): string {
+  return value
+    .split("_")
+    .map((part) => part.slice(0, 1).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+function formatDocumentDate(value: string): string {
+  return new Intl.DateTimeFormat("en-NG", {
+    dateStyle: "medium",
+  }).format(new Date(value));
+}
+
+function formatSourceChannel(value: DocumentReviewQueueItem["sourceChannel"]): string {
+  switch (value) {
+    case "api_import":
+      return "API Import";
+    case "manual_entry":
+      return "Manual";
+    case "upload":
+      return "Upload";
+  }
 }

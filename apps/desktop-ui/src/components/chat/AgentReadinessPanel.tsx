@@ -20,10 +20,7 @@ import {
   type ReactElement,
 } from "react";
 import { CoaApiError, uploadManualCoa } from "../../lib/coa";
-import {
-  DocumentReviewApiError,
-  uploadSourceDocuments,
-} from "../../lib/documents";
+import { DocumentReviewApiError, uploadSourceDocuments } from "../../lib/documents";
 import type { ChatThreadWorkspace } from "../../lib/chat";
 
 type AgentReadinessPanelProps = {
@@ -51,10 +48,7 @@ export function AgentReadinessPanel({
   const documentInputRef = useRef<HTMLInputElement | null>(null);
 
   const accountPreview = useMemo(
-    () =>
-      (workspace?.coa.accounts ?? [])
-        .filter((account) => account.is_postable)
-        .slice(0, 8),
+    () => (workspace?.coa.accounts ?? []).filter((account) => account.is_postable).slice(0, 8),
     [workspace],
   );
 
@@ -160,7 +154,9 @@ export function AgentReadinessPanel({
         <MetricTile label="Parsed" value={String(readiness.parsed_document_count)} />
       </div>
 
-      {coa.summary ? <Banner tone={showCoaUpload ? "warning" : "info"}>{coa.summary}</Banner> : null}
+      {coa.summary ? (
+        <Banner tone={showCoaUpload ? "warning" : "info"}>{coa.summary}</Banner>
+      ) : null}
 
       {readiness.blockers.length > 0 ? (
         <NoticeCard title="Blocked until resolved" tone="danger">
@@ -204,16 +200,20 @@ export function AgentReadinessPanel({
         <section style={sectionStyle}>
           <div style={sectionHeaderStyle}>
             <div>
-              <p style={sectionEyebrowStyle}>Step 06</p>
-              <h4 style={sectionTitleStyle}>Supporting schedule workspace</h4>
+              <p style={sectionEyebrowStyle}>Next Workspace</p>
+              <h4 style={sectionTitleStyle}>Recommendations and journals</h4>
             </div>
-            <Link href={`/entities/${entityId}/close-runs/${closeRunId}/schedules`} style={sectionLinkStyle}>
-              Open schedules
+            <Link
+              href={`/entities/${entityId}/close-runs/${closeRunId}/recommendations`}
+              style={sectionLinkStyle}
+            >
+              Open journals
             </Link>
           </div>
           <p style={helperTextStyle}>
-            Fixed assets, loan amortisation, accrual tracker, and budget-vs-actual workpapers are
-            maintained in the Step 06 editor and now feed the reconciliation gate directly.
+            Once evidence is complete and document exceptions are cleared, continue into
+            Recommendations and Journals to review AI-proposed accounting treatment before
+            reconciliation starts.
           </p>
         </section>
       ) : null}
@@ -231,9 +231,13 @@ export function AgentReadinessPanel({
               <article key={phase.phase} style={phaseCardStyle}>
                 <div style={phaseHeaderStyle}>
                   <strong style={phaseLabelStyle}>{phase.label}</strong>
-                  <span style={phaseStatusPillStyle(phase.status)}>{formatPhaseStatus(phase.status)}</span>
+                  <span style={phaseStatusPillStyle(phase.status)}>
+                    {formatPhaseStatus(phase.status)}
+                  </span>
                 </div>
-                {phase.blocking_reason ? <p style={phaseReasonStyle}>{phase.blocking_reason}</p> : null}
+                {phase.blocking_reason ? (
+                  <p style={phaseReasonStyle}>{phase.blocking_reason}</p>
+                ) : null}
                 {phase.completed_at ? (
                   <p style={phaseMetaStyle}>Completed {formatTimestamp(phase.completed_at)}</p>
                 ) : null}
@@ -293,7 +297,10 @@ export function AgentReadinessPanel({
               <p style={sectionEyebrowStyle}>Source Intake</p>
               <h4 style={sectionTitleStyle}>Upload source documents</h4>
             </div>
-            <Link href={`/entities/${entityId}/close-runs/${closeRunId}/documents`} style={sectionLinkStyle}>
+            <Link
+              href={`/entities/${entityId}/close-runs/${closeRunId}/documents`}
+              style={sectionLinkStyle}
+            >
               Open document queue
             </Link>
           </div>
@@ -453,12 +460,28 @@ function formatTimestamp(value: string): string {
 function phaseStatusPillStyle(status: string): CSSProperties {
   const palette =
     status === "completed"
-      ? { background: "rgba(62, 163, 118, 0.18)", color: "#8FDBC5" }
+      ? {
+          background: "rgba(27, 67, 50, 0.08)",
+          border: "1px solid rgba(27, 67, 50, 0.18)",
+          color: "var(--quartz-success)",
+        }
       : status === "blocked"
-        ? { background: "rgba(217, 83, 79, 0.16)", color: "#FFB4AE" }
+        ? {
+            background: "rgba(255, 218, 214, 0.72)",
+            border: "1px solid rgba(123, 45, 38, 0.22)",
+            color: "var(--quartz-error)",
+          }
         : status === "in_progress"
-          ? { background: "rgba(76, 139, 245, 0.18)", color: "#9BC2FF" }
-          : { background: "rgba(183, 195, 214, 0.12)", color: "#D7E0ED" };
+          ? {
+              background: "rgba(69, 97, 123, 0.08)",
+              border: "1px solid rgba(69, 97, 123, 0.24)",
+              color: "var(--quartz-secondary)",
+            }
+          : {
+              background: "var(--quartz-surface)",
+              border: "1px solid var(--quartz-border)",
+              color: "var(--quartz-muted)",
+            };
   return {
     ...palette,
     borderRadius: 999,
@@ -473,40 +496,40 @@ function bannerStyle(tone: "danger" | "info" | "success" | "warning"): CSSProper
   switch (tone) {
     case "danger":
       return {
-        background: "rgba(217, 83, 79, 0.16)",
-        border: "1px solid rgba(217, 83, 79, 0.3)",
+        background: "rgba(255, 218, 214, 0.72)",
+        border: "1px solid rgba(123, 45, 38, 0.22)",
         borderRadius: 12,
-        color: "#FFB4AE",
+        color: "var(--quartz-error)",
         fontSize: 13,
         lineHeight: "20px",
         padding: "10px 12px",
       };
     case "success":
       return {
-        background: "rgba(62, 163, 118, 0.16)",
-        border: "1px solid rgba(62, 163, 118, 0.28)",
+        background: "rgba(27, 67, 50, 0.08)",
+        border: "1px solid rgba(27, 67, 50, 0.18)",
         borderRadius: 12,
-        color: "#8FDBC5",
+        color: "var(--quartz-success)",
         fontSize: 13,
         lineHeight: "20px",
         padding: "10px 12px",
       };
     case "warning":
       return {
-        background: "rgba(231, 169, 59, 0.16)",
-        border: "1px solid rgba(231, 169, 59, 0.28)",
+        background: "rgba(255, 251, 235, 0.92)",
+        border: "1px solid rgba(142, 115, 75, 0.22)",
         borderRadius: 12,
-        color: "#FFD38D",
+        color: "var(--quartz-gold)",
         fontSize: 13,
         lineHeight: "20px",
         padding: "10px 12px",
       };
     default:
       return {
-        background: "rgba(76, 139, 245, 0.16)",
-        border: "1px solid rgba(76, 139, 245, 0.28)",
+        background: "rgba(69, 97, 123, 0.08)",
+        border: "1px solid rgba(69, 97, 123, 0.24)",
         borderRadius: 12,
-        color: "#A8CBFF",
+        color: "var(--quartz-secondary)",
         fontSize: 13,
         lineHeight: "20px",
         padding: "10px 12px",
@@ -520,7 +543,7 @@ const panelStackStyle: CSSProperties = {
 };
 
 const emptyStateStyle: CSSProperties = {
-  color: "#AAB7CA",
+  color: "var(--quartz-muted)",
   fontSize: 13,
   lineHeight: "20px",
   margin: 0,
@@ -533,8 +556,8 @@ const metricGridStyle: CSSProperties = {
 };
 
 const metricTileStyle: CSSProperties = {
-  background: "#152033",
-  border: "1px solid #24324A",
+  background: "var(--quartz-surface-low)",
+  border: "1px solid var(--quartz-border)",
   borderRadius: 14,
   display: "grid",
   gap: 6,
@@ -542,7 +565,7 @@ const metricTileStyle: CSSProperties = {
 };
 
 const metricLabelStyle: CSSProperties = {
-  color: "#8FA2BF",
+  color: "var(--quartz-muted)",
   fontSize: 11,
   fontWeight: 700,
   letterSpacing: "0.06em",
@@ -550,15 +573,15 @@ const metricLabelStyle: CSSProperties = {
 };
 
 const metricValueStyle: CSSProperties = {
-  color: "#F4F7FB",
+  color: "var(--quartz-ink)",
   fontSize: 14,
   fontWeight: 700,
   textTransform: "capitalize",
 };
 
 const dangerNoticeStyle: CSSProperties = {
-  background: "#25171B",
-  border: "1px solid rgba(217, 83, 79, 0.28)",
+  background: "rgba(255, 218, 214, 0.72)",
+  border: "1px solid rgba(123, 45, 38, 0.22)",
   borderRadius: 14,
   display: "grid",
   gap: 10,
@@ -566,8 +589,8 @@ const dangerNoticeStyle: CSSProperties = {
 };
 
 const warningNoticeStyle: CSSProperties = {
-  background: "#241D11",
-  border: "1px solid rgba(231, 169, 59, 0.28)",
+  background: "rgba(255, 251, 235, 0.92)",
+  border: "1px solid rgba(142, 115, 75, 0.22)",
   borderRadius: 14,
   display: "grid",
   gap: 10,
@@ -575,21 +598,21 @@ const warningNoticeStyle: CSSProperties = {
 };
 
 const noticeTitleStyle: CSSProperties = {
-  color: "#F4F7FB",
+  color: "var(--quartz-ink)",
   fontSize: 13,
   fontWeight: 700,
 };
 
 const noticeItemStyle: CSSProperties = {
-  color: "#D7E0ED",
+  color: "var(--quartz-ink)",
   fontSize: 13,
   lineHeight: "20px",
   margin: 0,
 };
 
 const sectionStyle: CSSProperties = {
-  background: "#101828",
-  border: "1px solid #24324A",
+  background: "var(--quartz-surface)",
+  border: "1px solid var(--quartz-border)",
   borderRadius: 16,
   display: "grid",
   gap: 12,
@@ -604,7 +627,7 @@ const sectionHeaderStyle: CSSProperties = {
 };
 
 const sectionEyebrowStyle: CSSProperties = {
-  color: "#7EBCFF",
+  color: "var(--quartz-secondary)",
   fontSize: 11,
   fontWeight: 700,
   letterSpacing: "0.08em",
@@ -613,14 +636,14 @@ const sectionEyebrowStyle: CSSProperties = {
 };
 
 const sectionTitleStyle: CSSProperties = {
-  color: "#F4F7FB",
+  color: "var(--quartz-ink)",
   fontSize: 15,
   fontWeight: 700,
   margin: "4px 0 0",
 };
 
 const sectionLinkStyle: CSSProperties = {
-  color: "#9BC2FF",
+  color: "var(--quartz-secondary)",
   fontSize: 12,
   fontWeight: 600,
   textDecoration: "none",
@@ -628,15 +651,15 @@ const sectionLinkStyle: CSSProperties = {
 };
 
 const helperTextStyle: CSSProperties = {
-  color: "#AAB7CA",
+  color: "var(--quartz-muted)",
   fontSize: 13,
   lineHeight: "20px",
   margin: 0,
 };
 
 const inputShellStyle: CSSProperties = {
-  background: "#152033",
-  border: "1px dashed #35507A",
+  background: "var(--quartz-surface-low)",
+  border: "1px dashed var(--quartz-border-strong)",
   borderRadius: 14,
   display: "grid",
   gap: 8,
@@ -644,13 +667,13 @@ const inputShellStyle: CSSProperties = {
 };
 
 const inputLabelStyle: CSSProperties = {
-  color: "#D7E0ED",
+  color: "var(--quartz-ink)",
   fontSize: 12,
   fontWeight: 600,
 };
 
 const fileInputStyle: CSSProperties = {
-  color: "#B7C3D6",
+  color: "var(--quartz-muted)",
   fontSize: 12,
 };
 
@@ -661,8 +684,8 @@ const fileListStyle: CSSProperties = {
 
 const fileTokenStyle: CSSProperties = {
   alignItems: "center",
-  background: "#152033",
-  border: "1px solid #24324A",
+  background: "var(--quartz-surface-low)",
+  border: "1px solid var(--quartz-border)",
   borderRadius: 12,
   display: "flex",
   gap: 8,
@@ -671,7 +694,7 @@ const fileTokenStyle: CSSProperties = {
 };
 
 const fileNameStyle: CSSProperties = {
-  color: "#F4F7FB",
+  color: "var(--quartz-ink)",
   fontSize: 12,
   overflow: "hidden",
   textOverflow: "ellipsis",
@@ -679,7 +702,7 @@ const fileNameStyle: CSSProperties = {
 };
 
 const fileSizeStyle: CSSProperties = {
-  color: "#8FA2BF",
+  color: "var(--quartz-muted)",
   fontSize: 11,
   flexShrink: 0,
 };
@@ -690,10 +713,10 @@ const actionRowStyle: CSSProperties = {
 };
 
 const primaryButtonStyle: CSSProperties = {
-  background: "linear-gradient(135deg, #4C8BF5 0%, #3569D3 100%)",
-  border: "none",
+  background: "var(--quartz-primary)",
+  border: "1px solid var(--quartz-primary)",
   borderRadius: 12,
-  color: "#FFFFFF",
+  color: "var(--quartz-primary-contrast)",
   cursor: "pointer",
   fontSize: 13,
   fontWeight: 700,
@@ -706,18 +729,18 @@ const listStackStyle: CSSProperties = {
 };
 
 const nextActionCardStyle: CSSProperties = {
-  background: "#152033",
-  border: "1px solid #24324A",
+  background: "var(--quartz-surface-low)",
+  border: "1px solid var(--quartz-border)",
   borderRadius: 12,
-  color: "#D7E0ED",
+  color: "var(--quartz-ink)",
   fontSize: 13,
   lineHeight: "20px",
   padding: "10px 12px",
 };
 
 const phaseCardStyle: CSSProperties = {
-  background: "#152033",
-  border: "1px solid #24324A",
+  background: "var(--quartz-surface-low)",
+  border: "1px solid var(--quartz-border)",
   borderRadius: 12,
   display: "grid",
   gap: 8,
@@ -732,19 +755,19 @@ const phaseHeaderStyle: CSSProperties = {
 };
 
 const phaseLabelStyle: CSSProperties = {
-  color: "#F4F7FB",
+  color: "var(--quartz-ink)",
   fontSize: 13,
 };
 
 const phaseReasonStyle: CSSProperties = {
-  color: "#D7E0ED",
+  color: "var(--quartz-muted)",
   fontSize: 12,
   lineHeight: "18px",
   margin: 0,
 };
 
 const phaseMetaStyle: CSSProperties = {
-  color: "#8FA2BF",
+  color: "var(--quartz-muted)",
   fontSize: 11,
   margin: 0,
 };
@@ -756,8 +779,8 @@ const accountGridStyle: CSSProperties = {
 };
 
 const accountCardStyle: CSSProperties = {
-  background: "#152033",
-  border: "1px solid #24324A",
+  background: "var(--quartz-surface-low)",
+  border: "1px solid var(--quartz-border)",
   borderRadius: 12,
   display: "grid",
   gap: 4,
@@ -765,18 +788,18 @@ const accountCardStyle: CSSProperties = {
 };
 
 const accountCodeStyle: CSSProperties = {
-  color: "#F4F7FB",
+  color: "var(--quartz-ink)",
   fontSize: 12,
 };
 
 const accountNameStyle: CSSProperties = {
-  color: "#D7E0ED",
+  color: "var(--quartz-muted)",
   fontSize: 12,
   lineHeight: "18px",
 };
 
 const accountMetaStyle: CSSProperties = {
-  color: "#8FA2BF",
+  color: "var(--quartz-muted)",
   fontSize: 11,
   textTransform: "capitalize",
 };

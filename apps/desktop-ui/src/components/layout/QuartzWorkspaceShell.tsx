@@ -207,6 +207,20 @@ function resolveBreadcrumbs(pathname: string): readonly { href: string; label: s
     ];
   }
 
+  const closeRunWorkspaceLabel = resolveCloseRunWorkspaceLabel(pathname);
+  if (closeRunWorkspaceLabel !== null) {
+    const closeRunRootPath = pathname.replace(
+      /\/(documents|recommendations|reconciliation|reports|exports)$/u,
+      "",
+    );
+    return [
+      { href: "/", label: "Portfolio Overview" },
+      { href: "/entities", label: "Entities" },
+      { href: closeRunRootPath, label: "Close Mission Control" },
+      { href: pathname, label: closeRunWorkspaceLabel },
+    ];
+  }
+
   if (pathname.includes("/close-runs/")) {
     return [
       { href: "/", label: "Portfolio Overview" },
@@ -224,6 +238,30 @@ function resolveBreadcrumbs(pathname: string): readonly { href: string; label: s
   }
 
   return [{ href: "/", label: "Portfolio Overview" }];
+}
+
+function resolveCloseRunWorkspaceLabel(pathname: string): string | null {
+  if (/\/close-runs\/[^/]+\/documents$/u.test(pathname)) {
+    return "Inputs Workspace";
+  }
+
+  if (/\/close-runs\/[^/]+\/recommendations$/u.test(pathname)) {
+    return "Recommendations & Journals";
+  }
+
+  if (/\/close-runs\/[^/]+\/reconciliation$/u.test(pathname)) {
+    return "Reconciliation";
+  }
+
+  if (/\/close-runs\/[^/]+\/reports$/u.test(pathname)) {
+    return "Reporting & Commentary";
+  }
+
+  if (/\/close-runs\/[^/]+\/exports$/u.test(pathname)) {
+    return "Sign-Off & Release";
+  }
+
+  return null;
 }
 
 function resolveWorkspaceAction(

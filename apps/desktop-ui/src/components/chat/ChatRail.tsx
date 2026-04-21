@@ -44,11 +44,7 @@ export type ChatRailProps = {
   presentation?: "rail" | "workspace";
 };
 
-export function ChatRail({
-  closeRunId,
-  entityId,
-  presentation = "rail",
-}: Readonly<ChatRailProps>) {
+export function ChatRail({ closeRunId, entityId, presentation = "rail" }: Readonly<ChatRailProps>) {
   const [threads, setThreads] = useState<ChatThreadSummary[]>([]);
   const [selectedThread, setSelectedThread] = useState<ChatThreadSummary | null>(null);
   const [messages, setMessages] = useState<ChatMessageRecord[]>([]);
@@ -186,83 +182,84 @@ export function ChatRail({
   );
 
   const grounding = selectedThread?.grounding ?? workspace?.grounding ?? null;
-  const panel = presentation === "workspace" ? (
-    <div style={workbenchShellStyle}>
-      <ThreadSidebar
+  const panel =
+    presentation === "workspace" ? (
+      <div style={workbenchShellStyle}>
+        <ThreadSidebar
+          deletingThreadId={deletingThreadId}
+          threads={threads}
+          onDeleteThread={(thread) => {
+            void handleDeleteThread(thread);
+          }}
+          selectedThreadId={selectedThread?.id ?? null}
+          onCreateThread={() => {
+            void handleCreateThread();
+          }}
+          onSelectThread={(thread) => {
+            void loadThreadWorkspace(thread);
+          }}
+        />
+        <section style={conversationPaneStyle}>
+          <ConversationHeader
+            error={error}
+            grounding={grounding}
+            memorySummary={workspace?.memory.progress_summary ?? null}
+          />
+          <MessageList isLoading={isLoading} messages={messages} />
+          <ActionComposer
+            closeRunId={selectedThread?.close_run_id ?? closeRunId}
+            disabled={isLoading || selectedThread === null}
+            entityId={entityId}
+            onActionStateChange={() => {
+              void refreshSelectedThread();
+            }}
+            onMessageSent={() => {
+              void refreshSelectedThread();
+            }}
+            threadId={selectedThread?.id ?? ""}
+            workspace={workspace}
+          />
+          <div ref={messagesEndRef} />
+        </section>
+        <AgentWorkspacePanel
+          closeRunId={closeRunId}
+          entityId={entityId}
+          onRefresh={() => {
+            void refreshSelectedThread();
+          }}
+          workspace={workspace}
+        />
+      </div>
+    ) : (
+      <CompactRail
+        closeRunId={closeRunId}
+        entityId={entityId}
+        error={error}
+        grounding={grounding}
+        isExpanded={isExpanded}
+        isLoading={isLoading}
+        messages={messages}
         deletingThreadId={deletingThreadId}
-        threads={threads}
+        onCollapse={() => setIsExpanded(false)}
+        onCreateThread={() => {
+          void handleCreateThread();
+        }}
         onDeleteThread={(thread) => {
           void handleDeleteThread(thread);
         }}
-        selectedThreadId={selectedThread?.id ?? null}
-        onCreateThread={() => {
-          void handleCreateThread();
+        onExpand={() => setIsExpanded(true)}
+        onRefresh={() => {
+          void refreshSelectedThread();
         }}
         onSelectThread={(thread) => {
           void loadThreadWorkspace(thread);
         }}
-      />
-      <section style={conversationPaneStyle}>
-        <ConversationHeader
-          error={error}
-          grounding={grounding}
-          memorySummary={workspace?.memory.progress_summary ?? null}
-        />
-        <MessageList isLoading={isLoading} messages={messages} />
-        <ActionComposer
-          closeRunId={selectedThread?.close_run_id ?? closeRunId}
-          disabled={isLoading || selectedThread === null}
-          entityId={entityId}
-          onActionStateChange={() => {
-            void refreshSelectedThread();
-          }}
-          onMessageSent={() => {
-            void refreshSelectedThread();
-          }}
-          threadId={selectedThread?.id ?? ""}
-          workspace={workspace}
-        />
-        <div ref={messagesEndRef} />
-      </section>
-      <AgentWorkspacePanel
-        closeRunId={closeRunId}
-        entityId={entityId}
-        onRefresh={() => {
-          void refreshSelectedThread();
-        }}
+        selectedThread={selectedThread}
+        threads={threads}
+        threadId={selectedThread?.id ?? ""}
         workspace={workspace}
       />
-    </div>
-  ) : (
-    <CompactRail
-      closeRunId={closeRunId}
-      entityId={entityId}
-      error={error}
-      grounding={grounding}
-      isExpanded={isExpanded}
-      isLoading={isLoading}
-      messages={messages}
-      deletingThreadId={deletingThreadId}
-      onCollapse={() => setIsExpanded(false)}
-      onCreateThread={() => {
-        void handleCreateThread();
-      }}
-      onDeleteThread={(thread) => {
-        void handleDeleteThread(thread);
-      }}
-      onExpand={() => setIsExpanded(true)}
-      onRefresh={() => {
-        void refreshSelectedThread();
-      }}
-      onSelectThread={(thread) => {
-        void loadThreadWorkspace(thread);
-      }}
-      selectedThread={selectedThread}
-      threads={threads}
-      threadId={selectedThread?.id ?? ""}
-      workspace={workspace}
-    />
-  );
+    );
 
   return panel;
 }
@@ -310,7 +307,12 @@ function CompactRail({
 }: Readonly<CompactRailProps>) {
   if (!isExpanded) {
     return (
-      <button aria-label="Expand chat rail" onClick={onExpand} style={expandButtonStyle} type="button">
+      <button
+        aria-label="Expand chat rail"
+        onClick={onExpand}
+        style={expandButtonStyle}
+        type="button"
+      >
         Agent
       </button>
     );
@@ -333,7 +335,12 @@ function CompactRail({
             {threads.length} {threads.length === 1 ? "thread" : "threads"}
           </p>
         </div>
-        <button aria-label="Collapse chat rail" onClick={onCollapse} style={ghostButtonStyle} type="button">
+        <button
+          aria-label="Collapse chat rail"
+          onClick={onCollapse}
+          style={ghostButtonStyle}
+          type="button"
+        >
           Collapse
         </button>
       </header>
@@ -423,7 +430,8 @@ function ThreadSidebar({
                   <div style={{ display: "grid", gap: 4 }}>
                     <span style={threadTitleStyle}>{thread.title ?? "Untitled thread"}</span>
                     <span style={threadMetaStyle}>
-                      {thread.grounding.period_label ?? "Workspace scope"} · {thread.message_count} messages
+                      {thread.grounding.period_label ?? "Workspace scope"} · {thread.message_count}{" "}
+                      messages
                     </span>
                   </div>
                 </button>
@@ -470,7 +478,9 @@ function ConversationHeader({
       {grounding ? (
         <div style={conversationBadgeRowStyle}>
           <span style={groundingBadgeStyle}>{grounding.entity_name}</span>
-          {grounding.period_label ? <span style={metaPillStyle}>{grounding.period_label}</span> : null}
+          {grounding.period_label ? (
+            <span style={metaPillStyle}>{grounding.period_label}</span>
+          ) : null}
           <span style={metaPillStyle}>{grounding.autonomy_mode.replaceAll("_", " ")}</span>
         </div>
       ) : null}
@@ -491,7 +501,8 @@ function MessageList({ isLoading, messages }: Readonly<MessageListProps>) {
         <div style={emptyStateCardStyle}>
           <p style={emptyTitleStyle}>Start with an instruction</p>
           <p style={emptyBodyStyle}>
-            Ask about status, approvals, reporting, exports, or next steps. You can also attach files and continue the workflow from chat.
+            Ask about status, approvals, reporting, exports, or next steps. You can also attach
+            files and continue the workflow from chat.
           </p>
         </div>
       ) : null}
@@ -529,7 +540,7 @@ function MessageList({ isLoading, messages }: Readonly<MessageListProps>) {
       ))}
       {isLoading ? (
         <div style={assistantMessageStyle}>
-          <p style={{ color: "#94A4BD", margin: 0 }}>Refreshing agent context…</p>
+          <p style={{ color: "var(--quartz-muted)", margin: 0 }}>Refreshing agent context...</p>
         </div>
       ) : null}
     </div>
@@ -562,7 +573,10 @@ function AgentWorkspacePanel({
     }
     return Array.from(grouped.entries());
   }, [workspace]);
-  const traceSummary = useMemo(() => buildTraceSummary(workspace?.recent_traces ?? []), [workspace]);
+  const traceSummary = useMemo(
+    () => buildTraceSummary(workspace?.recent_traces ?? []),
+    [workspace],
+  );
   const visibleTraces = useMemo(() => {
     if (workspace === null) {
       return [];
@@ -596,20 +610,28 @@ function AgentWorkspacePanel({
           <p style={supportingTextStyle}>Select or create a thread to load agent memory.</p>
         ) : (
           <div style={metricGridStyle}>
-            <MetricTile label="Pending approvals" value={String(workspace.memory.pending_action_count)} />
+            <MetricTile
+              label="Pending approvals"
+              value={String(workspace.memory.pending_action_count)}
+            />
             <MetricTile label="Last tool" value={workspace.memory.last_tool_name ?? "None"} />
             <MetricTile
               label="Last status"
               value={workspace.memory.last_action_status?.replaceAll("_", " ") ?? "Idle"}
             />
-            <MetricTile label="Last trace" value={workspace.memory.last_trace_id ?? "Not recorded"} />
+            <MetricTile
+              label="Last trace"
+              value={workspace.memory.last_trace_id ?? "Not recorded"}
+            />
           </div>
         )}
         {workspace?.memory.progress_summary ? (
           <p style={supportingTextStyle}>{workspace.memory.progress_summary}</p>
         ) : null}
         {workspace?.memory.updated_at ? (
-          <p style={traceMetaStyle}>Last refreshed {formatTimestamp(workspace.memory.updated_at)}</p>
+          <p style={traceMetaStyle}>
+            Last refreshed {formatTimestamp(workspace.memory.updated_at)}
+          </p>
         ) : null}
       </WorkspaceCard>
 
@@ -651,7 +673,9 @@ function AgentWorkspacePanel({
 
       <WorkspaceCard eyebrow="Trace" title="Execution timeline">
         {workspace === null || workspace.recent_traces.length === 0 ? (
-          <p style={supportingTextStyle}>Trace history appears after the agent responds or applies an action.</p>
+          <p style={supportingTextStyle}>
+            Trace history appears after the agent responds or applies an action.
+          </p>
         ) : (
           <div style={{ display: "grid", gap: 12 }}>
             <div style={metricGridStyle}>
@@ -679,7 +703,8 @@ function AgentWorkspacePanel({
             </div>
             {visibleTraces.length === 0 ? (
               <p style={supportingTextStyle}>
-                No trace events match the current filter. Switch filters to inspect other execution states.
+                No trace events match the current filter. Switch filters to inspect other execution
+                states.
               </p>
             ) : null}
           </div>
@@ -690,7 +715,10 @@ function AgentWorkspacePanel({
 }
 
 function ToolSchemaPreview({ tool }: Readonly<{ tool: AgentToolManifestItem }>) {
-  const schemaFields = useMemo(() => extractToolSchemaFields(tool.input_schema), [tool.input_schema]);
+  const schemaFields = useMemo(
+    () => extractToolSchemaFields(tool.input_schema),
+    [tool.input_schema],
+  );
   const schemaSummary = useMemo(() => summarizeToolSchema(tool.input_schema), [tool.input_schema]);
 
   return (
@@ -786,8 +814,12 @@ function TraceItem({ trace }: Readonly<{ trace: AgentTraceRecord }>) {
         <div style={{ display: "grid", gap: 4 }}>
           <strong style={toolNameStyle}>{trace.tool_name ?? trace.mode ?? "agent event"}</strong>
           <div style={traceBadgeRowStyle}>
-            {trace.mode ? <span style={toolFieldTypePillStyle}>{formatTraceMode(trace.mode)}</span> : null}
-            {trace.trace_id ? <span style={toolFieldTypePillStyle}>trace {trace.trace_id}</span> : null}
+            {trace.mode ? (
+              <span style={toolFieldTypePillStyle}>{formatTraceMode(trace.mode)}</span>
+            ) : null}
+            {trace.trace_id ? (
+              <span style={toolFieldTypePillStyle}>trace {trace.trace_id}</span>
+            ) : null}
           </div>
         </div>
         <span style={traceStatusPillStyleForValue(trace.action_status)}>
@@ -836,17 +868,16 @@ function extractInlineAttachments(message: ChatMessageRecord): Array<{
     .map((item) => ({
       filename: typeof item.filename === "string" ? item.filename : "attached file",
       intentLabel:
-        typeof item.intent === "string"
-          ? item.intent.replaceAll("_", " ")
-          : attachmentIntent,
+        typeof item.intent === "string" ? item.intent.replaceAll("_", " ") : attachmentIntent,
     }));
 }
 
 function toolPolicyPillStyle(requiresApproval: boolean): CSSProperties {
   return {
-    background: "rgba(170, 183, 202, 0.1)",
+    background: requiresApproval ? "rgba(255, 251, 235, 0.92)" : "rgba(27, 67, 50, 0.08)",
+    border: `1px solid ${requiresApproval ? "rgba(142, 115, 75, 0.22)" : "rgba(27, 67, 50, 0.18)"}`,
     borderRadius: 999,
-    color: requiresApproval ? "#D8B36A" : "#8FDBC5",
+    color: requiresApproval ? "var(--quartz-gold)" : "var(--quartz-success)",
     fontSize: 11,
     fontWeight: 700,
     padding: "4px 10px",
@@ -923,19 +954,25 @@ function traceStatusPillStyleForValue(actionStatus: string | null): CSSPropertie
   if (actionStatus === "applied") {
     return {
       ...traceStatusPillStyle,
-      color: "#8FDBC5",
+      background: "rgba(27, 67, 50, 0.08)",
+      border: "1px solid rgba(27, 67, 50, 0.18)",
+      color: "var(--quartz-success)",
     };
   }
   if (actionStatus === "pending") {
     return {
       ...traceStatusPillStyle,
-      color: "#D8B36A",
+      background: "rgba(255, 251, 235, 0.92)",
+      border: "1px solid rgba(142, 115, 75, 0.22)",
+      color: "var(--quartz-gold)",
     };
   }
   if (isIssueTrace(actionStatus)) {
     return {
       ...traceStatusPillStyle,
-      color: "#F28B82",
+      background: "rgba(255, 218, 214, 0.72)",
+      border: "1px solid rgba(123, 45, 38, 0.22)",
+      color: "var(--quartz-error)",
     };
   }
   return traceStatusPillStyle;
@@ -943,10 +980,10 @@ function traceStatusPillStyleForValue(actionStatus: string | null): CSSPropertie
 
 function traceFilterPillStyle(isActive: boolean): CSSProperties {
   return {
-    background: isActive ? "rgba(79, 142, 247, 0.14)" : "rgba(170, 183, 202, 0.08)",
-    border: "1px solid rgba(79, 142, 247, 0.18)",
+    background: isActive ? "rgba(69, 97, 123, 0.08)" : "var(--quartz-surface)",
+    border: `1px solid ${isActive ? "rgba(69, 97, 123, 0.28)" : "var(--quartz-border)"}`,
     borderRadius: 999,
-    color: isActive ? "#7EBCFF" : "#AAB7CA",
+    color: isActive ? "var(--quartz-secondary)" : "var(--quartz-muted)",
     cursor: "pointer",
     fontSize: 11,
     fontWeight: 700,
@@ -956,14 +993,15 @@ function traceFilterPillStyle(isActive: boolean): CSSProperties {
 
 const workbenchShellStyle: CSSProperties = {
   display: "grid",
-  gridTemplateColumns: "280px minmax(0, 1fr) 360px",
+  gridTemplateColumns: "minmax(240px, 280px) minmax(0, 1fr) minmax(320px, 360px)",
   height: "100%",
   minHeight: 0,
+  overflow: "hidden",
 };
 
 const threadSidebarStyle: CSSProperties = {
-  background: "#121926",
-  borderRight: "1px solid #24324A",
+  background: "var(--quartz-surface-low)",
+  borderRight: "1px solid var(--quartz-border)",
   display: "flex",
   flexDirection: "column",
   gap: 16,
@@ -978,15 +1016,15 @@ const threadSidebarHeaderStyle: CSSProperties = {
 };
 
 const conversationPaneStyle: CSSProperties = {
-  background: "#0F1624",
+  background: "var(--quartz-paper)",
   display: "flex",
   flexDirection: "column",
   minHeight: 0,
 };
 
 const workspacePanelStyle: CSSProperties = {
-  background: "#121926",
-  borderLeft: "1px solid #24324A",
+  background: "var(--quartz-surface-low)",
+  borderLeft: "1px solid var(--quartz-border)",
   display: "flex",
   flexDirection: "column",
   gap: 16,
@@ -996,8 +1034,8 @@ const workspacePanelStyle: CSSProperties = {
 };
 
 const workspaceCardStyle: CSSProperties = {
-  background: "#172133",
-  border: "1px solid #24324A",
+  background: "var(--quartz-surface)",
+  border: "1px solid var(--quartz-border)",
   borderRadius: 16,
   display: "grid",
   gap: 14,
@@ -1005,8 +1043,8 @@ const workspaceCardStyle: CSSProperties = {
 };
 
 const railContainerStyle: CSSProperties = {
-  background: "#121926",
-  borderLeft: "1px solid #24324A",
+  background: "var(--quartz-surface-low)",
+  borderLeft: "1px solid var(--quartz-border)",
   display: "flex",
   flexDirection: "column",
   height: "100%",
@@ -1015,34 +1053,34 @@ const railContainerStyle: CSSProperties = {
 
 const railHeaderStyle: CSSProperties = {
   alignItems: "center",
-  borderBottom: "1px solid #24324A",
+  borderBottom: "1px solid var(--quartz-border)",
   display: "flex",
   justifyContent: "space-between",
   padding: "14px 16px",
 };
 
 const railTitleStyle: CSSProperties = {
-  color: "#F2F5FA",
+  color: "var(--quartz-ink)",
   fontSize: 16,
   fontWeight: 700,
   margin: 0,
 };
 
 const railSubtitleStyle: CSSProperties = {
-  color: "#94A4BD",
+  color: "var(--quartz-muted)",
   fontSize: 12,
   margin: 0,
 };
 
 const conversationHeaderStyle: CSSProperties = {
-  borderBottom: "1px solid #24324A",
+  borderBottom: "1px solid var(--quartz-border)",
   display: "grid",
   gap: 12,
   padding: "20px 24px 16px",
 };
 
 const conversationBodyStyle: CSSProperties = {
-  color: "#AAB7CA",
+  color: "var(--quartz-muted)",
   fontSize: 14,
   lineHeight: "22px",
   margin: 0,
@@ -1072,10 +1110,10 @@ const threadRowStyle: CSSProperties = {
 };
 
 const threadItemStyle: CSSProperties = {
-  background: "#172133",
-  border: "1px solid #24324A",
+  background: "var(--quartz-surface)",
+  border: "1px solid var(--quartz-border)",
   borderRadius: 14,
-  color: "#F2F5FA",
+  color: "var(--quartz-ink)",
   cursor: "pointer",
   display: "block",
   padding: "14px 16px",
@@ -1084,28 +1122,29 @@ const threadItemStyle: CSSProperties = {
 };
 
 const threadItemActiveStyle: CSSProperties = {
-  borderColor: "#4F8EF7",
-  boxShadow: "0 0 0 1px rgba(79, 142, 247, 0.18)",
+  borderColor: "rgba(69, 97, 123, 0.28)",
+  boxShadow: "inset 3px 0 0 var(--quartz-secondary)",
+  background: "rgba(69, 97, 123, 0.08)",
 };
 
 const threadTitleStyle: CSSProperties = {
-  color: "#F2F5FA",
+  color: "var(--quartz-ink)",
   fontSize: 14,
   fontWeight: 600,
 };
 
 const threadMetaStyle: CSSProperties = {
-  color: "#94A4BD",
+  color: "var(--quartz-muted)",
   fontSize: 12,
 };
 
 const threadDeleteButtonStyle: CSSProperties = {
   alignItems: "center",
   alignSelf: "stretch",
-  background: "rgba(242, 139, 130, 0.08)",
-  border: "1px solid rgba(242, 139, 130, 0.18)",
+  background: "rgba(255, 218, 214, 0.72)",
+  border: "1px solid rgba(123, 45, 38, 0.22)",
   borderRadius: 12,
-  color: "#F28B82",
+  color: "var(--quartz-error)",
   cursor: "pointer",
   display: "inline-flex",
   fontSize: 14,
@@ -1127,8 +1166,8 @@ const messageListStyle: CSSProperties = {
 
 const assistantMessageStyle: CSSProperties = {
   alignSelf: "stretch",
-  background: "#172133",
-  border: "1px solid #24324A",
+  background: "var(--quartz-surface)",
+  border: "1px solid var(--quartz-border)",
   borderRadius: 16,
   display: "grid",
   gap: 8,
@@ -1139,8 +1178,8 @@ const assistantMessageStyle: CSSProperties = {
 const userMessageStyle: CSSProperties = {
   ...assistantMessageStyle,
   alignSelf: "flex-end",
-  background: "#1D2B43",
-  borderColor: "#36517D",
+  background: "rgba(69, 97, 123, 0.08)",
+  borderColor: "rgba(69, 97, 123, 0.28)",
 };
 
 const messageHeaderStyle: CSSProperties = {
@@ -1151,29 +1190,29 @@ const messageHeaderStyle: CSSProperties = {
 };
 
 const messageRoleStyle: CSSProperties = {
-  color: "#F2F5FA",
+  color: "var(--quartz-ink)",
   fontSize: 12,
   fontWeight: 700,
 };
 
 const messageTypeBadgeStyle: CSSProperties = {
-  background: "rgba(79, 142, 247, 0.12)",
+  background: "rgba(69, 97, 123, 0.08)",
   borderRadius: 999,
-  color: "#7EBCFF",
+  color: "var(--quartz-secondary)",
   fontSize: 11,
   padding: "2px 8px",
 };
 
 const traceBadgeStyle: CSSProperties = {
-  background: "rgba(216, 179, 106, 0.12)",
+  background: "rgba(255, 251, 235, 0.92)",
   borderRadius: 999,
-  color: "#D8B36A",
+  color: "var(--quartz-gold)",
   fontSize: 11,
   padding: "2px 8px",
 };
 
 const messageContentStyle: CSSProperties = {
-  color: "#E4EBF5",
+  color: "var(--quartz-ink)",
   fontSize: 14,
   lineHeight: "22px",
   margin: 0,
@@ -1181,13 +1220,13 @@ const messageContentStyle: CSSProperties = {
 };
 
 const messageMetaStyle: CSSProperties = {
-  color: "#7B8AA3",
+  color: "var(--quartz-muted)",
   fontSize: 11,
   margin: 0,
 };
 
 const panelEyebrowStyle: CSSProperties = {
-  color: "#7EBCFF",
+  color: "var(--quartz-secondary)",
   fontSize: 11,
   fontWeight: 700,
   letterSpacing: "0.08em",
@@ -1196,21 +1235,21 @@ const panelEyebrowStyle: CSSProperties = {
 };
 
 const panelTitleStyle: CSSProperties = {
-  color: "#F2F5FA",
+  color: "var(--quartz-ink)",
   fontSize: 20,
   fontWeight: 700,
   margin: 0,
 };
 
 const workspaceCardTitleStyle: CSSProperties = {
-  color: "#F2F5FA",
+  color: "var(--quartz-ink)",
   fontSize: 16,
   fontWeight: 700,
   margin: 0,
 };
 
 const supportingTextStyle: CSSProperties = {
-  color: "#AAB7CA",
+  color: "var(--quartz-muted)",
   fontSize: 13,
   lineHeight: "20px",
   margin: 0,
@@ -1223,8 +1262,8 @@ const metricGridStyle: CSSProperties = {
 };
 
 const metricTileStyle: CSSProperties = {
-  background: "#101826",
-  border: "1px solid #24324A",
+  background: "var(--quartz-surface-low)",
+  border: "1px solid var(--quartz-border)",
   borderRadius: 12,
   display: "grid",
   gap: 6,
@@ -1232,26 +1271,26 @@ const metricTileStyle: CSSProperties = {
 };
 
 const metricLabelStyle: CSSProperties = {
-  color: "#94A4BD",
+  color: "var(--quartz-muted)",
   fontSize: 11,
   textTransform: "uppercase",
 };
 
 const metricValueStyle: CSSProperties = {
-  color: "#F2F5FA",
+  color: "var(--quartz-ink)",
   fontSize: 14,
 };
 
 const toolIntentHeaderStyle: CSSProperties = {
-  color: "#94A4BD",
+  color: "var(--quartz-muted)",
   fontSize: 11,
   fontWeight: 700,
   textTransform: "uppercase",
 };
 
 const toolCardStyle: CSSProperties = {
-  background: "#101826",
-  border: "1px solid #24324A",
+  background: "var(--quartz-surface-low)",
+  border: "1px solid var(--quartz-border)",
   borderRadius: 12,
   display: "grid",
   gap: 8,
@@ -1259,19 +1298,19 @@ const toolCardStyle: CSSProperties = {
 };
 
 const toolNameStyle: CSSProperties = {
-  color: "#F2F5FA",
+  color: "var(--quartz-ink)",
   fontSize: 13,
 };
 
 const toolDescriptionStyle: CSSProperties = {
-  color: "#AAB7CA",
+  color: "var(--quartz-muted)",
   fontSize: 12,
   lineHeight: "18px",
   margin: 0,
 };
 
 const toolSignatureStyle: CSSProperties = {
-  color: "#7EBCFF",
+  color: "var(--quartz-secondary)",
   fontSize: 11,
   overflowWrap: "anywhere",
 };
@@ -1285,9 +1324,9 @@ const schemaSummaryRowStyle: CSSProperties = {
 };
 
 const schemaSummaryPillStyle: CSSProperties = {
-  background: "rgba(79, 142, 247, 0.12)",
+  background: "rgba(69, 97, 123, 0.08)",
   borderRadius: 999,
-  color: "#7EBCFF",
+  color: "var(--quartz-secondary)",
   fontSize: 11,
   fontWeight: 700,
   padding: "4px 10px",
@@ -1301,9 +1340,10 @@ const schemaFieldChipRowStyle: CSSProperties = {
 
 function schemaFieldChipStyle(isRequired: boolean): CSSProperties {
   return {
-    background: isRequired ? "rgba(216, 179, 106, 0.12)" : "rgba(170, 183, 202, 0.1)",
+    background: isRequired ? "rgba(255, 251, 235, 0.92)" : "var(--quartz-surface)",
+    border: `1px solid ${isRequired ? "rgba(142, 115, 75, 0.22)" : "var(--quartz-border)"}`,
     borderRadius: 999,
-    color: isRequired ? "#D8B36A" : "#AAB7CA",
+    color: isRequired ? "var(--quartz-gold)" : "var(--quartz-muted)",
     fontSize: 10,
     fontWeight: 700,
     padding: "4px 8px",
@@ -1311,14 +1351,14 @@ function schemaFieldChipStyle(isRequired: boolean): CSSProperties {
 }
 
 const toolSchemaDetailsStyle: CSSProperties = {
-  background: "rgba(12, 18, 30, 0.65)",
-  border: "1px solid rgba(36, 50, 74, 0.9)",
+  background: "var(--quartz-paper)",
+  border: "1px solid var(--quartz-border)",
   borderRadius: 10,
   padding: "8px 10px",
 };
 
 const toolSchemaSummaryStyle: CSSProperties = {
-  color: "#F2F5FA",
+  color: "var(--quartz-ink)",
   cursor: "pointer",
   fontSize: 12,
   fontWeight: 700,
@@ -1331,8 +1371,8 @@ const toolSchemaFieldListStyle: CSSProperties = {
 };
 
 const toolSchemaFieldCardStyle: CSSProperties = {
-  background: "#0D1522",
-  border: "1px solid #223148",
+  background: "var(--quartz-surface-low)",
+  border: "1px solid var(--quartz-border)",
   borderRadius: 10,
   padding: 10,
 };
@@ -1352,35 +1392,38 @@ const toolFieldMetaRowStyle: CSSProperties = {
 };
 
 const toolFieldTypePillStyle: CSSProperties = {
-  background: "rgba(170, 183, 202, 0.1)",
+  background: "var(--quartz-surface)",
+  border: "1px solid var(--quartz-border)",
   borderRadius: 999,
-  color: "#AAB7CA",
+  color: "var(--quartz-muted)",
   fontSize: 10,
   fontWeight: 700,
   padding: "3px 8px",
 };
 
 const toolFieldRequiredPillStyle: CSSProperties = {
-  background: "rgba(216, 179, 106, 0.12)",
+  background: "rgba(255, 251, 235, 0.92)",
+  border: "1px solid rgba(142, 115, 75, 0.22)",
   borderRadius: 999,
-  color: "#D8B36A",
+  color: "var(--quartz-gold)",
   fontSize: 10,
   fontWeight: 700,
   padding: "3px 8px",
 };
 
 const toolFieldEnumPillStyle: CSSProperties = {
-  background: "rgba(143, 219, 197, 0.12)",
+  background: "rgba(27, 67, 50, 0.08)",
+  border: "1px solid rgba(27, 67, 50, 0.18)",
   borderRadius: 999,
-  color: "#8FDBC5",
+  color: "var(--quartz-success)",
   fontSize: 10,
   fontWeight: 700,
   padding: "3px 8px",
 };
 
 const traceItemStyle: CSSProperties = {
-  background: "#101826",
-  border: "1px solid #24324A",
+  background: "var(--quartz-surface-low)",
+  border: "1px solid var(--quartz-border)",
   borderRadius: 12,
   display: "grid",
   gap: 6,
@@ -1388,7 +1431,7 @@ const traceItemStyle: CSSProperties = {
 };
 
 const traceMetaStyle: CSSProperties = {
-  color: "#7B8AA3",
+  color: "var(--quartz-muted)",
   fontSize: 11,
   margin: 0,
 };
@@ -1413,27 +1456,28 @@ const inlineAttachmentRowStyle: CSSProperties = {
 };
 
 const inlineAttachmentPillStyle: CSSProperties = {
-  background: "rgba(76, 139, 245, 0.12)",
-  border: "1px solid rgba(76, 139, 245, 0.28)",
+  background: "rgba(69, 97, 123, 0.08)",
+  border: "1px solid rgba(69, 97, 123, 0.24)",
   borderRadius: 999,
-  color: "#A8CBFF",
+  color: "var(--quartz-secondary)",
   fontSize: 11,
   padding: "4px 8px",
   textTransform: "capitalize",
 };
 
 const traceStatusPillStyle: CSSProperties = {
-  background: "rgba(170, 183, 202, 0.1)",
+  background: "var(--quartz-surface)",
+  border: "1px solid var(--quartz-border)",
   borderRadius: 999,
-  color: "#AAB7CA",
+  color: "var(--quartz-muted)",
   fontSize: 11,
   fontWeight: 700,
   padding: "4px 10px",
 };
 
 const emptyStateCardStyle: CSSProperties = {
-  background: "#172133",
-  border: "1px dashed #30415F",
+  background: "var(--quartz-surface-low)",
+  border: "1px dashed var(--quartz-border-strong)",
   borderRadius: 16,
   display: "grid",
   gap: 8,
@@ -1441,24 +1485,24 @@ const emptyStateCardStyle: CSSProperties = {
 };
 
 const emptyTitleStyle: CSSProperties = {
-  color: "#F2F5FA",
+  color: "var(--quartz-ink)",
   fontSize: 14,
   fontWeight: 700,
   margin: 0,
 };
 
 const emptyBodyStyle: CSSProperties = {
-  color: "#AAB7CA",
+  color: "var(--quartz-muted)",
   fontSize: 13,
   lineHeight: "20px",
   margin: 0,
 };
 
 const primaryButtonStyle: CSSProperties = {
-  background: "#4F8EF7",
-  border: "none",
+  background: "var(--quartz-primary)",
+  border: "1px solid var(--quartz-primary)",
   borderRadius: 10,
-  color: "#F2F5FA",
+  color: "var(--quartz-primary-contrast)",
   cursor: "pointer",
   fontSize: 13,
   fontWeight: 700,
@@ -1466,10 +1510,10 @@ const primaryButtonStyle: CSSProperties = {
 };
 
 const ghostButtonStyle: CSSProperties = {
-  background: "transparent",
-  border: "1px solid #30415F",
+  background: "var(--quartz-surface)",
+  border: "1px solid var(--quartz-border)",
   borderRadius: 10,
-  color: "#AAB7CA",
+  color: "var(--quartz-muted)",
   cursor: "pointer",
   fontSize: 12,
   fontWeight: 700,
@@ -1477,47 +1521,49 @@ const ghostButtonStyle: CSSProperties = {
 };
 
 const groundingBadgeStyle: CSSProperties = {
-  background: "rgba(79, 142, 247, 0.12)",
+  background: "rgba(69, 97, 123, 0.08)",
+  border: "1px solid rgba(69, 97, 123, 0.24)",
   borderRadius: 999,
-  color: "#7EBCFF",
+  color: "var(--quartz-secondary)",
   fontSize: 11,
   fontWeight: 700,
   padding: "4px 10px",
 };
 
 const metaPillStyle: CSSProperties = {
-  background: "rgba(170, 183, 202, 0.1)",
+  background: "var(--quartz-surface)",
+  border: "1px solid var(--quartz-border)",
   borderRadius: 999,
-  color: "#AAB7CA",
+  color: "var(--quartz-muted)",
   fontSize: 11,
   fontWeight: 700,
   padding: "4px 10px",
 };
 
 const statusDangerStyle: CSSProperties = {
-  background: "rgba(217, 83, 79, 0.12)",
-  border: "1px solid rgba(217, 83, 79, 0.28)",
+  background: "rgba(255, 218, 214, 0.72)",
+  border: "1px solid rgba(123, 45, 38, 0.22)",
   borderRadius: 12,
-  color: "#F2B5B2",
+  color: "var(--quartz-error)",
   fontSize: 12,
   padding: "10px 12px",
 };
 
 const statusInfoStyle: CSSProperties = {
-  background: "rgba(79, 142, 247, 0.12)",
-  border: "1px solid rgba(79, 142, 247, 0.28)",
+  background: "rgba(69, 97, 123, 0.08)",
+  border: "1px solid rgba(69, 97, 123, 0.24)",
   borderRadius: 12,
-  color: "#D8E6FF",
+  color: "var(--quartz-secondary)",
   fontSize: 12,
   padding: "10px 12px",
 };
 
 const expandButtonStyle: CSSProperties = {
-  background: "#4F8EF7",
-  border: "none",
+  background: "var(--quartz-primary)",
+  border: "1px solid var(--quartz-primary)",
   borderRadius: 12,
   bottom: 16,
-  color: "#F2F5FA",
+  color: "var(--quartz-primary-contrast)",
   cursor: "pointer",
   fontSize: 13,
   fontWeight: 700,

@@ -2384,6 +2384,17 @@ a {
   justify-content: space-between;
 }
 
+.quartz-toolbar-search {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 260px;
+}
+
+.quartz-toolbar-search .text-input {
+  min-width: 260px;
+}
+
 .quartz-form-link {
   color: var(--quartz-secondary);
   font-size: 0.74rem;
@@ -2436,6 +2447,22 @@ a {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 320px;
   min-height: calc(100vh - 56px);
+}
+
+.quartz-chat-page {
+  display: grid;
+  gap: 24px;
+}
+
+.quartz-chat-page .quartz-section {
+  margin-top: 0;
+}
+
+.quartz-chat-workbench-shell {
+  min-height: calc(100vh - 236px);
+  border: 1px solid var(--quartz-border);
+  background: var(--quartz-paper);
+  overflow: hidden;
 }
 
 .quartz-main-panel {
@@ -2683,6 +2710,37 @@ a {
   margin: 0;
 }
 
+.quartz-filter-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.quartz-filter-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+  padding: 0 12px;
+  border: 1px solid var(--quartz-border);
+  background: var(--quartz-surface);
+  color: var(--quartz-muted);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.quartz-filter-chip strong {
+  color: var(--quartz-ink);
+}
+
+.quartz-filter-chip.active {
+  border-color: rgba(69, 97, 123, 0.28);
+  background: rgba(69, 97, 123, 0.08);
+  color: var(--quartz-secondary);
+}
+
 .quartz-table-shell {
   overflow: hidden;
 }
@@ -2719,6 +2777,10 @@ a {
 
 .quartz-table-row.error {
   background: rgba(255, 218, 214, 0.28);
+}
+
+.quartz-table-row.selected {
+  background: rgba(69, 97, 123, 0.08);
 }
 
 .quartz-table-primary {
@@ -2919,6 +2981,10 @@ a {
     grid-template-columns: 1fr;
   }
 
+  .quartz-chat-workbench-shell {
+    min-height: 720px;
+  }
+
   .quartz-right-rail {
     min-height: auto;
     border-top: 1px solid var(--quartz-border);
@@ -2939,6 +3005,12 @@ a {
   .quartz-form-row {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .quartz-toolbar-search,
+  .quartz-toolbar-search .text-input {
+    min-width: 100%;
+    width: 100%;
   }
 
   .quartz-kpi-grid,

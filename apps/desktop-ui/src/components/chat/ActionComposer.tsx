@@ -14,7 +14,15 @@ Behavior:
 
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type FormEvent,
+  type KeyboardEvent,
+} from "react";
 import {
   approveChatAction,
   type ChatAttachmentIntent,
@@ -59,13 +67,13 @@ const ACTION_INTENT_LABELS: Record<string, string> = {
 
 /** Map action intents to confidence color indicators. */
 const ACTION_INTENT_COLORS: Record<string, string> = {
-  approval_request: "#4C8BF5",
-  document_request: "#E7A93B",
-  explanation: "#B7C3D6",
-  proposed_edit: "#D9534F",
-  reconciliation_query: "#5AA4FF",
-  report_action: "#2CB6A4",
-  workflow_action: "#4C8BF5",
+  approval_request: "var(--quartz-secondary)",
+  document_request: "var(--quartz-gold)",
+  explanation: "var(--quartz-neutral)",
+  proposed_edit: "var(--quartz-error)",
+  reconciliation_query: "var(--quartz-secondary)",
+  report_action: "var(--quartz-success)",
+  workflow_action: "var(--quartz-secondary)",
 };
 
 /**
@@ -262,8 +270,8 @@ export function ActionComposer({
   return (
     <div
       style={{
-        borderTop: "1px solid #24324A",
-        background: "#121A2B",
+        borderTop: "1px solid var(--quartz-border)",
+        background: "var(--quartz-surface-low)",
         padding: "12px 16px",
       }}
     >
@@ -283,8 +291,8 @@ export function ActionComposer({
               key={action.id}
               style={{
                 flexShrink: 0,
-                background: "#182338",
-                border: "1px solid #24324A",
+                background: "var(--quartz-surface)",
+                border: "1px solid var(--quartz-border)",
                 borderRadius: 8,
                 padding: "6px 10px",
                 minWidth: 180,
@@ -304,7 +312,7 @@ export function ActionComposer({
                     width: 6,
                     height: 6,
                     borderRadius: "50%",
-                    background: ACTION_INTENT_COLORS[action.intent] ?? "#B7C3D6",
+                    background: ACTION_INTENT_COLORS[action.intent] ?? "var(--quartz-neutral)",
                     display: "inline-block",
                   }}
                 />
@@ -312,7 +320,7 @@ export function ActionComposer({
                   style={{
                     fontSize: 11,
                     fontWeight: 500,
-                    color: "#F4F7FB",
+                    color: "var(--quartz-ink)",
                     lineHeight: "16px",
                   }}
                 >
@@ -322,8 +330,9 @@ export function ActionComposer({
                   <span
                     style={{
                       fontSize: 9,
-                      color: "#E7A93B",
-                      background: "rgba(231, 169, 59, 0.12)",
+                      color: "var(--quartz-gold)",
+                      background: "rgba(255, 251, 235, 0.92)",
+                      border: "1px solid rgba(142, 115, 75, 0.22)",
                       padding: "1px 4px",
                       borderRadius: 4,
                       lineHeight: "14px",
@@ -350,9 +359,9 @@ export function ActionComposer({
                     fontWeight: 500,
                     padding: "3px 0",
                     borderRadius: 6,
-                    border: "1px solid #1FA971",
-                    background: "rgba(31, 169, 113, 0.12)",
-                    color: "#1FA971",
+                    border: "1px solid rgba(27, 67, 50, 0.18)",
+                    background: "rgba(27, 67, 50, 0.08)",
+                    color: "var(--quartz-success)",
                     cursor: loadingActions.has(action.id) ? "not-allowed" : "pointer",
                     opacity: loadingActions.has(action.id) ? 0.6 : 1,
                   }}
@@ -369,9 +378,9 @@ export function ActionComposer({
                     fontWeight: 500,
                     padding: "3px 0",
                     borderRadius: 6,
-                    border: "1px solid #D9534F",
-                    background: "rgba(217, 83, 79, 0.12)",
-                    color: "#D9534F",
+                    border: "1px solid rgba(123, 45, 38, 0.22)",
+                    background: "rgba(255, 218, 214, 0.72)",
+                    color: "var(--quartz-error)",
                     cursor: loadingActions.has(action.id) ? "not-allowed" : "pointer",
                     opacity: loadingActions.has(action.id) ? 0.6 : 1,
                   }}
@@ -391,9 +400,9 @@ export function ActionComposer({
             marginBottom: 8,
             padding: "6px 10px",
             borderRadius: 8,
-            background: "rgba(217, 83, 79, 0.1)",
-            border: "1px solid rgba(217, 83, 79, 0.3)",
-            color: "#D9534F",
+            background: "var(--quartz-error-soft)",
+            border: "1px solid rgba(123, 45, 38, 0.22)",
+            color: "var(--quartz-error)",
             fontSize: 12,
             lineHeight: "18px",
           }}
@@ -417,8 +426,9 @@ export function ActionComposer({
             gap: 6,
             fontSize: 11,
             fontWeight: 600,
-            color: "#4C8BF5",
-            background: "rgba(76, 139, 245, 0.1)",
+            color: "var(--quartz-secondary)",
+            background: "rgba(69, 97, 123, 0.08)",
+            border: "1px solid rgba(69, 97, 123, 0.24)",
             borderRadius: 999,
             padding: "4px 9px",
           }}
@@ -428,7 +438,7 @@ export function ActionComposer({
               width: 8,
               height: 8,
               borderRadius: "50%",
-              background: "#4C8BF5",
+              background: "var(--quartz-secondary)",
             }}
           />
           Context-aware agent
@@ -436,7 +446,7 @@ export function ActionComposer({
         <p
           style={{
             margin: 0,
-            color: "#8FA2BF",
+            color: "var(--quartz-muted)",
             fontSize: 11,
             lineHeight: "17px",
           }}
@@ -466,10 +476,10 @@ export function ActionComposer({
                 setError(null);
               }}
               style={{
-                background: "rgba(24, 35, 56, 0.9)",
-                border: "1px solid #24324A",
+                background: "var(--quartz-surface)",
+                border: "1px solid var(--quartz-border)",
                 borderRadius: 999,
-                color: "#D7E0ED",
+                color: "var(--quartz-muted)",
                 cursor: "pointer",
                 fontSize: 11,
                 lineHeight: "16px",
@@ -496,10 +506,10 @@ export function ActionComposer({
           <button
             onClick={() => fileInputRef.current?.click()}
             style={{
-              background: "rgba(76, 139, 245, 0.12)",
-              border: "1px solid rgba(76, 139, 245, 0.32)",
+              background: "rgba(69, 97, 123, 0.1)",
+              border: "1px solid rgba(69, 97, 123, 0.24)",
               borderRadius: 8,
-              color: "#A8CBFF",
+              color: "var(--quartz-secondary)",
               cursor: "pointer",
               fontSize: 11,
               fontWeight: 600,
@@ -523,14 +533,12 @@ export function ActionComposer({
           />
           {attachments.length > 0 ? (
             <select
-              onChange={(event) =>
-                setAttachmentIntent(event.target.value as ChatAttachmentIntent)
-              }
+              onChange={(event) => setAttachmentIntent(event.target.value as ChatAttachmentIntent)}
               style={{
-                background: "#0B1020",
-                border: "1px solid #24324A",
+                background: "var(--quartz-surface)",
+                border: "1px solid var(--quartz-border)",
                 borderRadius: 8,
-                color: "#D7E0ED",
+                color: "var(--quartz-ink)",
                 fontSize: 11,
                 padding: "5px 9px",
               }}
@@ -556,7 +564,7 @@ export function ActionComposer({
             style={{
               background: "transparent",
               border: "none",
-              color: "#8FA2BF",
+              color: "var(--quartz-muted)",
               cursor: "pointer",
               fontSize: 11,
               padding: 0,
@@ -581,10 +589,10 @@ export function ActionComposer({
             <span
               key={`${file.name}:${file.size}`}
               style={{
-                background: "#182338",
-                border: "1px solid #24324A",
+                background: "var(--quartz-surface)",
+                border: "1px solid var(--quartz-border)",
                 borderRadius: 999,
-                color: "#D7E0ED",
+                color: "var(--quartz-ink)",
                 display: "inline-flex",
                 gap: 6,
                 maxWidth: "100%",
@@ -601,7 +609,7 @@ export function ActionComposer({
               >
                 {file.name}
               </span>
-              <span style={{ color: "#8FA2BF", fontSize: 10 }}>
+              <span style={{ color: "var(--quartz-muted)", fontSize: 10 }}>
                 {formatByteSize(file.size)}
               </span>
             </span>
@@ -644,9 +652,9 @@ export function ActionComposer({
               flex: 1,
               fontSize: 13,
               lineHeight: "20px",
-              color: "#F4F7FB",
-              background: "#0B1020",
-              border: "1px solid #24324A",
+              color: "var(--quartz-ink)",
+              background: "var(--quartz-surface)",
+              border: "1px solid var(--quartz-border)",
               borderRadius: 10,
               padding: "8px 12px",
               resize: "none",
@@ -663,8 +671,12 @@ export function ActionComposer({
               height: 32,
               borderRadius: 8,
               border: "none",
-              background: hasInput && !isSubmitting ? "#4C8BF5" : "#24324A",
-              color: hasInput && !isSubmitting ? "#fff" : "#B7C3D6",
+              background:
+                hasInput && !isSubmitting ? "var(--quartz-primary)" : "var(--quartz-surface-high)",
+              color:
+                hasInput && !isSubmitting
+                  ? "var(--quartz-primary-contrast)"
+                  : "var(--quartz-muted)",
               cursor: hasInput && !isSubmitting ? "pointer" : "not-allowed",
               display: "flex",
               alignItems: "center",
@@ -698,7 +710,9 @@ function buildStarterPrompts(options: {
 }): string[] {
   const prompts: string[] = [];
   const { closeRunId, workspace } = options;
-  const activePhase = workspace?.readiness.phase_states.find((phaseState) => phaseState.status !== "completed");
+  const activePhase = workspace?.readiness.phase_states.find(
+    (phaseState) => phaseState.status !== "completed",
+  );
 
   if (workspace?.readiness.blockers.length) {
     prompts.push("What's blocking this run right now?");
