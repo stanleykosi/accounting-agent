@@ -7,7 +7,7 @@ Dependencies: React hooks, Next.js links, and the entity API helpers.
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState, type ReactElement } from "react";
+import { useEffect, useState, type ReactElement } from "react";
 import { QuartzIcon } from "../../../components/layout/QuartzIcons";
 import {
   EntityApiError,
@@ -31,8 +31,6 @@ export default function EntitiesPage(): ReactElement {
     });
   }, []);
 
-  const recentEntities = useMemo(() => entities.slice(0, 4), [entities]);
-
   return (
     <div className="quartz-page quartz-workspace-layout">
       <section className="quartz-main-panel">
@@ -42,11 +40,6 @@ export default function EntitiesPage(): ReactElement {
             <p className="quartz-page-subtitle">
               Portfolio-wide access to operational workspaces, ownership, and base-ledger defaults.
             </p>
-          </div>
-          <div className="quartz-page-toolbar">
-            <Link className="primary-button" href="/entities/new">
-              Create Workspace
-            </Link>
           </div>
         </header>
 
@@ -164,42 +157,6 @@ export default function EntitiesPage(): ReactElement {
             </table>
           </div>
         </section>
-      </section>
-
-      <section className="quartz-section">
-        <div className="quartz-split-grid quartz-split-grid-halves">
-          <article className="quartz-card ai">
-            <p className="quartz-card-eyebrow secondary">Portfolio note</p>
-            <h3>Keep workspace creation light</h3>
-            <p className="form-helper">
-              Start with entity name and base currency. Team routing and deeper configuration can be
-              refined inside each workspace.
-            </p>
-          </article>
-
-          <article className="quartz-card">
-            <div className="quartz-section-header quartz-section-header-tight">
-              <h2 className="quartz-section-title">Recent Workspaces</h2>
-              <Link className="quartz-filter-link" href="/entities/new">
-                Create Workspace
-              </Link>
-            </div>
-            <div className="quartz-mini-list">
-              {recentEntities.length === 0 ? (
-                <p className="form-helper">New workspaces will appear here after creation.</p>
-              ) : (
-                recentEntities.map((entity) => (
-                  <div className="quartz-mini-item" key={entity.id}>
-                    <strong>{entity.name}</strong>
-                    <span className="quartz-mini-meta">
-                      {entity.base_currency} • {entity.member_count} members
-                    </span>
-                  </div>
-                ))
-              )}
-            </div>
-          </article>
-        </div>
       </section>
     </div>
   );
