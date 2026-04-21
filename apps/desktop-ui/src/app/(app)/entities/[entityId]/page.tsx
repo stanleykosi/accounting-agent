@@ -30,10 +30,12 @@ import {
   getCloseRunPhaseStatusLabel,
   getCloseRunStatusLabel,
   listCloseRuns,
+  readCloseRunListSnapshot,
   type CloseRunSummary,
 } from "../../../../lib/close-runs";
 import {
   EntityApiError,
+  readEntityWorkspaceSnapshot,
   readEntityWorkspace,
   type EntityWorkspace,
 } from "../../../../lib/entities/api";
@@ -83,12 +85,16 @@ export default function EntityWorkspacePage({
   params,
 }: Readonly<EntityWorkspacePageProps>): ReactElement {
   const { entityId } = use(params);
+  const entitySnapshot = readEntityWorkspaceSnapshot(entityId);
+  const closeRunSnapshot = readCloseRunListSnapshot(entityId);
   const router = useRouter();
-  const [entity, setEntity] = useState<EntityWorkspace | null>(null);
+  const [entity, setEntity] = useState<EntityWorkspace | null>(entitySnapshot);
   const [entityErrorMessage, setEntityErrorMessage] = useState<string | null>(null);
   const [closeRunErrorMessage, setCloseRunErrorMessage] = useState<string | null>(null);
-  const [closeRuns, setCloseRuns] = useState<readonly CloseRunSummary[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const [closeRuns, setCloseRuns] = useState<readonly CloseRunSummary[]>(closeRunSnapshot ?? []);
+  const [isLoading, setIsLoading] = useState(
+    () => entitySnapshot === null || closeRunSnapshot === null,
+  );
   const [isPending, startTransition] = useTransition();
   const [closeRunFormState, setCloseRunFormState] = useState<CreateCloseRunFormState>(
     defaultCreateCloseRunFormState,
@@ -561,18 +567,25 @@ async function loadWorkspaceView(options: {
   onLoadingChange: (value: boolean) => void;
 }): Promise<void> {
   options.onLoadingChange(true);
+  const [workspaceResult, closeRunsResult] = await Promise.allSettled([
+    readEntityWorkspace(options.entityId),
+    listCloseRuns(options.entityId),
+  ]);
+
   try {
-    const workspace = await readEntityWorkspace(options.entityId);
-    options.onLoaded(workspace);
+    if (workspaceResult.status === "rejected") {
+      throw workspaceResult.reason;
+    }
+
+    options.onLoaded(workspaceResult.value);
     options.onError(null);
 
-    try {
-      const closeRuns = await listCloseRuns(options.entityId);
-      options.onCloseRunsLoaded(closeRuns);
+    if (closeRunsResult.status === "fulfilled") {
+      options.onCloseRunsLoaded(closeRunsResult.value);
       options.onCloseRunError(null);
-    } catch (error: unknown) {
+    } else {
       options.onCloseRunsLoaded([]);
-      options.onCloseRunError(resolveWorkspaceViewErrorMessage(error));
+      options.onCloseRunError(resolveWorkspaceViewErrorMessage(closeRunsResult.reason));
     }
   } catch (error: unknown) {
     options.onCloseRunsLoaded([]);

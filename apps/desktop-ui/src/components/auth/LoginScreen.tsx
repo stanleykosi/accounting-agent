@@ -48,11 +48,12 @@ export function LoginScreen({
   const [isPending, startTransition] = useTransition();
 
   const noticeMessage = resolveNoticeMessage(initialReason);
-  const submitLabel = mode === "login" ? "Enter Workspace" : "Create Administrator";
+  const title = mode === "login" ? "Sign in" : "Sign up";
+  const submitLabel = mode === "login" ? "Sign in" : "Sign up";
   const helperCopy =
     mode === "login"
-      ? "Provide credentials to access the central ledger workspace and resume period review."
-      : "Initialize this workstation by creating the first administrator account for the workspace.";
+      ? "Sign in to continue to your accounting workspace."
+      : "Create your account to access the accounting workspace.";
 
   const handleFieldChange =
     (fieldName: keyof AuthFormState) =>
@@ -92,22 +93,13 @@ export function LoginScreen({
           </div>
 
           <header>
-            <h1 className="quartz-auth-title">Welcome to the Close</h1>
+            <h1 className="quartz-auth-title">{title}</h1>
             <p className="quartz-auth-copy">{helperCopy}</p>
           </header>
 
           {noticeMessage ? (
             <div className="status-banner warning" role="status">
               {noticeMessage}
-            </div>
-          ) : null}
-
-          {mode === "register" ? (
-            <div className="quartz-highlight-box">
-              <p className="form-helper">
-                This path is intended only for the first administrator or a controlled workstation
-                reset.
-              </p>
             </div>
           ) : null}
 
@@ -186,21 +178,10 @@ export function LoginScreen({
               }}
               type="button"
             >
-              {mode === "login"
-                ? "Need to initialize this workstation?"
-                : "Return to operator sign-in"}
+              {mode === "login" ? "Sign up" : "Back to sign in"}
             </button>
           </form>
         </div>
-
-        <footer className="quartz-auth-footer">
-          <span className="quartz-auth-footer-item">
-            <QuartzIcon className="quartz-inline-icon" name="check" /> SSO Enforced
-          </span>
-          <span className="quartz-auth-footer-item">
-            <QuartzIcon className="quartz-inline-icon" name="portfolio" /> Audit Logging Active
-          </span>
-        </footer>
       </section>
     </main>
   );

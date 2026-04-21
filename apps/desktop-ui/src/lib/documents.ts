@@ -4,6 +4,12 @@ Scope: Document queue reads, close-run period context reads, typed API errors, a
 Dependencies: Browser Fetch APIs, existing `/api/entities/**` proxy routes, and strict runtime response guards.
 */
 
+import {
+  buildEntityCacheInvalidationPrefixes,
+  invalidateClientCacheByPrefix,
+  loadClientCachedValue,
+} from "./client-cache";
+
 export type DocumentReviewFilter =
   | "all"
   | "low_confidence"
@@ -476,23 +482,35 @@ async function documentReviewRequest<TResponse>(
   init: Readonly<RequestInit>,
 ): Promise<TResponse> {
   const isFormDataBody = init.body instanceof FormData;
-  const response = await fetch(path, {
-    ...init,
-    cache: "no-store",
-    credentials: "same-origin",
-    headers: {
-      Accept: "application/json",
-      ...(init.body && !isFormDataBody ? { "Content-Type": "application/json" } : {}),
-      ...init.headers,
-    },
-  });
+  const requestMethod = normalizeRequestMethod(init.method);
 
-  const payload = await parseJsonPayload(response);
-  if (!response.ok) {
-    throw buildDocumentReviewApiError(response.status, payload);
+  const performRequest = async (): Promise<TResponse> => {
+    const response = await fetch(path, {
+      ...init,
+      cache: "no-store",
+      credentials: "same-origin",
+      headers: {
+        Accept: "application/json",
+        ...(init.body && !isFormDataBody ? { "Content-Type": "application/json" } : {}),
+        ...init.headers,
+      },
+    });
+
+    const payload = await parseJsonPayload(response);
+    if (!response.ok) {
+      throw buildDocumentReviewApiError(response.status, payload);
+    }
+
+    return payload as TResponse;
+  };
+
+  if (requestMethod === "GET") {
+    return loadClientCachedValue(path, performRequest);
   }
 
-  return payload as TResponse;
+  const payload = await performRequest();
+  invalidateClientCacheByPrefix(buildEntityCacheInvalidationPrefixes(path));
+  return payload;
 }
 
 function buildEntityProxyPath(entityId: string, pathSegments: readonly string[]): string {
@@ -1479,6 +1497,10 @@ function formatFieldValue(value: unknown): string {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
+}
+
+function normalizeRequestMethod(value: string | null | undefined): string {
+  return (value ?? "GET").toUpperCase();
 }
 
 type DocumentApiSummary = {

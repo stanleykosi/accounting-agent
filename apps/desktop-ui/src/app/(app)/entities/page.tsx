@@ -9,12 +9,19 @@ Dependencies: React hooks, Next.js links, and the entity API helpers.
 import Link from "next/link";
 import { useEffect, useMemo, useState, type ReactElement } from "react";
 import { QuartzIcon } from "../../../components/layout/QuartzIcons";
-import { EntityApiError, listEntities, type EntitySummary } from "../../../lib/entities/api";
+import {
+  EntityApiError,
+  listEntities,
+  readEntityListSnapshot,
+  type EntitySummary,
+} from "../../../lib/entities/api";
 
 export default function EntitiesPage(): ReactElement {
-  const [entities, setEntities] = useState<readonly EntitySummary[]>([]);
+  const [entities, setEntities] = useState<readonly EntitySummary[]>(
+    () => readEntityListSnapshot()?.entities ?? [],
+  );
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(() => readEntityListSnapshot() === null);
 
   useEffect(() => {
     void loadEntities({
@@ -71,7 +78,7 @@ export default function EntitiesPage(): ReactElement {
             <article className="quartz-kpi-tile highlight">
               <p className="quartz-kpi-label">Directory Status</p>
               <p className="quartz-kpi-value">{isLoading ? "Syncing" : "Current"}</p>
-              <p className="quartz-kpi-meta">Same-origin list refreshed without cache</p>
+              <p className="quartz-kpi-meta">Fast local snapshot with current-state refresh</p>
             </article>
           </div>
         </section>

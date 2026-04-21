@@ -5,6 +5,12 @@ Scope: Fetch reconciliations, items, trial balance, anomalies, dispositions, and
 Dependencies: Native fetch, canonical reconciliation contract shapes.
 */
 
+import {
+  buildEntityCacheInvalidationPrefixes,
+  invalidateClientCacheByPrefix,
+  loadClientCachedValue,
+} from "./client-cache";
+
 /** Represent the filter state for the reconciliation review queue. */
 export type ReconciliationReviewFilter =
   | "all"
@@ -675,32 +681,49 @@ export function getSeverityColor(severity: string): string {
  * Behavior: Throws ReconciliationApiError on non-2xx responses.
  */
 async function fetchWithAuth(url: string, init?: RequestInit): Promise<unknown> {
-  const response = await fetch(url, {
-    ...init,
-    credentials: "include",
-  });
+  const requestMethod = normalizeRequestMethod(init?.method);
 
-  if (!response.ok) {
-    let message = `API request failed: ${response.status} ${response.statusText}`;
-    let code: string | null = null;
-    try {
-      const body = (await response.json()) as Record<string, unknown>;
-      if (typeof body.detail === "object" && body.detail !== null) {
-        const detail = body.detail as Record<string, unknown>;
-        if (typeof detail.message === "string") {
-          message = detail.message;
+  const performRequest = async (): Promise<unknown> => {
+    const response = await fetch(url, {
+      ...init,
+      cache: "no-store",
+      credentials: "include",
+    });
+
+    if (!response.ok) {
+      let message = `API request failed: ${response.status} ${response.statusText}`;
+      let code: string | null = null;
+      try {
+        const body = (await response.json()) as Record<string, unknown>;
+        if (typeof body.detail === "object" && body.detail !== null) {
+          const detail = body.detail as Record<string, unknown>;
+          if (typeof detail.message === "string") {
+            message = detail.message;
+          }
+          if (typeof detail.code === "string") {
+            code = detail.code;
+          }
+        } else if (typeof body.detail === "string") {
+          message = body.detail;
         }
-        if (typeof detail.code === "string") {
-          code = detail.code;
-        }
-      } else if (typeof body.detail === "string") {
-        message = body.detail;
+      } catch {
+        // Response body is not JSON; use default message
       }
-    } catch {
-      // Response body is not JSON; use default message
+      throw new ReconciliationApiError(message, response.status, code);
     }
-    throw new ReconciliationApiError(message, response.status, code);
+
+    return response.json();
+  };
+
+  if (requestMethod === "GET") {
+    return loadClientCachedValue(url, performRequest);
   }
 
-  return response.json();
+  const payload = await performRequest();
+  invalidateClientCacheByPrefix(buildEntityCacheInvalidationPrefixes(url));
+  return payload;
+}
+
+function normalizeRequestMethod(value: string | null | undefined): string {
+  return (value ?? "GET").toUpperCase();
 }

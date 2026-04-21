@@ -25,7 +25,7 @@ export async function proxyEntityRequest(
     buildBackendEntitiesUrl(`/${pathSegments.join("/")}`, requestUrl.search),
     {
       cache: "no-store",
-      headers: buildProxyHeaders(request),
+      headers: buildEntityProxyHeaders(request),
       method: request.method,
       redirect: "manual",
       ...(requestBody === undefined ? {} : { body: requestBody }),
@@ -59,7 +59,7 @@ export async function proxyEntityRequest(
   });
 }
 
-function buildProxyHeaders(request: Request): Headers {
+export function buildEntityProxyHeaders(request: Request): Headers {
   const headers = new Headers({
     Accept: request.headers.get("accept") ?? "application/json",
   });

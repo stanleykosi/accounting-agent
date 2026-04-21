@@ -16,15 +16,14 @@ import {
   findBlockingPhase,
   formatCloseRunDateTime,
   formatCloseRunPeriod,
-  listCloseRuns,
   type CloseRunSummary,
 } from "../../lib/close-runs";
-import { EntityApiError, listEntities, type EntitySummary } from "../../lib/entities/api";
-
-type DashboardEntityRuns = {
-  closeRuns: readonly CloseRunSummary[];
-  entity: EntitySummary;
-};
+import {
+  readDashboardBootstrap,
+  readDashboardBootstrapSnapshot,
+  type DashboardEntityRuns,
+} from "../../lib/dashboard";
+import { EntityApiError, type EntitySummary } from "../../lib/entities/api";
 
 type DashboardRow = {
   closeRun: CloseRunSummary;
@@ -36,13 +35,13 @@ type DashboardActivityRow = {
   lastActivity: NonNullable<EntitySummary["last_activity"]>;
 };
 
-type DashboardEntitySummary = EntitySummary;
-
 export default function DashboardPage(): ReactElement {
   const router = useRouter();
-  const [dashboardData, setDashboardData] = useState<readonly DashboardEntityRuns[]>([]);
+  const [dashboardData, setDashboardData] = useState<readonly DashboardEntityRuns[]>(
+    () => readDashboardBootstrapSnapshot() ?? [],
+  );
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(() => readDashboardBootstrapSnapshot() === null);
 
   useEffect(() => {
     void loadDashboard({
@@ -377,14 +376,7 @@ async function loadDashboard(options: {
 }): Promise<void> {
   options.onLoadingChange(true);
   try {
-    const entityList = await listEntities();
-    const closeRunsByEntity = await Promise.all(
-      entityList.entities.map(async (entity: DashboardEntitySummary) => ({
-        closeRuns: await listCloseRuns(entity.id),
-        entity,
-      })),
-    );
-    options.onLoaded(closeRunsByEntity);
+    options.onLoaded(await readDashboardBootstrap());
     options.onError(null);
   } catch (error: unknown) {
     options.onError(resolveDashboardErrorMessage(error));

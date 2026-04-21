@@ -5,6 +5,12 @@ Dependencies: The generated TS SDK schema types and the Next.js same-origin enti
 */
 
 import type { components } from "@accounting-ai-agent/ts-sdk";
+import {
+  buildEntityCacheInvalidationPrefixes,
+  invalidateClientCacheByPrefix,
+  loadClientCachedValue,
+  readClientCacheSnapshot,
+} from "../client-cache";
 import { resolveBackendApiBaseUrl } from "../runtime";
 
 export type CreateEntityRequest = components["schemas"]["CreateEntityRequest"];
@@ -58,6 +64,7 @@ export class EntityApiError extends Error {
 }
 
 const ENTITY_PROXY_BASE_PATH = "/api/entities";
+const ENTITY_READ_CACHE_TTL_MS = 30_000;
 
 /**
  * Purpose: Build the backend FastAPI entity URL targeted by the Next.js proxy handlers.
@@ -83,6 +90,10 @@ export async function listEntities(): Promise<EntityListResponse> {
   return entityRequest<EntityListResponse>(ENTITY_PROXY_BASE_PATH, {
     method: "GET",
   });
+}
+
+export function readEntityListSnapshot(): EntityListResponse | null {
+  return readClientCacheSnapshot<EntityListResponse>(ENTITY_PROXY_BASE_PATH);
 }
 
 /**
@@ -112,6 +123,12 @@ export async function readEntityWorkspace(entityId: string): Promise<EntityWorks
     {
       method: "GET",
     },
+  );
+}
+
+export function readEntityWorkspaceSnapshot(entityId: string): EntityWorkspace | null {
+  return readClientCacheSnapshot<EntityWorkspace>(
+    `${ENTITY_PROXY_BASE_PATH}/${encodeURIComponent(entityId)}`,
   );
 }
 
@@ -194,23 +211,35 @@ async function entityRequest<TResponse>(
   path: string,
   init: Readonly<RequestInit>,
 ): Promise<TResponse> {
-  const response = await fetch(path, {
-    ...init,
-    cache: "no-store",
-    credentials: "same-origin",
-    headers: {
-      Accept: "application/json",
-      ...(init.body ? { "Content-Type": "application/json" } : {}),
-      ...init.headers,
-    },
-  });
+  const requestMethod = normalizeRequestMethod(init.method);
 
-  const payload = await parseJsonPayload(response);
-  if (!response.ok) {
-    throw buildEntityApiError(response.status, payload);
+  const performRequest = async (): Promise<TResponse> => {
+    const response = await fetch(path, {
+      ...init,
+      cache: "no-store",
+      credentials: "same-origin",
+      headers: {
+        Accept: "application/json",
+        ...(init.body ? { "Content-Type": "application/json" } : {}),
+        ...init.headers,
+      },
+    });
+
+    const payload = await parseJsonPayload(response);
+    if (!response.ok) {
+      throw buildEntityApiError(response.status, payload);
+    }
+
+    return payload as TResponse;
+  };
+
+  if (requestMethod === "GET") {
+    return loadClientCachedValue(path, performRequest, ENTITY_READ_CACHE_TTL_MS);
   }
 
-  return payload as TResponse;
+  const payload = await performRequest();
+  invalidateClientCacheByPrefix(buildEntityCacheInvalidationPrefixes(path));
+  return payload;
 }
 
 function buildEntityApiError(statusCode: number, payload: unknown): EntityApiError {
@@ -274,4 +303,8 @@ function asEntityApiErrorCode(value: unknown): EntityApiErrorCode {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
+}
+
+function normalizeRequestMethod(value: string | null | undefined): string {
+  return (value ?? "GET").toUpperCase();
 }

@@ -4,6 +4,12 @@ Scope: Template listing, creation, activation, guardrail validation, and comment
 Dependencies: Browser Fetch APIs and the existing `/api/entities/**` proxy surface.
 */
 
+import {
+  buildEntityCacheInvalidationPrefixes,
+  invalidateClientCacheByPrefix,
+  loadClientCachedValue,
+} from "./client-cache";
+
 export type ReportSectionDefinition = {
   section_key: string;
   label: string;
@@ -116,31 +122,44 @@ function apiPath(entityId: string, suffix: string): string {
 }
 
 async function requestJson<T>(url: string, init: RequestInit = {}): Promise<T> {
-  const response = await fetch(url, {
-    ...init,
-    headers: {
-      "Content-Type": "application/json",
-      ...init.headers,
-    },
-    credentials: "include",
-  });
+  const requestMethod = normalizeRequestMethod(init.method);
 
-  if (!response.ok) {
-    let detail: { code?: string; message?: string } | null = null;
-    try {
-      detail = (await response.json()) as { code?: string; message?: string };
-    } catch {
-      // Ignore JSON parse errors on error responses.
+  const performRequest = async (): Promise<T> => {
+    const response = await fetch(url, {
+      ...init,
+      cache: "no-store",
+      headers: {
+        "Content-Type": "application/json",
+        ...init.headers,
+      },
+      credentials: "include",
+    });
+
+    if (!response.ok) {
+      let detail: { code?: string; message?: string } | null = null;
+      try {
+        detail = (await response.json()) as { code?: string; message?: string };
+      } catch {
+        // Ignore JSON parse errors on error responses.
+      }
+
+      throw new ReportApiError(
+        detail?.message ?? `Request failed with status ${response.status}.`,
+        (detail?.code as ReportApiErrorCode) ?? "unexpected_error",
+        response.status,
+      );
     }
 
-    throw new ReportApiError(
-      detail?.message ?? `Request failed with status ${response.status}.`,
-      (detail?.code as ReportApiErrorCode) ?? "unexpected_error",
-      response.status,
-    );
+    return (await response.json()) as T;
+  };
+
+  if (requestMethod === "GET") {
+    return loadClientCachedValue(url, performRequest);
   }
 
-  return (await response.json()) as T;
+  const payload = await performRequest();
+  invalidateClientCacheByPrefix(buildEntityCacheInvalidationPrefixes(url));
+  return payload;
 }
 
 /* ------------------------------------------------------------------ */
@@ -300,4 +319,8 @@ export function buildReportArtifactDownloadPath(
     entityId,
     `/close-runs/${closeRunId}/runs/${reportRunId}/artifacts/${encodeURIComponent(artifactType)}`,
   );
+}
+
+function normalizeRequestMethod(value: string | null | undefined): string {
+  return (value ?? "GET").toUpperCase();
 }

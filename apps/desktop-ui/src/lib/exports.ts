@@ -39,6 +39,12 @@ export type EvidencePackBundle = {
   version_no: number;
 };
 
+import {
+  buildEntityCacheInvalidationPrefixes,
+  invalidateClientCacheByPrefix,
+  loadClientCachedValue,
+} from "./client-cache";
+
 export type ExportArtifactEntry = {
   artifact_type: string;
   checksum: string;
@@ -107,28 +113,40 @@ function buildEntityProxyPath(entityId: string, pathSegments: readonly string[])
 }
 
 async function requestJson<T>(url: string, init: RequestInit = {}): Promise<T> {
-  const response = await fetch(url, {
-    ...init,
-    cache: "no-store",
-    credentials: "include",
-    headers: {
-      Accept: "application/json",
-      "Content-Type": "application/json",
-      ...init.headers,
-    },
-  });
-  const payload = await parseJsonResponse(response);
-  if (!response.ok) {
-    const detail = isRecord(payload) ? payload.detail : null;
-    throw new ExportApiError(
-      isRecord(detail) && typeof detail.message === "string"
-        ? detail.message
-        : `Request failed with status ${response.status}.`,
-      response.status,
-      isRecord(detail) && typeof detail.code === "string" ? detail.code : null,
-    );
+  const requestMethod = normalizeRequestMethod(init.method);
+
+  const performRequest = async (): Promise<T> => {
+    const response = await fetch(url, {
+      ...init,
+      cache: "no-store",
+      credentials: "include",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+        ...init.headers,
+      },
+    });
+    const payload = await parseJsonResponse(response);
+    if (!response.ok) {
+      const detail = isRecord(payload) ? payload.detail : null;
+      throw new ExportApiError(
+        isRecord(detail) && typeof detail.message === "string"
+          ? detail.message
+          : `Request failed with status ${response.status}.`,
+        response.status,
+        isRecord(detail) && typeof detail.code === "string" ? detail.code : null,
+      );
+    }
+    return payload as T;
+  };
+
+  if (requestMethod === "GET") {
+    return loadClientCachedValue(url, performRequest);
   }
-  return payload as T;
+
+  const payload = await performRequest();
+  invalidateClientCacheByPrefix(buildEntityCacheInvalidationPrefixes(url));
+  return payload;
 }
 
 export async function listExports(
@@ -228,4 +246,8 @@ async function parseJsonResponse(response: Response): Promise<unknown> {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
+}
+
+function normalizeRequestMethod(value: string | null | undefined): string {
+  return (value ?? "GET").toUpperCase();
 }

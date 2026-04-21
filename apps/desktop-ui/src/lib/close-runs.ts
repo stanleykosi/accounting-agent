@@ -13,7 +13,17 @@ import {
   type PhaseProgressItem,
   type WorkflowPhase,
 } from "@accounting-ai-agent/ui";
-import { readEntityWorkspace, type EntityWorkspace } from "./entities/api";
+import {
+  buildEntityCacheInvalidationPrefixes,
+  invalidateClientCacheByPrefix,
+  loadClientCachedValue,
+  readClientCacheSnapshot,
+} from "./client-cache";
+import {
+  readEntityWorkspace,
+  readEntityWorkspaceSnapshot,
+  type EntityWorkspace,
+} from "./entities/api";
 
 export type CloseRunPhaseStateSummary = {
   blockingReason: string | null;
@@ -141,6 +151,7 @@ export class CloseRunApiError extends Error {
 }
 
 const ENTITIES_PROXY_BASE_PATH = "/api/entities";
+const CLOSE_RUN_READ_CACHE_TTL_MS = 30_000;
 
 /**
  * Purpose: Read all close runs for one entity workspace through the same-origin proxy.
@@ -153,6 +164,11 @@ export async function listCloseRuns(entityId: string): Promise<readonly CloseRun
     method: "GET",
   });
   return parseCloseRunListResponse(payload);
+}
+
+export function readCloseRunListSnapshot(entityId: string): readonly CloseRunSummary[] | null {
+  const payload = readClientCacheSnapshot<unknown>(buildEntityProxyPath(entityId, ["close-runs"]));
+  return payload === null ? null : parseCloseRunListResponse(payload);
 }
 
 /**
@@ -186,6 +202,13 @@ export async function readCloseRun(entityId: string, closeRunId: string): Promis
     },
   );
   return parseCloseRunSummary(payload);
+}
+
+export function readCloseRunSnapshot(entityId: string, closeRunId: string): CloseRunSummary | null {
+  const payload = readClientCacheSnapshot<unknown>(
+    buildEntityProxyPath(entityId, ["close-runs", closeRunId]),
+  );
+  return payload === null ? null : parseCloseRunSummary(payload);
 }
 
 export async function transitionCloseRun(
@@ -263,6 +286,25 @@ export async function readCloseRunWorkspace(
     readCloseRun(entityId, closeRunId),
     listCloseRuns(entityId),
   ]);
+  return {
+    closeRun,
+    closeRuns,
+    entity,
+  };
+}
+
+export function readCloseRunWorkspaceSnapshot(
+  entityId: string,
+  closeRunId: string,
+): CloseRunWorkspaceData | null {
+  const entity = readEntityWorkspaceSnapshot(entityId);
+  const closeRun = readCloseRunSnapshot(entityId, closeRunId);
+  const closeRuns = readCloseRunListSnapshot(entityId);
+
+  if (entity === null || closeRun === null || closeRuns === null) {
+    return null;
+  }
+
   return {
     closeRun,
     closeRuns,
@@ -457,26 +499,38 @@ async function closeRunRequest<TResponse>(
   path: string,
   init: Readonly<RequestInit>,
 ): Promise<TResponse> {
-  const response = await fetch(path, {
-    ...init,
-    cache: "no-store",
-    credentials: "same-origin",
-    headers: {
-      Accept: "application/json",
-      ...(init.body ? { "Content-Type": "application/json" } : {}),
-      ...init.headers,
-    },
-  });
+  const requestMethod = normalizeRequestMethod(init.method);
 
-  const payload = await parseJsonPayload(response);
-  if (!response.ok) {
-    throw buildCloseRunApiError(response.status, payload);
+  const performRequest = async (): Promise<TResponse> => {
+    const response = await fetch(path, {
+      ...init,
+      cache: "no-store",
+      credentials: "same-origin",
+      headers: {
+        Accept: "application/json",
+        ...(init.body ? { "Content-Type": "application/json" } : {}),
+        ...init.headers,
+      },
+    });
+
+    const payload = await parseJsonPayload(response);
+    if (!response.ok) {
+      throw buildCloseRunApiError(response.status, payload);
+    }
+
+    return payload as TResponse;
+  };
+
+  if (requestMethod === "GET") {
+    return loadClientCachedValue(path, performRequest, CLOSE_RUN_READ_CACHE_TTL_MS);
   }
 
-  return payload as TResponse;
+  const payload = await performRequest();
+  invalidateClientCacheByPrefix(buildEntityCacheInvalidationPrefixes(path));
+  return payload;
 }
 
-function parseCloseRunListResponse(payload: unknown): readonly CloseRunSummary[] {
+export function parseCloseRunListResponse(payload: unknown): readonly CloseRunSummary[] {
   if (!isRecord(payload) || !Array.isArray(payload.close_runs)) {
     throw new Error("Invalid close-run list response payload.");
   }
@@ -718,4 +772,8 @@ function safeParseDate(value: string): Date | null {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
+}
+
+function normalizeRequestMethod(value: string | null | undefined): string {
+  return (value ?? "GET").toUpperCase();
 }

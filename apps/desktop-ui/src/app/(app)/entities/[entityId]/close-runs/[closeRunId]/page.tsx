@@ -21,6 +21,7 @@ import {
   formatCloseRunPeriod,
   getCloseRunPhaseStatusLabel,
   getCloseRunStatusLabel,
+  readCloseRunWorkspaceSnapshot,
   readCloseRunWorkspace,
   transitionCloseRun,
   type CloseRunSummary,
@@ -71,12 +72,13 @@ export default function CloseRunOverviewPage({
   params,
 }: Readonly<CloseRunOverviewPageProps>): ReactElement {
   const { closeRunId, entityId } = use(params);
+  const workspaceSnapshot = readCloseRunWorkspaceSnapshot(entityId, closeRunId);
   const router = useRouter();
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(() => workspaceSnapshot === null);
   const [isMutating, setIsMutating] = useState(false);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
-  const [workspaceData, setWorkspaceData] = useState<CloseRunWorkspaceData | null>(null);
+  const [workspaceData, setWorkspaceData] = useState<CloseRunWorkspaceData | null>(workspaceSnapshot);
 
   useEffect(() => {
     void loadCloseRunWorkspace({
