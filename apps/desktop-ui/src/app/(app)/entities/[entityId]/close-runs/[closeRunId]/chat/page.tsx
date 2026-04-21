@@ -23,22 +23,9 @@ export default async function ChatPage({ params }: Readonly<ChatPageProps>) {
 
   return (
     <div className="quartz-page quartz-chat-page">
-      <header className="quartz-page-header">
-        <div>
-          <p className="quartz-kpi-label">Assistant</p>
-          <h1>Assistant Workspace</h1>
-          <p className="quartz-page-subtitle">
-            Ask questions, upload source documents, and continue the close from one clean
-            conversation workspace.
-          </p>
-        </div>
-      </header>
-
-      <section className="quartz-section">
-        <div className="quartz-chat-workbench-shell">
-          <ChatRail closeRunId={closeRunId} entityId={entityId} presentation="workspace" />
-        </div>
-      </section>
+      <div className="quartz-chat-workbench-shell">
+        <ChatRail closeRunId={closeRunId} entityId={entityId} presentation="workspace" />
+      </div>
     </div>
   );
 }

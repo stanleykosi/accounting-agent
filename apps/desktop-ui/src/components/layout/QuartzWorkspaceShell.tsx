@@ -47,6 +47,7 @@ export function QuartzWorkspaceShell({
     [closeContext, rememberedCloseContext],
   );
   const breadcrumbs = useMemo(() => resolveBreadcrumbs(pathname), [pathname]);
+  const isChatWorkspace = pathname.endsWith("/chat");
   const navItems = useMemo<readonly NavItem[]>(
     () => [
       {
@@ -157,7 +158,7 @@ export function QuartzWorkspaceShell({
         </div>
       </aside>
 
-      <div className="quartz-shell-main">
+      <div className={isChatWorkspace ? "quartz-shell-main quartz-shell-main-chat" : "quartz-shell-main"}>
         <header className="quartz-topbar">
           <div className="quartz-topbar-left">
             <span className="quartz-topbar-brand">Accounting AI Agent</span>
@@ -188,7 +189,15 @@ export function QuartzWorkspaceShell({
           </div>
         </header>
 
-        <div className="quartz-shell-content">{children}</div>
+        <div
+          className={
+            isChatWorkspace
+              ? "quartz-shell-content quartz-shell-content-chat"
+              : "quartz-shell-content"
+          }
+        >
+          {children}
+        </div>
       </div>
     </div>
   );

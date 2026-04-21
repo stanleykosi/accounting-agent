@@ -9,6 +9,7 @@ import {
   type CSSProperties,
   type ReactElement,
 } from "react";
+import { QuartzIcon } from "../layout/QuartzIcons";
 import { ActionComposer, type ComposerDraft } from "./ActionComposer";
 import {
   ChatApiError,
@@ -38,6 +39,10 @@ type RenderableMessage = ChatMessageRecord & {
   displayTime: string;
 };
 
+type CreateThreadOptions = {
+  suppressError?: boolean;
+};
+
 export function ChatRail({
   closeRunId,
   entityId,
@@ -48,10 +53,13 @@ export function ChatRail({
   const [messages, setMessages] = useState<ChatMessageRecord[]>([]);
   const [workspace, setWorkspace] = useState<ChatThreadWorkspace | null>(null);
   const [pendingTurn, setPendingTurn] = useState<PendingTurn | null>(null);
+  const [pendingDeletionThread, setPendingDeletionThread] = useState<ChatThreadSummary | null>(null);
   const [deletingThreadId, setDeletingThreadId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isBootstrapping, setIsBootstrapping] = useState(true);
+  const [isCreatingThread, setIsCreatingThread] = useState(false);
   const [isLoadingThread, setIsLoadingThread] = useState(false);
+  const isCreatingThreadRef = useRef(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const loadThreads = useCallback(async (): Promise<ChatThreadSummary[]> => {
@@ -67,6 +75,12 @@ export function ChatRail({
           },
     );
     setThreads(response.threads);
+    setSelectedThread((current) => {
+      if (current === null) {
+        return current;
+      }
+      return response.threads.find((thread) => thread.id === current.id) ?? current;
+    });
     return response.threads;
   }, [closeRunId, entityId]);
 
@@ -92,8 +106,8 @@ export function ChatRail({
         setMessages(threadDetail.messages);
         setWorkspace(threadWorkspace);
         setPendingTurn(null);
-      } catch (error: unknown) {
-        if (error instanceof ChatApiError && error.status !== 401) {
+      } catch (caughtError: unknown) {
+        if (caughtError instanceof ChatApiError && caughtError.status !== 401) {
           setError("The selected chat could not be loaded.");
         }
       } finally {
@@ -105,30 +119,51 @@ export function ChatRail({
     [entityId],
   );
 
-  const handleCreateThread = useCallback(async (): Promise<ChatThreadSummary | null> => {
-    try {
-      const response = await createChatThread(
-        closeRunId
-          ? {
-              close_run_id: closeRunId,
-              entity_id: entityId,
-            }
-          : {
-              entity_id: entityId,
-            },
-      );
-      const nextThread = response.thread;
-      setThreads((current) => dedupeThreads([nextThread, ...current]));
-      await loadThreadWorkspace(nextThread, { showLoader: false });
-      setError(null);
-      return nextThread;
-    } catch (error: unknown) {
-      if (error instanceof ChatApiError && error.status !== 401) {
-        setError("A new chat could not be created.");
+  const createFreshThread = useCallback(
+    async (options?: CreateThreadOptions): Promise<ChatThreadSummary | null> => {
+      if (isCreatingThreadRef.current) {
+        return null;
       }
-      return null;
-    }
-  }, [closeRunId, entityId, loadThreadWorkspace]);
+
+      isCreatingThreadRef.current = true;
+      setIsCreatingThread(true);
+      setError(null);
+      setPendingTurn(null);
+
+      try {
+        const response = await createChatThread(
+          closeRunId
+            ? {
+                close_run_id: closeRunId,
+                entity_id: entityId,
+              }
+            : {
+                entity_id: entityId,
+              },
+        );
+        const nextThread = response.thread;
+        setThreads((current) => dedupeThreads([nextThread, ...current]));
+        setMessages([]);
+        setWorkspace(null);
+        setSelectedThread(nextThread);
+        await loadThreadWorkspace(nextThread, { showLoader: false });
+        return nextThread;
+      } catch (caughtError: unknown) {
+        if (
+          !options?.suppressError &&
+          caughtError instanceof ChatApiError &&
+          caughtError.status !== 401
+        ) {
+          setError("The assistant could not start a new chat.");
+        }
+        return null;
+      } finally {
+        isCreatingThreadRef.current = false;
+        setIsCreatingThread(false);
+      }
+    },
+    [closeRunId, entityId, loadThreadWorkspace],
+  );
 
   useEffect(() => {
     let isMounted = true;
@@ -153,10 +188,10 @@ export function ChatRail({
         }
 
         if (presentation === "workspace") {
-          await handleCreateThread();
+          await createFreshThread({ suppressError: true });
         }
-      } catch (error: unknown) {
-        if (error instanceof ChatApiError && error.status !== 401) {
+      } catch (caughtError: unknown) {
+        if (caughtError instanceof ChatApiError && caughtError.status !== 401) {
           setError("The assistant workspace could not be prepared.");
         }
       } finally {
@@ -171,11 +206,16 @@ export function ChatRail({
     return () => {
       isMounted = false;
     };
-  }, [handleCreateThread, loadThreadWorkspace, loadThreads, presentation]);
+  }, [createFreshThread, loadThreadWorkspace, loadThreads, presentation]);
+
+  const renderableMessages = useMemo(() => buildRenderableMessages(messages), [messages]);
 
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, pendingTurn, isLoadingThread]);
+    messagesEndRef.current?.scrollIntoView({
+      behavior: renderableMessages.length > 0 || pendingTurn !== null ? "smooth" : "auto",
+      block: "end",
+    });
+  }, [pendingTurn, renderableMessages.length]);
 
   const refreshSelectedThread = useCallback(async (): Promise<void> => {
     if (selectedThread === null) {
@@ -186,137 +226,159 @@ export function ChatRail({
     try {
       await loadThreads();
     } catch {
-      // Keep the current thread visible even if the thread list refresh fails.
+      // Keep the current thread visible even if the thread index refresh fails.
     }
   }, [loadThreadWorkspace, loadThreads, selectedThread]);
 
-  const handleDeleteThread = useCallback(
-    async (thread: ChatThreadSummary): Promise<void> => {
-      const confirmed = window.confirm(
-        `Delete "${formatThreadTitle(thread)}"? This removes the full conversation history.`,
-      );
-      if (!confirmed) {
+  const confirmThreadDeletion = useCallback(async (): Promise<void> => {
+    if (pendingDeletionThread === null) {
+      return;
+    }
+
+    const thread = pendingDeletionThread;
+    setDeletingThreadId(thread.id);
+    setPendingDeletionThread(null);
+
+    try {
+      await deleteChatThread(thread.id, entityId);
+      const remainingThreads = threads.filter((candidate) => candidate.id !== thread.id);
+      setThreads(remainingThreads);
+      setError(null);
+
+      if (selectedThread?.id !== thread.id) {
         return;
       }
 
-      setDeletingThreadId(thread.id);
-      try {
-        await deleteChatThread(thread.id, entityId);
-        const remainingThreads = threads.filter((candidate) => candidate.id !== thread.id);
-        setThreads(remainingThreads);
-        setError(null);
-
-        if (selectedThread?.id !== thread.id) {
-          return;
-        }
-
-        if (remainingThreads[0] !== undefined) {
-          await loadThreadWorkspace(remainingThreads[0], { showLoader: false });
-          return;
-        }
-
-        setMessages([]);
-        setWorkspace(null);
-        setSelectedThread(null);
-        setPendingTurn(null);
-
-        if (presentation === "workspace") {
-          await handleCreateThread();
-        }
-      } catch (error: unknown) {
-        if (error instanceof ChatApiError && error.status !== 401) {
-          setError("The selected chat could not be deleted.");
-        }
-      } finally {
-        setDeletingThreadId(null);
+      if (remainingThreads[0] !== undefined) {
+        await loadThreadWorkspace(remainingThreads[0], { showLoader: false });
+        return;
       }
-    },
-    [entityId, handleCreateThread, loadThreadWorkspace, presentation, selectedThread, threads],
-  );
 
-  const renderableMessages = useMemo(
-    () => buildRenderableMessages(messages),
-    [messages],
-  );
+      setMessages([]);
+      setWorkspace(null);
+      setSelectedThread(null);
+      setPendingTurn(null);
+
+      if (presentation === "workspace") {
+        await createFreshThread({ suppressError: true });
+      }
+    } catch (caughtError: unknown) {
+      if (caughtError instanceof ChatApiError && caughtError.status !== 401) {
+        setError("The selected chat could not be deleted.");
+      }
+    } finally {
+      setDeletingThreadId(null);
+    }
+  }, [
+    createFreshThread,
+    entityId,
+    loadThreadWorkspace,
+    pendingDeletionThread,
+    presentation,
+    selectedThread?.id,
+    threads,
+  ]);
 
   const isAwaitingReply = pendingTurn !== null && pendingTurn.assistantContent === null;
+  const isBusy = isBootstrapping || isLoadingThread;
 
   return (
-    <div
-      style={
-        presentation === "workspace"
-          ? workbenchShellStyle
-          : { ...workbenchShellStyle, gridTemplateColumns: "minmax(240px, 280px) minmax(0, 1fr)" }
-      }
-    >
-      <ThreadSidebar
-        deletingThreadId={deletingThreadId}
-        isBootstrapping={isBootstrapping}
-        selectedThreadId={selectedThread?.id ?? null}
-        threads={threads}
-        onCreateThread={() => {
-          void handleCreateThread();
-        }}
-        onDeleteThread={(thread) => {
-          void handleDeleteThread(thread);
-        }}
-        onSelectThread={(thread) => {
-          void loadThreadWorkspace(thread);
-        }}
-      />
-
-      <section style={conversationPaneStyle}>
-        <ConversationHeader
-          error={error}
-          isLoading={isLoadingThread || isBootstrapping}
-          thread={selectedThread}
+    <>
+      <div
+        style={
+          presentation === "workspace"
+            ? workbenchShellStyle
+            : {
+                ...workbenchShellStyle,
+                gridTemplateColumns: "minmax(240px, 280px) minmax(0, 1fr)",
+              }
+        }
+      >
+        <ThreadSidebar
+          deletingThreadId={deletingThreadId}
+          isBootstrapping={isBootstrapping}
+          isCreatingThread={isCreatingThread}
+          selectedThreadId={selectedThread?.id ?? null}
+          threads={threads}
+          onCreateThread={() => {
+            void createFreshThread();
+          }}
+          onRequestDeleteThread={setPendingDeletionThread}
+          onSelectThread={(thread) => {
+            void loadThreadWorkspace(thread);
+          }}
         />
 
-        <MessageList
-          isAwaitingReply={isAwaitingReply}
-          isLoading={isLoadingThread || isBootstrapping}
-          messages={renderableMessages}
-          pendingTurn={pendingTurn}
-        />
+        <section style={conversationPaneStyle}>
+          <ConversationHeader
+            error={error}
+            isCreatingThread={isCreatingThread}
+            isLoading={isBusy}
+            thread={selectedThread}
+          />
 
-        <ActionComposer
-          closeRunId={selectedThread?.close_run_id ?? closeRunId}
-          disabled={isLoadingThread || isBootstrapping || selectedThread === null}
-          entityId={entityId}
-          onActionStateChange={() => {
-            void refreshSelectedThread();
-          }}
-          onMessageSent={(response: ChatActionResponse, draft: ComposerDraft) => {
-            setPendingTurn({
-              assistantContent: response.content,
-              draft,
-            });
-            void refreshSelectedThread();
-          }}
-          onSubmissionError={() => {
-            setPendingTurn(null);
-          }}
-          onSubmissionStart={(draft: ComposerDraft) => {
-            setPendingTurn({
-              assistantContent: null,
-              draft,
-            });
-          }}
-          threadId={selectedThread?.id ?? ""}
-          workspace={workspace}
-        />
+          <MessageList
+            isAwaitingReply={isAwaitingReply}
+            isLoading={isBusy}
+            messages={renderableMessages}
+            pendingTurn={pendingTurn}
+          />
 
-        <div ref={messagesEndRef} />
-      </section>
-    </div>
+          <ActionComposer
+            closeRunId={selectedThread?.close_run_id ?? closeRunId}
+            disabled={isBusy || selectedThread === null}
+            entityId={entityId}
+            onActionStateChange={() => {
+              void refreshSelectedThread();
+            }}
+            onMessageSent={(response: ChatActionResponse, draft: ComposerDraft) => {
+              setPendingTurn({
+                assistantContent: response.content,
+                draft,
+              });
+              void refreshSelectedThread();
+            }}
+            onSubmissionError={() => {
+              setPendingTurn(null);
+            }}
+            onSubmissionStart={(draft: ComposerDraft) => {
+              setPendingTurn({
+                assistantContent: null,
+                draft,
+              });
+            }}
+            threadId={selectedThread?.id ?? ""}
+            workspace={workspace}
+          />
+
+          <div ref={messagesEndRef} />
+        </section>
+      </div>
+
+      {pendingDeletionThread !== null ? (
+        <DeleteThreadModal
+          isDeleting={deletingThreadId === pendingDeletionThread.id}
+          thread={pendingDeletionThread}
+          onClose={() => {
+            if (deletingThreadId === null) {
+              setPendingDeletionThread(null);
+            }
+          }}
+          onConfirm={() => {
+            void confirmThreadDeletion();
+          }}
+        />
+      ) : null}
+    </>
   );
 }
 
 type ThreadSidebarProps = {
   deletingThreadId: string | null;
   isBootstrapping: boolean;
+  isCreatingThread: boolean;
   onCreateThread: () => void;
-  onDeleteThread: (thread: ChatThreadSummary) => void;
+  onRequestDeleteThread: (thread: ChatThreadSummary) => void;
   onSelectThread: (thread: ChatThreadSummary) => void;
   selectedThreadId: string | null;
   threads: readonly ChatThreadSummary[];
@@ -325,8 +387,9 @@ type ThreadSidebarProps = {
 function ThreadSidebar({
   deletingThreadId,
   isBootstrapping,
+  isCreatingThread,
   onCreateThread,
-  onDeleteThread,
+  onRequestDeleteThread,
   onSelectThread,
   selectedThreadId,
   threads,
@@ -334,58 +397,62 @@ function ThreadSidebar({
   return (
     <aside style={threadSidebarStyle}>
       <div style={threadSidebarHeaderStyle}>
-        <div style={{ display: "grid", gap: 6 }}>
+        <div style={sidebarHeadingBlockStyle}>
           <p style={sidebarEyebrowStyle}>Assistant</p>
-          <h2 style={sidebarTitleStyle}>Chats</h2>
-          <p style={sidebarBodyStyle}>
-            One clean workspace for questions, approvals, and source-document uploads.
-          </p>
+          <h2 style={sidebarTitleStyle}>Threads</h2>
         </div>
-        <button onClick={onCreateThread} style={newChatButtonStyle} type="button">
-          New chat
+
+        <button
+          disabled={isCreatingThread}
+          onClick={onCreateThread}
+          style={newChatButtonStyle(isCreatingThread)}
+          type="button"
+        >
+          <QuartzIcon name="sparkle" style={buttonIconStyle} />
+          <span>{isCreatingThread ? "Creating..." : "New chat"}</span>
         </button>
       </div>
 
       {isBootstrapping ? (
         <div style={emptySidebarCardStyle}>
-          <p style={emptySidebarTitleStyle}>Preparing assistant…</p>
-          <p style={emptySidebarBodyStyle}>Loading the latest chat workspace.</p>
+          <p style={emptySidebarTitleStyle}>Preparing assistant</p>
+          <p style={emptySidebarBodyStyle}>Loading your latest conversation threads.</p>
         </div>
       ) : threads.length === 0 ? (
         <div style={emptySidebarCardStyle}>
           <p style={emptySidebarTitleStyle}>No chats yet</p>
-          <p style={emptySidebarBodyStyle}>
-            A new chat will open automatically when you begin working here.
-          </p>
+          <p style={emptySidebarBodyStyle}>Create a chat to start working with the assistant.</p>
         </div>
       ) : (
         <ul style={threadListStyle}>
           {threads.map((thread) => {
             const isActive = thread.id === selectedThreadId;
+            const isDeleting = deletingThreadId === thread.id;
             return (
               <li key={thread.id}>
                 <div style={threadRowStyle}>
                   <button
                     onClick={() => onSelectThread(thread)}
-                    style={isActive ? { ...threadCardStyle, ...threadCardActiveStyle } : threadCardStyle}
+                    style={threadCardStyle(isActive)}
                     type="button"
                   >
-                    <div style={{ display: "grid", gap: 6 }}>
-                      <span style={threadTitleStyle}>{formatThreadTitle(thread)}</span>
-                      <span style={threadMetaStyle}>
-                        {formatThreadSubtitle(thread)} · {formatThreadTime(thread.updated_at)}
-                      </span>
-                    </div>
+                    <span style={threadTitleStyle}>{formatThreadTitle(thread)}</span>
+                    <span style={threadMetaStyle}>
+                      {formatThreadSubtitle(thread)}
+                      {" / "}
+                      {formatThreadTime(thread.updated_at)}
+                    </span>
                   </button>
+
                   <button
                     aria-label={`Delete ${formatThreadTitle(thread)}`}
-                    disabled={deletingThreadId === thread.id}
-                    onClick={() => onDeleteThread(thread)}
-                    style={threadDeleteButtonStyle(deletingThreadId === thread.id)}
+                    disabled={isDeleting}
+                    onClick={() => onRequestDeleteThread(thread)}
+                    style={threadDeleteButtonStyle(isDeleting)}
                     title="Delete chat"
                     type="button"
                   >
-                    {deletingThreadId === thread.id ? "…" : "×"}
+                    <QuartzIcon name="trash" style={threadDeleteIconStyle} />
                   </button>
                 </div>
               </li>
@@ -399,42 +466,38 @@ function ThreadSidebar({
 
 type ConversationHeaderProps = {
   error: string | null;
+  isCreatingThread: boolean;
   isLoading: boolean;
   thread: ChatThreadSummary | null;
 };
 
 function ConversationHeader({
   error,
+  isCreatingThread,
   isLoading,
   thread,
 }: Readonly<ConversationHeaderProps>): ReactElement {
+  const scopeLabel = thread?.grounding.period_label ?? "Entity scope";
+
   return (
     <header style={conversationHeaderStyle}>
-      <div style={{ display: "grid", gap: 6 }}>
-        <p style={conversationEyebrowStyle}>Assistant Workspace</p>
-        <div style={conversationTitleRowStyle}>
-          <h2 style={conversationTitleStyle}>
-            {thread === null ? "New chat" : formatThreadTitle(thread)}
-          </h2>
-          {thread !== null ? (
-            <span style={conversationMetaPillStyle}>
-              {thread.grounding.period_label ?? "Entity scope"}
-            </span>
-          ) : null}
+      <div style={conversationTitleBlockStyle}>
+        <div style={conversationHeaderMetaStyle}>
+          <p style={conversationEyebrowStyle}>Assistant Workspace</p>
+          <span style={conversationScopePillStyle}>{scopeLabel}</span>
         </div>
-        <p style={conversationBodyStyle}>
-          Ask questions naturally, upload source documents, and continue the close from one clean
-          conversation. Hidden workflow context stays grounded in the backend and out of the UI.
-        </p>
+        <h2 style={conversationTitleStyle}>{thread === null ? "New chat" : formatThreadTitle(thread)}</h2>
       </div>
-      {error ? (
-        <div style={conversationErrorStyle} role="status">
-          {error}
-        </div>
-      ) : null}
-      {isLoading ? (
-        <div style={conversationLoadingStyle}>Refreshing the latest assistant state…</div>
-      ) : null}
+
+      <div style={conversationStatusRowStyle}>
+        {isCreatingThread ? <span style={conversationStatusPillStyle}>Starting chat</span> : null}
+        {isLoading ? <span style={conversationMutedPillStyle}>Syncing</span> : null}
+        {error ? (
+          <div role="status" style={conversationErrorStyle}>
+            {error}
+          </div>
+        ) : null}
+      </div>
     </header>
   );
 }
@@ -456,84 +519,165 @@ function MessageList({
 
   return (
     <div style={messageListStyle}>
-      {!hasMessages && !isLoading ? (
-        <div style={emptyConversationCardStyle}>
-          <p style={emptyConversationEyebrowStyle}>Ready</p>
-          <h3 style={emptyConversationTitleStyle}>Start the conversation</h3>
-          <p style={emptyConversationBodyStyle}>
-            Use the assistant like a modern chat workspace. Ask for the next step, resolve a
-            blocker, or upload source documents and let the agent stay grounded to this close.
-          </p>
-        </div>
-      ) : null}
-
-      {messages.map((message) => (
-        <article
-          key={message.id}
-          style={message.role === "user" ? userMessageContainerStyle : assistantMessageContainerStyle}
-        >
-          <div style={message.role === "user" ? userMessageBubbleStyle : assistantMessageBubbleStyle}>
-            <div style={messageHeaderStyle}>
-              <span style={messageRoleStyle(message.role)}>{message.role === "user" ? "You" : "Assistant"}</span>
-              <span style={messageTimeStyle}>{message.displayTime}</span>
-            </div>
-            {extractInlineAttachments(message).length > 0 ? (
-              <div style={inlineAttachmentRowStyle}>
-                {extractInlineAttachments(message).map((attachment) => (
-                  <span key={`${message.id}-${attachment.filename}`} style={inlineAttachmentPillStyle}>
-                    {attachment.intentLabel}: {attachment.filename}
-                  </span>
-                ))}
-              </div>
-            ) : null}
-            <p style={messageContentStyle}>{message.content}</p>
+      <div style={messageStreamStyle}>
+        {!hasMessages && !isLoading ? (
+          <div style={emptyConversationCardStyle}>
+            <p style={emptyConversationEyebrowStyle}>Ready</p>
+            <h3 style={emptyConversationTitleStyle}>Start a new conversation</h3>
+            <p style={emptyConversationBodyStyle}>
+              Ask for the next close action, resolve a blocker, or upload source documents directly
+              into the thread.
+            </p>
           </div>
-        </article>
-      ))}
+        ) : null}
 
-      {pendingTurn !== null ? (
-        <>
-          <article style={userMessageContainerStyle}>
-            <div style={userMessageBubbleStyle}>
+        {messages.map((message) => (
+          <article
+            key={message.id}
+            style={
+              message.role === "user" ? userMessageContainerStyle : assistantMessageContainerStyle
+            }
+          >
+            <div
+              style={
+                message.role === "user" ? userMessageBubbleStyle : assistantMessageBubbleStyle
+              }
+            >
               <div style={messageHeaderStyle}>
-                <span style={messageRoleStyle("user")}>You</span>
-                <span style={messageTimeStyle}>Sending…</span>
+                <span style={messageRoleStyle(message.role)}>
+                  {message.role === "user" ? "You" : "Assistant"}
+                </span>
+                <span style={messageTimeStyle}>{message.displayTime}</span>
               </div>
-              {pendingTurn.draft.attachmentNames.length > 0 ? (
+
+              {extractInlineAttachments(message).length > 0 ? (
                 <div style={inlineAttachmentRowStyle}>
-                  {pendingTurn.draft.attachmentNames.map((attachmentName) => (
-                    <span key={attachmentName} style={inlineAttachmentPillStyle}>
-                      Source document: {attachmentName}
+                  {extractInlineAttachments(message).map((attachment) => (
+                    <span
+                      key={`${message.id}-${attachment.filename}`}
+                      style={inlineAttachmentPillStyle}
+                    >
+                      {attachment.intentLabel}: {attachment.filename}
                     </span>
                   ))}
                 </div>
               ) : null}
-              <p style={messageContentStyle}>{pendingTurn.draft.content}</p>
-            </div>
-          </article>
 
-          <article style={assistantMessageContainerStyle}>
-            <div style={assistantMessageBubbleStyle}>
-              <div style={messageHeaderStyle}>
-                <span style={messageRoleStyle("assistant")}>Assistant</span>
-                <span style={messageTimeStyle}>{isAwaitingReply ? "Thinking…" : "Reply ready"}</span>
-              </div>
-              {pendingTurn.assistantContent === null ? (
-                <div style={thinkingBubbleStyle}>
-                  <span className="quartz-chat-thinking-dots">
-                    <span />
-                    <span />
-                    <span />
-                  </span>
-                  <span>Working through the request</span>
-                </div>
-              ) : (
-                <p style={messageContentStyle}>{pendingTurn.assistantContent}</p>
-              )}
+              <p style={messageContentStyle}>{message.content}</p>
             </div>
           </article>
-        </>
-      ) : null}
+        ))}
+
+        {pendingTurn !== null ? (
+          <>
+            <article style={userMessageContainerStyle}>
+              <div style={userMessageBubbleStyle}>
+                <div style={messageHeaderStyle}>
+                  <span style={messageRoleStyle("user")}>You</span>
+                  <span style={messageTimeStyle}>Sending...</span>
+                </div>
+
+                {pendingTurn.draft.attachmentNames.length > 0 ? (
+                  <div style={inlineAttachmentRowStyle}>
+                    {pendingTurn.draft.attachmentNames.map((attachmentName) => (
+                      <span key={attachmentName} style={inlineAttachmentPillStyle}>
+                        Source document: {attachmentName}
+                      </span>
+                    ))}
+                  </div>
+                ) : null}
+
+                <p style={messageContentStyle}>{pendingTurn.draft.content}</p>
+              </div>
+            </article>
+
+            <article style={assistantMessageContainerStyle}>
+              <div style={assistantMessageBubbleStyle}>
+                <div style={messageHeaderStyle}>
+                  <span style={messageRoleStyle("assistant")}>Assistant</span>
+                  <span style={messageTimeStyle}>
+                    {isAwaitingReply ? "Thinking..." : "Reply ready"}
+                  </span>
+                </div>
+
+                {pendingTurn.assistantContent === null ? (
+                  <div style={thinkingBubbleStyle}>
+                    <span className="quartz-chat-thinking-dots" aria-hidden="true">
+                      <span />
+                      <span />
+                      <span />
+                    </span>
+                    <span>Working through the request</span>
+                  </div>
+                ) : (
+                  <p style={messageContentStyle}>{pendingTurn.assistantContent}</p>
+                )}
+              </div>
+            </article>
+          </>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+type DeleteThreadModalProps = {
+  isDeleting: boolean;
+  onClose: () => void;
+  onConfirm: () => void;
+  thread: ChatThreadSummary;
+};
+
+function DeleteThreadModal({
+  isDeleting,
+  onClose,
+  onConfirm,
+  thread,
+}: Readonly<DeleteThreadModalProps>): ReactElement {
+  return (
+    <div
+      aria-modal="true"
+      className="quartz-modal-backdrop"
+      onClick={onClose}
+      role="dialog"
+    >
+      <div
+        className="quartz-modal-card"
+        onClick={(event) => event.stopPropagation()}
+        role="document"
+      >
+        <div style={deleteModalHeaderStyle}>
+          <div style={{ display: "grid", gap: 8 }}>
+            <h2 style={deleteModalTitleStyle}>Delete this chat?</h2>
+            <p style={deleteModalBodyStyle}>
+              Remove <strong>{formatThreadTitle(thread)}</strong> and its full conversation history.
+            </p>
+          </div>
+          <button
+            aria-label="Close"
+            className="quartz-icon-button"
+            onClick={onClose}
+            type="button"
+          >
+            <QuartzIcon name="dismiss" />
+          </button>
+        </div>
+
+        <div className="quartz-form-row quartz-modal-actions">
+          <button className="secondary-button" onClick={onClose} type="button">
+            Cancel
+          </button>
+          <button
+            className="primary-button"
+            disabled={isDeleting}
+            onClick={onConfirm}
+            style={deleteModalDangerButtonStyle}
+            type="button"
+          >
+            {isDeleting ? "Deleting..." : "Delete chat"}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -614,8 +758,11 @@ function formatThreadTitle(thread: ChatThreadSummary): string {
 
 function formatThreadSubtitle(thread: ChatThreadSummary): string {
   const scope = thread.grounding.period_label ?? "Entity scope";
+  if (thread.message_count <= 1) {
+    return scope;
+  }
   const messageCountLabel = thread.message_count === 1 ? "1 message" : `${thread.message_count} messages`;
-  return `${scope} · ${messageCountLabel}`;
+  return `${scope} / ${messageCountLabel}`;
 }
 
 function formatThreadTime(value: string): string {
@@ -653,14 +800,14 @@ function formatMessageTime(value: string): string {
 
 const workbenchShellStyle = {
   display: "grid",
-  gridTemplateColumns: "minmax(250px, 292px) minmax(0, 1fr)",
+  gridTemplateColumns: "minmax(272px, 312px) minmax(0, 1fr)",
   height: "100%",
   minHeight: 0,
   overflow: "hidden",
 } satisfies CSSProperties;
 
 const threadSidebarStyle = {
-  background: "linear-gradient(180deg, rgba(241, 237, 236, 0.82) 0%, rgba(247, 243, 242, 0.96) 100%)",
+  background: "linear-gradient(180deg, rgba(247, 243, 242, 0.94) 0%, rgba(241, 237, 236, 0.98) 100%)",
   borderRight: "1px solid var(--quartz-border)",
   display: "grid",
   gap: 18,
@@ -671,6 +818,11 @@ const threadSidebarStyle = {
 const threadSidebarHeaderStyle = {
   display: "grid",
   gap: 14,
+} satisfies CSSProperties;
+
+const sidebarHeadingBlockStyle = {
+  display: "grid",
+  gap: 4,
 } satisfies CSSProperties;
 
 const sidebarEyebrowStyle = {
@@ -685,35 +837,40 @@ const sidebarEyebrowStyle = {
 const sidebarTitleStyle = {
   color: "var(--quartz-ink)",
   fontFamily: "var(--font-display)",
-  fontSize: 28,
+  fontSize: 26,
   fontWeight: 600,
   letterSpacing: "-0.05em",
+  lineHeight: 1.05,
   margin: 0,
 } satisfies CSSProperties;
 
-const sidebarBodyStyle = {
-  color: "var(--quartz-muted)",
-  fontSize: 13,
-  lineHeight: "20px",
-  margin: 0,
-} satisfies CSSProperties;
+function newChatButtonStyle(disabled: boolean) {
+  return {
+    alignItems: "center",
+    border: "1px solid var(--quartz-primary)",
+    borderRadius: 999,
+    background: "var(--quartz-primary)",
+    color: "var(--quartz-primary-contrast)",
+    cursor: disabled ? "not-allowed" : "pointer",
+    display: "inline-flex",
+    gap: 8,
+    justifyContent: "center",
+    minHeight: 40,
+    opacity: disabled ? 0.72 : 1,
+    padding: "0 16px",
+    width: "100%",
+  } satisfies CSSProperties;
+}
 
-const newChatButtonStyle = {
-  border: "1px solid var(--quartz-primary)",
-  borderRadius: 999,
-  background: "var(--quartz-primary)",
-  color: "var(--quartz-primary-contrast)",
-  cursor: "pointer",
-  fontSize: 12,
-  fontWeight: 700,
-  minHeight: 38,
-  padding: "0 16px",
+const buttonIconStyle = {
+  height: 15,
+  width: 15,
 } satisfies CSSProperties;
 
 const emptySidebarCardStyle = {
   border: "1px solid var(--quartz-border)",
   borderRadius: 18,
-  background: "var(--quartz-surface)",
+  background: "rgba(255, 255, 255, 0.88)",
   display: "grid",
   gap: 8,
   padding: 18,
@@ -721,7 +878,7 @@ const emptySidebarCardStyle = {
 
 const emptySidebarTitleStyle = {
   color: "var(--quartz-ink)",
-  fontSize: 16,
+  fontSize: 15,
   fontWeight: 700,
   margin: 0,
 } satisfies CSSProperties;
@@ -750,63 +907,89 @@ const threadRowStyle = {
   gridTemplateColumns: "minmax(0, 1fr) auto",
 } satisfies CSSProperties;
 
-const threadCardStyle = {
-  border: "1px solid var(--quartz-border)",
-  borderRadius: 16,
-  background: "rgba(255, 255, 255, 0.82)",
-  color: "var(--quartz-ink)",
-  cursor: "pointer",
-  padding: "14px 16px",
-  textAlign: "left",
-  width: "100%",
-} satisfies CSSProperties;
-
-const threadCardActiveStyle = {
-  borderColor: "rgba(69, 97, 123, 0.28)",
-  background: "rgba(69, 97, 123, 0.1)",
-  boxShadow: "inset 3px 0 0 var(--quartz-secondary)",
-} satisfies CSSProperties;
+function threadCardStyle(active: boolean) {
+  return {
+    border: active ? "1px solid rgba(69, 97, 123, 0.28)" : "1px solid var(--quartz-border)",
+    borderRadius: 16,
+    background: active ? "rgba(69, 97, 123, 0.09)" : "rgba(255, 255, 255, 0.8)",
+    boxShadow: active ? "inset 3px 0 0 var(--quartz-secondary)" : "none",
+    color: "var(--quartz-ink)",
+    cursor: "pointer",
+    display: "grid",
+    gap: 6,
+    minHeight: 74,
+    padding: "14px 16px",
+    textAlign: "left",
+    width: "100%",
+  } satisfies CSSProperties;
+}
 
 const threadTitleStyle = {
   color: "var(--quartz-ink)",
   fontSize: 14,
   fontWeight: 600,
+  lineHeight: "20px",
+  overflow: "hidden",
+  textOverflow: "ellipsis",
+  whiteSpace: "nowrap",
 } satisfies CSSProperties;
 
 const threadMetaStyle = {
   color: "var(--quartz-muted)",
   fontSize: 12,
   lineHeight: "18px",
+  overflow: "hidden",
+  textOverflow: "ellipsis",
+  whiteSpace: "nowrap",
 } satisfies CSSProperties;
 
 function threadDeleteButtonStyle(disabled: boolean) {
   return {
     alignItems: "center",
-    border: "1px solid rgba(123, 45, 38, 0.2)",
+    border: "1px solid rgba(123, 45, 38, 0.18)",
     borderRadius: 14,
-    background: "rgba(255, 218, 214, 0.62)",
+    background: "rgba(255, 255, 255, 0.82)",
     color: "var(--quartz-error)",
     cursor: disabled ? "not-allowed" : "pointer",
     display: "inline-flex",
-    fontSize: 20,
     justifyContent: "center",
-    minWidth: 40,
-    opacity: disabled ? 0.65 : 1,
+    minWidth: 42,
+    opacity: disabled ? 0.6 : 1,
   } satisfies CSSProperties;
 }
 
+const threadDeleteIconStyle = {
+  height: 16,
+  width: 16,
+} satisfies CSSProperties;
+
 const conversationPaneStyle = {
-  background: "var(--quartz-paper)",
-  display: "flex",
-  flexDirection: "column",
+  background: "linear-gradient(180deg, rgba(253, 248, 248, 0.98) 0%, rgba(252, 252, 250, 1) 100%)",
+  display: "grid",
+  gridTemplateRows: "auto minmax(0, 1fr) auto",
   minHeight: 0,
 } satisfies CSSProperties;
 
 const conversationHeaderStyle = {
+  alignItems: "flex-start",
   borderBottom: "1px solid var(--quartz-border)",
+  display: "flex",
+  gap: 16,
+  justifyContent: "space-between",
+  padding: "22px 28px 16px",
+} satisfies CSSProperties;
+
+const conversationTitleBlockStyle = {
   display: "grid",
+  gap: 8,
+  minWidth: 0,
+} satisfies CSSProperties;
+
+const conversationHeaderMetaStyle = {
+  alignItems: "center",
+  display: "flex",
+  flexWrap: "wrap",
   gap: 10,
-  padding: "24px 28px 18px",
 } satisfies CSSProperties;
 
 const conversationEyebrowStyle = {
@@ -818,11 +1001,13 @@ const conversationEyebrowStyle = {
   textTransform: "uppercase",
 } satisfies CSSProperties;
 
-const conversationTitleRowStyle = {
-  alignItems: "center",
-  display: "flex",
-  flexWrap: "wrap",
-  gap: 10,
+const conversationScopePillStyle = {
+  border: "1px solid var(--quartz-border)",
+  borderRadius: 999,
+  color: "var(--quartz-muted)",
+  fontSize: 12,
+  fontWeight: 600,
+  padding: "5px 10px",
 } satisfies CSSProperties;
 
 const conversationTitleStyle = {
@@ -833,9 +1018,30 @@ const conversationTitleStyle = {
   letterSpacing: "-0.06em",
   lineHeight: 1.02,
   margin: 0,
+  overflow: "hidden",
+  textOverflow: "ellipsis",
+  whiteSpace: "nowrap",
 } satisfies CSSProperties;
 
-const conversationMetaPillStyle = {
+const conversationStatusRowStyle = {
+  alignItems: "center",
+  display: "flex",
+  flexWrap: "wrap",
+  gap: 8,
+  justifyContent: "flex-end",
+} satisfies CSSProperties;
+
+const conversationStatusPillStyle = {
+  border: "1px solid rgba(69, 97, 123, 0.22)",
+  borderRadius: 999,
+  background: "rgba(69, 97, 123, 0.08)",
+  color: "var(--quartz-secondary)",
+  fontSize: 12,
+  fontWeight: 600,
+  padding: "6px 10px",
+} satisfies CSSProperties;
+
+const conversationMutedPillStyle = {
   border: "1px solid var(--quartz-border)",
   borderRadius: 999,
   color: "var(--quartz-muted)",
@@ -844,50 +1050,40 @@ const conversationMetaPillStyle = {
   padding: "6px 10px",
 } satisfies CSSProperties;
 
-const conversationBodyStyle = {
-  color: "var(--quartz-muted)",
-  fontSize: 14,
-  lineHeight: "22px",
-  margin: 0,
-  maxWidth: 820,
-} satisfies CSSProperties;
-
 const conversationErrorStyle = {
   border: "1px solid rgba(123, 45, 38, 0.22)",
-  borderRadius: 12,
+  borderRadius: 999,
   background: "rgba(255, 218, 214, 0.72)",
   color: "var(--quartz-error)",
   fontSize: 12,
-  lineHeight: "18px",
-  padding: "10px 12px",
-} satisfies CSSProperties;
-
-const conversationLoadingStyle = {
-  color: "var(--quartz-muted)",
-  fontSize: 12,
   fontWeight: 600,
+  lineHeight: "18px",
+  padding: "6px 10px",
 } satisfies CSSProperties;
 
 const messageListStyle = {
-  display: "flex",
-  flex: 1,
-  flexDirection: "column",
-  gap: 18,
   minHeight: 0,
   overflow: "auto",
-  padding: "28px",
+  padding: "28px 32px 24px",
+} satisfies CSSProperties;
+
+const messageStreamStyle = {
+  display: "grid",
+  gap: 18,
+  margin: "0 auto",
+  maxWidth: 960,
+  width: "100%",
 } satisfies CSSProperties;
 
 const emptyConversationCardStyle = {
   alignSelf: "center",
   border: "1px solid var(--quartz-border)",
-  borderRadius: 22,
-  background: "rgba(255, 255, 255, 0.86)",
+  borderRadius: 24,
+  background: "rgba(255, 255, 255, 0.84)",
   display: "grid",
   gap: 10,
-  marginTop: 28,
-  maxWidth: 560,
-  padding: "26px 28px",
+  marginTop: 36,
+  padding: "28px 30px",
   textAlign: "center",
 } satisfies CSSProperties;
 
@@ -914,39 +1110,38 @@ const emptyConversationBodyStyle = {
   fontSize: 14,
   lineHeight: "22px",
   margin: 0,
+  maxWidth: 520,
 } satisfies CSSProperties;
 
 const assistantMessageContainerStyle = {
-  alignItems: "flex-start",
   display: "flex",
   justifyContent: "flex-start",
 } satisfies CSSProperties;
 
 const userMessageContainerStyle = {
-  alignItems: "flex-end",
   display: "flex",
   justifyContent: "flex-end",
 } satisfies CSSProperties;
 
 const assistantMessageBubbleStyle = {
   border: "1px solid var(--quartz-border)",
-  borderRadius: "22px 22px 22px 8px",
-  background: "rgba(255, 255, 255, 0.88)",
+  borderRadius: "24px 24px 24px 10px",
+  background: "rgba(255, 255, 255, 0.92)",
   display: "grid",
   gap: 10,
-  maxWidth: 860,
-  padding: "16px 18px",
-  width: "min(100%, 860px)",
+  maxWidth: "min(100%, 840px)",
+  padding: "18px 20px",
+  width: "min(100%, 840px)",
 } satisfies CSSProperties;
 
 const userMessageBubbleStyle = {
-  border: "1px solid rgba(69, 97, 123, 0.22)",
-  borderRadius: "22px 22px 8px 22px",
+  border: "1px solid rgba(69, 97, 123, 0.2)",
+  borderRadius: "24px 24px 10px 24px",
   background: "rgba(69, 97, 123, 0.08)",
   display: "grid",
   gap: 10,
-  maxWidth: 720,
-  padding: "16px 18px",
+  maxWidth: "min(100%, 680px)",
+  padding: "18px 20px",
 } satisfies CSSProperties;
 
 const messageHeaderStyle = {
@@ -974,8 +1169,9 @@ const messageTimeStyle = {
 const messageContentStyle = {
   color: "var(--quartz-ink)",
   fontSize: 15,
-  lineHeight: "24px",
+  lineHeight: "25px",
   margin: 0,
+  overflowWrap: "anywhere",
   whiteSpace: "pre-wrap",
 } satisfies CSSProperties;
 
@@ -1002,4 +1198,32 @@ const thinkingBubbleStyle = {
   gap: 10,
   fontSize: 14,
   lineHeight: "22px",
+} satisfies CSSProperties;
+
+const deleteModalHeaderStyle = {
+  alignItems: "flex-start",
+  display: "flex",
+  gap: 16,
+  justifyContent: "space-between",
+} satisfies CSSProperties;
+
+const deleteModalTitleStyle = {
+  color: "var(--quartz-ink)",
+  fontFamily: "var(--font-display)",
+  fontSize: 26,
+  fontWeight: 600,
+  letterSpacing: "-0.04em",
+  margin: 0,
+} satisfies CSSProperties;
+
+const deleteModalBodyStyle = {
+  color: "var(--quartz-muted)",
+  fontSize: 14,
+  lineHeight: "22px",
+  margin: 0,
+} satisfies CSSProperties;
+
+const deleteModalDangerButtonStyle = {
+  background: "var(--quartz-error)",
+  borderColor: "var(--quartz-error)",
 } satisfies CSSProperties;

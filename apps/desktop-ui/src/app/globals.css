@@ -2168,6 +2168,11 @@ a {
   padding-left: 64px;
 }
 
+.quartz-shell-main-chat {
+  height: 100vh;
+  overflow: hidden;
+}
+
 .quartz-topbar {
   position: fixed;
   top: 0;
@@ -2318,6 +2323,12 @@ a {
 .quartz-shell-content {
   min-height: 100vh;
   padding-top: 72px;
+}
+
+.quartz-shell-content-chat {
+  height: 100vh;
+  min-height: 100vh;
+  overflow: hidden;
 }
 
 .quartz-page {
@@ -2578,19 +2589,29 @@ a {
 }
 
 .quartz-chat-page {
-  display: grid;
-  gap: 24px;
-}
-
-.quartz-chat-page .quartz-section {
-  margin-top: 0;
+  box-sizing: border-box;
+  display: flex;
+  max-height: calc(100vh - 72px);
+  min-height: calc(100vh - 72px);
+  height: calc(100vh - 72px);
+  overflow: hidden;
 }
 
 .quartz-chat-workbench-shell {
-  min-height: calc(100vh - 236px);
+  flex: 1 1 auto;
+  min-height: 0;
+  height: 100%;
   border: 1px solid var(--quartz-border);
   background: var(--quartz-paper);
   overflow: hidden;
+}
+
+@supports (height: 100dvh) {
+  .quartz-chat-page {
+    max-height: calc(100dvh - 72px);
+    min-height: calc(100dvh - 72px);
+    height: calc(100dvh - 72px);
+  }
 }
 
 @keyframes quartz-chat-dot-pulse {
@@ -4085,7 +4106,7 @@ a {
   }
 
   .quartz-chat-workbench-shell {
-    min-height: 720px;
+    min-height: 0;
   }
 
   .quartz-reporting-layout,

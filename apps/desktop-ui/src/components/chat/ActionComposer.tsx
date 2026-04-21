@@ -74,6 +74,16 @@ export function ActionComposer({
     [closeRunId, workspace],
   );
 
+  const resetComposer = useCallback(() => {
+    setInputValue("");
+    setAttachments([]);
+    setError(null);
+    setIsLoading(false);
+    if (fileInputRef.current !== null) {
+      fileInputRef.current.value = "";
+    }
+  }, []);
+
   const loadPendingActions = useCallback(async () => {
     if (threadId.trim().length === 0) {
       setPendingActions([]);
@@ -83,16 +93,17 @@ export function ActionComposer({
     try {
       const actions = await listThreadActions(threadId, entityId);
       setPendingActions(actions);
-    } catch (error: unknown) {
-      if (error instanceof ChatApiError && error.status !== 404) {
-        console.warn("Failed to load pending chat actions:", error);
+    } catch (caughtError: unknown) {
+      if (caughtError instanceof ChatApiError && caughtError.status !== 404) {
+        console.warn("Failed to load pending chat actions:", caughtError);
       }
     }
   }, [entityId, threadId]);
 
   useEffect(() => {
+    resetComposer();
     void loadPendingActions();
-  }, [loadPendingActions]);
+  }, [loadPendingActions, resetComposer, threadId]);
 
   const handleSubmit = useCallback(
     async (event: FormEvent) => {
@@ -140,17 +151,13 @@ export function ActionComposer({
               )
             : await sendChatAction(threadId, entityId, trimmed);
 
-        setInputValue("");
-        setAttachments([]);
-        if (fileInputRef.current !== null) {
-          fileInputRef.current.value = "";
-        }
+        resetComposer();
         onMessageSent(actionResponse, draft);
         await loadPendingActions();
-      } catch (error: unknown) {
+      } catch (caughtError: unknown) {
         setError(
-          error instanceof ChatApiError
-            ? error.message
+          caughtError instanceof ChatApiError
+            ? caughtError.message
             : "The assistant could not complete this turn. Try again.",
         );
         onSubmissionError?.();
@@ -168,6 +175,7 @@ export function ActionComposer({
       onMessageSent,
       onSubmissionError,
       onSubmissionStart,
+      resetComposer,
       threadId,
     ],
   );
@@ -183,10 +191,10 @@ export function ActionComposer({
         const updated = await approveChatAction(actionId, threadId, entityId);
         setPendingActions((current) => current.filter((action) => action.id !== actionId));
         onActionStateChange?.(updated);
-      } catch (error: unknown) {
+      } catch (caughtError: unknown) {
         setError(
-          error instanceof ChatApiError
-            ? error.message
+          caughtError instanceof ChatApiError
+            ? caughtError.message
             : "The approval could not be completed. Try again.",
         );
       } finally {
@@ -216,10 +224,10 @@ export function ActionComposer({
         );
         setPendingActions((current) => current.filter((action) => action.id !== actionId));
         onActionStateChange?.(updated);
-      } catch (error: unknown) {
+      } catch (caughtError: unknown) {
         setError(
-          error instanceof ChatApiError
-            ? error.message
+          caughtError instanceof ChatApiError
+            ? caughtError.message
             : "The rejection could not be completed. Try again.",
         );
       } finally {
@@ -235,16 +243,11 @@ export function ActionComposer({
 
   const hasInput = inputValue.trim().length > 0 || attachments.length > 0;
   const isSubmitting = isLoading || disabled;
+  const showSuggestions =
+    !disabled && inputValue.trim().length === 0 && attachments.length === 0 && starterPrompts.length > 0;
 
   return (
-    <div
-      style={{
-        borderTop: "1px solid var(--quartz-border)",
-        background:
-          "linear-gradient(180deg, rgba(247, 243, 242, 0.94) 0%, rgba(253, 248, 248, 1) 100%)",
-        padding: "18px 24px 22px",
-      }}
-    >
+    <div style={composerContainerStyle}>
       {pendingActions.length > 0 ? (
         <div style={pendingActionListStyle}>
           {pendingActions.map((action) => {
@@ -255,8 +258,9 @@ export function ActionComposer({
                   <span style={pendingActionLabelStyle}>
                     {ACTION_INTENT_LABELS[action.intent] ?? action.intent.replaceAll("_", " ")}
                   </span>
-                  <span style={pendingActionBadgeStyle}>Review required</span>
+                  <span style={pendingActionBadgeStyle}>Review</span>
                 </div>
+
                 <div style={pendingActionButtonRowStyle}>
                   <button
                     disabled={isBusy}
@@ -266,7 +270,7 @@ export function ActionComposer({
                     style={pendingApproveButtonStyle(isBusy)}
                     type="button"
                   >
-                    {isBusy ? "..." : "Approve"}
+                    {isBusy ? "Saving..." : "Approve"}
                   </button>
                   <button
                     disabled={isBusy}
@@ -276,7 +280,7 @@ export function ActionComposer({
                     style={pendingRejectButtonStyle(isBusy)}
                     type="button"
                   >
-                    {isBusy ? "..." : "Reject"}
+                    {isBusy ? "Saving..." : "Reject"}
                   </button>
                 </div>
               </div>
@@ -286,26 +290,8 @@ export function ActionComposer({
       ) : null}
 
       {error ? (
-        <div style={errorBannerStyle} role="status">
+        <div role="status" style={errorBannerStyle}>
           {error}
-        </div>
-      ) : null}
-
-      {!disabled && inputValue.trim().length === 0 && attachments.length === 0 && starterPrompts.length > 0 ? (
-        <div style={suggestionRowStyle}>
-          {starterPrompts.map((prompt) => (
-            <button
-              key={prompt}
-              onClick={() => {
-                setInputValue(prompt);
-                setError(null);
-              }}
-              style={suggestionChipStyle}
-              type="button"
-            >
-              {prompt}
-            </button>
-          ))}
         </div>
       ) : null}
 
@@ -316,11 +302,29 @@ export function ActionComposer({
         style={composerFormStyle}
       >
         <div style={composerShellStyle}>
+          {showSuggestions ? (
+            <div style={suggestionRowStyle}>
+              {starterPrompts.map((prompt) => (
+                <button
+                  key={prompt}
+                  onClick={() => {
+                    setInputValue(prompt);
+                    setError(null);
+                  }}
+                  style={suggestionChipStyle}
+                  type="button"
+                >
+                  {prompt}
+                </button>
+              ))}
+            </div>
+          ) : null}
+
           <textarea
             disabled={isSubmitting}
             onChange={(event) => setInputValue(event.target.value)}
             onKeyDown={(event: KeyboardEvent<HTMLTextAreaElement>) => {
-              if (event.key === "Enter" && !event.shiftKey && !event.metaKey) {
+              if (event.key === "Enter" && !event.shiftKey && !event.metaKey && !event.ctrlKey) {
                 event.preventDefault();
                 if (hasInput && !isSubmitting) {
                   void handleSubmit(event);
@@ -329,10 +333,10 @@ export function ActionComposer({
             }}
             placeholder={
               attachments.length > 0
-                ? "Tell the assistant what to do with these source documents..."
-                : "Ask about the close, request the next step, or upload source documents..."
+                ? "Tell the assistant what to do with these documents..."
+                : "Ask about the close, request the next step, or upload documents..."
             }
-            rows={1}
+            rows={2}
             style={composerTextareaStyle}
             value={inputValue}
           />
@@ -355,7 +359,7 @@ export function ActionComposer({
                 style={attachmentButtonStyle}
                 type="button"
               >
-                Upload source documents
+                Upload documents
               </button>
               <input
                 accept=".pdf,.csv,.xlsx,.xls,.xlsm"
@@ -368,6 +372,7 @@ export function ActionComposer({
                 style={{ display: "none" }}
                 type="file"
               />
+
               {attachments.length > 0 ? (
                 <button
                   onClick={() => {
@@ -390,15 +395,10 @@ export function ActionComposer({
               style={sendButtonStyle(!hasInput || isSubmitting)}
               type="submit"
             >
-              {isSubmitting ? "..." : "Send"}
+              {isSubmitting ? "Sending..." : "Send"}
             </button>
           </div>
         </div>
-
-        <p style={composerNoteStyle}>
-          Chat uploads are treated as source documents only. Use Entity Home for COA, general
-          ledger, or trial balance uploads.
-        </p>
       </form>
     </div>
   );
@@ -447,11 +447,20 @@ function buildStarterPrompts(options: {
   return Array.from(new Set(prompts)).slice(0, 5);
 }
 
-const pendingActionListStyle = {
+const composerContainerStyle = {
+  borderTop: "1px solid var(--quartz-border)",
+  background:
+    "linear-gradient(180deg, rgba(247, 243, 242, 0.9) 0%, rgba(253, 248, 248, 1) 100%)",
   display: "grid",
+  gap: 14,
+  padding: "18px 28px 24px",
+} satisfies React.CSSProperties;
+
+const pendingActionListStyle = {
+  display: "flex",
   gap: 10,
-  gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
-  marginBottom: 14,
+  overflowX: "auto",
+  paddingBottom: 2,
 } satisfies React.CSSProperties;
 
 const pendingActionCardStyle = {
@@ -460,6 +469,7 @@ const pendingActionCardStyle = {
   borderRadius: 16,
   display: "grid",
   gap: 10,
+  minWidth: 228,
   padding: "12px 14px",
 } satisfies React.CSSProperties;
 
@@ -479,7 +489,7 @@ const pendingActionLabelStyle = {
 } satisfies React.CSSProperties;
 
 const pendingActionBadgeStyle = {
-  border: "1px solid rgba(142, 115, 75, 0.2)",
+  border: "1px solid rgba(142, 115, 75, 0.18)",
   borderRadius: 999,
   color: "var(--quartz-gold)",
   fontSize: 11,
@@ -522,27 +532,42 @@ function pendingRejectButtonStyle(disabled: boolean) {
 }
 
 const errorBannerStyle = {
-  marginBottom: 12,
-  padding: "10px 12px",
+  border: "1px solid rgba(123, 45, 38, 0.22)",
   borderRadius: 12,
   background: "rgba(255, 218, 214, 0.72)",
-  border: "1px solid rgba(123, 45, 38, 0.22)",
   color: "var(--quartz-error)",
   fontSize: 12,
   lineHeight: "18px",
+  padding: "10px 12px",
+} satisfies React.CSSProperties;
+
+const composerFormStyle = {
+  display: "grid",
+} satisfies React.CSSProperties;
+
+const composerShellStyle = {
+  border: "1px solid var(--quartz-border)",
+  borderRadius: 24,
+  background: "rgba(255, 255, 255, 0.92)",
+  boxShadow: "0 14px 34px rgba(17, 24, 39, 0.06)",
+  display: "grid",
+  gap: 14,
+  margin: "0 auto",
+  maxWidth: 960,
+  padding: "14px 16px 16px",
+  width: "100%",
 } satisfies React.CSSProperties;
 
 const suggestionRowStyle = {
   display: "flex",
   flexWrap: "wrap",
   gap: 8,
-  marginBottom: 12,
 } satisfies React.CSSProperties;
 
 const suggestionChipStyle = {
   border: "1px solid var(--quartz-border)",
   borderRadius: 999,
-  background: "rgba(255, 255, 255, 0.74)",
+  background: "rgba(247, 243, 242, 0.94)",
   color: "var(--quartz-muted)",
   cursor: "pointer",
   fontSize: 12,
@@ -550,24 +575,9 @@ const suggestionChipStyle = {
   padding: "8px 12px",
 } satisfies React.CSSProperties;
 
-const composerFormStyle = {
-  display: "grid",
-  gap: 10,
-} satisfies React.CSSProperties;
-
-const composerShellStyle = {
-  border: "1px solid var(--quartz-border)",
-  borderRadius: 22,
-  background: "var(--quartz-surface)",
-  boxShadow: "0 10px 28px rgba(17, 24, 39, 0.06)",
-  display: "grid",
-  gap: 12,
-  padding: "14px 16px 14px",
-} satisfies React.CSSProperties;
-
 const composerTextareaStyle = {
   width: "100%",
-  minHeight: 44,
+  minHeight: 56,
   maxHeight: 180,
   border: "none",
   background: "transparent",
@@ -625,15 +635,15 @@ const composerUtilityRowStyle = {
 } satisfies React.CSSProperties;
 
 const attachmentButtonStyle = {
-  border: "1px solid rgba(69, 97, 123, 0.22)",
+  border: "1px solid rgba(69, 97, 123, 0.2)",
   borderRadius: 999,
   background: "rgba(69, 97, 123, 0.08)",
   color: "var(--quartz-secondary)",
   cursor: "pointer",
   fontSize: 12,
   fontWeight: 600,
-  minHeight: 34,
-  padding: "0 12px",
+  minHeight: 36,
+  padding: "0 14px",
 } satisfies React.CSSProperties;
 
 const clearButtonStyle = {
@@ -655,16 +665,8 @@ function sendButtonStyle(disabled: boolean) {
     cursor: disabled ? "not-allowed" : "pointer",
     fontSize: 12,
     fontWeight: 700,
-    minHeight: 38,
-    minWidth: 74,
-    padding: "0 16px",
+    minHeight: 40,
+    minWidth: 82,
+    padding: "0 18px",
   } satisfies React.CSSProperties;
 }
-
-const composerNoteStyle = {
-  color: "var(--quartz-muted)",
-  fontSize: 11,
-  lineHeight: "17px",
-  margin: 0,
-  paddingLeft: 6,
-} satisfies React.CSSProperties;
