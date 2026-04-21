@@ -114,16 +114,11 @@ export default function CloseRunOverviewPage({
 
   const closeRun = workspaceData.closeRun;
   const attention = deriveCloseRunAttention(closeRun);
-  const activePhase = findActivePhase(closeRun);
   const nextPhase = resolveNextWorkflowPhase(closeRun);
   const workstreamRows = buildMissionWorkstreamRows(closeRun, entityId);
   const missionTiles = buildMissionTiles(closeRun);
   const phaseRows = buildPhaseProgressRows(closeRun);
   const timelineRows = buildTimelineRows(closeRun);
-  const primaryWorkstream =
-    workstreamRows.find((row) => row.phase === (activePhase?.phase ?? "collection")) ??
-    workstreamRows.find((row) => row.statusTone !== "success") ??
-    workstreamRows[0]!;
 
   async function refreshWorkspace(): Promise<void> {
     await loadCloseRunWorkspace({
@@ -211,9 +206,6 @@ export default function CloseRunOverviewPage({
             </p>
           </div>
           <div className="quartz-page-toolbar">
-            <Link className="secondary-button" href={primaryWorkstream.href}>
-              {resolvePrimaryWorkbenchLabel(primaryWorkstream.phase)}
-            </Link>
             <span className={`quartz-status-badge ${mapAttentionToneToBadge(attention.tone)}`}>
               {attention.label}
             </span>
@@ -233,7 +225,7 @@ export default function CloseRunOverviewPage({
         ) : null}
 
         <section className="quartz-section">
-          <div className="quartz-kpi-grid">
+          <div className="quartz-kpi-grid quartz-kpi-grid-triple">
             {missionTiles.map((tile, index) => (
               <article
                 className={
@@ -344,66 +336,41 @@ export default function CloseRunOverviewPage({
             </article>
           </div>
         </section>
-        <section className="quartz-section">
-          <div className="quartz-split-grid quartz-split-grid-halves">
-            <article className="quartz-card ai">
-              <p
-                className={`quartz-card-eyebrow ${attention.tone === "warning" ? "error" : "secondary"}`}
-              >
-                {attention.tone === "warning" ? "Highest priority" : "Current focus"}
-              </p>
-              <h3>{attention.label}</h3>
-              <p className="form-helper">{attention.detail}</p>
-              <div className="quartz-button-row">
-                <Link className="secondary-button" href={primaryWorkstream.href}>
-                  Investigate
-                </Link>
-              </div>
-            </article>
-
-            <article className="quartz-card">
-              <p className="quartz-card-eyebrow">Operating mode</p>
-              <h3>{formatOperatingModeLabel(closeRun.operatingMode.mode)}</h3>
-              <p className="form-helper">{closeRun.operatingMode.description}</p>
-              <div className="quartz-mini-list">
-                <div className="quartz-mini-item">
-                  <span className="quartz-table-secondary">Journal posting</span>
-                  <strong>
-                    {closeRun.operatingMode.journalPostingAvailable ? "Available" : "Restricted"}
-                  </strong>
-                </div>
-                <div className="quartz-mini-item">
-                  <span className="quartz-table-secondary">Reconciliation depth</span>
-                  <strong>
-                    {closeRun.operatingMode.bankReconciliationAvailable ? "Full" : "Evidence-only"}
-                  </strong>
-                </div>
-              </div>
-            </article>
-          </div>
-        </section>
 
         <section className="quartz-section">
-          <article className="quartz-card">
-            <p className="quartz-card-eyebrow">Lifecycle controls</p>
-            <div className="quartz-button-stack">
+          <article className="quartz-card quartz-lifecycle-shell">
+            <div className="quartz-section-header quartz-section-header-tight">
+              <div>
+                <p className="quartz-card-eyebrow">Lifecycle Control</p>
+                <h3>Governed close-run actions</h3>
+              </div>
+              <p className="quartz-page-subtitle">{attention.detail}</p>
+            </div>
+            <div className="quartz-lifecycle-grid">
               <button
-                className="secondary-button"
+                className="quartz-lifecycle-action"
                 disabled={isMutating || nextPhase === null}
                 onClick={() => {
                   void handleAdvanceCloseRun();
                 }}
                 type="button"
               >
-                {isMutating
-                  ? "Saving..."
-                  : nextPhase === null
-                    ? "No phase advance available"
-                    : `Advance to ${getWorkflowPhaseDefinition(nextPhase).label}`}
+                <strong>
+                  {isMutating
+                    ? "Saving..."
+                    : nextPhase === null
+                      ? "No phase advance available"
+                      : `Advance to ${getWorkflowPhaseDefinition(nextPhase).label}`}
+                </strong>
+                <span>
+                  {nextPhase === null
+                    ? "The workflow is already at its final governed phase."
+                    : "Move the close run into the next controlled phase."}
+                </span>
               </button>
 
               <button
-                className="secondary-button"
+                className="quartz-lifecycle-action"
                 disabled={
                   isMutating || closeRun.status === "approved" || closeRun.status === "archived"
                 }
@@ -412,29 +379,32 @@ export default function CloseRunOverviewPage({
                 }}
                 type="button"
               >
-                {isMutating ? "Saving..." : "Approve Close Run"}
+                <strong>{isMutating ? "Saving..." : "Approve Close Run"}</strong>
+                <span>Finalize this run when all governed workstreams are complete.</span>
               </button>
 
               <button
-                className="secondary-button"
+                className="quartz-lifecycle-action"
                 disabled={isMutating || closeRun.status === "archived"}
                 onClick={() => {
                   void handleArchiveExistingCloseRun();
                 }}
                 type="button"
               >
-                {isMutating ? "Saving..." : "Archive Close Run"}
+                <strong>{isMutating ? "Saving..." : "Archive Close Run"}</strong>
+                <span>Move the run into historical reference after operational use ends.</span>
               </button>
 
               <button
-                className="secondary-button"
+                className="quartz-lifecycle-action danger"
                 disabled={isMutating || !canDeleteCloseRun(closeRun)}
                 onClick={() => {
                   void handleDeleteCloseRun();
                 }}
                 type="button"
               >
-                {isMutating ? "Saving..." : "Delete Mutable Close"}
+                <strong>{isMutating ? "Saving..." : "Delete Mutable Close"}</strong>
+                <span>Remove a still-mutable run and its linked working artifacts.</span>
               </button>
             </div>
           </article>
@@ -488,7 +458,7 @@ function buildMissionTiles(closeRun: Readonly<CloseRunSummary>): readonly Missio
     },
     {
       label: "Current Gate",
-      meta: closeRun.reportingCurrency,
+      meta: `Version ${closeRun.currentVersionNo} • ${closeRun.reportingCurrency}`,
       value: activePhase ? getWorkflowPhaseDefinition(activePhase.phase).label : "Complete",
     },
     {
@@ -497,11 +467,6 @@ function buildMissionTiles(closeRun: Readonly<CloseRunSummary>): readonly Missio
         blockedPhases > 0 ? `${blockedPhases} blockers still active` : "No blocked workflow gates",
       tone: blockedPhases > 0 ? "error" : "success",
       value: `${completedPhases}/5`,
-    },
-    {
-      label: "Operating Mode",
-      meta: `Version ${closeRun.currentVersionNo}`,
-      value: formatOperatingModeLabel(closeRun.operatingMode.mode),
     },
   ];
 }
@@ -610,7 +575,7 @@ function resolvePhaseWorkspaceHref(
 function resolvePhaseTitle(phase: WorkflowPhase): string {
   switch (phase) {
     case "collection":
-      return "Inputs Workspace";
+      return "Document Workspace";
     case "processing":
       return "Recommendations & Journals";
     case "reconciliation":
@@ -625,7 +590,7 @@ function resolvePhaseTitle(phase: WorkflowPhase): string {
 function resolvePrimaryWorkbenchLabel(phase: WorkflowPhase): string {
   switch (phase) {
     case "collection":
-      return "Open Inputs";
+      return "Open Documents";
     case "processing":
       return "Review Journals";
     case "reconciliation":
@@ -746,18 +711,5 @@ function resolvePhasePercent(
       return 46;
     case "not_started":
       return 10;
-  }
-}
-
-function formatOperatingModeLabel(mode: CloseRunSummary["operatingMode"]["mode"]): string {
-  switch (mode) {
-    case "imported_general_ledger":
-      return "Imported GL";
-    case "source_documents_only":
-      return "Source documents only";
-    case "trial_balance_only":
-      return "Trial balance only";
-    case "working_ledger":
-      return "Working ledger";
   }
 }

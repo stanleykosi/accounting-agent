@@ -211,7 +211,7 @@ a {
 
 .primary-button:disabled,
 .secondary-button:disabled {
-  cursor: wait;
+  cursor: not-allowed;
   opacity: 0.7;
   transform: none;
 }
@@ -3655,7 +3655,7 @@ a {
 }
 
 .quartz-table-icon-action:disabled {
-  cursor: wait;
+  cursor: not-allowed;
   opacity: 0.55;
 }
 
@@ -3772,7 +3772,7 @@ a {
 }
 
 .quartz-upload-choice:disabled {
-  cursor: wait;
+  cursor: not-allowed;
   opacity: 0.7;
 }
 
@@ -3793,6 +3793,60 @@ a {
   width: 20px;
   height: 20px;
   color: var(--quartz-secondary);
+}
+
+.quartz-lifecycle-shell {
+  display: grid;
+  gap: 18px;
+}
+
+.quartz-lifecycle-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.quartz-lifecycle-action {
+  display: grid;
+  justify-items: start;
+  gap: 6px;
+  min-height: 108px;
+  padding: 16px;
+  border: 1px solid var(--quartz-border);
+  background: var(--quartz-surface-low);
+  color: var(--text-strong);
+  cursor: pointer;
+  text-align: left;
+  transition:
+    border-color 180ms ease,
+    background-color 180ms ease,
+    color 180ms ease;
+}
+
+.quartz-lifecycle-action strong {
+  font-size: 0.94rem;
+  letter-spacing: -0.01em;
+}
+
+.quartz-lifecycle-action span {
+  color: var(--quartz-muted);
+  font-size: 0.82rem;
+  line-height: 1.5;
+}
+
+.quartz-lifecycle-action:hover {
+  border-color: rgba(69, 97, 123, 0.28);
+  background: rgba(69, 97, 123, 0.07);
+}
+
+.quartz-lifecycle-action.danger:hover {
+  border-color: rgba(123, 45, 38, 0.22);
+  background: rgba(255, 218, 214, 0.4);
+}
+
+.quartz-lifecycle-action:disabled {
+  cursor: not-allowed;
+  opacity: 0.68;
 }
 
 .quartz-mini-list {
@@ -4003,6 +4057,7 @@ a {
   }
 
   .quartz-document-detail-grid,
+  .quartz-lifecycle-grid,
   .quartz-upload-choice-grid {
     grid-template-columns: 1fr;
   }
