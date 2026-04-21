@@ -2927,6 +2927,109 @@ a {
   padding-left: 18px;
 }
 
+.quartz-complete-page {
+  display: grid;
+  gap: 24px;
+}
+
+.quartz-complete-header {
+  display: grid;
+  justify-items: center;
+  gap: 10px;
+  margin-top: 24px;
+  text-align: center;
+}
+
+.quartz-complete-header h1 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: clamp(2.4rem, 4vw, 3.8rem);
+  font-weight: 600;
+  letter-spacing: -0.06em;
+  line-height: 1.08;
+}
+
+.quartz-complete-header .quartz-page-subtitle {
+  max-width: 60ch;
+}
+
+.quartz-complete-badge {
+  display: grid;
+  place-items: center;
+  width: 52px;
+  height: 52px;
+  border-radius: 999px;
+  background: rgba(27, 67, 50, 0.08);
+  color: var(--quartz-success);
+}
+
+.quartz-complete-badge-icon {
+  width: 22px;
+  height: 22px;
+}
+
+.quartz-complete-summary-grid {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: minmax(280px, 0.92fr) minmax(0, 1.08fr);
+}
+
+.quartz-complete-summary-card {
+  display: grid;
+  gap: 16px;
+}
+
+.quartz-complete-status-cards {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.quartz-complete-status-card {
+  display: grid;
+  justify-items: center;
+  gap: 10px;
+  min-height: 132px;
+  align-content: center;
+  text-align: center;
+}
+
+.quartz-complete-status-card strong {
+  font-size: 1.05rem;
+}
+
+.quartz-complete-status-text {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--quartz-gold);
+}
+
+.quartz-complete-actions {
+  justify-items: center;
+}
+
+.quartz-complete-primary-action {
+  justify-content: center;
+}
+
+.quartz-complete-secondary-actions {
+  justify-content: center;
+}
+
+.quartz-complete-audit-note {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: 720px;
+  margin: 0 auto;
+  background: var(--quartz-surface-low);
+}
+
+.quartz-complete-audit-note p {
+  margin: 0;
+}
+
 .quartz-header-stat-value.error {
   color: var(--quartz-error);
 }
@@ -3461,8 +3564,13 @@ a {
 
   .quartz-reporting-layout,
   .quartz-release-layout,
+  .quartz-complete-summary-grid,
   .quartz-review-layout,
   .quartz-reconciliation-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .quartz-complete-status-cards {
     grid-template-columns: 1fr;
   }
 

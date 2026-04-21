@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { use, useCallback, useEffect, useMemo, useState, type ReactElement } from "react";
 import { QuartzIcon } from "../../../../../../../components/layout/QuartzIcons";
 import {
@@ -316,6 +317,14 @@ export default function CloseRunExportsPage({
           </div>
 
           <div className="quartz-page-toolbar">
+            {closeRun.status === "approved" || closeRun.status === "archived" ? (
+              <Link
+                className="secondary-button"
+                href={`/entities/${entityId}/close-runs/${closeRunId}/complete`}
+              >
+                Open Completion Summary
+              </Link>
+            ) : null}
             <button
               className="primary-button"
               disabled={

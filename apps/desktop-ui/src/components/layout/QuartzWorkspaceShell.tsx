@@ -210,7 +210,7 @@ function resolveBreadcrumbs(pathname: string): readonly { href: string; label: s
   const closeRunWorkspaceLabel = resolveCloseRunWorkspaceLabel(pathname);
   if (closeRunWorkspaceLabel !== null) {
     const closeRunRootPath = pathname.replace(
-      /\/(documents|recommendations|reconciliation|reports|exports)$/u,
+      /\/(documents|recommendations|reconciliation|reports|exports|complete)$/u,
       "",
     );
     return [
@@ -259,6 +259,10 @@ function resolveCloseRunWorkspaceLabel(pathname: string): string | null {
 
   if (/\/close-runs\/[^/]+\/exports$/u.test(pathname)) {
     return "Sign-Off & Release";
+  }
+
+  if (/\/close-runs\/[^/]+\/complete$/u.test(pathname)) {
+    return "Close Complete";
   }
 
   return null;
