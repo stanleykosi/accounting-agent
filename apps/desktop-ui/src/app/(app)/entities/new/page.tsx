@@ -2,7 +2,6 @@
 
 import {
   autonomyModeDefinitions,
-  autonomyModeOrder,
   type AutonomyMode,
 } from "@accounting-ai-agent/ui";
 import { useRouter } from "next/navigation";
@@ -69,8 +68,6 @@ const accountingStandardOptions = [
   "Local GAAP",
   "Other",
 ] as const;
-
-const autonomyModeOptions = autonomyModeOrder as readonly AutonomyMode[];
 
 export default function WorkspaceCreationPage(): ReactElement {
   const router = useRouter();
@@ -225,49 +222,21 @@ export default function WorkspaceCreationPage(): ReactElement {
               </label>
             </div>
 
-            <section className="quartz-setup-section">
-              <div className="quartz-setup-section-header">
-                <h2 className="quartz-setup-section-title">Review Routing</h2>
-                <p className="quartz-setup-section-copy">
-                  Choose how the workspace routes accounting actions and approvals.
-                </p>
-              </div>
-              <div className="quartz-choice-grid">
-                {autonomyModeOptions.map((mode) => {
-                  const definition = autonomyModeDefinitions.find(
-                    (option) => option.code === mode,
-                  );
-                  const isSelected = formState.autonomyMode === mode;
-                  if (definition === undefined) {
-                    return null;
-                  }
-
-                  return (
-                    <label
-                      className={`quartz-choice-card ${isSelected ? "selected" : ""}`}
-                      key={mode}
-                    >
-                      <input
-                        checked={isSelected}
-                        name="autonomyMode"
-                        onChange={handleFieldChange("autonomyMode")}
-                        type="radio"
-                        value={mode}
-                      />
-                      <div className="quartz-choice-card-content">
-                        <div className="quartz-choice-card-header">
-                          <strong>{definition.label}</strong>
-                          {mode === "human_review" ? (
-                            <span className="quartz-status-badge success">Default</span>
-                          ) : null}
-                        </div>
-                        <p>{definition.description}</p>
-                      </div>
-                    </label>
-                  );
-                })}
-              </div>
-            </section>
+            <label className="quartz-form-label">
+              <span>Review Routing</span>
+              <select
+                className="text-input"
+                name="autonomyMode"
+                onChange={handleFieldChange("autonomyMode")}
+                value={formState.autonomyMode}
+              >
+                {autonomyModeDefinitions.map((definition) => (
+                  <option key={definition.code} value={definition.code}>
+                    {definition.label}
+                  </option>
+                ))}
+              </select>
+            </label>
 
             {errorMessage ? (
               <div className="status-banner danger" role="alert">
