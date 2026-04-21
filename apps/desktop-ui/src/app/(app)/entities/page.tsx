@@ -1,63 +1,20 @@
 /*
-Purpose: Render the authenticated entity workspace directory for desktop operators.
-Scope: Client-side entity listing, workspace creation, and quick navigation into individual workspaces.
-Dependencies: React state hooks, Next.js navigation, the same-origin entity API helpers, and shared UI cards.
+Purpose: Render the entity directory with a clean operational index into workspaces.
+Scope: Client-side entity listing through the same-origin proxy, plus quick routes into workspace creation and entity homes.
+Dependencies: React hooks, Next.js links, and the entity API helpers.
 */
 
 "use client";
 
-import { SurfaceCard } from "@accounting-ai-agent/ui";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import {
-  useEffect,
-  useState,
-  useTransition,
-  type ChangeEvent,
-  type FormEvent,
-  type ReactElement,
-} from "react";
-import {
-  EntityApiError,
-  createEntity,
-  listEntities,
-  type CreateEntityRequest,
-  type EntitySummary,
-} from "../../../lib/entities/api";
+import { useEffect, useMemo, useState, type ReactElement } from "react";
+import { QuartzIcon } from "../../../components/layout/QuartzIcons";
+import { EntityApiError, listEntities, type EntitySummary } from "../../../lib/entities/api";
 
-type CreateEntityFormState = {
-  accountingStandard: string;
-  autonomyMode: CreateEntityRequest["autonomy_mode"];
-  baseCurrency: string;
-  countryCode: string;
-  legalName: string;
-  name: string;
-  timezone: string;
-};
-
-const defaultCreateEntityFormState: CreateEntityFormState = {
-  accountingStandard: "",
-  autonomyMode: "human_review",
-  baseCurrency: "NGN",
-  countryCode: "NG",
-  legalName: "",
-  name: "",
-  timezone: "Africa/Lagos",
-};
-
-/**
- * Purpose: Render the entity workspace directory with creation controls and recent-activity summaries.
- * Inputs: None.
- * Outputs: A client-rendered page showing accessible workspaces and a create-workspace form.
- * Behavior: Fetches through the same-origin proxy so session rotation and auth cookies remain synchronized.
- */
 export default function EntitiesPage(): ReactElement {
-  const router = useRouter();
   const [entities, setEntities] = useState<readonly EntitySummary[]>([]);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [formState, setFormState] = useState<CreateEntityFormState>(defaultCreateEntityFormState);
   const [isLoading, setIsLoading] = useState(true);
-  const [isPending, startTransition] = useTransition();
 
   useEffect(() => {
     void loadEntities({
@@ -67,223 +24,185 @@ export default function EntitiesPage(): ReactElement {
     });
   }, []);
 
-  const handleFieldChange =
-    (fieldName: keyof CreateEntityFormState) =>
-    (event: ChangeEvent<HTMLInputElement | HTMLSelectElement>): void => {
-      setFormState((currentState) => ({
-        ...currentState,
-        [fieldName]: event.target.value,
-      }));
-    };
-
-  const handleCreateEntity = (event: FormEvent<HTMLFormElement>): void => {
-    event.preventDefault();
-    setErrorMessage(null);
-
-    startTransition(() => {
-      void createEntity(buildCreateEntityPayload(formState))
-        .then((workspace) => {
-          setFormState(defaultCreateEntityFormState);
-          router.push(`/entities/${workspace.id}`);
-          router.refresh();
-        })
-        .catch((error: unknown) => {
-          setErrorMessage(resolveEntityErrorMessage(error));
-        });
-    });
-  };
+  const recentEntities = useMemo(() => entities.slice(0, 4), [entities]);
 
   return (
-    <div className="app-shell entity-directory">
-      <section className="hero-grid entity-hero-grid">
-        <div className="hero-copy">
-          <p className="eyebrow">Entity Workspaces</p>
-          <h1>One workspace per entity, with clear ownership and an auditable activity stream.</h1>
-          <p className="lede">
-            Use entity workspaces to anchor memberships, base-currency defaults, and the timeline
-            that future close runs, documents, and approvals will build on.
-          </p>
+    <div className="quartz-page quartz-workspace-layout">
+      <section className="quartz-main-panel">
+        <header className="quartz-page-header">
+          <div>
+            <h1>Entity Directory</h1>
+            <p className="quartz-page-subtitle">
+              Portfolio-wide access to operational workspaces, ownership, and base-ledger defaults.
+            </p>
+          </div>
+          <div className="quartz-page-toolbar">
+            <Link className="primary-button" href="/entities/new">
+              Create Workspace
+            </Link>
+          </div>
+        </header>
+
+        {errorMessage ? (
+          <div className="status-banner warning quartz-section" role="status">
+            {errorMessage}
+          </div>
+        ) : null}
+
+        <section className="quartz-section">
+          <div className="quartz-kpi-grid">
+            <article className="quartz-kpi-tile">
+              <p className="quartz-kpi-label">Accessible Workspaces</p>
+              <p className="quartz-kpi-value">{entities.length}</p>
+              <p className="quartz-kpi-meta">Entities available to the current operator</p>
+            </article>
+            <article className="quartz-kpi-tile">
+              <p className="quartz-kpi-label">Default Currency</p>
+              <p className="quartz-kpi-value">{entities[0]?.base_currency ?? "NGN"}</p>
+              <p className="quartz-kpi-meta">Most recent workspace base ledger</p>
+            </article>
+            <article className="quartz-kpi-tile">
+              <p className="quartz-kpi-label">Assigned Operators</p>
+              <p className="quartz-kpi-value">
+                {entities.reduce((sum, entity) => sum + entity.member_count, 0)}
+              </p>
+              <p className="quartz-kpi-meta">Current memberships across listed entities</p>
+            </article>
+            <article className="quartz-kpi-tile highlight">
+              <p className="quartz-kpi-label">Directory Status</p>
+              <p className="quartz-kpi-value">{isLoading ? "Syncing" : "Current"}</p>
+              <p className="quartz-kpi-meta">Same-origin list refreshed without cache</p>
+            </article>
+          </div>
+        </section>
+
+        <section className="quartz-section">
+          <div className="quartz-section-header">
+            <h2 className="quartz-section-title">Workspace Ledger</h2>
+            <Link className="quartz-filter-link" href="/entities/new">
+              <QuartzIcon className="quartz-inline-icon" name="entities" />
+              New workspace
+            </Link>
+          </div>
+
+          <div className="quartz-table-shell">
+            <table className="quartz-table">
+              <thead>
+                <tr>
+                  <th>Entity</th>
+                  <th>Base Ledger</th>
+                  <th>Owner</th>
+                  <th>Last Activity</th>
+                  <th>Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                {isLoading ? (
+                  <tr>
+                    <td colSpan={5}>
+                      <div className="quartz-empty-state">Loading entity directory...</div>
+                    </td>
+                  </tr>
+                ) : entities.length === 0 ? (
+                  <tr>
+                    <td colSpan={5}>
+                      <div className="quartz-empty-state">
+                        No workspaces exist yet. Create the first entity to begin the close
+                        workflow.
+                      </div>
+                    </td>
+                  </tr>
+                ) : (
+                  entities.map((entity) => (
+                    <tr key={entity.id}>
+                      <td>
+                        <div className="quartz-table-primary">{entity.name}</div>
+                        <div className="quartz-table-secondary">
+                          {entity.legal_name ?? "Legal name not set"}
+                        </div>
+                      </td>
+                      <td>
+                        <div className="quartz-table-primary">{entity.base_currency}</div>
+                        <div className="quartz-table-secondary">
+                          {entity.country_code} • {entity.timezone}
+                        </div>
+                      </td>
+                      <td>
+                        <div className="quartz-table-primary">
+                          {entity.default_actor?.full_name ?? "Default actor not assigned"}
+                        </div>
+                        <div className="quartz-table-secondary">
+                          {entity.member_count} active members
+                        </div>
+                      </td>
+                      <td>
+                        <div className="quartz-table-primary">
+                          {entity.last_activity?.summary ?? "No activity recorded"}
+                        </div>
+                        <div className="quartz-table-secondary">
+                          {entity.last_activity
+                            ? `${formatDateTime(entity.last_activity.created_at)} via ${entity.last_activity.source_surface}`
+                            : "Awaiting first governed action"}
+                        </div>
+                      </td>
+                      <td className="quartz-table-center">
+                        <Link className="quartz-action-link" href={`/entities/${entity.id}`}>
+                          Open
+                        </Link>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      </section>
+
+      <aside className="quartz-right-rail">
+        <div className="quartz-right-rail-header">
+          <QuartzIcon className="quartz-inline-icon" name="assistant" />
+          <div>
+            <h2 className="quartz-right-rail-title">Omni-Assistant</h2>
+            <p className="quartz-right-rail-subtitle">Portfolio guidance</p>
+          </div>
         </div>
 
-        <SurfaceCard title="Workspace Defaults" subtitle="Step 15 foundation" tone="accent">
-          <ul className="detail-list">
-            <li>
-              New workspaces default to Naira (NGN) with Africa/Lagos as the starting timezone.
-            </li>
-            <li>
-              English is the current workspace language scope until broader locale settings land.
-            </li>
-            <li>
-              Each workspace keeps exactly one default actor so approvals and ownership stay
-              anchored.
-            </li>
-          </ul>
-        </SurfaceCard>
-      </section>
-
-      <section className="entity-grid">
-        <SurfaceCard title="Create Workspace" subtitle="New entity">
-          <form className="entity-form" onSubmit={handleCreateEntity}>
-            <label className="field">
-              <span>Workspace name</span>
-              <input
-                className="text-input"
-                name="name"
-                onChange={handleFieldChange("name")}
-                placeholder="Northwind Nigeria"
-                required
-                type="text"
-                value={formState.name}
-              />
-            </label>
-
-            <label className="field">
-              <span>Legal name</span>
-              <input
-                className="text-input"
-                name="legalName"
-                onChange={handleFieldChange("legalName")}
-                placeholder="Northwind Nigeria Limited"
-                type="text"
-                value={formState.legalName}
-              />
-            </label>
-
-            <div className="entity-form-row">
-              <label className="field">
-                <span>Base currency</span>
-                <input
-                  className="text-input"
-                  maxLength={3}
-                  name="baseCurrency"
-                  onChange={handleFieldChange("baseCurrency")}
-                  required
-                  type="text"
-                  value={formState.baseCurrency}
-                />
-              </label>
-
-              <label className="field">
-                <span>Country code</span>
-                <input
-                  className="text-input"
-                  maxLength={2}
-                  name="countryCode"
-                  onChange={handleFieldChange("countryCode")}
-                  required
-                  type="text"
-                  value={formState.countryCode}
-                />
-              </label>
-            </div>
-
-            <label className="field">
-              <span>Timezone</span>
-              <input
-                className="text-input"
-                name="timezone"
-                onChange={handleFieldChange("timezone")}
-                required
-                type="text"
-                value={formState.timezone}
-              />
-            </label>
-
-            <div className="entity-form-row">
-              <label className="field">
-                <span>Accounting standard</span>
-                <input
-                  className="text-input"
-                  name="accountingStandard"
-                  onChange={handleFieldChange("accountingStandard")}
-                  placeholder="IFRS for SMEs"
-                  type="text"
-                  value={formState.accountingStandard}
-                />
-              </label>
-
-              <label className="field">
-                <span>Autonomy mode</span>
-                <select
-                  className="text-input"
-                  name="autonomyMode"
-                  onChange={handleFieldChange("autonomyMode")}
-                  value={formState.autonomyMode}
-                >
-                  <option value="human_review">Human review</option>
-                  <option value="reduced_interruption">Reduced interruption</option>
-                </select>
-              </label>
-            </div>
-
-            {errorMessage ? (
-              <div className="status-banner danger" role="alert">
-                {errorMessage}
-              </div>
-            ) : null}
-
-            <button className="primary-button" disabled={isPending} type="submit">
-              {isPending ? "Creating workspace..." : "Create workspace"}
-            </button>
-          </form>
-        </SurfaceCard>
-
-        <SurfaceCard title="Accessible Workspaces" subtitle="Your entities">
-          {isLoading ? <p className="form-helper">Loading workspaces...</p> : null}
-          {!isLoading && entities.length === 0 ? (
+        <div className="quartz-right-rail-body">
+          <article className="quartz-card ai">
+            <p className="quartz-card-eyebrow secondary">Portfolio note</p>
+            <h3>Keep workspace creation light</h3>
             <p className="form-helper">
-              No workspaces exist yet. Create the first entity to start the close-run backbone.
+              Start with entity name and base currency. Team routing and deeper configuration can be
+              refined inside each workspace.
             </p>
-          ) : null}
+          </article>
 
-          <div className="entity-card-list">
-            {entities.map((entity) => (
-              <Link className="entity-card-link" href={`/entities/${entity.id}`} key={entity.id}>
-                <article className="entity-card">
-                  <div className="entity-card-header">
-                    <div>
-                      <p className="eyebrow entity-card-eyebrow">
-                        {entity.base_currency} workspace
-                      </p>
-                      <h2>{entity.name}</h2>
-                    </div>
-                    <span className="entity-status-chip">{entity.status.replace("_", " ")}</span>
-                  </div>
-
-                  <dl className="entity-meta-grid">
-                    <div>
-                      <dt>Default actor</dt>
-                      <dd>{entity.default_actor?.full_name ?? "Unassigned"}</dd>
-                    </div>
-                    <div>
-                      <dt>Members</dt>
-                      <dd>{entity.member_count}</dd>
-                    </div>
-                    <div>
-                      <dt>Timezone</dt>
-                      <dd>{entity.timezone}</dd>
-                    </div>
-                    <div>
-                      <dt>Language</dt>
-                      <dd>{entity.workspace_language.toUpperCase()}</dd>
-                    </div>
-                  </dl>
-
-                  <div className="entity-card-footer">
-                    <div>
-                      <strong>Last activity</strong>
-                      <p>{entity.last_activity?.summary ?? "No activity has been recorded yet."}</p>
-                    </div>
-                    <span>
-                      {formatDateTime(entity.last_activity?.created_at ?? entity.updated_at)}
+          <article className="quartz-card">
+            <p className="quartz-card-eyebrow">Recent workspaces</p>
+            <div className="quartz-mini-list">
+              {recentEntities.length === 0 ? (
+                <p className="form-helper">New workspaces will appear here after creation.</p>
+              ) : (
+                recentEntities.map((entity) => (
+                  <div className="quartz-mini-item" key={entity.id}>
+                    <strong>{entity.name}</strong>
+                    <span className="quartz-mini-meta">
+                      {entity.base_currency} • {entity.member_count} members
                     </span>
                   </div>
-                </article>
-              </Link>
-            ))}
-          </div>
-        </SurfaceCard>
-      </section>
+                ))
+              )}
+            </div>
+          </article>
+        </div>
+
+        <div className="quartz-right-rail-footer">
+          <Link className="primary-button" href="/entities/new">
+            Create Workspace
+          </Link>
+        </div>
+      </aside>
     </div>
   );
 }
@@ -299,30 +218,11 @@ async function loadEntities(options: {
     options.onLoaded(response.entities);
     options.onError(null);
   } catch (error: unknown) {
+    options.onLoaded([]);
     options.onError(resolveEntityErrorMessage(error));
   } finally {
     options.onLoadingChange(false);
   }
-}
-
-function emptyStringToUndefined(value: string): string | undefined {
-  const normalized = value.trim();
-  return normalized.length > 0 ? normalized : undefined;
-}
-
-function buildCreateEntityPayload(formState: Readonly<CreateEntityFormState>): CreateEntityRequest {
-  const accountingStandard = emptyStringToUndefined(formState.accountingStandard);
-  const legalName = emptyStringToUndefined(formState.legalName);
-
-  return {
-    autonomy_mode: formState.autonomyMode,
-    base_currency: formState.baseCurrency,
-    country_code: formState.countryCode,
-    name: formState.name,
-    timezone: formState.timezone,
-    ...(accountingStandard ? { accounting_standard: accountingStandard } : {}),
-    ...(legalName ? { legal_name: legalName } : {}),
-  };
 }
 
 function resolveEntityErrorMessage(error: unknown): string {
@@ -330,7 +230,7 @@ function resolveEntityErrorMessage(error: unknown): string {
     return error.message;
   }
 
-  return "The entity workspace request failed. Reload the page and try again.";
+  return "The entity directory could not be loaded. Reload the workspace and try again.";
 }
 
 function formatDateTime(value: string): string {

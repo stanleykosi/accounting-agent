@@ -1,31 +1,26 @@
 /*
-Purpose: Render the close-run overview page with lifecycle status, phase progress, and activity context.
-Scope: Close-run workspace loading, overview metrics, phase progression, quick links into review surfaces, and related period navigation.
-Dependencies: Same-origin close-run/entity API helpers and shared desktop UI components.
+Purpose: Render the close mission control page for one governed close run.
+Scope: Live close-run workspace loading, lifecycle mutations, and direct routing into the core work surfaces.
+Dependencies: React hooks, close-run/entity API helpers, shared workflow metadata, and the Quartz workspace components.
 */
 
 "use client";
 
-import {
-  PhaseProgress,
-  SurfaceCard,
-  Timeline,
-  type TimelineItem,
-  type WorkflowPhase,
-} from "@accounting-ai-agent/ui";
+import { getWorkflowPhaseDefinition, type WorkflowPhase } from "@accounting-ai-agent/ui";
 import Link from "next/link";
-import { use, useEffect, useMemo, useState, type ReactElement } from "react";
-import { AgentCapabilityCatalog } from "../../../../../../components/chat/AgentCapabilityCatalog";
+import { useRouter } from "next/navigation";
+import { use, useEffect, useState, type ReactElement } from "react";
+import { QuartzIcon } from "../../../../../../components/layout/QuartzIcons";
 import {
   approveCloseRun,
   archiveCloseRun,
   CloseRunApiError,
-  buildPhaseProgressItems,
   deleteCloseRun,
   deriveCloseRunAttention,
   findActivePhase,
   formatCloseRunDateTime,
   formatCloseRunPeriod,
+  getCloseRunPhaseStatusLabel,
   getCloseRunStatusLabel,
   readCloseRunWorkspace,
   transitionCloseRun,
@@ -33,7 +28,6 @@ import {
   type CloseRunWorkspaceData,
 } from "../../../../../../lib/close-runs";
 import { EntityApiError } from "../../../../../../lib/entities/api";
-import { useRouter } from "next/navigation";
 
 type CloseRunOverviewPageProps = {
   params: Promise<{
@@ -42,12 +36,38 @@ type CloseRunOverviewPageProps = {
   }>;
 };
 
-/**
- * Purpose: Render the desktop overview surface for one entity close run.
- * Inputs: Route params containing the entity and close-run UUIDs.
- * Outputs: A client-rendered close-run overview with progress, activity, and queue-entry links.
- * Behavior: Hydrates the close-run, entity workspace, and sibling runs together so the page stays context-rich.
- */
+type MissionTile = {
+  label: string;
+  meta: string;
+  tone?: "error" | "success";
+  value: string;
+};
+
+type MissionWorkstreamRow = {
+  detail: string;
+  href: string;
+  isBlocked: boolean;
+  isCurrent: boolean;
+  phase: WorkflowPhase;
+  phaseStatusLabel: string;
+  statusTone: "error" | "neutral" | "success" | "warning";
+  title: string;
+};
+
+type TimelineRow = {
+  id: string;
+  label: string;
+  meta: string;
+};
+
+const workflowPhaseOrder: readonly WorkflowPhase[] = [
+  "collection",
+  "processing",
+  "reconciliation",
+  "reporting",
+  "review_signoff",
+];
+
 export default function CloseRunOverviewPage({
   params,
 }: Readonly<CloseRunOverviewPageProps>): ReactElement {
@@ -69,119 +89,42 @@ export default function CloseRunOverviewPage({
     });
   }, [closeRunId, entityId]);
 
-  const relatedCloseRuns = useMemo(
-    () =>
-      workspaceData === null
-        ? []
-        : workspaceData.closeRuns
-            .filter((closeRun) => closeRun.id !== workspaceData.closeRun.id)
-            .slice(0, 4),
-    [workspaceData],
-  );
-
-  const timelineItems = useMemo<readonly TimelineItem[]>(() => {
-    if (workspaceData === null) {
-      return [];
-    }
-
-    const closeRun = workspaceData.closeRun;
-    const items: Array<{
-      badge: string;
-      detail: string;
-      id: string;
-      occurredAt: string;
-      title: string;
-      tone: NonNullable<TimelineItem["tone"]>;
-    }> = [
-      {
-        badge: workspaceData.entity.name,
-        detail: `Close run version ${closeRun.currentVersionNo} opened for ${formatCloseRunPeriod(closeRun)}.`,
-        id: `${closeRun.id}-opened`,
-        occurredAt: closeRun.createdAt,
-        title: "Close run opened",
-        tone: "default",
-      },
-    ];
-
-    closeRun.workflowState.phaseStates.forEach((phaseState) => {
-      if (phaseState.completedAt === null) {
-        return;
-      }
-
-      items.push({
-        badge: phaseState.phase.replaceAll("_", " "),
-        detail: "The workflow advanced after this phase completed.",
-        id: `${closeRun.id}-${phaseState.phase}-completed`,
-        occurredAt: phaseState.completedAt,
-        title: `${phaseState.phase.replaceAll("_", " ")} completed`,
-        tone: "success",
-      });
-    });
-
-    if (closeRun.approvedAt !== null) {
-      items.push({
-        badge: "Sign-off",
-        detail: "The close run reached approved state and is ready for release controls.",
-        id: `${closeRun.id}-approved`,
-        occurredAt: closeRun.approvedAt,
-        title: "Close run approved",
-        tone: "success",
-      });
-    }
-
-    if (closeRun.archivedAt !== null) {
-      items.push({
-        badge: "Archive",
-        detail: "The close run was archived after release or review completion.",
-        id: `${closeRun.id}-archived`,
-        occurredAt: closeRun.archivedAt,
-        title: "Close run archived",
-        tone: "warning",
-      });
-    }
-
-    return items
-      .sort(
-        (left, right) => new Date(right.occurredAt).valueOf() - new Date(left.occurredAt).valueOf(),
-      )
-      .map((item) => ({
-        badge: item.badge,
-        detail: item.detail,
-        id: item.id,
-        timestamp: formatCloseRunDateTime(item.occurredAt),
-        title: item.title,
-        tone: item.tone,
-      }));
-  }, [workspaceData]);
-
   if (isLoading) {
     return (
-      <div className="app-shell close-run-overview-page">
-        <SurfaceCard title="Loading Close Run" subtitle="Overview">
-          <p className="form-helper">
-            Loading close-run status, phase progress, and workspace context...
-          </p>
-        </SurfaceCard>
+      <div className="quartz-page quartz-workspace-layout">
+        <section className="quartz-main-panel">
+          <div className="quartz-empty-state">Loading close mission control...</div>
+        </section>
+        <aside className="quartz-right-rail" />
       </div>
     );
   }
 
   if (workspaceData === null) {
     return (
-      <div className="app-shell close-run-overview-page">
-        <SurfaceCard title="Close Run Unavailable" subtitle="Overview">
+      <div className="quartz-page quartz-workspace-layout">
+        <section className="quartz-main-panel">
           <div className="status-banner danger" role="alert">
             {errorMessage ?? "The requested close run could not be loaded."}
           </div>
-        </SurfaceCard>
+        </section>
+        <aside className="quartz-right-rail" />
       </div>
     );
   }
 
   const closeRun = workspaceData.closeRun;
-  const activePhase = findActivePhase(closeRun);
   const attention = deriveCloseRunAttention(closeRun);
-  const nextPhase = getNextWorkflowPhase(closeRun);
+  const activePhase = findActivePhase(closeRun);
+  const nextPhase = resolveNextWorkflowPhase(closeRun);
+  const workstreamRows = buildMissionWorkstreamRows(closeRun, entityId);
+  const missionTiles = buildMissionTiles(closeRun);
+  const phaseRows = buildPhaseProgressRows(closeRun);
+  const timelineRows = buildTimelineRows(closeRun);
+  const primaryWorkstream =
+    workstreamRows.find((row) => row.phase === (activePhase?.phase ?? "collection")) ??
+    workstreamRows.find((row) => row.statusTone !== "success") ??
+    workstreamRows[0]!;
 
   async function refreshWorkspace(): Promise<void> {
     await loadCloseRunWorkspace({
@@ -197,13 +140,14 @@ export default function CloseRunOverviewPage({
     if (nextPhase === null) {
       return;
     }
+
     setIsMutating(true);
     try {
       await transitionCloseRun(entityId, closeRun.id, {
-        reason: "Advanced from close-run overview",
+        reason: "Advanced from close mission control",
         target_phase: nextPhase,
       });
-      setStatusMessage(`Close run advanced into ${formatWorkflowPhaseLabel(nextPhase)}.`);
+      setStatusMessage(`Close run advanced into ${getWorkflowPhaseDefinition(nextPhase).label}.`);
       await refreshWorkspace();
     } catch (error: unknown) {
       setErrorMessage(resolveCloseRunOverviewErrorMessage(error));
@@ -215,7 +159,7 @@ export default function CloseRunOverviewPage({
   async function handleApproveCloseRun(): Promise<void> {
     setIsMutating(true);
     try {
-      await approveCloseRun(entityId, closeRun.id, "Approved from close-run overview");
+      await approveCloseRun(entityId, closeRun.id, "Approved from close mission control");
       setStatusMessage("Close run approved.");
       await refreshWorkspace();
     } catch (error: unknown) {
@@ -228,7 +172,7 @@ export default function CloseRunOverviewPage({
   async function handleArchiveExistingCloseRun(): Promise<void> {
     setIsMutating(true);
     try {
-      await archiveCloseRun(entityId, closeRun.id, "Archived from close-run overview");
+      await archiveCloseRun(entityId, closeRun.id, "Archived from close mission control");
       setStatusMessage("Close run archived.");
       await refreshWorkspace();
     } catch (error: unknown) {
@@ -258,327 +202,265 @@ export default function CloseRunOverviewPage({
   }
 
   return (
-    <div className="app-shell close-run-overview-page">
-      <section className="hero-grid close-run-hero-grid">
-        <div className="hero-copy">
-          <p className="eyebrow">Close Run Overview</p>
-          <h1>{formatCloseRunPeriod(closeRun)}</h1>
-          <p className="lede">
-            Use this overview to move between workflow phases, review queues, and related entity
-            activity without losing the current period context.
-          </p>
+    <div className="quartz-page quartz-workspace-layout">
+      <section className="quartz-main-panel">
+        <header className="quartz-page-header">
+          <div>
+            <h1>Close Mission Control</h1>
+            <p className="quartz-page-subtitle">
+              {workspaceData.entity.name} • {formatCloseRunPeriod(closeRun)}
+            </p>
+          </div>
+          <div className="quartz-page-toolbar">
+            <Link className="secondary-button" href={primaryWorkstream.href}>
+              {resolvePrimaryWorkbenchLabel(primaryWorkstream.phase)}
+            </Link>
+            <span className={`quartz-status-badge ${mapAttentionToneToBadge(attention.tone)}`}>
+              {attention.label}
+            </span>
+          </div>
+        </header>
 
-          <div className="close-run-action-row">
-            <Link className="secondary-button" href={`/entities/${workspaceData.entity.id}`}>
-              Back to entity workspace
-            </Link>
+        {statusMessage ? (
+          <div className="status-banner success quartz-section" role="status">
+            {statusMessage}
+          </div>
+        ) : null}
+
+        {errorMessage ? (
+          <div className="status-banner warning quartz-section" role="status">
+            {errorMessage}
+          </div>
+        ) : null}
+
+        <section className="quartz-section">
+          <div className="quartz-kpi-grid">
+            {missionTiles.map((tile, index) => (
+              <article
+                className={
+                  index === missionTiles.length - 1
+                    ? "quartz-kpi-tile highlight"
+                    : "quartz-kpi-tile"
+                }
+                key={tile.label}
+              >
+                <p className="quartz-kpi-label">{tile.label}</p>
+                <p className={`quartz-kpi-value ${tile.tone ?? ""}`.trim()}>{tile.value}</p>
+                <p className="quartz-kpi-meta">{tile.meta}</p>
+              </article>
+            ))}
+          </div>
+        </section>
+
+        <section className="quartz-section">
+          <div className="quartz-section-header">
+            <h2 className="quartz-section-title">Workflow Control Table</h2>
             <Link
-              className="secondary-button"
-              href={`/entities/${workspaceData.entity.id}/close-runs/${closeRun.id}/documents`}
+              className="quartz-filter-link"
+              href={`/entities/${entityId}/close-runs/${closeRun.id}/chat`}
             >
-              Document queue
-            </Link>
-            <Link
-              className="secondary-button"
-              href={`/entities/${workspaceData.entity.id}/close-runs/${closeRun.id}/reconciliation`}
-            >
-              Reconciliation
-            </Link>
-            <Link
-              className="secondary-button"
-              href={`/entities/${workspaceData.entity.id}/close-runs/${closeRun.id}/recommendations`}
-            >
-              Recommendations
-            </Link>
-            <Link
-              className="secondary-button"
-              href={`/entities/${workspaceData.entity.id}/close-runs/${closeRun.id}/schedules`}
-            >
-              Supporting schedules
-            </Link>
-            <Link
-              className="secondary-button"
-              href={`/entities/${workspaceData.entity.id}/close-runs/${closeRun.id}/reports`}
-            >
-              Reporting
-            </Link>
-            <Link
-              className="secondary-button"
-              href={`/entities/${workspaceData.entity.id}/close-runs/${closeRun.id}/chat`}
-            >
-              Agent workbench
+              <QuartzIcon className="quartz-inline-icon" name="assistant" />
+              Ask Assistant
             </Link>
           </div>
-        </div>
 
-        <SurfaceCard title="Close-run Snapshot" subtitle={workspaceData.entity.name} tone="accent">
-          <dl className="entity-meta-grid close-run-summary-grid">
-            <div>
-              <dt>Status</dt>
-              <dd>{getCloseRunStatusLabel(closeRun.status)}</dd>
-            </div>
-            <div>
-              <dt>Reporting currency</dt>
-              <dd>{closeRun.reportingCurrency}</dd>
-            </div>
-            <div>
-              <dt>Version</dt>
-              <dd>v{closeRun.currentVersionNo}</dd>
-            </div>
-            <div>
-              <dt>Active phase</dt>
-              <dd>{activePhase ? activePhase.phase.replaceAll("_", " ") : "No active phase"}</dd>
-            </div>
-            <div>
-              <dt>Operating mode</dt>
-              <dd>{formatOperatingModeLabel(closeRun.operatingMode.mode)}</dd>
-            </div>
-          </dl>
-          <p className="form-helper">{closeRun.operatingMode.description}</p>
-          <p className="form-helper">{attention.detail}</p>
-        </SurfaceCard>
-      </section>
-
-      {statusMessage ? (
-        <div className="status-banner success" role="status">
-          {statusMessage}
-        </div>
-      ) : null}
-
-      {errorMessage ? (
-        <div className="status-banner warning" role="status">
-          {errorMessage}
-        </div>
-      ) : null}
-
-      <section className="close-run-stat-grid">
-        <MetricCard label="Opened" value={formatCloseRunDateTime(closeRun.createdAt)} />
-        <MetricCard label="Last updated" value={formatCloseRunDateTime(closeRun.updatedAt)} />
-        <MetricCard label="Approved" value={formatCloseRunDateTime(closeRun.approvedAt)} />
-        <MetricCard
-          label="Source version"
-          value={closeRun.reopenedFromCloseRunId ?? "Current root"}
-        />
-      </section>
-
-      <section className="content-grid">
-        <SurfaceCard title="Phase Progress" subtitle="Five-phase workflow">
-          <PhaseProgress items={buildPhaseProgressItems(closeRun)} />
-        </SurfaceCard>
-
-        <SurfaceCard title="Lifecycle Controls" subtitle="Advance and sign off">
-          <div className="dashboard-row-list">
-            <article className="dashboard-row">
-              <strong className="close-run-row-title">Advance workflow</strong>
-              <p className="form-helper">
-                Move this close run into the next canonical phase once the current gate is ready.
-              </p>
-              <div className="close-run-link-row">
-                <button
-                  className="secondary-button"
-                  disabled={isMutating || nextPhase === null}
-                  onClick={() => {
-                    void handleAdvanceCloseRun();
-                  }}
-                  type="button"
-                >
-                  {isMutating
-                    ? "Saving..."
-                    : nextPhase === null
-                      ? "No next phase"
-                      : `Advance to ${formatWorkflowPhaseLabel(nextPhase)}`}
-                </button>
-              </div>
-            </article>
-            <article className="dashboard-row">
-              <strong className="close-run-row-title">Approve close run</strong>
-              <p className="form-helper">
-                Sign off the period after reporting and review controls are satisfied.
-              </p>
-              <div className="close-run-link-row">
-                <button
-                  className="secondary-button"
-                  disabled={isMutating || closeRun.status === "approved" || closeRun.status === "archived"}
-                  onClick={() => {
-                    void handleApproveCloseRun();
-                  }}
-                  type="button"
-                >
-                  {isMutating ? "Saving..." : "Approve"}
-                </button>
-              </div>
-            </article>
-            <article className="dashboard-row">
-              <strong className="close-run-row-title">Archive close run</strong>
-              <p className="form-helper">
-                Archive a fully released period to lock it down for historical reference.
-              </p>
-              <div className="close-run-link-row">
-                <button
-                  className="secondary-button"
-                  disabled={isMutating || closeRun.status === "archived"}
-                  onClick={() => {
-                    void handleArchiveExistingCloseRun();
-                  }}
-                  type="button"
-                >
-                  {isMutating ? "Saving..." : "Archive"}
-                </button>
-              </div>
-            </article>
-            <article className="dashboard-row">
-              <strong className="close-run-row-title">Delete mutable close run</strong>
-              <p className="form-helper">
-                Remove this working period entirely when you want to start over without keeping its
-                uploaded evidence or downstream workflow state.
-              </p>
-              <div className="close-run-link-row">
-                <button
-                  className="secondary-button"
-                  disabled={isMutating || !canDeleteCloseRun(closeRun)}
-                  onClick={() => {
-                    void handleDeleteCloseRun();
-                  }}
-                  type="button"
-                >
-                  {isMutating ? "Saving..." : "Delete close run"}
-                </button>
-              </div>
-            </article>
+          <div className="quartz-table-shell">
+            <table className="quartz-table">
+              <thead>
+                <tr>
+                  <th>Workflow Area</th>
+                  <th>Current Gate</th>
+                  <th>Status</th>
+                  <th>Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                {workstreamRows.map((row) => (
+                  <tr
+                    className={row.isBlocked ? "quartz-table-row error" : undefined}
+                    key={row.phase}
+                  >
+                    <td>
+                      <div className="quartz-table-primary">{row.title}</div>
+                      <div className="quartz-table-secondary">
+                        {getWorkflowPhaseDefinition(row.phase).description}
+                      </div>
+                    </td>
+                    <td>
+                      <div className="quartz-table-primary">{row.phaseStatusLabel}</div>
+                      <div className="quartz-table-secondary">{row.detail}</div>
+                    </td>
+                    <td>
+                      <span className={`quartz-status-badge ${row.statusTone}`}>
+                        {row.isCurrent ? "In Focus" : row.phaseStatusLabel}
+                      </span>
+                    </td>
+                    <td className="quartz-table-center">
+                      <Link className="quartz-action-link" href={row.href}>
+                        {resolvePrimaryWorkbenchLabel(row.phase)}
+                      </Link>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
-        </SurfaceCard>
+        </section>
 
-        <SurfaceCard title="Review Surfaces" subtitle="Jump into the work">
-          <div className="dashboard-row-list">
-            <QuickLinkRow
-              description="Resolve collection blockers, low-confidence extractions, and wrong-period documents."
-              href={`/entities/${workspaceData.entity.id}/close-runs/${closeRun.id}/documents`}
-              label="Open document queue"
-            />
-            <QuickLinkRow
-              description="Review accounting recommendations, generated journals, and reviewer decisions."
-              href={`/entities/${workspaceData.entity.id}/close-runs/${closeRun.id}/recommendations`}
-              label="Open accounting review"
-            />
-            <QuickLinkRow
-              description="Disposition unmatched items, anomalies, and supporting schedule exceptions."
-              href={`/entities/${workspaceData.entity.id}/close-runs/${closeRun.id}/reconciliation`}
-              label="Open reconciliation review"
-            />
-            <QuickLinkRow
-              description="Generate report packs, refine commentary, and inspect reporting artifacts."
-              href={`/entities/${workspaceData.entity.id}/close-runs/${closeRun.id}/reports`}
-              label="Open reporting workspace"
-            />
-            <QuickLinkRow
-              description="Inspect background jobs, retries, and operational progress across this close run."
-              href={`/entities/${workspaceData.entity.id}/close-runs/${closeRun.id}/jobs`}
-              label="Open job monitor"
-            />
-            <QuickLinkRow
-              description="Create exports, assemble evidence packs, and inspect the final release manifest."
-              href={`/entities/${workspaceData.entity.id}/close-runs/${closeRun.id}/exports`}
-              label="Open export center"
-            />
-            <QuickLinkRow
-              description="Ask grounded questions about this period's source documents, rules, and outputs."
-              href={`/entities/${workspaceData.entity.id}/close-runs/${closeRun.id}/chat`}
-              label="Open agent workbench"
-            />
-            <QuickLinkRow
-              description="Inspect and manage the active report template used by report generation."
-              href={`/entities/${workspaceData.entity.id}/reports/templates`}
-              label="Open report templates"
-            />
-            <QuickLinkRow
-              description="Review entity-level setup, integrations, and chart of accounts context."
-              href={`/entities/${workspaceData.entity.id}`}
-              label="Open entity workspace"
-            />
-          </div>
-        </SurfaceCard>
-      </section>
-
-      <section className="content-grid">
-        <SurfaceCard title="Lifecycle Timeline" subtitle="Current period history">
-          <Timeline
-            emptyMessage="Lifecycle events will appear once this close run records phase completions or sign-off."
-            items={timelineItems}
-          />
-        </SurfaceCard>
-
-        <SurfaceCard title="Agent Capability Catalog" subtitle="Runtime visibility">
-          <AgentCapabilityCatalog
-            maxTools={8}
-            workbenchHref={`/entities/${workspaceData.entity.id}/close-runs/${closeRun.id}/chat`}
-          />
-        </SurfaceCard>
-
-        <SurfaceCard title="Related Periods" subtitle="Other close runs in this entity">
-          <div className="dashboard-row-list">
-            {relatedCloseRuns.length === 0 ? (
-              <p className="form-helper">No other close runs exist for this entity yet.</p>
-            ) : (
-              relatedCloseRuns.map((relatedRun) => (
-                <article className="dashboard-row" key={relatedRun.id}>
-                  <div className="close-run-row-header">
-                    <div>
-                      <strong className="close-run-row-title">
-                        {formatCloseRunPeriod(relatedRun)}
-                      </strong>
-                      <p className="close-run-row-meta">
-                        {getCloseRunStatusLabel(relatedRun.status)} • v{relatedRun.currentVersionNo}
-                      </p>
+        <section className="quartz-section">
+          <div className="quartz-split-grid quartz-split-grid-halves">
+            <article className="quartz-card">
+              <div className="quartz-section-header quartz-section-header-tight">
+                <h2 className="quartz-kpi-label quartz-kpi-heading">Phase Progress</h2>
+              </div>
+              <div className="quartz-mini-list">
+                {phaseRows.map((row) => (
+                  <div className="quartz-mini-item" key={row.label}>
+                    <div className="quartz-form-row">
+                      <span className="quartz-table-secondary">{row.label}</span>
+                      <span className="quartz-table-secondary">{row.statusLabel}</span>
                     </div>
-                    <span className="entity-status-chip">
-                      {deriveCloseRunAttention(relatedRun).label}
-                    </span>
+                    <div className="quartz-progress-track">
+                      <div
+                        className="quartz-progress-bar"
+                        style={{
+                          background: row.color,
+                          width: `${row.percent}%`,
+                        }}
+                      />
+                    </div>
                   </div>
-                  <div className="close-run-link-row">
-                    <Link
-                      className="workspace-link-inline"
-                      href={`/entities/${workspaceData.entity.id}/close-runs/${relatedRun.id}`}
-                    >
-                      Open overview
-                    </Link>
-                    <Link
-                      className="workspace-link-inline"
-                      href={`/entities/${workspaceData.entity.id}/close-runs/${relatedRun.id}/documents`}
-                    >
-                      Documents
-                    </Link>
-                  </div>
-                </article>
-              ))
-            )}
-          </div>
-        </SurfaceCard>
-      </section>
-
-      <SurfaceCard title="Management Report Workflow" subtitle="Client-facing workflow alignment">
-        <div className="dashboard-row-list">
-          {buildManagementReportWorkflowSteps(closeRun, workspaceData.entity.id).map((step) => (
-            <article className="dashboard-row" key={step.id}>
-              <div className="close-run-row-header">
-                <div>
-                  <strong className="close-run-row-title">
-                    {step.stepNo}. {step.title}
-                  </strong>
-                  <p className="close-run-row-meta">{step.phaseLabel}</p>
-                </div>
-                <span className="entity-status-chip">{step.stateLabel}</span>
-              </div>
-              <p className="form-helper">{step.description}</p>
-              <p className="form-helper">{step.detail}</p>
-              <div className="close-run-link-row">
-                <Link className="workspace-link-inline" href={step.href}>
-                  Open workspace
-                </Link>
+                ))}
               </div>
             </article>
-          ))}
+
+            <article className="quartz-card">
+              <div className="quartz-section-header quartz-section-header-tight">
+                <h2 className="quartz-kpi-label quartz-kpi-heading">Lifecycle Timeline</h2>
+              </div>
+              <div className="quartz-mini-list">
+                {timelineRows.map((row) => (
+                  <div className="quartz-mini-item" key={row.id}>
+                    <strong>{row.label}</strong>
+                    <span className="quartz-mini-meta">{row.meta}</span>
+                  </div>
+                ))}
+              </div>
+            </article>
+          </div>
+        </section>
+      </section>
+
+      <aside className="quartz-right-rail">
+        <div className="quartz-right-rail-header">
+          <QuartzIcon className="quartz-inline-icon" name="assistant" />
+          <div>
+            <h2 className="quartz-right-rail-title">Omni-Assistant</h2>
+            <p className="quartz-right-rail-subtitle">Period intelligence</p>
+          </div>
         </div>
-      </SurfaceCard>
+
+        <div className="quartz-right-rail-body">
+          <article className="quartz-card ai">
+            <p
+              className={`quartz-card-eyebrow ${attention.tone === "warning" ? "error" : "secondary"}`}
+            >
+              {attention.tone === "warning" ? "Highest priority" : "Current focus"}
+            </p>
+            <h3>{attention.label}</h3>
+            <p className="form-helper">{attention.detail}</p>
+            <div className="quartz-button-row">
+              <Link className="secondary-button" href={primaryWorkstream.href}>
+                Investigate
+              </Link>
+            </div>
+          </article>
+
+          <article className="quartz-card">
+            <p className="quartz-card-eyebrow">Operating mode</p>
+            <h3>{formatOperatingModeLabel(closeRun.operatingMode.mode)}</h3>
+            <p className="form-helper">{closeRun.operatingMode.description}</p>
+            <div className="quartz-mini-list">
+              <div className="quartz-mini-item">
+                <span className="quartz-table-secondary">Journal posting</span>
+                <strong>
+                  {closeRun.operatingMode.journalPostingAvailable ? "Available" : "Restricted"}
+                </strong>
+              </div>
+              <div className="quartz-mini-item">
+                <span className="quartz-table-secondary">Reconciliation depth</span>
+                <strong>
+                  {closeRun.operatingMode.bankReconciliationAvailable ? "Full" : "Evidence-only"}
+                </strong>
+              </div>
+            </div>
+          </article>
+
+          <article className="quartz-card">
+            <p className="quartz-card-eyebrow">Lifecycle controls</p>
+            <div className="quartz-button-stack">
+              <button
+                className="secondary-button"
+                disabled={isMutating || nextPhase === null}
+                onClick={() => {
+                  void handleAdvanceCloseRun();
+                }}
+                type="button"
+              >
+                {isMutating
+                  ? "Saving..."
+                  : nextPhase === null
+                    ? "No phase advance available"
+                    : `Advance to ${getWorkflowPhaseDefinition(nextPhase).label}`}
+              </button>
+
+              <button
+                className="secondary-button"
+                disabled={
+                  isMutating || closeRun.status === "approved" || closeRun.status === "archived"
+                }
+                onClick={() => {
+                  void handleApproveCloseRun();
+                }}
+                type="button"
+              >
+                {isMutating ? "Saving..." : "Approve Close Run"}
+              </button>
+
+              <button
+                className="secondary-button"
+                disabled={isMutating || closeRun.status === "archived"}
+                onClick={() => {
+                  void handleArchiveExistingCloseRun();
+                }}
+                type="button"
+              >
+                {isMutating ? "Saving..." : "Archive Close Run"}
+              </button>
+
+              <button
+                className="secondary-button"
+                disabled={isMutating || !canDeleteCloseRun(closeRun)}
+                onClick={() => {
+                  void handleDeleteCloseRun();
+                }}
+                type="button"
+              >
+                {isMutating ? "Saving..." : "Delete Mutable Close"}
+              </button>
+            </div>
+          </article>
+        </div>
+
+        <div className="quartz-right-rail-footer">
+          <Link
+            className="primary-button"
+            href={`/entities/${entityId}/close-runs/${closeRun.id}/chat`}
+          >
+            Open Assistant Workbench
+          </Link>
+        </div>
+      </aside>
     </div>
   );
 }
@@ -610,220 +492,293 @@ function resolveCloseRunOverviewErrorMessage(error: unknown): string {
   return "The close-run overview could not be loaded. Reload the workspace and try again.";
 }
 
-function canDeleteCloseRun(closeRun: Readonly<CloseRunSummary>): boolean {
-  return (
-    closeRun.status === "draft" ||
-    closeRun.status === "in_review" ||
-    closeRun.status === "reopened"
-  );
-}
-
-function MetricCard({
-  label,
-  value,
-}: Readonly<{
-  label: string;
-  value: string;
-}>): ReactElement {
-  return (
-    <article className="dashboard-stat-block">
-      <span>{label}</span>
-      <strong>{value}</strong>
-    </article>
-  );
-}
-
-function QuickLinkRow({
-  description,
-  href,
-  label,
-}: Readonly<{
-  description: string;
-  href: string;
-  label: string;
-}>): ReactElement {
-  return (
-    <article className="dashboard-row">
-      <strong className="close-run-row-title">{label}</strong>
-      <p className="form-helper">{description}</p>
-      <div className="close-run-link-row">
-        <Link className="workspace-link-inline" href={href}>
-          Open
-        </Link>
-      </div>
-    </article>
-  );
-}
-
-function buildManagementReportWorkflowSteps(
-  closeRun: Readonly<CloseRunSummary>,
-  entityId: string,
-): readonly {
-  description: string;
-  detail: string;
-  href: string;
-  id: string;
-  phaseLabel: string;
-  stateLabel: string;
-  stepNo: string;
-  title: string;
-}[] {
-  const phaseStates = new Map(
-    closeRun.workflowState.phaseStates.map((phaseState) => [phaseState.phase, phaseState]),
-  );
-  const activePhase = closeRun.workflowState.activePhase;
-  const operatingMode = closeRun.operatingMode.mode;
-  const trialBalanceReviewAvailable = closeRun.operatingMode.trialBalanceReviewAvailable;
-  const step04Description =
-    operatingMode === "imported_general_ledger"
-      ? "Post approved close-run adjustment journals into the working ledger layer above the imported production GL baseline."
-      : operatingMode === "trial_balance_only"
-        ? "Post approved close-run journals when source documents require them; the imported trial balance remains the external control baseline."
-        : operatingMode === "working_ledger"
-          ? "Post approved close-run journals into the platform working ledger because no imported production GL baseline is bound to this run."
-          : "Post approved journals only when eligible source documents create accounting entries. Bank statements remain reconciliation evidence rather than journal sources.";
-  const step05Description = closeRun.operatingMode.bankReconciliationAvailable
-    ? "Reconcile key balances against the ledger-side data available for this run and resolve resulting exceptions."
-    : "Detailed bank reconciliation is not currently applicable because this run has no ledger-side data to match against yet.";
-  const step07Description = trialBalanceReviewAvailable
-    ? "Confirm debits equal credits and clear unexplained anomalies or variances."
-    : "Trial-balance review becomes applicable once a trial-balance baseline or ledger-side transaction set exists for the run.";
+function buildMissionTiles(closeRun: Readonly<CloseRunSummary>): readonly MissionTile[] {
+  const activePhase = findActivePhase(closeRun);
+  const completedPhases = closeRun.workflowState.phaseStates.filter(
+    (phaseState) => phaseState.status === "completed",
+  ).length;
+  const blockedPhases = closeRun.workflowState.phaseStates.filter(
+    (phaseState) => phaseState.status === "blocked",
+  ).length;
 
   return [
     {
-      description: "Bank statements, invoices, payslips, receipts, and contracts.",
-      href: `/entities/${entityId}/close-runs/${closeRun.id}/documents`,
-      phase: "collection" as WorkflowPhase,
-      stepNo: "01",
-      title: "Collect source documents",
+      label: "Close Status",
+      meta: `Opened ${formatCloseRunDateTime(closeRun.createdAt)}`,
+      value: getCloseRunStatusLabel(closeRun.status),
     },
     {
-      description:
-        "Check completeness, authorization, and correct period before processing.",
-      href: `/entities/${entityId}/close-runs/${closeRun.id}/documents`,
-      phase: "collection" as WorkflowPhase,
-      stepNo: "02",
-      title: "Review and verify documents",
+      label: "Current Gate",
+      meta: closeRun.reportingCurrency,
+      value: activePhase ? getWorkflowPhaseDefinition(activePhase.phase).label : "Complete",
     },
     {
-      description: "Assign GL account codes, cost centres, departments, and projects.",
-      href: `/entities/${entityId}/close-runs/${closeRun.id}/recommendations`,
-      phase: "processing" as WorkflowPhase,
-      stepNo: "03",
-      title: "Code and classify transactions",
+      label: "Completed Gates",
+      meta:
+        blockedPhases > 0 ? `${blockedPhases} blockers still active` : "No blocked workflow gates",
+      tone: blockedPhases > 0 ? "error" : "success",
+      value: `${completedPhases}/5`,
     },
     {
-      description: step04Description,
-      href: `/entities/${entityId}/close-runs/${closeRun.id}/recommendations`,
-      phase: "processing" as WorkflowPhase,
-      stepNo: "04",
-      title: "Post transactions to the General Ledger",
+      label: "Operating Mode",
+      meta: `Version ${closeRun.currentVersionNo}`,
+      value: formatOperatingModeLabel(closeRun.operatingMode.mode),
     },
-    {
-      description: step05Description,
-      href: `/entities/${entityId}/close-runs/${closeRun.id}/reconciliation`,
-      phase: "reconciliation" as WorkflowPhase,
-      stepNo: "05",
-      title: "Reconcile key accounts",
-    },
-    {
-      description: "Update fixed assets, loan amortisation, accrual tracker, and budget-vs-actual schedules.",
-      href: `/entities/${entityId}/close-runs/${closeRun.id}/schedules`,
-      phase: "reconciliation" as WorkflowPhase,
-      stepNo: "06",
-      title: "Update supporting schedules",
-    },
-    {
-      description: step07Description,
-      href: `/entities/${entityId}/close-runs/${closeRun.id}/reconciliation`,
-      phase: "reconciliation" as WorkflowPhase,
-      stepNo: "07",
-      title: "Run and review trial balance",
-    },
-    {
-      description: "Generate the management report pack with P&L, Balance Sheet, Cash Flow, variance, and KPI outputs.",
-      href: `/entities/${entityId}/close-runs/${closeRun.id}/reports`,
-      phase: "reporting" as WorkflowPhase,
-      stepNo: "08",
-      title: "Prepare management report",
-    },
-    {
-      description: "Write and approve commentary covering variances, performance, risks, and management actions.",
-      href: `/entities/${entityId}/close-runs/${closeRun.id}/reports`,
-      phase: "reporting" as WorkflowPhase,
-      stepNo: "09",
-      title: "Write commentary and analysis",
-    },
-    {
-      description: "Finalize review, sign-off, export packaging, evidence pack coverage, and management distribution.",
-      href: `/entities/${entityId}/close-runs/${closeRun.id}/exports`,
-      phase: "review_signoff" as WorkflowPhase,
-      stepNo: "10",
-      title: "Review, sign-off, and distribute",
-    },
-  ].map((step) => {
-    const phaseState = phaseStates.get(step.phase);
-    const stateLabel =
-      phaseState?.status === "completed"
-        ? "Completed"
-        : activePhase === step.phase
-          ? phaseState?.blockingReason
-            ? "Blocked"
-            : "Active"
-          : "Upcoming";
-    const detail =
-      phaseState?.status === "completed"
-        ? "Phase completed for this close run."
-        : phaseState?.blockingReason ??
-          (activePhase === step.phase
-            ? "This is the current active workflow phase."
-            : "This step becomes available after earlier phases are completed.");
+  ];
+}
+
+function buildMissionWorkstreamRows(
+  closeRun: Readonly<CloseRunSummary>,
+  entityId: string,
+): readonly MissionWorkstreamRow[] {
+  const activePhase = findActivePhase(closeRun)?.phase ?? null;
+  const phaseStateMap = new Map(
+    closeRun.workflowState.phaseStates.map((phaseState) => [phaseState.phase, phaseState]),
+  );
+
+  return workflowPhaseOrder.map((phase) => {
+    const phaseState = phaseStateMap.get(phase);
+    if (phaseState === undefined) {
+      throw new Error(`Missing phase state for ${phase}.`);
+    }
+
     return {
-      description: step.description,
-      detail,
-      href: step.href,
-      id: `${closeRun.id}:${step.stepNo}`,
-      phaseLabel: phaseState?.phase.replaceAll("_", " ") ?? step.phase.replaceAll("_", " "),
-      stateLabel,
-      stepNo: step.stepNo,
-      title: step.title,
+      detail: resolveWorkstreamDetail(phase, phaseState, closeRun),
+      href: resolvePhaseWorkspaceHref(entityId, closeRun.id, phase),
+      isBlocked: phaseState.status === "blocked",
+      isCurrent: activePhase === phase,
+      phase,
+      phaseStatusLabel: getCloseRunPhaseStatusLabel(phaseState.status),
+      statusTone: mapPhaseStatusToBadge(phaseState.status),
+      title: resolvePhaseTitle(phase),
     };
   });
 }
 
-const WORKFLOW_PHASE_ORDER: readonly WorkflowPhase[] = [
-  "collection",
-  "processing",
-  "reconciliation",
-  "reporting",
-  "review_signoff",
-];
-
-function getNextWorkflowPhase(closeRun: Readonly<CloseRunSummary>): WorkflowPhase | null {
-  const activePhase = closeRun.workflowState.activePhase;
-  if (activePhase === null) {
-    return null;
-  }
-  const activeIndex = WORKFLOW_PHASE_ORDER.indexOf(activePhase);
-  if (activeIndex < 0 || activeIndex === WORKFLOW_PHASE_ORDER.length - 1) {
-    return null;
-  }
-  return WORKFLOW_PHASE_ORDER[activeIndex + 1] ?? null;
+function buildPhaseProgressRows(closeRun: Readonly<CloseRunSummary>): readonly {
+  color: string;
+  label: string;
+  percent: number;
+  statusLabel: string;
+}[] {
+  return closeRun.workflowState.phaseStates.map((phaseState) => ({
+    color: resolvePhaseColor(phaseState.status),
+    label: getWorkflowPhaseDefinition(phaseState.phase).label,
+    percent: resolvePhasePercent(phaseState.status),
+    statusLabel: getCloseRunPhaseStatusLabel(phaseState.status),
+  }));
 }
 
-function formatWorkflowPhaseLabel(phase: WorkflowPhase): string {
-  return phase.replaceAll("_", " ");
+function buildTimelineRows(closeRun: Readonly<CloseRunSummary>): readonly TimelineRow[] {
+  const rows: TimelineRow[] = [
+    {
+      id: `${closeRun.id}-opened`,
+      label: "Close run opened",
+      meta: formatCloseRunDateTime(closeRun.createdAt),
+    },
+  ];
+
+  closeRun.workflowState.phaseStates.forEach((phaseState) => {
+    if (phaseState.completedAt === null) {
+      return;
+    }
+
+    rows.push({
+      id: `${closeRun.id}-${phaseState.phase}-completed`,
+      label: `${getWorkflowPhaseDefinition(phaseState.phase).label} completed`,
+      meta: formatCloseRunDateTime(phaseState.completedAt),
+    });
+  });
+
+  if (closeRun.approvedAt !== null) {
+    rows.push({
+      id: `${closeRun.id}-approved`,
+      label: "Close run approved",
+      meta: formatCloseRunDateTime(closeRun.approvedAt),
+    });
+  }
+
+  if (closeRun.archivedAt !== null) {
+    rows.push({
+      id: `${closeRun.id}-archived`,
+      label: "Close run archived",
+      meta: formatCloseRunDateTime(closeRun.archivedAt),
+    });
+  }
+
+  return rows.sort((left, right) => right.meta.localeCompare(left.meta)).slice(0, 5);
+}
+
+function resolvePhaseWorkspaceHref(
+  entityId: string,
+  closeRunId: string,
+  phase: WorkflowPhase,
+): string {
+  switch (phase) {
+    case "collection":
+      return `/entities/${entityId}/close-runs/${closeRunId}/documents`;
+    case "processing":
+      return `/entities/${entityId}/close-runs/${closeRunId}/recommendations`;
+    case "reconciliation":
+      return `/entities/${entityId}/close-runs/${closeRunId}/reconciliation`;
+    case "reporting":
+      return `/entities/${entityId}/close-runs/${closeRunId}/reports`;
+    case "review_signoff":
+      return `/entities/${entityId}/close-runs/${closeRunId}/exports`;
+  }
+}
+
+function resolvePhaseTitle(phase: WorkflowPhase): string {
+  switch (phase) {
+    case "collection":
+      return "Inputs Workspace";
+    case "processing":
+      return "Recommendations & Journals";
+    case "reconciliation":
+      return "Reconciliation";
+    case "reporting":
+      return "Reporting & Commentary";
+    case "review_signoff":
+      return "Sign-Off & Release";
+  }
+}
+
+function resolvePrimaryWorkbenchLabel(phase: WorkflowPhase): string {
+  switch (phase) {
+    case "collection":
+      return "Open Inputs";
+    case "processing":
+      return "Review Journals";
+    case "reconciliation":
+      return "Open Reconciliation";
+    case "reporting":
+      return "Open Reports";
+    case "review_signoff":
+      return "Open Sign-Off";
+  }
+}
+
+function resolveWorkstreamDetail(
+  phase: WorkflowPhase,
+  phaseState: Readonly<CloseRunSummary["workflowState"]["phaseStates"][number]>,
+  closeRun: Readonly<CloseRunSummary>,
+): string {
+  if (phaseState.blockingReason !== null) {
+    return phaseState.blockingReason;
+  }
+
+  switch (phaseState.status) {
+    case "completed":
+      return phaseState.completedAt
+        ? `Completed ${formatCloseRunDateTime(phaseState.completedAt)}.`
+        : "Completed and ready for historical reference.";
+    case "ready":
+      return "Gate checks are satisfied and the workflow can advance.";
+    case "blocked":
+      return "A reviewer action or missing dependency is preventing progress.";
+    case "in_progress":
+      return phase === "processing" && !closeRun.operatingMode.journalPostingAvailable
+        ? "Review recommendations before journal posting is enabled for this run."
+        : "This is the current working area for the period.";
+    case "not_started":
+      return getWorkflowPhaseDefinition(phase).description;
+  }
+}
+
+function resolveNextWorkflowPhase(closeRun: Readonly<CloseRunSummary>): WorkflowPhase | null {
+  const readyPhase = closeRun.workflowState.phaseStates.find(
+    (phaseState) => phaseState.status === "ready",
+  );
+  if (readyPhase === undefined) {
+    return null;
+  }
+
+  const currentIndex = workflowPhaseOrder.indexOf(readyPhase.phase);
+  if (currentIndex < 0 || currentIndex === workflowPhaseOrder.length - 1) {
+    return null;
+  }
+
+  return workflowPhaseOrder[currentIndex + 1] ?? null;
+}
+
+function canDeleteCloseRun(closeRun: Readonly<CloseRunSummary>): boolean {
+  return (
+    closeRun.status === "draft" || closeRun.status === "in_review" || closeRun.status === "reopened"
+  );
+}
+
+function mapAttentionToneToBadge(
+  tone: ReturnType<typeof deriveCloseRunAttention>["tone"],
+): "error" | "success" | "warning" {
+  switch (tone) {
+    case "warning":
+      return "error";
+    case "success":
+      return "success";
+    default:
+      return "warning";
+  }
+}
+
+function mapPhaseStatusToBadge(
+  status: CloseRunSummary["workflowState"]["phaseStates"][number]["status"],
+): MissionWorkstreamRow["statusTone"] {
+  switch (status) {
+    case "completed":
+    case "ready":
+      return "success";
+    case "blocked":
+      return "error";
+    case "in_progress":
+      return "warning";
+    case "not_started":
+      return "neutral";
+  }
+}
+
+function resolvePhaseColor(
+  status: CloseRunSummary["workflowState"]["phaseStates"][number]["status"],
+): string {
+  switch (status) {
+    case "completed":
+      return "var(--quartz-success)";
+    case "ready":
+      return "var(--quartz-gold)";
+    case "blocked":
+      return "var(--quartz-error)";
+    case "in_progress":
+      return "var(--quartz-secondary)";
+    case "not_started":
+      return "var(--quartz-border)";
+  }
+}
+
+function resolvePhasePercent(
+  status: CloseRunSummary["workflowState"]["phaseStates"][number]["status"],
+): number {
+  switch (status) {
+    case "completed":
+      return 100;
+    case "ready":
+      return 84;
+    case "blocked":
+      return 62;
+    case "in_progress":
+      return 46;
+    case "not_started":
+      return 10;
+  }
 }
 
 function formatOperatingModeLabel(mode: CloseRunSummary["operatingMode"]["mode"]): string {
   switch (mode) {
-    case "working_ledger":
-      return "Working ledger";
     case "imported_general_ledger":
-      return "Imported general ledger";
+      return "Imported GL";
+    case "source_documents_only":
+      return "Source documents only";
     case "trial_balance_only":
       return "Trial balance only";
-    default:
-      return "Source documents only";
+    case "working_ledger":
+      return "Working ledger";
   }
 }

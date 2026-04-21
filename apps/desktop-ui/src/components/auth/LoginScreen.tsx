@@ -1,14 +1,14 @@
 /*
 Purpose: Render the interactive login and registration form used by the auth entry page.
 Scope: Client-side form state, same-origin auth submissions, and operator-facing auth feedback.
-Dependencies: Next.js client navigation, the shared AuthGate UI, and desktop auth helpers.
+Dependencies: Next.js client navigation and desktop auth helpers.
 */
 
 "use client";
 
-import { AuthGate } from "@accounting-ai-agent/ui";
 import { useRouter } from "next/navigation";
 import { useState, useTransition, type ChangeEvent, type FormEvent, type ReactElement } from "react";
+import { QuartzIcon } from "../layout/QuartzIcons";
 import { isAuthApiError, loginUser, registerUser } from "../../lib/auth/client";
 import { resolvePostLoginPath } from "../../lib/auth/session";
 
@@ -31,12 +31,6 @@ const defaultFormState: AuthFormState = {
   password: "",
 };
 
-const workflowHighlights = [
-  "One local sign-in controls desktop review, approvals, and audit attribution.",
-  "Session expiry routes back through the same login flow with the return path preserved.",
-  "No secondary browser auth path exists: the same FastAPI local-auth contract backs every session.",
-];
-
 /**
  * Purpose: Provide the interactive auth entry surface for the desktop workspace.
  * Inputs: The preserved post-login path and any session-recovery reason from middleware.
@@ -54,11 +48,11 @@ export function LoginScreen({
   const [isPending, startTransition] = useTransition();
 
   const noticeMessage = resolveNoticeMessage(initialReason);
-  const submitLabel = mode === "login" ? "Sign in" : "Create account";
+  const submitLabel = mode === "login" ? "Enter Workspace" : "Create Administrator";
   const helperCopy =
     mode === "login"
-      ? "Use the local operator account you created for this demo environment."
-      : "Create the first local operator account for this workstation or add another reviewer.";
+      ? "Provide credentials to access the central ledger workspace and resume period review."
+      : "Initialize this workstation by creating the first administrator account for the workspace.";
 
   const handleFieldChange =
     (fieldName: keyof AuthFormState) =>
@@ -89,56 +83,43 @@ export function LoginScreen({
   };
 
   return (
-    <main className="auth-shell">
-      <div className="auth-grid">
-        <AuthGate
-          description="Sign in to the canonical desktop workspace for close runs, review queues, and evidence-backed accounting decisions."
-          noticeTone={noticeMessage ? "warning" : "default"}
-          supportingContent={
-            <div className="detail-block">
-              <h2>Why this flow exists</h2>
-              <ul className="detail-list">
-                {workflowHighlights.map((item) => (
-                  <li key={item}>{item}</li>
-                ))}
-              </ul>
-            </div>
-          }
-          title="Enter the local accounting workspace."
-          {...(noticeMessage ? { notice: noticeMessage } : {})}
-        >
-          <div aria-label="Authentication mode" className="mode-toggle" role="tablist">
-            <button
-              aria-selected={mode === "login"}
-              className={mode === "login" ? "mode-toggle-button active" : "mode-toggle-button"}
-              onClick={() => setMode("login")}
-              role="tab"
-              type="button"
-            >
-              Sign in
-            </button>
-            <button
-              aria-selected={mode === "register"}
-              className={mode === "register" ? "mode-toggle-button active" : "mode-toggle-button"}
-              onClick={() => setMode("register")}
-              role="tab"
-              type="button"
-            >
-              Create account
-            </button>
+    <main className="quartz-auth-shell">
+      <section className="quartz-auth-card">
+        <div className="quartz-auth-card-body">
+          <div className="quartz-auth-brand">
+            <QuartzIcon className="quartz-auth-icon" name="entities" />
+            <span>Accounting AI Agent</span>
           </div>
 
-          <form className="auth-form" onSubmit={handleSubmit}>
-            <p className="form-helper">{helperCopy}</p>
+          <header>
+            <h1 className="quartz-auth-title">Welcome to the Close</h1>
+            <p className="quartz-auth-copy">{helperCopy}</p>
+          </header>
 
-            <label className="field">
-              <span>Email address</span>
+          {noticeMessage ? (
+            <div className="status-banner warning" role="status">
+              {noticeMessage}
+            </div>
+          ) : null}
+
+          {mode === "register" ? (
+            <div className="quartz-highlight-box">
+              <p className="form-helper">
+                This path is intended only for the first administrator or a controlled workstation
+                reset.
+              </p>
+            </div>
+          ) : null}
+
+          <form className="quartz-auth-form" onSubmit={handleSubmit}>
+            <label className="quartz-form-label">
+              <span>Email Address</span>
               <input
                 autoComplete="email"
                 className="text-input"
                 name="email"
                 onChange={handleFieldChange("email")}
-                placeholder="finance@example.com"
+                placeholder="controller@apexmeridian.ng"
                 required
                 type="email"
                 value={formState.email}
@@ -146,8 +127,8 @@ export function LoginScreen({
             </label>
 
             {mode === "register" ? (
-              <label className="field">
-                <span>Full name</span>
+              <label className="quartz-form-label">
+                <span>Full Name</span>
                 <input
                   autoComplete="name"
                   className="text-input"
@@ -161,8 +142,19 @@ export function LoginScreen({
               </label>
             ) : null}
 
-            <label className="field">
-              <span>Password</span>
+            <label className="quartz-form-label">
+              <div className="quartz-form-row">
+                <span>Password</span>
+                {mode === "login" ? (
+                  <button
+                    className="quartz-form-link"
+                    onClick={() => setFeedbackMessage("Password reset is handled by the local administrator.")}
+                    type="button"
+                  >
+                    Reset Access
+                  </button>
+                ) : null}
+              </div>
               <input
                 autoComplete={mode === "login" ? "current-password" : "new-password"}
                 className="text-input"
@@ -185,9 +177,31 @@ export function LoginScreen({
             <button className="primary-button" disabled={isPending} type="submit">
               {isPending ? `${submitLabel}...` : submitLabel}
             </button>
+
+            <button
+              className="quartz-form-link"
+              onClick={() => {
+                setMode((currentMode) => (currentMode === "login" ? "register" : "login"));
+                setFeedbackMessage(null);
+              }}
+              type="button"
+            >
+              {mode === "login"
+                ? "Need to initialize this workstation?"
+                : "Return to operator sign-in"}
+            </button>
           </form>
-        </AuthGate>
-      </div>
+        </div>
+
+        <footer className="quartz-auth-footer">
+          <span className="quartz-auth-footer-item">
+            <QuartzIcon className="quartz-inline-icon" name="check" /> SSO Enforced
+          </span>
+          <span className="quartz-auth-footer-item">
+            <QuartzIcon className="quartz-inline-icon" name="portfolio" /> Audit Logging Active
+          </span>
+        </footer>
+      </section>
     </main>
   );
 }
@@ -214,11 +228,11 @@ async function submitAuthForm(options: {
 function resolveNoticeMessage(reason: string | null): string | undefined {
   switch (reason) {
     case "session-expired":
-      return "Your previous session expired while you were away. Sign in again to resume where you left off.";
+      return "Your previous session expired while you were away. Sign in again to resume the current close workspace.";
     case "user-disabled":
-      return "This operator account is disabled. Use another local account or reactivate it from the admin surface.";
+      return "This operator account is disabled. Use another local account or reactivate it from the administration surface.";
     case "auth-required":
-      return "Sign in to continue to the protected accounting workspace.";
+      return "Sign in to continue into the protected accounting workspace.";
     default:
       return undefined;
   }
@@ -229,5 +243,5 @@ function resolveAuthMessage(error: unknown): string {
     return error.message;
   }
 
-  return "Authentication is temporarily unavailable. Reload the desktop workspace and try again.";
+  return "Authentication is temporarily unavailable. Reload the workspace and try again.";
 }

@@ -1,0 +1,457 @@
+<!DOCTYPE html>
+
+<html lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Accounting AI Agent - Ledger</title>
+<!-- Material Symbols -->
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<!-- Google Fonts -->
+<link href="https://fonts.googleapis.com" rel="preconnect"/>
+<link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&amp;family=Newsreader:wght@400;500;600;800&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<!-- Tailwind CSS -->
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<script id="tailwind-config">
+        tailwind.config = {
+          darkMode: "class",
+          theme: {
+            extend: {
+              "colors": {
+                      "on-surface-variant": "#4c4546",
+                      "secondary-container": "#c3e0ff",
+                      "gilded-accent": "#8E734B",
+                      "primary-fixed": "#e2e2e2",
+                      "surface-container-lowest": "#ffffff",
+                      "on-surface": "#1c1b1b",
+                      "on-background": "#1b1b1b",
+                      "tertiary-container": "#1b1b1b",
+                      "on-primary-fixed": "#1b1b1b",
+                      "surface-bright": "#f9f9f9",
+                      "ai-highlight": "#FFFBEB",
+                      "tertiary-fixed-dim": "#c6c6c6",
+                      "status-neutral": "#6B6B6B",
+                      "error": "#ba1a1a",
+                      "on-tertiary-fixed-variant": "#474747",
+                      "secondary-fixed": "#cde5ff",
+                      "status-success": "#1B4332",
+                      "on-primary-fixed-variant": "#474747",
+                      "outline": "#76777b",
+                      "surface-dim": "#dadada",
+                      "surface-container-low": "#f7f3f2",
+                      "paper-surface": "#FCFCFA",
+                      "inverse-primary": "#c6c6c6",
+                      "surface-container-high": "#e8e8e8",
+                      "tertiary": "#000000",
+                      "primary": "#000000",
+                      "tertiary-fixed": "#e2e2e2",
+                      "status-error": "#7B2D26",
+                      "on-secondary": "#ffffff",
+                      "inverse-on-surface": "#f1f1f1",
+                      "on-secondary-container": "#48647e",
+                      "surface": "#f9f9f9",
+                      "on-tertiary": "#ffffff",
+                      "error-container": "#ffdad6",
+                      "inverse-surface": "#303030",
+                      "secondary": "#45617b",
+                      "on-error": "#ffffff",
+                      "on-primary": "#ffffff",
+                      "on-secondary-fixed": "#001d32",
+                      "outline-variant": "#cfc4c5",
+                      "on-primary-container": "#848484",
+                      "surface-tint": "#5e5e5e",
+                      "secondary-fixed-dim": "#adcae8",
+                      "surface-variant": "#e2e2e2",
+                      "surface-container-highest": "#e2e2e2",
+                      "surface-container": "#f1edec",
+                      "on-secondary-fixed-variant": "#2d4962",
+                      "on-tertiary-container": "#848484",
+                      "background": "#fdf8f8",
+                      "primary-container": "#1b1b1b",
+                      "on-tertiary-fixed": "#1b1b1b",
+                      "primary-fixed-dim": "#c6c6c6",
+                      "on-error-container": "#93000a"
+              },
+              "borderRadius": {
+                      "DEFAULT": "0.25rem",
+                      "lg": "0.5rem",
+                      "xl": "0.75rem",
+                      "full": "9999px"
+              },
+              "spacing": {
+                      "xs": "4px",
+                      "xl": "40px",
+                      "unit": "4px",
+                      "sm": "8px",
+                      "margin": "24px",
+                      "gutter": "16px",
+                      "md": "16px",
+                      "lg": "24px"
+              },
+              "fontFamily": {
+                      "body-lg": [
+                              "Inter"
+                      ],
+                      "body-md": [
+                              "Inter"
+                      ],
+                      "label-caps": [
+                              "Inter"
+                      ],
+                      "body-sm": [
+                              "Inter"
+                      ],
+                      "headline-xl": [
+                              "Newsreader"
+                      ],
+                      "headline-lg": [
+                              "Newsreader"
+                      ],
+                      "headline-md": [
+                              "Newsreader"
+                      ],
+                      "data-mono": [
+                              "Inter"
+                      ]
+              },
+              "fontSize": {
+                      "body-lg": [
+                              "1rem",
+                              {
+                                      "lineHeight": "1.5",
+                                      "fontWeight": "400"
+                              }
+                      ],
+                      "body-md": [
+                              "0.875rem",
+                              {
+                                      "lineHeight": "1.5",
+                                      "fontWeight": "400"
+                              }
+                      ],
+                      "label-caps": [
+                              "0.6875rem",
+                              {
+                                      "letterSpacing": "0.05em",
+                                      "fontWeight": "600"
+                              }
+                      ],
+                      "body-sm": [
+                              "0.75rem",
+                              {
+                                      "lineHeight": "1.4",
+                                      "fontWeight": "400"
+                              }
+                      ],
+                      "headline-xl": [
+                              "2.5rem",
+                              {
+                                      "lineHeight": "1.2",
+                                      "fontWeight": "600"
+                              }
+                      ],
+                      "headline-lg": [
+                              "1.75rem",
+                              {
+                                      "lineHeight": "1.2",
+                                      "fontWeight": "500"
+                              }
+                      ],
+                      "headline-md": [
+                              "1.25rem",
+                              {
+                                      "lineHeight": "1.3",
+                                      "fontWeight": "500"
+                              }
+                      ],
+                      "data-mono": [
+                              "0.875rem",
+                              {
+                                      "lineHeight": "1.2",
+                                      "fontWeight": "500"
+                              }
+                      ]
+              }
+      },
+          },
+        }
+    </script>
+<style>
+        body { background-color: theme('colors.surface-container-lowest'); }
+        /* Hide scrollbar for cleaner terminal look */
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: theme('colors.outline-variant'); border-radius: 3px; }
+    </style>
+</head>
+<body class="text-on-surface font-body-md bg-surface-container-lowest overflow-hidden flex h-screen">
+<!-- SideNavBar (Predicted JSON) -->
+<nav class="fixed left-0 top-0 flex flex-col items-center py-4 z-50 h-screen w-16 border-r border-outline-variant bg-surface">
+<div class="mb-8 flex flex-col items-center">
+<span class="font-headline-xl text-headline-xl text-on-surface font-extrabold leading-none">AA</span>
+</div>
+<div class="flex flex-col gap-6 w-full items-center">
+<!-- Ledger -->
+<button class="flex flex-col items-center w-full py-2 text-on-surface-variant hover:bg-surface-container transition-colors duration-150 relative group">
+<span class="material-symbols-outlined text-2xl">account_balance</span>
+</button>
+<!-- Entities (Active) -->
+<button class="flex flex-col items-center w-full py-2 text-on-surface border-r-2 border-primary hover:bg-surface-container transition-colors duration-150 relative group">
+<span class="material-symbols-outlined text-2xl" style="font-variation-settings: 'FILL' 1;">corporate_fare</span>
+</button>
+<!-- Close -->
+<button class="flex flex-col items-center w-full py-2 text-on-surface-variant hover:bg-surface-container transition-colors duration-150 relative group">
+<span class="material-symbols-outlined text-2xl">event_available</span>
+</button>
+<!-- Audit -->
+<button class="flex flex-col items-center w-full py-2 text-on-surface-variant hover:bg-surface-container transition-colors duration-150 relative group">
+<span class="material-symbols-outlined text-2xl">history_edu</span>
+</button>
+</div>
+<div class="mt-auto mb-4 w-full">
+<!-- Settings -->
+<button class="flex flex-col items-center w-full py-2 text-on-surface-variant hover:bg-surface-container transition-colors duration-150">
+<span class="material-symbols-outlined text-2xl">settings</span>
+</button>
+</div>
+</nav>
+<!-- TopAppBar (Predicted JSON) -->
+<header class="fixed top-0 left-16 right-0 flex items-center justify-between px-6 z-40 h-14 border-b border-outline-variant bg-surface">
+<div class="flex items-center gap-6">
+<span class="font-headline-md text-headline-md font-medium text-on-surface">Accounting AI Agent</span>
+<div class="flex gap-4 font-body-sm text-body-sm">
+<span class="text-on-surface border-b-2 border-primary font-semibold py-4">Global Corp</span>
+<span class="text-on-surface-variant py-4">Q3 2023</span>
+<span class="text-on-surface-variant py-4">In Progress</span>
+</div>
+</div>
+<div class="flex items-center gap-4">
+<button class="font-body-md text-body-md text-on-surface-variant hover:text-on-surface transition-colors">Review Insights</button>
+<button class="font-body-md text-body-md bg-primary text-on-primary px-4 py-1.5 rounded hover:bg-tertiary transition-colors">Commit Ledger</button>
+<div class="flex gap-2 text-on-surface-variant border-l border-outline-variant pl-4 ml-2">
+<span class="material-symbols-outlined cursor-pointer hover:text-on-surface">notifications</span>
+<span class="material-symbols-outlined cursor-pointer hover:text-on-surface">help_outline</span>
+</div>
+</div>
+</header>
+<!-- Main Workspace Layout -->
+<main class="ml-16 mt-14 flex-1 flex h-[calc(100vh-3.5rem)] bg-surface-container-lowest">
+<!-- Canvas (Left) -->
+<div class="flex-1 overflow-y-auto p-8 border-r border-outline-variant">
+<!-- Context Header -->
+<div class="mb-8 flex justify-between items-end border-b border-outline-variant pb-4">
+<div>
+<h1 class="font-headline-xl text-headline-xl text-on-surface mb-1">Apex Meridian Nigeria Ltd</h1>
+<p class="font-body-md text-body-md text-on-surface-variant">Entity Home • Operational Period: March 2026</p>
+</div>
+<div class="text-right">
+<span class="font-label-caps text-label-caps text-secondary uppercase tracking-widest border border-secondary px-2 py-1 rounded-sm">Reporting Currency: NGN</span>
+</div>
+</div>
+<!-- Stats Bento -->
+<div class="grid grid-cols-4 gap-0 border border-outline-variant mb-8 bg-paper-surface">
+<div class="p-4 border-r border-outline-variant">
+<p class="font-label-caps text-label-caps text-on-surface-variant uppercase mb-2">Net Revenue</p>
+<p class="font-data-mono text-data-mono text-xl">₦ 452,890,000</p>
+<p class="font-body-sm text-body-sm text-status-success mt-1 flex items-center gap-1"><span class="material-symbols-outlined text-[14px]">trending_up</span> +12.4%</p>
+</div>
+<div class="p-4 border-r border-outline-variant">
+<p class="font-label-caps text-label-caps text-on-surface-variant uppercase mb-2">Total Expenses</p>
+<p class="font-data-mono text-data-mono text-xl">₦ 281,450,000</p>
+<p class="font-body-sm text-body-sm text-status-error mt-1 flex items-center gap-1"><span class="material-symbols-outlined text-[14px]">trending_down</span> -2.1%</p>
+</div>
+<div class="p-4 border-r border-outline-variant">
+<p class="font-label-caps text-label-caps text-on-surface-variant uppercase mb-2">Operating Margin</p>
+<p class="font-data-mono text-data-mono text-xl">37.8%</p>
+<p class="font-body-sm text-body-sm text-on-surface-variant mt-1">Expected: 35.0%</p>
+</div>
+<div class="p-4 bg-surface-container-low relative overflow-hidden">
+<div class="absolute top-0 right-0 w-2 h-full bg-gilded-accent"></div>
+<p class="font-label-caps text-label-caps text-on-surface-variant uppercase mb-2">Reconciliation Variance</p>
+<p class="font-data-mono text-data-mono text-xl">₦ 0.00</p>
+<p class="font-body-sm text-body-sm text-status-success mt-1 flex items-center gap-1"><span class="material-symbols-outlined text-[14px]">verified</span> Fully Reconciled</p>
+</div>
+</div>
+<!-- Task & Status Split -->
+<div class="grid grid-cols-2 gap-6 mb-8">
+<!-- Pending Tasks -->
+<div class="border border-outline-variant bg-paper-surface flex flex-col">
+<div class="p-3 border-b border-outline-variant bg-surface flex justify-between items-center">
+<h2 class="font-label-caps text-label-caps text-on-surface uppercase">Pending Close Tasks</h2>
+<span class="font-body-sm text-body-sm bg-primary text-on-primary px-2 rounded-full">3</span>
+</div>
+<div class="p-0 flex-1">
+<div class="flex items-center justify-between p-3 border-b border-outline-variant hover:bg-surface transition-colors cursor-pointer">
+<div class="flex items-center gap-3">
+<span class="material-symbols-outlined text-on-surface-variant">receipt_long</span>
+<span class="font-body-md text-body-md">Verify Q1 Payroll Accruals</span>
+</div>
+<span class="font-label-caps text-label-caps text-status-error bg-error-container px-2 py-0.5 rounded-sm">Urgent</span>
+</div>
+<div class="flex items-center justify-between p-3 border-b border-outline-variant hover:bg-surface transition-colors cursor-pointer">
+<div class="flex items-center gap-3">
+<span class="material-symbols-outlined text-on-surface-variant">account_balance_wallet</span>
+<span class="font-body-md text-body-md">Review Intercompany Transfers</span>
+</div>
+<span class="font-label-caps text-label-caps text-secondary bg-secondary-container px-2 py-0.5 rounded-sm">In Progress</span>
+</div>
+<div class="flex items-center justify-between p-3 hover:bg-surface transition-colors cursor-pointer">
+<div class="flex items-center gap-3">
+<span class="material-symbols-outlined text-on-surface-variant">inventory_2</span>
+<span class="font-body-md text-body-md">Depreciation Run - Fleet</span>
+</div>
+<span class="font-label-caps text-label-caps text-status-neutral border border-outline px-2 py-0.5 rounded-sm">Pending</span>
+</div>
+</div>
+</div>
+<!-- Rec Status -->
+<div class="border border-outline-variant bg-paper-surface flex flex-col">
+<div class="p-3 border-b border-outline-variant bg-surface">
+<h2 class="font-label-caps text-label-caps text-on-surface uppercase">Account Reconciliation</h2>
+</div>
+<div class="p-4 flex-1 flex flex-col justify-center">
+<div class="mb-4">
+<div class="flex justify-between mb-1">
+<span class="font-body-sm text-body-sm text-on-surface-variant">Bank Accounts (4/4)</span>
+<span class="font-data-mono text-data-mono text-sm">100%</span>
+</div>
+<div class="h-1 w-full bg-surface-container-high rounded-full overflow-hidden">
+<div class="h-full bg-status-success w-full"></div>
+</div>
+</div>
+<div class="mb-4">
+<div class="flex justify-between mb-1">
+<span class="font-body-sm text-body-sm text-on-surface-variant">Credit Cards (2/3)</span>
+<span class="font-data-mono text-data-mono text-sm">66%</span>
+</div>
+<div class="h-1 w-full bg-surface-container-high rounded-full overflow-hidden">
+<div class="h-full bg-secondary w-2/3"></div>
+</div>
+</div>
+<div>
+<div class="flex justify-between mb-1">
+<span class="font-body-sm text-body-sm text-on-surface-variant">Clearing Accounts (1/5)</span>
+<span class="font-data-mono text-data-mono text-sm">20%</span>
+</div>
+<div class="h-1 w-full bg-surface-container-high rounded-full overflow-hidden">
+<div class="h-full bg-status-error w-1/5"></div>
+</div>
+</div>
+</div>
+</div>
+</div>
+<!-- Ledger Table -->
+<div>
+<div class="flex justify-between items-center mb-4">
+<h2 class="font-headline-md text-headline-md text-on-surface">Recent Journal Entries</h2>
+<button class="font-label-caps text-label-caps flex items-center gap-1 text-secondary hover:text-on-surface transition-colors">
+<span class="material-symbols-outlined text-[16px]">filter_list</span> Filter
+                    </button>
+</div>
+<div class="border border-outline-variant bg-paper-surface">
+<table class="w-full text-left border-collapse">
+<thead>
+<tr class="border-b border-outline-variant bg-surface">
+<th class="p-2 font-label-caps text-label-caps text-on-surface-variant border-r border-outline-variant w-24">Date</th>
+<th class="p-2 font-label-caps text-label-caps text-on-surface-variant border-r border-outline-variant w-32">Reference</th>
+<th class="p-2 font-label-caps text-label-caps text-on-surface-variant border-r border-outline-variant">Description</th>
+<th class="p-2 font-label-caps text-label-caps text-on-surface-variant border-r border-outline-variant text-right w-36">Debit (NGN)</th>
+<th class="p-2 font-label-caps text-label-caps text-on-surface-variant text-right w-36">Credit (NGN)</th>
+</tr>
+</thead>
+<tbody class="font-body-sm text-body-sm">
+<tr class="border-b border-outline-variant hover:bg-surface-container-low transition-colors">
+<td class="p-2 border-r border-outline-variant text-on-surface-variant">Mar 28</td>
+<td class="p-2 border-r border-outline-variant font-data-mono">JE-2026-0412</td>
+<td class="p-2 border-r border-outline-variant">Lagos Office Lease Accrual</td>
+<td class="p-2 border-r border-outline-variant font-data-mono text-right text-on-surface">4,500,000.00</td>
+<td class="p-2 font-data-mono text-right text-on-surface-variant">-</td>
+</tr>
+<tr class="border-b border-outline-variant hover:bg-surface-container-low transition-colors">
+<td class="p-2 border-r border-outline-variant text-on-surface-variant">Mar 28</td>
+<td class="p-2 border-r border-outline-variant font-data-mono">JE-2026-0412</td>
+<td class="p-2 border-r border-outline-variant pl-6 text-on-surface-variant">Accrued Liabilities</td>
+<td class="p-2 border-r border-outline-variant font-data-mono text-right text-on-surface-variant">-</td>
+<td class="p-2 font-data-mono text-right text-on-surface">4,500,000.00</td>
+</tr>
+<tr class="border-b border-outline-variant hover:bg-surface-container-low transition-colors">
+<td class="p-2 border-r border-outline-variant text-on-surface-variant">Mar 27</td>
+<td class="p-2 border-r border-outline-variant font-data-mono">JE-2026-0410</td>
+<td class="p-2 border-r border-outline-variant">Vendor Pmt: Zenith Supplies</td>
+<td class="p-2 border-r border-outline-variant font-data-mono text-right text-on-surface">1,250,000.00</td>
+<td class="p-2 font-data-mono text-right text-on-surface-variant">-</td>
+</tr>
+<tr class="hover:bg-surface-container-low transition-colors">
+<td class="p-2 border-r border-outline-variant text-on-surface-variant">Mar 27</td>
+<td class="p-2 border-r border-outline-variant font-data-mono">JE-2026-0410</td>
+<td class="p-2 border-r border-outline-variant pl-6 text-on-surface-variant">Cash - Zenith Bank Operating</td>
+<td class="p-2 border-r border-outline-variant font-data-mono text-right text-on-surface-variant">-</td>
+<td class="p-2 font-data-mono text-right text-on-surface">1,250,000.00</td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+</div>
+<!-- Omni-Assistant (Right Rail) -->
+<aside class="w-80 flex-shrink-0 bg-surface border-l border-outline-variant flex flex-col h-full z-10 shadow-[-4px_0_15px_rgba(0,0,0,0.02)]">
+<div class="p-4 border-b border-outline-variant flex items-center justify-between bg-surface-container-lowest">
+<div class="flex items-center gap-2 text-secondary">
+<span class="material-symbols-outlined text-[20px]">temp_preferences_custom</span>
+<h3 class="font-headline-md text-headline-md font-medium">Omni-Assistant</h3>
+</div>
+<span class="relative flex h-2 w-2">
+<span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-secondary opacity-75"></span>
+<span class="relative inline-flex rounded-full h-2 w-2 bg-secondary"></span>
+</span>
+</div>
+<div class="flex-1 overflow-y-auto p-4 space-y-4">
+<!-- Anomaly Card -->
+<div class="bg-ai-highlight border border-gilded-accent/30 rounded-sm p-4 relative">
+<div class="absolute top-0 left-0 w-1 h-full bg-gilded-accent"></div>
+<div class="flex items-start gap-2 mb-2">
+<span class="material-symbols-outlined text-gilded-accent text-[18px] mt-0.5">warning</span>
+<h4 class="font-label-caps text-label-caps text-on-surface uppercase tracking-wide">Anomalies Detected</h4>
+</div>
+<p class="font-body-sm text-body-sm text-on-surface mb-3">
+                        Unusual expense pattern identified in <strong>Travel &amp; Entertainment</strong>. 
+                        Variance of <span class="font-data-mono">₦ 850,000</span> compared to trailing 3-month average.
+                    </p>
+<div class="flex gap-2">
+<button class="font-body-sm text-body-sm border border-outline text-on-surface px-3 py-1 rounded-sm hover:bg-surface-container transition-colors flex-1 text-center">Dismiss</button>
+<button class="font-body-sm text-body-sm bg-secondary text-on-primary px-3 py-1 rounded-sm hover:bg-secondary/90 transition-colors flex-1 text-center">Review Items</button>
+</div>
+</div>
+<!-- Evidence Pack Card -->
+<div class="border border-outline-variant rounded-sm p-4 bg-surface-container-lowest">
+<div class="flex items-start gap-2 mb-2">
+<span class="material-symbols-outlined text-secondary text-[18px] mt-0.5">folder_open</span>
+<h4 class="font-label-caps text-label-caps text-on-surface uppercase tracking-wide">Evidence Pack Status</h4>
+</div>
+<div class="mb-3">
+<div class="flex justify-between font-body-sm text-body-sm mb-1">
+<span class="text-on-surface-variant">Attachments linked</span>
+<span class="font-data-mono">142 / 145</span>
+</div>
+<div class="h-1 w-full bg-surface-container-high rounded-full overflow-hidden">
+<div class="h-full bg-status-success w-[97%]"></div>
+</div>
+</div>
+<p class="font-body-sm text-body-sm text-on-surface-variant mb-3">
+                        Missing source documents for 3 large transactions in the clearing account.
+                    </p>
+<button class="font-body-sm text-body-sm text-secondary border border-secondary px-3 py-1 rounded-sm hover:bg-secondary-container transition-colors w-full text-center">Request Documents</button>
+</div>
+<!-- Verified Context -->
+<div class="border border-outline-variant rounded-sm p-3 bg-surface-container-lowest opacity-75">
+<div class="flex items-center gap-2 mb-1">
+<span class="material-symbols-outlined text-status-success text-[16px]">check_circle</span>
+<span class="font-body-sm text-body-sm font-medium">Prior Period Locked</span>
+</div>
+<p class="font-body-sm text-body-sm text-on-surface-variant text-xs">February 2026 ledger committed by J. Doe on Mar 5.</p>
+</div>
+</div>
+</aside>
+</main>
+</body></html>

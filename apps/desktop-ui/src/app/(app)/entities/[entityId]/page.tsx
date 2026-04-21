@@ -1,15 +1,14 @@
 /*
-Purpose: Render one authenticated entity workspace overview with settings, memberships, and activity history.
-Scope: Client-side workspace reads plus update and membership-management flows against the same-origin entity proxy.
-Dependencies: React hooks, Next.js route params, the entity API helpers, and shared UI surface cards.
+Purpose: Render the operational entity home with live close-run context and start-close controls.
+Scope: Client-side entity and close-run reads, plus governed close-run creation through the same-origin API.
+Dependencies: React hooks, shared workflow metadata, Next.js routing, and entity/close-run helpers.
 */
 
 "use client";
 
-import { SurfaceCard, Timeline, type TimelineItem } from "@accounting-ai-agent/ui";
+import { getWorkflowPhaseDefinition, type WorkflowPhase } from "@accounting-ai-agent/ui";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { AgentCapabilityCatalog } from "../../../../components/chat/AgentCapabilityCatalog";
 import {
   use,
   useEffect,
@@ -20,22 +19,22 @@ import {
   type FormEvent,
   type ReactElement,
 } from "react";
+import { QuartzIcon, type QuartzIconName } from "../../../../components/layout/QuartzIcons";
 import {
   CloseRunApiError,
   createCloseRun,
   deriveCloseRunAttention,
+  findActivePhase,
+  formatCloseRunDateTime,
   formatCloseRunPeriod,
+  getCloseRunPhaseStatusLabel,
   getCloseRunStatusLabel,
   listCloseRuns,
   type CloseRunSummary,
 } from "../../../../lib/close-runs";
 import {
   EntityApiError,
-  createEntityMembership,
-  deleteEntityWorkspace,
   readEntityWorkspace,
-  updateEntity,
-  updateEntityMembership,
   type EntityWorkspace,
 } from "../../../../lib/entities/api";
 
@@ -45,34 +44,33 @@ type EntityWorkspacePageProps = {
   }>;
 };
 
-type EntitySettingsFormState = {
-  accountingStandard: string;
-  autonomyMode: EntityWorkspace["autonomy_mode"];
-  baseCurrency: string;
-  countryCode: string;
-  legalName: string;
-  name: string;
-  timezone: string;
-};
-
-type AddMembershipFormState = {
-  isDefaultActor: boolean;
-  role: string;
-  userEmail: string;
-};
-
 type CreateCloseRunFormState = {
   periodEnd: string;
   periodStart: string;
   reportingCurrency: string;
 };
 
-type EntityActivityEvent = EntityWorkspace["activity_events"][number];
+type MetricTile = {
+  label: string;
+  meta: string;
+  tone?: "error" | "success" | undefined;
+  value: string;
+};
 
-const defaultMembershipFormState: AddMembershipFormState = {
-  isDefaultActor: false,
-  role: "member",
-  userEmail: "",
+type TaskItem = {
+  detail: string;
+  href: string;
+  icon: QuartzIconName;
+  label: string;
+  title: string;
+  tone: "error" | "neutral" | "success" | "warning";
+};
+
+type PhaseProgressRow = {
+  color: string;
+  label: string;
+  percent: number;
+  statusLabel: string;
 };
 
 const defaultCreateCloseRunFormState: CreateCloseRunFormState = {
@@ -81,12 +79,6 @@ const defaultCreateCloseRunFormState: CreateCloseRunFormState = {
   reportingCurrency: "NGN",
 };
 
-/**
- * Purpose: Render the overview screen for one entity workspace selected from the directory.
- * Inputs: The dynamic route params that identify which workspace should be loaded.
- * Outputs: A client-rendered workspace view with editable settings, memberships, and activity.
- * Behavior: Reads and mutates through the same-origin proxy so rotated auth cookies reach the browser.
- */
 export default function EntityWorkspacePage({
   params,
 }: Readonly<EntityWorkspacePageProps>): ReactElement {
@@ -98,13 +90,9 @@ export default function EntityWorkspacePage({
   const [closeRuns, setCloseRuns] = useState<readonly CloseRunSummary[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isPending, startTransition] = useTransition();
-  const [membershipFormState, setMembershipFormState] = useState<AddMembershipFormState>(
-    defaultMembershipFormState,
-  );
   const [closeRunFormState, setCloseRunFormState] = useState<CreateCloseRunFormState>(
     defaultCreateCloseRunFormState,
   );
-  const [settingsFormState, setSettingsFormState] = useState<EntitySettingsFormState | null>(null);
 
   useEffect(() => {
     void loadWorkspaceView({
@@ -112,51 +100,46 @@ export default function EntityWorkspacePage({
       onCloseRunsLoaded: setCloseRuns,
       onCloseRunError: setCloseRunErrorMessage,
       onError: setEntityErrorMessage,
-      onLoaded: (workspace) => {
-        setEntity(workspace);
-        setSettingsFormState(deriveSettingsFormState(workspace));
-      },
+      onLoaded: setEntity,
       onLoadingChange: setIsLoading,
     });
   }, [entityId]);
 
-  const activityTimelineItems = useMemo<readonly TimelineItem[]>(
-    () =>
-      entity?.activity_events.map((activityEvent: EntityActivityEvent) => ({
-        badge: activityEvent.actor?.full_name ?? "System",
-        detail: `${activityEvent.summary} via ${activityEvent.source_surface}${
-          activityEvent.trace_id ? ` • trace ${activityEvent.trace_id}` : ""
-        }`,
-        id: activityEvent.id,
-        timestamp: formatDateTime(activityEvent.created_at),
-        title: activityEvent.summary,
-        tone: "default",
-      })) ?? [],
+  const activeCloseRun = useMemo(() => findWorkingCloseRun(closeRuns), [closeRuns]);
+  const attention = useMemo(
+    () => (activeCloseRun ? deriveCloseRunAttention(activeCloseRun) : null),
+    [activeCloseRun],
+  );
+  const reportingCurrency =
+    activeCloseRun?.reportingCurrency ??
+    entity?.base_currency ??
+    closeRunFormState.reportingCurrency;
+  const metricTiles = useMemo(
+    () => buildEntityMetricTiles(entity, closeRuns, activeCloseRun),
+    [activeCloseRun, closeRuns, entity],
+  );
+  const taskItems = useMemo(
+    () => buildEntityTaskItems(activeCloseRun, entityId),
+    [activeCloseRun, entityId],
+  );
+  const phaseItems = useMemo(
+    () => (activeCloseRun ? buildPhaseProgressRows(activeCloseRun) : []),
+    [activeCloseRun],
+  );
+  const recentActivityEvents = useMemo(
+    () => (entity ? entity.activity_events.slice(0, 3) : []),
     [entity],
   );
-
-  const handleSettingsFieldChange =
-    (fieldName: keyof EntitySettingsFormState) =>
-    (event: ChangeEvent<HTMLInputElement | HTMLSelectElement>): void => {
-      setSettingsFormState((currentState) =>
-        currentState === null
-          ? currentState
-          : {
-              ...currentState,
-              [fieldName]: event.target.value,
-            },
-      );
-    };
-
-  const handleMembershipFieldChange =
-    (fieldName: keyof AddMembershipFormState) =>
-    (event: ChangeEvent<HTMLInputElement>): void => {
-      const nextValue = fieldName === "isDefaultActor" ? event.target.checked : event.target.value;
-      setMembershipFormState((currentState) => ({
-        ...currentState,
-        [fieldName]: nextValue,
-      }));
-    };
+  const primaryCloseHref = activeCloseRun
+    ? `/entities/${entityId}/close-runs/${activeCloseRun.id}`
+    : null;
+  const primaryWorkspaceHref = activeCloseRun
+    ? resolvePhaseWorkspaceHref(
+        entityId,
+        activeCloseRun.id,
+        findActivePhase(activeCloseRun)?.phase ?? "collection",
+      )
+    : null;
 
   const handleCloseRunFieldChange =
     (fieldName: keyof CreateCloseRunFormState) =>
@@ -167,97 +150,23 @@ export default function EntityWorkspacePage({
       }));
     };
 
-  const handleEntityUpdate = (event: FormEvent<HTMLFormElement>): void => {
-    event.preventDefault();
-    if (settingsFormState === null) {
-      return;
-    }
-
-    setEntityErrorMessage(null);
-    startTransition(() => {
-      void updateEntity(entityId, {
-        accounting_standard: emptyStringToNull(settingsFormState.accountingStandard),
-        autonomy_mode: settingsFormState.autonomyMode,
-        base_currency: settingsFormState.baseCurrency,
-        country_code: settingsFormState.countryCode,
-        legal_name: emptyStringToNull(settingsFormState.legalName),
-        name: settingsFormState.name,
-        timezone: settingsFormState.timezone,
-      })
-        .then((workspace) => {
-          setEntity(workspace);
-          setSettingsFormState(deriveSettingsFormState(workspace));
-          router.refresh();
-        })
-        .catch((error: unknown) => {
-          setEntityErrorMessage(resolveEntityErrorMessage(error));
-        });
-    });
-  };
-
-  const handleAddMembership = (event: FormEvent<HTMLFormElement>): void => {
-    event.preventDefault();
-    setEntityErrorMessage(null);
-
-    startTransition(() => {
-      void createEntityMembership(entityId, {
-        is_default_actor: membershipFormState.isDefaultActor,
-        role: membershipFormState.role,
-        user_email: membershipFormState.userEmail,
-      })
-        .then((workspace) => {
-          setEntity(workspace);
-          setSettingsFormState(deriveSettingsFormState(workspace));
-          setMembershipFormState(defaultMembershipFormState);
-          router.refresh();
-        })
-        .catch((error: unknown) => {
-          setEntityErrorMessage(resolveEntityErrorMessage(error));
-        });
-    });
-  };
-
-  const handleMembershipUpdate = (
-    membershipId: string,
-    payload: {
-      is_default_actor?: boolean;
-      role?: string;
-    },
-  ): void => {
-    setEntityErrorMessage(null);
-
-    startTransition(() => {
-      void updateEntityMembership(entityId, membershipId, payload)
-        .then((workspace) => {
-          setEntity(workspace);
-          setSettingsFormState(deriveSettingsFormState(workspace));
-          router.refresh();
-        })
-        .catch((error: unknown) => {
-          setEntityErrorMessage(resolveEntityErrorMessage(error));
-        });
-    });
-  };
-
   const handleCreateCloseRun = (event: FormEvent<HTMLFormElement>): void => {
     event.preventDefault();
     setCloseRunErrorMessage(null);
-    const baseCurrency = entity?.base_currency ?? defaultCreateCloseRunFormState.reportingCurrency;
-    const nextEntityId = entity?.id ?? entityId;
 
     startTransition(() => {
       void createCloseRun(entityId, {
-        period_start: closeRunFormState.periodStart,
         period_end: closeRunFormState.periodEnd,
+        period_start: closeRunFormState.periodStart,
         reporting_currency: emptyStringToNull(closeRunFormState.reportingCurrency),
       })
         .then((createdCloseRun) => {
           setCloseRuns((currentCloseRuns) => [createdCloseRun, ...currentCloseRuns]);
           setCloseRunFormState({
             ...defaultCreateCloseRunFormState,
-            reportingCurrency: baseCurrency,
+            reportingCurrency: entity?.base_currency ?? "NGN",
           });
-          router.push(`/entities/${nextEntityId}/close-runs/${createdCloseRun.id}`);
+          router.push(`/entities/${entityId}/close-runs/${createdCloseRun.id}`);
           router.refresh();
         })
         .catch((error: unknown) => {
@@ -266,427 +175,393 @@ export default function EntityWorkspacePage({
     });
   };
 
-  const handleDeleteWorkspace = (): void => {
-    if (entity === null) {
-      return;
-    }
-    const confirmed = window.confirm(
-      `Delete ${entity.name}? This permanently removes the workspace, its close runs, documents, chat threads, and generated outputs.`,
-    );
-    if (!confirmed) {
-      return;
-    }
-
-    setEntityErrorMessage(null);
-    startTransition(() => {
-      void deleteEntityWorkspace(entity.id)
-        .then(() => {
-          router.push("/entities");
-          router.refresh();
-        })
-        .catch((error: unknown) => {
-          setEntityErrorMessage(resolveEntityErrorMessage(error));
-        });
-    });
-  };
-
   if (isLoading) {
     return (
-      <div className="app-shell entity-workspace-loading">
-        <SurfaceCard title="Loading Workspace" subtitle="Entity detail">
-          <p className="form-helper">Loading workspace settings, memberships, and activity...</p>
-        </SurfaceCard>
+      <div className="quartz-page quartz-workspace-layout">
+        <section className="quartz-main-panel">
+          <div className="quartz-empty-state">Loading entity home...</div>
+        </section>
+        <aside className="quartz-right-rail" />
       </div>
     );
   }
 
-  if (entity === null || settingsFormState === null) {
+  if (entity === null) {
     return (
-      <div className="app-shell entity-workspace-loading">
-        <SurfaceCard title="Workspace Unavailable" subtitle="Entity detail">
+      <div className="quartz-page quartz-workspace-layout">
+        <section className="quartz-main-panel">
           <div className="status-banner danger" role="alert">
-            {entityErrorMessage ?? "The requested workspace could not be loaded."}
+            {entityErrorMessage ?? "The entity workspace could not be loaded."}
           </div>
-        </SurfaceCard>
+        </section>
+        <aside className="quartz-right-rail" />
       </div>
     );
   }
 
   return (
-    <div className="app-shell entity-workspace-page">
-      <section className="hero-grid entity-hero-grid">
-        <div className="hero-copy">
-          <p className="eyebrow">Entity Workspace</p>
-          <h1>{entity.name}</h1>
-          <p className="lede">
-            Keep workspace defaults, operator ownership, and the entity activity stream visible in
-            one place before close runs start accumulating documents and approvals.
-          </p>
-          <div className="coa-hero-actions">
-            <Link className="secondary-button" href={`/entities/${entity.id}/coa`}>
-              Open chart of accounts
-            </Link>
-            <Link className="secondary-button" href={`/entities/${entity.id}/ledger`}>
-              Open ledger baselines
-            </Link>
-            {entity.current_user_membership.role === "owner" ? (
-              <button
-                className="secondary-button"
-                disabled={isPending}
-                onClick={handleDeleteWorkspace}
-                type="button"
-              >
-                {isPending ? "Working..." : "Delete workspace"}
-              </button>
-            ) : null}
+    <div className="quartz-page quartz-workspace-layout">
+      <section className="quartz-main-panel">
+        <header className="quartz-page-header">
+          <div>
+            <h1>{entity.name}</h1>
+            <p className="quartz-page-subtitle">
+              Entity Home • Operational Period:{" "}
+              {activeCloseRun
+                ? formatCloseRunPeriod(activeCloseRun)
+                : "No active close in progress"}
+            </p>
           </div>
-        </div>
-
-        <SurfaceCard title="Workspace Snapshot" subtitle="Current defaults" tone="accent">
-          <dl className="entity-meta-grid workspace-snapshot-grid">
-            <div>
-              <dt>Base currency</dt>
-              <dd>{entity.base_currency}</dd>
+          <div className="quartz-page-toolbar">
+            {primaryCloseHref ? (
+              <Link className="secondary-button" href={primaryCloseHref}>
+                Open Active Close
+              </Link>
+            ) : (
+              <a className="secondary-button" href="#new-close-run">
+                Start Close Run
+              </a>
+            )}
+            <div className="quartz-status-badge neutral">
+              Reporting Currency: {reportingCurrency}
             </div>
-            <div>
-              <dt>Language</dt>
-              <dd>{entity.workspace_language.toUpperCase()}</dd>
-            </div>
-            <div>
-              <dt>Default actor</dt>
-              <dd>{entity.default_actor?.full_name ?? "Unassigned"}</dd>
-            </div>
-            <div>
-              <dt>Autonomy mode</dt>
-              <dd>{entity.autonomy_mode.replace("_", " ")}</dd>
-            </div>
-          </dl>
-        </SurfaceCard>
-      </section>
+          </div>
+        </header>
 
-      {entityErrorMessage ? (
-        <div className="status-banner danger" role="alert">
-          {entityErrorMessage}
-        </div>
-      ) : null}
+        {entityErrorMessage ? (
+          <div className="status-banner warning quartz-section" role="status">
+            {entityErrorMessage}
+          </div>
+        ) : null}
 
-      <section className="entity-workspace-grid">
-        <SurfaceCard title="Workspace Settings" subtitle="Update defaults">
-          <form className="entity-form" onSubmit={handleEntityUpdate}>
-            <label className="field">
-              <span>Workspace name</span>
-              <input
-                className="text-input"
-                onChange={handleSettingsFieldChange("name")}
-                required
-                type="text"
-                value={settingsFormState.name}
-              />
-            </label>
-
-            <label className="field">
-              <span>Legal name</span>
-              <input
-                className="text-input"
-                onChange={handleSettingsFieldChange("legalName")}
-                type="text"
-                value={settingsFormState.legalName}
-              />
-            </label>
-
-            <div className="entity-form-row">
-              <label className="field">
-                <span>Base currency</span>
-                <input
-                  className="text-input"
-                  maxLength={3}
-                  onChange={handleSettingsFieldChange("baseCurrency")}
-                  required
-                  type="text"
-                  value={settingsFormState.baseCurrency}
-                />
-              </label>
-              <label className="field">
-                <span>Country code</span>
-                <input
-                  className="text-input"
-                  maxLength={2}
-                  onChange={handleSettingsFieldChange("countryCode")}
-                  required
-                  type="text"
-                  value={settingsFormState.countryCode}
-                />
-              </label>
-            </div>
-
-            <label className="field">
-              <span>Timezone</span>
-              <input
-                className="text-input"
-                onChange={handleSettingsFieldChange("timezone")}
-                required
-                type="text"
-                value={settingsFormState.timezone}
-              />
-            </label>
-
-            <div className="entity-form-row">
-              <label className="field">
-                <span>Accounting standard</span>
-                <input
-                  className="text-input"
-                  onChange={handleSettingsFieldChange("accountingStandard")}
-                  type="text"
-                  value={settingsFormState.accountingStandard}
-                />
-              </label>
-              <label className="field">
-                <span>Autonomy mode</span>
-                <select
-                  className="text-input"
-                  onChange={handleSettingsFieldChange("autonomyMode")}
-                  value={settingsFormState.autonomyMode}
-                >
-                  <option value="human_review">Human review</option>
-                  <option value="reduced_interruption">Reduced interruption</option>
-                </select>
-              </label>
-            </div>
-
-            <button className="primary-button" disabled={isPending} type="submit">
-              {isPending ? "Saving settings..." : "Save settings"}
-            </button>
-          </form>
-        </SurfaceCard>
-
-        <SurfaceCard title="Memberships" subtitle="Ownership and default actor">
-          <form className="entity-form" onSubmit={handleAddMembership}>
-            <label className="field">
-              <span>Operator email</span>
-              <input
-                className="text-input"
-                onChange={handleMembershipFieldChange("userEmail")}
-                placeholder="reviewer@example.com"
-                required
-                type="email"
-                value={membershipFormState.userEmail}
-              />
-            </label>
-
-            <div className="entity-form-row">
-              <label className="field">
-                <span>Role</span>
-                <input
-                  className="text-input"
-                  onChange={handleMembershipFieldChange("role")}
-                  required
-                  type="text"
-                  value={membershipFormState.role}
-                />
-              </label>
-
-              <label className="checkbox-field">
-                <input
-                  checked={membershipFormState.isDefaultActor}
-                  onChange={handleMembershipFieldChange("isDefaultActor")}
-                  type="checkbox"
-                />
-                <span>Make this operator the default actor</span>
-              </label>
-            </div>
-
-            <button className="secondary-button" disabled={isPending} type="submit">
-              {isPending ? "Adding member..." : "Add member"}
-            </button>
-          </form>
-
-          <div className="membership-list">
-            {entity.memberships.map((membership: EntityWorkspace["memberships"][number]) => (
-              <article className="membership-card" key={membership.id}>
-                <div className="membership-card-header">
-                  <div>
-                    <strong>{membership.user.full_name}</strong>
-                    <span>{membership.user.email}</span>
-                  </div>
-                  {membership.is_default_actor ? (
-                    <span className="entity-status-chip default-actor-chip">Default actor</span>
-                  ) : null}
-                </div>
-
-                <div className="membership-card-actions">
-                  <input
-                    aria-label={`Role for ${membership.user.full_name}`}
-                    className="text-input compact-input"
-                    defaultValue={membership.role}
-                    onBlur={(event) => {
-                      const nextRole = event.target.value.trim().toLowerCase().replaceAll(" ", "_");
-                      if (nextRole.length === 0 || nextRole === membership.role) {
-                        event.target.value = membership.role;
-                        return;
-                      }
-
-                      handleMembershipUpdate(membership.id, { role: nextRole });
-                    }}
-                    type="text"
-                  />
-
-                  {!membership.is_default_actor ? (
-                    <button
-                      className="secondary-button compact-button"
-                      disabled={isPending}
-                      onClick={() =>
-                        handleMembershipUpdate(membership.id, { is_default_actor: true })
-                      }
-                      type="button"
-                    >
-                      Set default
-                    </button>
-                  ) : (
-                    <button
-                      className="secondary-button compact-button"
-                      disabled={isPending}
-                      onClick={() =>
-                        handleMembershipUpdate(membership.id, { is_default_actor: false })
-                      }
-                      type="button"
-                    >
-                      Remove default
-                    </button>
-                  )}
-                </div>
+        <section className="quartz-section">
+          <div className="quartz-kpi-grid">
+            {metricTiles.map((tile, index) => (
+              <article
+                className={
+                  index === metricTiles.length - 1 ? "quartz-kpi-tile highlight" : "quartz-kpi-tile"
+                }
+                key={tile.label}
+              >
+                <p className="quartz-kpi-label">{tile.label}</p>
+                <p className={`quartz-kpi-value ${tile.tone ?? ""}`.trim()}>{tile.value}</p>
+                <p className="quartz-kpi-meta">{tile.meta}</p>
               </article>
             ))}
           </div>
-        </SurfaceCard>
+        </section>
 
-        <SurfaceCard title="Close Runs" subtitle="Period workflows">
-          {closeRunErrorMessage ? (
-            <div className="status-banner warning" role="status">
-              {closeRunErrorMessage}
-            </div>
-          ) : null}
-
-          <form className="entity-form close-run-create-form" onSubmit={handleCreateCloseRun}>
-            <div className="entity-form-row">
-              <label className="field">
-                <span>Period start</span>
-                <input
-                  className="text-input"
-                  onChange={handleCloseRunFieldChange("periodStart")}
-                  required
-                  type="date"
-                  value={closeRunFormState.periodStart}
-                />
-              </label>
-              <label className="field">
-                <span>Period end</span>
-                <input
-                  className="text-input"
-                  onChange={handleCloseRunFieldChange("periodEnd")}
-                  required
-                  type="date"
-                  value={closeRunFormState.periodEnd}
-                />
-              </label>
-            </div>
-
-            <div className="entity-form-row">
-              <label className="field">
-                <span>Reporting currency</span>
-                <input
-                  className="text-input"
-                  maxLength={3}
-                  onChange={handleCloseRunFieldChange("reportingCurrency")}
-                  type="text"
-                  value={closeRunFormState.reportingCurrency}
-                />
-              </label>
-              <div className="field close-run-create-actions">
-                <span>New close run</span>
-                <button className="primary-button" disabled={isPending} type="submit">
-                  {isPending ? "Creating close run..." : "Create close run"}
-                </button>
+        <section className="quartz-section">
+          <div className="quartz-split-grid quartz-split-grid-halves">
+            <article className="quartz-table-shell">
+              <div className="quartz-task-row quartz-surface-row">
+                <h2 className="quartz-kpi-label quartz-kpi-heading">Priority Queue</h2>
+                <span className="quartz-pill-count">{taskItems.length}</span>
               </div>
-            </div>
-          </form>
-
-          {closeRunErrorMessage === null && closeRuns.length === 0 ? (
-            <p className="form-helper">
-              No close runs exist yet for this workspace. Create the first period run here to begin
-              the accounting workflow for this entity.
-            </p>
-          ) : (
-            <div className="dashboard-row-list">
-              {closeRuns.map((closeRun) => (
-                <article className="dashboard-row" key={closeRun.id}>
-                  <div className="close-run-row-header">
-                    <div>
-                      <strong className="close-run-row-title">
-                        {formatCloseRunPeriod(closeRun)}
-                      </strong>
-                      <p className="close-run-row-meta">
-                        {getCloseRunStatusLabel(closeRun.status)} • v{closeRun.currentVersionNo} •{" "}
-                        {closeRun.reportingCurrency}
-                      </p>
-                    </div>
-                    <span className="entity-status-chip">
-                      {deriveCloseRunAttention(closeRun).label}
+              <div className="quartz-task-list">
+                {taskItems.length === 0 ? (
+                  <div className="quartz-task-row">
+                    <span className="form-helper">
+                      Create the first close run to begin task routing.
                     </span>
                   </div>
+                ) : (
+                  taskItems.map((item) => (
+                    <div className="quartz-task-row" key={item.title}>
+                      <div className="quartz-task-title">
+                        <QuartzIcon className="quartz-inline-icon" name={item.icon} />
+                        <div>
+                          <strong>{item.title}</strong>
+                          <div className="quartz-table-secondary">{item.detail}</div>
+                        </div>
+                      </div>
+                      <Link className={`quartz-status-badge ${item.tone}`} href={item.href}>
+                        {item.label}
+                      </Link>
+                    </div>
+                  ))
+                )}
+              </div>
+            </article>
 
-                  <p className="form-helper">{deriveCloseRunAttention(closeRun).detail}</p>
+            <article className="quartz-card">
+              <div className="quartz-section-header quartz-section-header-tight">
+                <h2 className="quartz-kpi-label quartz-kpi-heading">Close Progress</h2>
+                {activeCloseRun ? (
+                  <Link
+                    className="quartz-filter-link"
+                    href={primaryWorkspaceHref ?? primaryCloseHref ?? "#new-close-run"}
+                  >
+                    <QuartzIcon className="quartz-inline-icon" name="close" />
+                    Continue
+                  </Link>
+                ) : null}
+              </div>
+              <div className="quartz-mini-list">
+                {phaseItems.length === 0 ? (
+                  <p className="form-helper">
+                    Phase progress will appear here once a close run is active for this entity.
+                  </p>
+                ) : (
+                  phaseItems.map((item) => (
+                    <div className="quartz-mini-item" key={item.label}>
+                      <div className="quartz-form-row">
+                        <span className="quartz-table-secondary">{item.label}</span>
+                        <span className="quartz-table-secondary">{item.statusLabel}</span>
+                      </div>
+                      <div className="quartz-progress-track">
+                        <div
+                          className="quartz-progress-bar"
+                          style={{
+                            background: item.color,
+                            width: `${item.percent}%`,
+                          }}
+                        />
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </article>
+          </div>
+        </section>
 
-                  <div className="close-run-link-row">
-                    <Link
-                      className="workspace-link-inline"
-                      href={`/entities/${entity.id}/close-runs/${closeRun.id}`}
-                    >
-                      Overview
-                    </Link>
-                    <Link
-                      className="workspace-link-inline"
-                      href={`/entities/${entity.id}/close-runs/${closeRun.id}/documents`}
-                    >
-                      Documents
-                    </Link>
-                    <Link
-                      className="workspace-link-inline"
-                      href={`/entities/${entity.id}/close-runs/${closeRun.id}/reconciliation`}
-                    >
-                      Reconciliation
-                    </Link>
-                    <Link
-                      className="workspace-link-inline"
-                      href={`/entities/${entity.id}/close-runs/${closeRun.id}/schedules`}
-                    >
-                      Schedules
-                    </Link>
-                    <Link
-                      className="workspace-link-inline"
-                      href={`/entities/${entity.id}/close-runs/${closeRun.id}/chat`}
-                    >
-                      Agent
-                    </Link>
-                  </div>
-                </article>
-              ))}
+        <section className="quartz-section">
+          <div className="quartz-section-header">
+            <h2 className="quartz-section-title">Close Run Ledger</h2>
+            <Link className="quartz-filter-link" href="/entities">
+              <QuartzIcon className="quartz-inline-icon" name="filter" />
+              Directory
+            </Link>
+          </div>
+
+          <div className="quartz-table-shell">
+            <table className="quartz-table">
+              <thead>
+                <tr>
+                  <th>Period</th>
+                  <th>Status</th>
+                  <th>Current Gate</th>
+                  <th>Last Updated</th>
+                  <th>Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                {closeRuns.length === 0 ? (
+                  <tr>
+                    <td colSpan={5}>
+                      <div className="quartz-empty-state">
+                        No close runs exist yet for this workspace.
+                      </div>
+                    </td>
+                  </tr>
+                ) : (
+                  closeRuns.map((closeRun) => {
+                    const activePhase = findActivePhase(closeRun);
+                    const rowAttention = deriveCloseRunAttention(closeRun);
+                    const badgeTone =
+                      rowAttention.tone === "warning"
+                        ? "error"
+                        : closeRun.status === "approved" || closeRun.status === "archived"
+                          ? "success"
+                          : "neutral";
+
+                    return (
+                      <tr
+                        className={
+                          rowAttention.tone === "warning" ? "quartz-table-row error" : undefined
+                        }
+                        key={closeRun.id}
+                      >
+                        <td>
+                          <div className="quartz-table-primary">
+                            {formatCloseRunPeriod(closeRun)}
+                          </div>
+                          <div className="quartz-table-secondary">
+                            v{closeRun.currentVersionNo} • {closeRun.reportingCurrency}
+                          </div>
+                        </td>
+                        <td>
+                          <span className={`quartz-status-badge ${badgeTone}`}>
+                            {getCloseRunStatusLabel(closeRun.status)}
+                          </span>
+                        </td>
+                        <td>
+                          <div className="quartz-table-primary">
+                            {activePhase
+                              ? getWorkflowPhaseDefinition(activePhase.phase).label
+                              : "Complete"}
+                          </div>
+                          <div className="quartz-table-secondary">{rowAttention.detail}</div>
+                        </td>
+                        <td>{formatCloseRunDateTime(closeRun.updatedAt)}</td>
+                        <td className="quartz-table-center">
+                          <Link
+                            className="quartz-action-link"
+                            href={`/entities/${entity.id}/close-runs/${closeRun.id}`}
+                          >
+                            Open
+                          </Link>
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section className="quartz-section" id="new-close-run">
+          <div className="quartz-section-header">
+            <h2 className="quartz-section-title">Start Close Run</h2>
+            <span className="quartz-filter-link">
+              Define the period and begin the governed workflow.
+            </span>
+          </div>
+
+          <div className="quartz-card">
+            <form className="quartz-setup-form" onSubmit={handleCreateCloseRun}>
+              <div className="quartz-form-grid">
+                <label className="quartz-form-label">
+                  <span>Period Start</span>
+                  <input
+                    className="text-input"
+                    onChange={handleCloseRunFieldChange("periodStart")}
+                    required
+                    type="date"
+                    value={closeRunFormState.periodStart}
+                  />
+                </label>
+
+                <label className="quartz-form-label">
+                  <span>Period End</span>
+                  <input
+                    className="text-input"
+                    onChange={handleCloseRunFieldChange("periodEnd")}
+                    required
+                    type="date"
+                    value={closeRunFormState.periodEnd}
+                  />
+                </label>
+              </div>
+
+              <div className="quartz-form-row">
+                <label className="quartz-form-label quartz-grow">
+                  <span>Reporting Currency</span>
+                  <input
+                    className="text-input"
+                    maxLength={3}
+                    onChange={handleCloseRunFieldChange("reportingCurrency")}
+                    type="text"
+                    value={closeRunFormState.reportingCurrency}
+                  />
+                </label>
+
+                <button className="primary-button" disabled={isPending} type="submit">
+                  {isPending ? "Creating close run..." : "Start Close Run"}
+                </button>
+              </div>
+            </form>
+
+            {closeRunErrorMessage ? (
+              <div className="status-banner warning quartz-section" role="status">
+                {closeRunErrorMessage}
+              </div>
+            ) : null}
+          </div>
+        </section>
+      </section>
+
+      <aside className="quartz-right-rail">
+        <div className="quartz-right-rail-header">
+          <QuartzIcon className="quartz-inline-icon" name="assistant" />
+          <div>
+            <h2 className="quartz-right-rail-title">Omni-Assistant</h2>
+            <p className="quartz-right-rail-subtitle">Entity intelligence</p>
+          </div>
+        </div>
+
+        <div className="quartz-right-rail-body">
+          <article className="quartz-card ai">
+            <p
+              className={`quartz-card-eyebrow ${attention?.tone === "warning" ? "error" : "secondary"}`}
+            >
+              {attention?.tone === "warning" ? "Attention required" : "Current focus"}
+            </p>
+            <h3>{attention?.label ?? "Workspace ready"}</h3>
+            <p className="form-helper">
+              {attention?.detail ??
+                "This workspace is configured and ready for its next governed period-close cycle."}
+            </p>
+            <div className="quartz-button-row">
+              {primaryWorkspaceHref ? (
+                <Link className="secondary-button" href={primaryWorkspaceHref}>
+                  Continue Workflow
+                </Link>
+              ) : (
+                <a className="secondary-button" href="#new-close-run">
+                  Start Close
+                </a>
+              )}
             </div>
-          )}
-        </SurfaceCard>
+          </article>
 
-        <SurfaceCard title="Agent Capability Catalog" subtitle="Workspace-level runtime map">
-          <AgentCapabilityCatalog maxTools={6} />
-        </SurfaceCard>
-      </section>
+          <article className="quartz-card">
+            <p className="quartz-card-eyebrow">Workspace ownership</p>
+            <h3>{entity.default_actor?.full_name ?? "Default actor not assigned"}</h3>
+            <p className="form-helper">
+              {entity.member_count} active members • {formatAutonomyMode(entity.autonomy_mode)}{" "}
+              posture
+            </p>
+            <div className="quartz-mini-list">
+              <div className="quartz-mini-item">
+                <span className="quartz-table-secondary">Legal entity</span>
+                <strong>{entity.legal_name ?? entity.name}</strong>
+              </div>
+              <div className="quartz-mini-item">
+                <span className="quartz-table-secondary">Base ledger</span>
+                <strong>
+                  {entity.base_currency} • {entity.timezone}
+                </strong>
+              </div>
+            </div>
+          </article>
 
-      <section className="entity-activity-section">
-        <SurfaceCard title="Activity Timeline" subtitle="Root event stream">
-          <Timeline
-            emptyMessage="Activity appears here when the workspace records uploads, approvals, and ownership changes."
-            items={activityTimelineItems}
-          />
-        </SurfaceCard>
-      </section>
+          <article className="quartz-card">
+            <p className="quartz-card-eyebrow">Recent activity</p>
+            <div className="quartz-mini-list">
+              {recentActivityEvents.length === 0 ? (
+                <p className="form-helper">
+                  Uploads, approvals, and routing events will appear here.
+                </p>
+              ) : (
+                recentActivityEvents.map((event) => (
+                  <div className="quartz-mini-item" key={event.id}>
+                    <strong>{event.summary}</strong>
+                    <span className="quartz-mini-meta">
+                      {formatCloseRunDateTime(event.created_at)} via {event.source_surface}
+                    </span>
+                  </div>
+                ))
+              )}
+            </div>
+          </article>
+        </div>
+
+        <div className="quartz-right-rail-footer">
+          <Link
+            className="primary-button"
+            href={
+              activeCloseRun
+                ? `/entities/${entity.id}/close-runs/${activeCloseRun.id}/chat`
+                : `/entities/${entity.id}`
+            }
+          >
+            {activeCloseRun ? "Open Assistant" : "Stay in Workspace"}
+          </Link>
+        </div>
+      </aside>
     </div>
   );
 }
@@ -722,31 +597,6 @@ async function loadWorkspaceView(options: {
   }
 }
 
-function emptyStringToNull(value: string): string | null {
-  const normalized = value.trim();
-  return normalized.length > 0 ? normalized : null;
-}
-
-function deriveSettingsFormState(entity: Readonly<EntityWorkspace>): EntitySettingsFormState {
-  return {
-    accountingStandard: entity.accounting_standard ?? "",
-    autonomyMode: entity.autonomy_mode,
-    baseCurrency: entity.base_currency,
-    countryCode: entity.country_code,
-    legalName: entity.legal_name ?? "",
-    name: entity.name,
-    timezone: entity.timezone,
-  };
-}
-
-function resolveEntityErrorMessage(error: unknown): string {
-  if (error instanceof EntityApiError) {
-    return error.message;
-  }
-
-  return "The entity workspace request failed. Reload the page and try again.";
-}
-
 function resolveWorkspaceViewErrorMessage(error: unknown): string {
   if (error instanceof EntityApiError || error instanceof CloseRunApiError) {
     return error.message;
@@ -755,9 +605,243 @@ function resolveWorkspaceViewErrorMessage(error: unknown): string {
   return "The entity workspace request failed. Reload the page and try again.";
 }
 
-function formatDateTime(value: string): string {
-  return new Intl.DateTimeFormat("en-NG", {
-    dateStyle: "medium",
-    timeStyle: "short",
-  }).format(new Date(value));
+function emptyStringToNull(value: string): string | null {
+  const normalized = value.trim();
+  return normalized.length > 0 ? normalized : null;
+}
+
+function findWorkingCloseRun(closeRuns: readonly CloseRunSummary[]): CloseRunSummary | null {
+  return (
+    closeRuns.find((closeRun) => ["draft", "in_review", "reopened"].includes(closeRun.status)) ??
+    closeRuns[0] ??
+    null
+  );
+}
+
+function buildEntityMetricTiles(
+  entity: Readonly<EntityWorkspace> | null,
+  closeRuns: readonly CloseRunSummary[],
+  activeCloseRun: Readonly<CloseRunSummary> | null,
+): readonly MetricTile[] {
+  const openCloseRuns = closeRuns.filter((closeRun) =>
+    ["draft", "in_review", "reopened"].includes(closeRun.status),
+  ).length;
+  const blockedControls = closeRuns.reduce(
+    (count, closeRun) =>
+      count +
+      closeRun.workflowState.phaseStates.filter((phaseState) => phaseState.status === "blocked")
+        .length,
+    0,
+  );
+  const attention = activeCloseRun ? deriveCloseRunAttention(activeCloseRun) : null;
+  const activePhase = activeCloseRun ? findActivePhase(activeCloseRun) : null;
+
+  return [
+    {
+      label: "Open Periods",
+      meta: `${closeRuns.length} close runs on record`,
+      value: String(openCloseRuns),
+    },
+    {
+      label: "Blocked Controls",
+      meta:
+        blockedControls > 0
+          ? "Escalate blocked review gates before sign-off"
+          : "No blocked workflow gates across active periods",
+      tone: blockedControls > 0 ? "error" : "success",
+      value: String(blockedControls),
+    },
+    {
+      label: "Workspace Members",
+      meta: entity?.default_actor?.full_name ?? "Default actor not assigned",
+      value: String(entity?.member_count ?? 0),
+    },
+    {
+      label: "Current Focus",
+      meta: activeCloseRun
+        ? formatCloseRunPeriod(activeCloseRun)
+        : "Start the next governed period",
+      tone:
+        attention?.tone === "warning"
+          ? "error"
+          : attention?.tone === "success"
+            ? "success"
+            : undefined,
+      value: activePhase ? getWorkflowPhaseDefinition(activePhase.phase).label : "No active close",
+    },
+  ];
+}
+
+function buildEntityTaskItems(
+  activeCloseRun: Readonly<CloseRunSummary> | null,
+  entityId: string,
+): readonly TaskItem[] {
+  if (activeCloseRun === null) {
+    return [];
+  }
+
+  const activePhase = findActivePhase(activeCloseRun);
+  const attention = deriveCloseRunAttention(activeCloseRun);
+  const currentPhase = activePhase?.phase ?? "collection";
+
+  return [
+    {
+      detail: attention.detail,
+      href: resolvePhaseWorkspaceHref(entityId, activeCloseRun.id, currentPhase),
+      icon: resolveTaskIcon(currentPhase, attention.tone),
+      label: resolvePrimaryTaskLabel(currentPhase),
+      title: resolvePrimaryTaskTitle(currentPhase),
+      tone: mapAttentionToneToBadge(attention.tone),
+    },
+    {
+      detail: "Ask grounded questions, inspect evidence, or route into the next control point.",
+      href: `/entities/${entityId}/close-runs/${activeCloseRun.id}/chat`,
+      icon: "assistant",
+      label: "Open",
+      title: "Assistant briefing",
+      tone: "neutral",
+    },
+    {
+      detail: "Return to the full period control tower with lifecycle and release controls.",
+      href: `/entities/${entityId}/close-runs/${activeCloseRun.id}`,
+      icon: "close",
+      label: "Open",
+      title: "Close mission control",
+      tone: "neutral",
+    },
+  ];
+}
+
+function buildPhaseProgressRows(closeRun: Readonly<CloseRunSummary>): readonly PhaseProgressRow[] {
+  return closeRun.workflowState.phaseStates.map((phaseState) => ({
+    color: resolvePhaseColor(phaseState.status),
+    label: getWorkflowPhaseDefinition(phaseState.phase).label,
+    percent: resolvePhasePercent(phaseState.status),
+    statusLabel: getCloseRunPhaseStatusLabel(phaseState.status),
+  }));
+}
+
+function resolvePhaseWorkspaceHref(
+  entityId: string,
+  closeRunId: string,
+  phase: WorkflowPhase,
+): string {
+  switch (phase) {
+    case "collection":
+      return `/entities/${entityId}/close-runs/${closeRunId}/documents`;
+    case "processing":
+      return `/entities/${entityId}/close-runs/${closeRunId}/recommendations`;
+    case "reconciliation":
+      return `/entities/${entityId}/close-runs/${closeRunId}/reconciliation`;
+    case "reporting":
+      return `/entities/${entityId}/close-runs/${closeRunId}/reports`;
+    case "review_signoff":
+      return `/entities/${entityId}/close-runs/${closeRunId}/exports`;
+  }
+}
+
+function resolvePrimaryTaskTitle(phase: WorkflowPhase): string {
+  switch (phase) {
+    case "collection":
+      return "Clear inputs and source evidence";
+    case "processing":
+      return "Review journals and recommendations";
+    case "reconciliation":
+      return "Resolve reconciliation exceptions";
+    case "reporting":
+      return "Generate reports and commentary";
+    case "review_signoff":
+      return "Complete sign-off and release";
+  }
+}
+
+function resolvePrimaryTaskLabel(phase: WorkflowPhase): string {
+  switch (phase) {
+    case "collection":
+      return "Open Inputs";
+    case "processing":
+      return "Review Journals";
+    case "reconciliation":
+      return "Open Reconciliation";
+    case "reporting":
+      return "Open Reports";
+    case "review_signoff":
+      return "Open Sign-Off";
+  }
+}
+
+function resolveTaskIcon(
+  phase: WorkflowPhase,
+  tone: ReturnType<typeof deriveCloseRunAttention>["tone"],
+): QuartzIconName {
+  if (tone === "warning") {
+    return "warning";
+  }
+
+  switch (phase) {
+    case "collection":
+      return "close";
+    case "processing":
+      return "sparkle";
+    case "reconciliation":
+      return "check";
+    case "reporting":
+      return "portfolio";
+    case "review_signoff":
+      return "assistant";
+  }
+}
+
+function mapAttentionToneToBadge(
+  tone: ReturnType<typeof deriveCloseRunAttention>["tone"],
+): TaskItem["tone"] {
+  switch (tone) {
+    case "warning":
+      return "error";
+    case "success":
+      return "success";
+    default:
+      return "warning";
+  }
+}
+
+function resolvePhaseColor(
+  status: CloseRunSummary["workflowState"]["phaseStates"][number]["status"],
+): string {
+  switch (status) {
+    case "completed":
+      return "var(--quartz-success)";
+    case "ready":
+      return "var(--quartz-gold)";
+    case "blocked":
+      return "var(--quartz-error)";
+    case "in_progress":
+      return "var(--quartz-secondary)";
+    case "not_started":
+      return "var(--quartz-border)";
+  }
+}
+
+function resolvePhasePercent(
+  status: CloseRunSummary["workflowState"]["phaseStates"][number]["status"],
+): number {
+  switch (status) {
+    case "completed":
+      return 100;
+    case "ready":
+      return 84;
+    case "blocked":
+      return 62;
+    case "in_progress":
+      return 46;
+    case "not_started":
+      return 10;
+  }
+}
+
+function formatAutonomyMode(value: string): string {
+  return value
+    .split("_")
+    .map((segment) => segment.charAt(0).toUpperCase() + segment.slice(1))
+    .join(" ");
 }

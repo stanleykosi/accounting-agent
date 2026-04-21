@@ -1,30 +1,29 @@
 /*
 Purpose: Render the global desktop dashboard for close-run operations, review queues, and recent workspace activity.
 Scope: Authenticated dashboard data loading, status aggregation, featured close-run progress, and review-queue navigation.
-Dependencies: Same-origin entity and close-run API helpers plus shared desktop UI components.
+Dependencies: Same-origin entity and close-run API helpers.
 */
 
 "use client";
 
-import { PhaseProgress, SurfaceCard, Timeline, type TimelineItem } from "@accounting-ai-agent/ui";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState, type ReactElement } from "react";
+import { QuartzIcon } from "../../components/layout/QuartzIcons";
 import {
   CloseRunApiError,
-  buildPhaseProgressItems,
   deriveCloseRunAttention,
   findBlockingPhase,
   formatCloseRunDateTime,
   formatCloseRunPeriod,
-  getCloseRunStatusLabel,
   listCloseRuns,
   type CloseRunSummary,
 } from "../../lib/close-runs";
 import { EntityApiError, listEntities, type EntitySummary } from "../../lib/entities/api";
 
 type DashboardEntityRuns = {
-  entity: EntitySummary;
   closeRuns: readonly CloseRunSummary[];
+  entity: EntitySummary;
 };
 
 type DashboardRow = {
@@ -39,13 +38,8 @@ type DashboardActivityRow = {
 
 type DashboardEntitySummary = EntitySummary;
 
-/**
- * Purpose: Render the primary authenticated dashboard for desktop operators.
- * Inputs: None.
- * Outputs: A client-rendered dashboard with high-signal close-run navigation and activity context.
- * Behavior: Loads accessible entities first, then hydrates each entity's close runs in parallel through the same-origin proxy.
- */
 export default function DashboardPage(): ReactElement {
+  const router = useRouter();
   const [dashboardData, setDashboardData] = useState<readonly DashboardEntityRuns[]>([]);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -57,6 +51,12 @@ export default function DashboardPage(): ReactElement {
       onLoadingChange: setIsLoading,
     });
   }, []);
+
+  useEffect(() => {
+    if (!isLoading && errorMessage === null && dashboardData.length === 0) {
+      router.replace("/entities/new");
+    }
+  }, [dashboardData.length, errorMessage, isLoading, router]);
 
   const flattenedRows = useMemo<readonly DashboardRow[]>(
     () =>
@@ -70,40 +70,55 @@ export default function DashboardPage(): ReactElement {
   );
 
   const reviewQueue = useMemo(() => [...flattenedRows].sort(compareDashboardRows), [flattenedRows]);
-
   const featuredRow = reviewQueue[0] ?? null;
-  const recentActivityItems = useMemo<readonly TimelineItem[]>(() => {
-    const activityRows: DashboardActivityRow[] = [];
-    dashboardData.forEach((entry) => {
-      const lastActivity = entry.entity.last_activity;
-      if (lastActivity === null || lastActivity === undefined) {
-        return;
-      }
 
-      activityRows.push({
-        entityName: entry.entity.name,
-        lastActivity,
-      });
-    });
+  const entityRows = useMemo(
+    () =>
+      [...dashboardData].sort((left, right) => {
+        const leftRun = left.closeRuns[0] ?? null;
+        const rightRun = right.closeRuns[0] ?? null;
 
-    return activityRows
-      .sort((left, right) => {
-        const leftTimestamp = new Date(left.lastActivity.created_at).valueOf();
-        const rightTimestamp = new Date(right.lastActivity.created_at).valueOf();
-        return rightTimestamp - leftTimestamp;
-      })
-      .slice(0, 6)
-      .map(({ entityName, lastActivity }) => {
-        return {
-          badge: entityName,
-          detail: `${lastActivity.summary} via ${lastActivity.source_surface}.`,
-          id: lastActivity.id,
-          timestamp: formatCloseRunDateTime(lastActivity.created_at),
-          title: lastActivity.summary,
-          tone: "default",
-        } satisfies TimelineItem;
-      });
-  }, [dashboardData]);
+        if (leftRun === null && rightRun === null) {
+          return left.entity.name.localeCompare(right.entity.name);
+        }
+
+        if (leftRun === null) {
+          return 1;
+        }
+
+        if (rightRun === null) {
+          return -1;
+        }
+
+        return compareDashboardRows(
+          { closeRun: leftRun, entity: left.entity },
+          { closeRun: rightRun, entity: right.entity },
+        );
+      }),
+    [dashboardData],
+  );
+
+  const recentActivityRows = useMemo<readonly DashboardActivityRow[]>(
+    () =>
+      dashboardData
+        .flatMap((entry) =>
+          entry.entity.last_activity
+            ? [
+                {
+                  entityName: entry.entity.name,
+                  lastActivity: entry.entity.last_activity,
+                },
+              ]
+            : [],
+        )
+        .sort(
+          (left, right) =>
+            new Date(right.lastActivity.created_at).valueOf() -
+            new Date(left.lastActivity.created_at).valueOf(),
+        )
+        .slice(0, 4),
+    [dashboardData],
+  );
 
   const openCloseRuns = flattenedRows.filter(({ closeRun }) =>
     ["draft", "in_review", "reopened"].includes(closeRun.status),
@@ -119,202 +134,237 @@ export default function DashboardPage(): ReactElement {
       (phaseState) => phaseState.phase === "review_signoff" && phaseState.status === "ready",
     ),
   ).length;
-  const showEmptyDashboardState = !isLoading && errorMessage === null && dashboardData.length === 0;
-  const showEntityWorkspacesSection = !isLoading && dashboardData.length > 0;
-  const showReviewQueueSection = !isLoading && flattenedRows.length > 0;
+  const completionPercent =
+    flattenedRows.length === 0
+      ? 0
+      : Math.round(
+          (flattenedRows.reduce(
+            (sum, row) =>
+              sum +
+              row.closeRun.workflowState.phaseStates.filter(
+                (phaseState) => phaseState.status === "completed",
+              ).length,
+            0,
+          ) /
+            (flattenedRows.length * 5)) *
+            100,
+        );
 
   return (
-    <div className="app-shell dashboard-page">
-      <section className="hero-grid dashboard-hero-grid">
-        <div className="hero-copy">
-          <p className="eyebrow">Global Dashboard</p>
-          <h1>
-            Track period progress, review pressure, and entity activity from one desktop home.
-          </h1>
-          <p className="lede">
-            Keep the five-phase workflow visible across every entity so accountants can move from
-            blockers into sign-off without losing the audit trail.
-          </p>
-          <div className="close-run-action-row">
-            <Link className="primary-button" href="/entities">
-              Open entity workspaces
-            </Link>
+    <div className="quartz-page quartz-workspace-layout">
+      <section className="quartz-main-panel">
+        <header className="quartz-page-header">
+          <div>
+            <h1>Portfolio Overview</h1>
+            <p className="quartz-page-subtitle">
+              Executive summary of active entities and close-run pressure across the current review
+              cycle.
+            </p>
           </div>
-        </div>
+          <div>
+            <p className="quartz-kpi-label">Portfolio Health</p>
+            <p className="quartz-kpi-value">{openCloseRuns} Active Closes</p>
+          </div>
+        </header>
 
-        <SurfaceCard title="Today's Focus" subtitle="Workspace summary" tone="accent">
-          <div className="dashboard-stat-grid">
-            <StatBlock label="Entities" value={String(dashboardData.length)} />
-            <StatBlock label="Open close runs" value={String(openCloseRuns)} />
-            <StatBlock label="Blocked phases" value={String(blockedPhaseCount)} />
-            <StatBlock label="Ready for sign-off" value={String(readyForSignoffCount)} />
+        {errorMessage ? (
+          <div className="status-banner warning" role="status" style={{ marginTop: "24px" }}>
+            {errorMessage}
           </div>
-        </SurfaceCard>
+        ) : null}
+
+        {isLoading ? (
+          <section className="quartz-section">
+            <div className="quartz-empty-state">Loading the portfolio command center...</div>
+          </section>
+        ) : null}
+
+        {!isLoading && featuredRow !== null ? (
+          <>
+            <section className="quartz-section">
+              <div className="quartz-kpi-grid">
+                <article className="quartz-kpi-tile">
+                  <p className="quartz-kpi-label">Total Entities</p>
+                  <p className="quartz-kpi-value">{dashboardData.length}</p>
+                  <p className="quartz-kpi-meta">Accessible workspaces</p>
+                </article>
+                <article className="quartz-kpi-tile">
+                  <p className="quartz-kpi-label">Close Progress</p>
+                  <p className="quartz-kpi-value">{completionPercent}%</p>
+                  <div className="quartz-progress-track">
+                    <div
+                      className="quartz-progress-bar"
+                      style={{ width: `${completionPercent}%` }}
+                    />
+                  </div>
+                </article>
+                <article className="quartz-kpi-tile">
+                  <p className="quartz-kpi-label">Active Exceptions</p>
+                  <p className="quartz-kpi-value error">{blockedPhaseCount}</p>
+                  <p className="quartz-kpi-meta">Blocked workflow phases</p>
+                </article>
+                <article className="quartz-kpi-tile highlight">
+                  <p className="quartz-kpi-label">Ready For Sign-Off</p>
+                  <p className="quartz-kpi-value">{readyForSignoffCount}</p>
+                  <p className="quartz-kpi-meta">Periods awaiting final approval</p>
+                </article>
+              </div>
+            </section>
+
+            <section className="quartz-section">
+              <div className="quartz-section-header">
+                <h2 className="quartz-section-title">Entity Ledger</h2>
+                <span className="quartz-filter-link">
+                  <QuartzIcon className="quartz-inline-icon" name="filter" />
+                  Prioritized view
+                </span>
+              </div>
+
+              <div className="quartz-table-shell">
+                <table className="quartz-table">
+                  <thead>
+                    <tr>
+                      <th>Entity Name</th>
+                      <th>Country</th>
+                      <th>Status</th>
+                      <th>Progress</th>
+                      <th>Latest Period</th>
+                      <th>Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {entityRows.map((entry) => {
+                      const currentCloseRun = entry.closeRuns[0] ?? null;
+                      const attention = currentCloseRun
+                        ? deriveCloseRunAttention(currentCloseRun)
+                        : null;
+                      const progress = currentCloseRun
+                        ? calculateCompletionPercent(currentCloseRun)
+                        : null;
+                      const badgeTone =
+                        attention?.tone === "warning"
+                          ? "error"
+                          : entry.entity.status === "archived"
+                            ? "neutral"
+                            : "success";
+
+                      return (
+                        <tr
+                          className={
+                            attention?.tone === "warning" ? "quartz-table-row error" : undefined
+                          }
+                          key={entry.entity.id}
+                        >
+                          <td>
+                            <div className="quartz-table-primary">{entry.entity.name}</div>
+                            <div className="quartz-table-secondary">
+                              {entry.entity.base_currency} workspace • {entry.entity.member_count}{" "}
+                              members
+                            </div>
+                          </td>
+                          <td>{entry.entity.country_code}</td>
+                          <td>
+                            <span className={`quartz-status-badge ${badgeTone}`}>
+                              {attention?.label ?? entry.entity.status}
+                            </span>
+                          </td>
+                          <td className="quartz-table-numeric">
+                            {progress === null ? "—" : `${progress}%`}
+                          </td>
+                          <td>
+                            {currentCloseRun
+                              ? formatCloseRunPeriod(currentCloseRun)
+                              : "No close run"}
+                          </td>
+                          <td className="quartz-table-center">
+                            <Link
+                              className="quartz-action-link"
+                              href={
+                                currentCloseRun
+                                  ? `/entities/${entry.entity.id}/close-runs/${currentCloseRun.id}`
+                                  : `/entities/${entry.entity.id}`
+                              }
+                            >
+                              {currentCloseRun ? "Review" : "Open"}
+                            </Link>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          </>
+        ) : null}
       </section>
 
-      {errorMessage ? (
-        <div className="status-banner warning" role="status">
-          {errorMessage}
+      <aside className="quartz-right-rail">
+        <div className="quartz-right-rail-header">
+          <QuartzIcon className="quartz-inline-icon" name="assistant" />
+          <div>
+            <h2 className="quartz-right-rail-title">Omni-Assistant</h2>
+            <p className="quartz-right-rail-subtitle">Portfolio intelligence</p>
+          </div>
         </div>
-      ) : null}
 
-      {isLoading ? (
-        <SurfaceCard title="Loading Dashboard" subtitle="Global workspace">
-          <p className="form-helper">
-            Loading entity workspaces, close-run status, and review signals...
-          </p>
-        </SurfaceCard>
-      ) : null}
-
-      {showEmptyDashboardState ? (
-        <SurfaceCard title="No Entity Workspaces Yet" subtitle="Global dashboard">
-          <p className="form-helper">
-            Create the first entity workspace to start tracking period close runs and workflow
-            progress.
-          </p>
-        </SurfaceCard>
-      ) : null}
-
-      {!isLoading && featuredRow !== null ? (
-        <section className="content-grid">
-          <SurfaceCard title="Featured Close Run" subtitle={featuredRow.entity.name}>
-            <div className="close-run-row-header">
-              <div>
-                <strong className="close-run-row-title">
-                  {formatCloseRunPeriod(featuredRow.closeRun)}
-                </strong>
-                <p className="close-run-row-meta">
-                  {getCloseRunStatusLabel(featuredRow.closeRun.status)} • Updated{" "}
-                  {formatCloseRunDateTime(featuredRow.closeRun.updatedAt)}
-                </p>
+        <div className="quartz-right-rail-body">
+          {featuredRow ? (
+            <article className="quartz-card ai">
+              <p className="quartz-card-eyebrow error">Variance detected</p>
+              <h3>{featuredRow.entity.name}</h3>
+              <p className="form-helper">{deriveCloseRunAttention(featuredRow.closeRun).detail}</p>
+              <div className="quartz-highlight-box">
+                <span className="quartz-card-eyebrow">Current period</span>
+                <p style={{ margin: "6px 0 0" }}>{formatCloseRunPeriod(featuredRow.closeRun)}</p>
               </div>
-              <span
-                className={`timeline-badge ${deriveCloseRunAttention(featuredRow.closeRun).tone}`}
-              >
-                {deriveCloseRunAttention(featuredRow.closeRun).label}
-              </span>
-            </div>
+              <div className="quartz-button-row">
+                <Link
+                  className="secondary-button"
+                  href={`/entities/${featuredRow.entity.id}/close-runs/${featuredRow.closeRun.id}`}
+                >
+                  Investigate
+                </Link>
+              </div>
+            </article>
+          ) : null}
 
-            <p className="form-helper">{deriveCloseRunAttention(featuredRow.closeRun).detail}</p>
-            <PhaseProgress items={buildPhaseProgressItems(featuredRow.closeRun)} />
+          <article className="quartz-card">
+            <p className="quartz-card-eyebrow secondary">Pace analysis</p>
+            <h3>Close cadence is stable</h3>
+            <p className="form-helper">
+              {openCloseRuns} active close runs are in motion. {readyForSignoffCount} periods are
+              ready for final review and {blockedPhaseCount} workflow gates currently require
+              intervention.
+            </p>
+          </article>
 
-            <div className="close-run-link-row">
-              <Link
-                className="secondary-button"
-                href={`/entities/${featuredRow.entity.id}/close-runs/${featuredRow.closeRun.id}`}
-              >
-                Open overview
-              </Link>
-              <Link
-                className="secondary-button"
-                href={`/entities/${featuredRow.entity.id}/close-runs/${featuredRow.closeRun.id}/documents`}
-              >
-                Review documents
-              </Link>
-            </div>
-          </SurfaceCard>
-
-          <SurfaceCard title="Recent Activity" subtitle="Workspace timeline">
-            <Timeline
-              emptyMessage="Activity appears here once entity workspaces begin recording events."
-              items={recentActivityItems}
-            />
-          </SurfaceCard>
-        </section>
-      ) : null}
-
-      {showReviewQueueSection ? (
-        <section className="content-grid">
-          <SurfaceCard title="Review Queue" subtitle="Highest-attention close runs">
-            <div className="dashboard-row-list">
-              {reviewQueue.slice(0, 6).map((row) => (
-                <article className="dashboard-row" key={row.closeRun.id}>
-                  <div className="close-run-row-header">
-                    <div>
-                      <strong className="close-run-row-title">{row.entity.name}</strong>
-                      <p className="close-run-row-meta">{formatCloseRunPeriod(row.closeRun)}</p>
-                    </div>
-                    <span className="entity-status-chip">
-                      {getCloseRunStatusLabel(row.closeRun.status)}
+          <article className="quartz-card">
+            <p className="quartz-card-eyebrow">Recent activity</p>
+            <div className="quartz-mini-list">
+              {recentActivityRows.length === 0 ? (
+                <p className="form-helper">Recent approvals and uploads will appear here.</p>
+              ) : (
+                recentActivityRows.map((activity) => (
+                  <div className="quartz-mini-item" key={activity.lastActivity.id}>
+                    <strong>{activity.lastActivity.summary}</strong>
+                    <span className="quartz-mini-meta">
+                      {activity.entityName} •{" "}
+                      {formatCloseRunDateTime(activity.lastActivity.created_at)}
                     </span>
                   </div>
-
-                  <p className="form-helper">{deriveCloseRunAttention(row.closeRun).detail}</p>
-
-                  <div className="close-run-link-row">
-                    <Link
-                      className="workspace-link-inline"
-                      href={`/entities/${row.entity.id}/close-runs/${row.closeRun.id}`}
-                    >
-                      Overview
-                    </Link>
-                    <Link
-                      className="workspace-link-inline"
-                      href={`/entities/${row.entity.id}/close-runs/${row.closeRun.id}/documents`}
-                    >
-                      Documents
-                    </Link>
-                    <Link
-                      className="workspace-link-inline"
-                      href={`/entities/${row.entity.id}/close-runs/${row.closeRun.id}/reconciliation`}
-                    >
-                      Reconciliation
-                    </Link>
-                  </div>
-                </article>
-              ))}
+                ))
+              )}
             </div>
-          </SurfaceCard>
-        </section>
-      ) : null}
+          </article>
+        </div>
 
-      {showEntityWorkspacesSection ? (
-        <section className="content-grid">
-          <SurfaceCard title="Entity Workspaces" subtitle="Latest workspace context">
-            <div className="dashboard-row-list">
-              {dashboardData.map((entry) => (
-                <article className="dashboard-row" key={entry.entity.id}>
-                  <div className="close-run-row-header">
-                    <div>
-                      <strong className="close-run-row-title">{entry.entity.name}</strong>
-                      <p className="close-run-row-meta">
-                        {entry.entity.base_currency} • {entry.entity.member_count} members
-                      </p>
-                    </div>
-                    <span className="entity-status-chip">
-                      {entry.entity.autonomy_mode.replaceAll("_", " ")}
-                    </span>
-                  </div>
-
-                  <p className="form-helper">
-                    {entry.closeRuns[0]
-                      ? `${entry.closeRuns.length} close runs recorded. Latest period: ${formatCloseRunPeriod(entry.closeRuns[0])}.`
-                      : "No close runs recorded yet for this workspace."}
-                  </p>
-
-                  <div className="close-run-link-row">
-                    <Link className="workspace-link-inline" href={`/entities/${entry.entity.id}`}>
-                      Open workspace
-                    </Link>
-                    <Link
-                      className="workspace-link-inline"
-                      href={`/entities/${entry.entity.id}/coa`}
-                    >
-                      Chart of accounts
-                    </Link>
-                    <Link
-                      className="workspace-link-inline"
-                      href={`/entities/${entry.entity.id}/integrations`}
-                    >
-                      Integrations
-                    </Link>
-                  </div>
-                </article>
-              ))}
-            </div>
-          </SurfaceCard>
-        </section>
-      ) : null}
+        <div className="quartz-right-rail-footer">
+          <Link className="primary-button" href="/entities">
+            Open Entity Directory
+          </Link>
+        </div>
+      </aside>
     </div>
   );
 }
@@ -347,7 +397,7 @@ function resolveDashboardErrorMessage(error: unknown): string {
     return error.message;
   }
 
-  return "The dashboard could not be loaded. Reload the workspace and try again.";
+  return "The portfolio command center could not be loaded. Reload the workspace and try again.";
 }
 
 function compareDashboardRows(left: DashboardRow, right: DashboardRow): number {
@@ -385,17 +435,9 @@ function compareUpdatedAt(left: CloseRunSummary, right: CloseRunSummary): number
   return new Date(right.updatedAt).valueOf() - new Date(left.updatedAt).valueOf();
 }
 
-function StatBlock({
-  label,
-  value,
-}: Readonly<{
-  label: string;
-  value: string;
-}>): ReactElement {
-  return (
-    <div className="dashboard-stat-block">
-      <span>{label}</span>
-      <strong>{value}</strong>
-    </div>
-  );
+function calculateCompletionPercent(closeRun: Readonly<CloseRunSummary>): number {
+  const completed = closeRun.workflowState.phaseStates.filter(
+    (phaseState) => phaseState.status === "completed",
+  ).length;
+  return Math.round((completed / closeRun.workflowState.phaseStates.length) * 100);
 }
