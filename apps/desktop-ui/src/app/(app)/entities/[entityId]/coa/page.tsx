@@ -7,8 +7,8 @@ Dependencies: React hooks, route params, Next links, and the COA API helper modu
 "use client";
 
 import Link from "next/link";
+import { useParams } from "next/navigation";
 import {
-  use,
   useEffect,
   useMemo,
   useState,
@@ -30,12 +30,7 @@ import {
   type CoaSetSummary,
   type CoaWorkspaceResponse,
 } from "../../../../../lib/coa";
-
-type CoaPageProps = {
-  params: Promise<{
-    entityId: string;
-  }>;
-};
+import { requireRouteParam } from "../../../../../lib/route-params";
 
 type CreateAccountFormState = {
   accountCode: string;
@@ -73,8 +68,9 @@ const defaultCreateAccountFormState: CreateAccountFormState = {
  * Outputs: A client-rendered COA workspace page with set versions and account editor tools.
  * Behavior: Keeps all COA mutations routed through versioned backend workflows and reloads on success.
  */
-export default function EntityCoaPage({ params }: Readonly<CoaPageProps>): ReactElement {
-  const { entityId } = use(params);
+export default function EntityCoaPage(): ReactElement {
+  const routeParams = useParams<{ entityId: string }>();
+  const entityId = requireRouteParam(routeParams.entityId, "entityId");
 
   const [workspace, setWorkspace] = useState<CoaWorkspaceResponse | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);

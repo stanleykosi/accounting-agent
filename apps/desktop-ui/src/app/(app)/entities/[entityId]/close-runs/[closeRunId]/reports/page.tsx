@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { use, useCallback, useEffect, useMemo, useState, type ReactElement } from "react";
+import { useParams } from "next/navigation";
+import { useCallback, useEffect, useMemo, useState, type ReactElement } from "react";
 import { QuartzIcon } from "../../../../../../../components/layout/QuartzIcons";
 import {
   CloseRunApiError,
@@ -20,13 +21,7 @@ import {
   type ReportRunSummary,
   updateReportCommentary,
 } from "../../../../../../../lib/reports";
-
-type CloseRunReportsPageProps = {
-  params: Promise<{
-    closeRunId: string;
-    entityId: string;
-  }>;
-};
+import { requireRouteParam } from "../../../../../../../lib/route-params";
 
 type ReportRunDetailRecord = Awaited<ReturnType<typeof readReportRun>>;
 
@@ -43,10 +38,10 @@ const emptyArtifacts: readonly Record<string, unknown>[] = [];
 const emptyCommentary: readonly CommentarySummary[] = [];
 const emptyReportRuns: readonly ReportRunSummary[] = [];
 
-export default function CloseRunReportsPage({
-  params,
-}: Readonly<CloseRunReportsPageProps>): ReactElement {
-  const { closeRunId, entityId } = use(params);
+export default function CloseRunReportsPage(): ReactElement {
+  const routeParams = useParams<{ closeRunId: string; entityId: string }>();
+  const closeRunId = requireRouteParam(routeParams.closeRunId, "closeRunId");
+  const entityId = requireRouteParam(routeParams.entityId, "entityId");
 
   const [closeRunWorkspace, setCloseRunWorkspace] = useState<CloseRunWorkspaceData | null>(null);
   const [draftCommentary, setDraftCommentary] = useState<Record<string, string>>({});

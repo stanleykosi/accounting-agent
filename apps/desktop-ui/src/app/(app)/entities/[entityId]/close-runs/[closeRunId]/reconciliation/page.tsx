@@ -11,7 +11,8 @@ Dependencies: Close-run context, reconciliation review APIs, job polling, and
 import { EvidenceDrawer } from "@accounting-ai-agent/ui";
 import type { EvidenceDrawerReference } from "@accounting-ai-agent/ui";
 import Link from "next/link";
-import { use, useCallback, useEffect, useMemo, useRef, useState, type ReactElement } from "react";
+import { useParams } from "next/navigation";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement } from "react";
 import { QuartzIcon } from "../../../../../../../components/layout/QuartzIcons";
 import {
   CloseRunApiError,
@@ -40,13 +41,7 @@ import {
   runReconciliation,
   submitDispositionItem,
 } from "../../../../../../../lib/reconciliation";
-
-type CloseRunReconciliationPageProps = {
-  params: Promise<{
-    closeRunId: string;
-    entityId: string;
-  }>;
-};
+import { requireRouteParam } from "../../../../../../../lib/route-params";
 
 type EvidenceDrawerState = {
   isOpen: boolean;
@@ -78,10 +73,10 @@ const reconciliationFilters: readonly {
   { filter: "matched", label: "Matched" },
 ];
 
-export default function CloseRunReconciliationPage({
-  params,
-}: Readonly<CloseRunReconciliationPageProps>): ReactElement {
-  const { closeRunId, entityId } = use(params);
+export default function CloseRunReconciliationPage(): ReactElement {
+  const routeParams = useParams<{ closeRunId: string; entityId: string }>();
+  const closeRunId = requireRouteParam(routeParams.closeRunId, "closeRunId");
+  const entityId = requireRouteParam(routeParams.entityId, "entityId");
 
   const [activeActionKey, setActiveActionKey] = useState<string | null>(null);
   const [activeFilter, setActiveFilter] = useState<ReconciliationReviewFilter>("all");

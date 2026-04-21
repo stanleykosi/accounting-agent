@@ -8,8 +8,8 @@ Dependencies: React hooks, close-run/entity API helpers, shared workflow metadat
 
 import { getWorkflowPhaseDefinition, type WorkflowPhase } from "@accounting-ai-agent/ui";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { use, useEffect, useState, type ReactElement } from "react";
+import { useParams, useRouter } from "next/navigation";
+import { useEffect, useState, type ReactElement } from "react";
 import { QuartzIcon } from "../../../../../../components/layout/QuartzIcons";
 import {
   approveCloseRun,
@@ -29,13 +29,7 @@ import {
   type CloseRunWorkspaceData,
 } from "../../../../../../lib/close-runs";
 import { EntityApiError } from "../../../../../../lib/entities/api";
-
-type CloseRunOverviewPageProps = {
-  params: Promise<{
-    closeRunId: string;
-    entityId: string;
-  }>;
-};
+import { requireRouteParam } from "../../../../../../lib/route-params";
 
 type MissionTile = {
   label: string;
@@ -69,10 +63,10 @@ const workflowPhaseOrder: readonly WorkflowPhase[] = [
   "review_signoff",
 ];
 
-export default function CloseRunOverviewPage({
-  params,
-}: Readonly<CloseRunOverviewPageProps>): ReactElement {
-  const { closeRunId, entityId } = use(params);
+export default function CloseRunOverviewPage(): ReactElement {
+  const routeParams = useParams<{ closeRunId: string; entityId: string }>();
+  const closeRunId = requireRouteParam(routeParams.closeRunId, "closeRunId");
+  const entityId = requireRouteParam(routeParams.entityId, "entityId");
   const workspaceSnapshot = readCloseRunWorkspaceSnapshot(entityId, closeRunId);
   const router = useRouter();
   const [errorMessage, setErrorMessage] = useState<string | null>(null);

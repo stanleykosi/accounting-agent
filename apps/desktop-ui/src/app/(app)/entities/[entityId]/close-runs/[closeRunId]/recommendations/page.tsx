@@ -9,7 +9,8 @@ Dependencies: Close-run context reads, recommendation/journal API helpers, and
 "use client";
 
 import Link from "next/link";
-import { use, useCallback, useEffect, useMemo, useState, type ReactElement } from "react";
+import { useParams } from "next/navigation";
+import { useCallback, useEffect, useMemo, useState, type ReactElement } from "react";
 import { QuartzIcon } from "../../../../../../../components/layout/QuartzIcons";
 import {
   CloseRunApiError,
@@ -33,13 +34,7 @@ import {
   type JournalSummary,
   type RecommendationSummary,
 } from "../../../../../../../lib/recommendations";
-
-type RecommendationsPageProps = {
-  params: Promise<{
-    closeRunId: string;
-    entityId: string;
-  }>;
-};
+import { requireRouteParam } from "../../../../../../../lib/route-params";
 
 type RecommendationsWorkspaceData = {
   closeRunWorkspace: CloseRunWorkspaceData;
@@ -50,10 +45,10 @@ type RecommendationsWorkspaceData = {
 const emptyRecommendations: readonly RecommendationSummary[] = [];
 const emptyJournals: readonly JournalSummary[] = [];
 
-export default function RecommendationsPage({
-  params,
-}: Readonly<RecommendationsPageProps>): ReactElement {
-  const { closeRunId, entityId } = use(params);
+export default function RecommendationsPage(): ReactElement {
+  const routeParams = useParams<{ closeRunId: string; entityId: string }>();
+  const closeRunId = requireRouteParam(routeParams.closeRunId, "closeRunId");
+  const entityId = requireRouteParam(routeParams.entityId, "entityId");
 
   const [activeActionKey, setActiveActionKey] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);

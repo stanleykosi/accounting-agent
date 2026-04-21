@@ -2,10 +2,9 @@
 
 import { autonomyModeDefinitions, type AutonomyMode } from "@accounting-ai-agent/ui";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import {
   useCallback,
-  use,
   useEffect,
   useMemo,
   useState,
@@ -31,12 +30,7 @@ import {
   countryOptions,
   timezoneOptions,
 } from "../../../../../lib/entities/options";
-
-type WorkspaceSettingsPageProps = {
-  params: Promise<{
-    entityId: string;
-  }>;
-};
+import { requireRouteParam } from "../../../../../lib/route-params";
 
 type WorkspaceGeneralFormState = {
   accountingStandard: string;
@@ -88,10 +82,9 @@ const moduleDefinitions = [
   },
 ] as const;
 
-export default function WorkspaceSettingsPage({
-  params,
-}: Readonly<WorkspaceSettingsPageProps>): ReactElement {
-  const { entityId } = use(params);
+export default function WorkspaceSettingsPage(): ReactElement {
+  const routeParams = useParams<{ entityId: string }>();
+  const entityId = requireRouteParam(routeParams.entityId, "entityId");
   const router = useRouter();
   const entitySnapshot = readEntityWorkspaceSnapshot(entityId);
   const [entity, setEntity] = useState<EntityWorkspace | null>(entitySnapshot);

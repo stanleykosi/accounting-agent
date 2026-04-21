@@ -7,7 +7,8 @@ Dependencies: React client state, Next route params and links, and QuickBooks AP
 "use client";
 
 import Link from "next/link";
-import { use, useEffect, useState, useTransition, type ReactElement } from "react";
+import { useParams } from "next/navigation";
+import { useEffect, useState, useTransition, type ReactElement } from "react";
 import { QuartzIcon } from "../../../../../components/layout/QuartzIcons";
 import {
   QuickBooksApiError,
@@ -18,12 +19,7 @@ import {
   type QuickBooksCoaSyncResponse,
   type QuickBooksConnectionStatusResponse,
 } from "../../../../../lib/quickbooks";
-
-type IntegrationsPageProps = {
-  params: Promise<{
-    entityId: string;
-  }>;
-};
+import { requireRouteParam } from "../../../../../lib/route-params";
 
 /**
  * Purpose: Render the QuickBooks-first integration workspace for one entity.
@@ -31,10 +27,9 @@ type IntegrationsPageProps = {
  * Outputs: A client-rendered integration management page with sync and reconnect controls.
  * Behavior: Keeps OAuth, token refresh, and COA materialization in backend services.
  */
-export default function EntityIntegrationsPage({
-  params,
-}: Readonly<IntegrationsPageProps>): ReactElement {
-  const { entityId } = use(params);
+export default function EntityIntegrationsPage(): ReactElement {
+  const routeParams = useParams<{ entityId: string }>();
+  const entityId = requireRouteParam(routeParams.entityId, "entityId");
   const [connectionStatus, setConnectionStatus] =
     useState<QuickBooksConnectionStatusResponse | null>(null);
   const [syncResult, setSyncResult] = useState<QuickBooksCoaSyncResponse | null>(null);

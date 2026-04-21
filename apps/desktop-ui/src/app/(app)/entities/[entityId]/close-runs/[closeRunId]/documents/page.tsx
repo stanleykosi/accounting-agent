@@ -7,9 +7,9 @@ Dependencies: Document review API helpers, shared Quartz styles, and the close-r
 "use client";
 
 import Link from "next/link";
+import { useParams } from "next/navigation";
 import {
   Fragment,
-  use,
   useCallback,
   useEffect,
   useMemo,
@@ -33,13 +33,7 @@ import {
   reparseSourceDocument,
   uploadSourceDocuments,
 } from "../../../../../../../lib/documents";
-
-type CloseRunDocumentsPageProps = {
-  params: Promise<{
-    closeRunId: string;
-    entityId: string;
-  }>;
-};
+import { requireRouteParam } from "../../../../../../../lib/route-params";
 
 type QueueFilterDefinition = {
   filter: DocumentReviewFilter;
@@ -70,10 +64,10 @@ const filterDefinitions: readonly QueueFilterDefinition[] = [
   { filter: "wrong_period", label: "Wrong Period" },
 ];
 
-export default function CloseRunDocumentsPage({
-  params,
-}: Readonly<CloseRunDocumentsPageProps>): ReactElement {
-  const { closeRunId, entityId } = use(params);
+export default function CloseRunDocumentsPage(): ReactElement {
+  const routeParams = useParams<{ closeRunId: string; entityId: string }>();
+  const closeRunId = requireRouteParam(routeParams.closeRunId, "closeRunId");
+  const entityId = requireRouteParam(routeParams.entityId, "entityId");
 
   const directoryInputRef = useRef<HTMLInputElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);

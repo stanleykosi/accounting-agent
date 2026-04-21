@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { use, useCallback, useEffect, useMemo, useState, type ReactElement } from "react";
+import { useParams } from "next/navigation";
+import { useCallback, useEffect, useMemo, useState, type ReactElement } from "react";
 import { QuartzIcon } from "../../../../../../../components/layout/QuartzIcons";
 import {
   approveCloseRun,
@@ -39,13 +40,7 @@ import {
   readReportRun,
   ReportApiError,
 } from "../../../../../../../lib/reports";
-
-type CloseRunExportsPageProps = {
-  params: Promise<{
-    closeRunId: string;
-    entityId: string;
-  }>;
-};
+import { requireRouteParam } from "../../../../../../../lib/route-params";
 
 type DistributionFormState = {
   deliveryChannel: string;
@@ -82,10 +77,10 @@ const defaultDistributionFormState: DistributionFormState = {
 };
 
 const emptyExports: readonly ExportSummary[] = [];
-export default function CloseRunExportsPage({
-  params,
-}: Readonly<CloseRunExportsPageProps>): ReactElement {
-  const { closeRunId, entityId } = use(params);
+export default function CloseRunExportsPage(): ReactElement {
+  const routeParams = useParams<{ closeRunId: string; entityId: string }>();
+  const closeRunId = requireRouteParam(routeParams.closeRunId, "closeRunId");
+  const entityId = requireRouteParam(routeParams.entityId, "entityId");
 
   const [closeRunWorkspace, setCloseRunWorkspace] = useState<CloseRunWorkspaceData | null>(null);
   const [distributionForm, setDistributionForm] = useState<DistributionFormState>(

@@ -9,7 +9,8 @@ Dependencies: Supporting-schedule API helpers and shared surface primitives.
 
 import Link from "next/link";
 import { SurfaceCard } from "@accounting-ai-agent/ui";
-import { use, useEffect, useMemo, useState, type ChangeEvent, type ReactElement } from "react";
+import { useParams } from "next/navigation";
+import { useEffect, useMemo, useState, type ChangeEvent, type ReactElement } from "react";
 import {
   deleteSupportingScheduleRow,
   readSupportingScheduleWorkspace,
@@ -21,13 +22,7 @@ import {
   type SupportingScheduleType,
   updateSupportingScheduleStatus,
 } from "../../../../../../../lib/supporting-schedules";
-
-type CloseRunSchedulesPageProps = {
-  params: Promise<{
-    closeRunId: string;
-    entityId: string;
-  }>;
-};
+import { requireRouteParam } from "../../../../../../../lib/route-params";
 
 type ScheduleFieldType = "date" | "month" | "number" | "text" | "textarea";
 
@@ -159,10 +154,10 @@ const SCHEDULE_DEFINITIONS: Readonly<Record<SupportingScheduleType, ScheduleDefi
   },
 };
 
-export default function CloseRunSchedulesPage({
-  params,
-}: Readonly<CloseRunSchedulesPageProps>): ReactElement {
-  const { closeRunId, entityId } = use(params);
+export default function CloseRunSchedulesPage(): ReactElement {
+  const routeParams = useParams<{ closeRunId: string; entityId: string }>();
+  const closeRunId = requireRouteParam(routeParams.closeRunId, "closeRunId");
+  const entityId = requireRouteParam(routeParams.entityId, "entityId");
   const [editingRowIds, setEditingRowIds] = useState<Record<string, string | null>>({});
   const [drafts, setDrafts] = useState<Record<string, DraftState>>({});
   const [errorMessage, setErrorMessage] = useState<string | null>(null);

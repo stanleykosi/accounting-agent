@@ -7,7 +7,8 @@ Dependencies: Same-origin job APIs and shared desktop surface cards.
 "use client";
 
 import { SurfaceCard } from "@accounting-ai-agent/ui";
-import { use, useCallback, useEffect, useState, type ReactElement } from "react";
+import { useParams } from "next/navigation";
+import { useCallback, useEffect, useState, type ReactElement } from "react";
 import {
   cancelJob,
   JobApiError,
@@ -15,16 +16,12 @@ import {
   resumeJob,
   type JobSummary,
 } from "../../../../../../../lib/jobs";
+import { requireRouteParam } from "../../../../../../../lib/route-params";
 
-type JobsPageProps = {
-  params: Promise<{
-    closeRunId: string;
-    entityId: string;
-  }>;
-};
-
-export default function JobsPage({ params }: Readonly<JobsPageProps>): ReactElement {
-  const { closeRunId, entityId } = use(params);
+export default function JobsPage(): ReactElement {
+  const routeParams = useParams<{ closeRunId: string; entityId: string }>();
+  const closeRunId = requireRouteParam(routeParams.closeRunId, "closeRunId");
+  const entityId = requireRouteParam(routeParams.entityId, "entityId");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [jobs, setJobs] = useState<readonly JobSummary[]>([]);
   const [isLoading, setIsLoading] = useState(true);

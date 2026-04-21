@@ -7,10 +7,9 @@ Dependencies: React hooks, shared workflow metadata, Next.js routing, and entity
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import {
   useCallback,
-  use,
   useEffect,
   useMemo,
   useState,
@@ -52,12 +51,7 @@ import {
   type LedgerImportUploadResponse,
   type LedgerWorkspaceResponse,
 } from "../../../../lib/ledger";
-
-type EntityWorkspacePageProps = {
-  params: Promise<{
-    entityId: string;
-  }>;
-};
+import { requireRouteParam } from "../../../../lib/route-params";
 
 type CreateCloseRunFormState = {
   periodEnd: string;
@@ -95,10 +89,9 @@ const defaultUploadEntityDataFormState: UploadEntityDataFormState = {
   periodStart: "",
 };
 
-export default function EntityWorkspacePage({
-  params,
-}: Readonly<EntityWorkspacePageProps>): ReactElement {
-  const { entityId } = use(params);
+export default function EntityWorkspacePage(): ReactElement {
+  const routeParams = useParams<{ entityId: string }>();
+  const entityId = requireRouteParam(routeParams.entityId, "entityId");
   const entitySnapshot = readEntityWorkspaceSnapshot(entityId);
   const closeRunSnapshot = readCloseRunListSnapshot(entityId);
   const router = useRouter();

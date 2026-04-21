@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { use, useCallback, useEffect, useMemo, useState, type ReactElement } from "react";
+import { useParams } from "next/navigation";
+import { useCallback, useEffect, useMemo, useState, type ReactElement } from "react";
 import { QuartzIcon } from "../../../../../../../components/layout/QuartzIcons";
 import {
   archiveCloseRun,
@@ -33,13 +34,7 @@ import {
   readReportRun,
   ReportApiError,
 } from "../../../../../../../lib/reports";
-
-type CloseRunCompletePageProps = {
-  params: Promise<{
-    closeRunId: string;
-    entityId: string;
-  }>;
-};
+import { requireRouteParam } from "../../../../../../../lib/route-params";
 
 type CompletionWorkspaceData = {
   closeRunWorkspace: CloseRunWorkspaceData;
@@ -66,10 +61,10 @@ type ReleaseArtifactRow = Readonly<{
   statusTone: "error" | "neutral" | "success" | "warning";
 }>;
 
-export default function CloseRunCompletePage({
-  params,
-}: Readonly<CloseRunCompletePageProps>): ReactElement {
-  const { closeRunId, entityId } = use(params);
+export default function CloseRunCompletePage(): ReactElement {
+  const routeParams = useParams<{ closeRunId: string; entityId: string }>();
+  const closeRunId = requireRouteParam(routeParams.closeRunId, "closeRunId");
+  const entityId = requireRouteParam(routeParams.entityId, "entityId");
 
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isArchiving, setIsArchiving] = useState(false);

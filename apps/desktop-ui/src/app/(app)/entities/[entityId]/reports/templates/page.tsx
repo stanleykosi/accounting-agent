@@ -8,8 +8,8 @@ Dependencies: React hooks, route params, Next links, and the reports API helper 
 "use client";
 
 import Link from "next/link";
+import { useParams } from "next/navigation";
 import {
-  use,
   useCallback,
   useEffect,
   useState,
@@ -30,12 +30,7 @@ import {
   type ReportSectionDefinition,
   type ReportTemplateSummary,
 } from "../../../../../../lib/reports";
-
-type ReportTemplatesPageProps = {
-  params: Promise<{
-    entityId: string;
-  }>;
-};
+import { requireRouteParam } from "../../../../../../lib/route-params";
 
 type CreateTemplateFormState = {
   name: string;
@@ -77,9 +72,9 @@ const defaultCreateTemplateFormState: CreateTemplateFormState = {
 /* Page component                                                      */
 /* ------------------------------------------------------------------ */
 
-export default function ReportTemplatesPage({ params }: ReportTemplatesPageProps): ReactElement {
-  const resolvedParams = use(params);
-  const { entityId } = resolvedParams;
+export default function ReportTemplatesPage(): ReactElement {
+  const routeParams = useParams<{ entityId: string }>();
+  const entityId = requireRouteParam(routeParams.entityId, "entityId");
 
   const [templates, setTemplates] = useState<readonly ReportTemplateSummary[]>([]);
   const [activeTemplateId, setActiveTemplateId] = useState<string | null>(null);
