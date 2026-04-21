@@ -113,7 +113,7 @@ ThreadLimitQuery = Annotated[int, Query(ge=1, le=200, description="Maximum items
 MessageLimitQuery = Annotated[int, Query(ge=1, le=500, description="Maximum messages.")]
 ActionPlanIdPath = Annotated[UUID, Path(description="Action plan UUID to approve or reject.")]
 ThreadAccessQuery = Annotated[UUID, Query(description="Thread UUID for access verification.")]
-INLINE_ATTACHMENT_INTENTS = ("source_documents", "chart_of_accounts")
+INLINE_ATTACHMENT_INTENTS = ("source_documents",)
 
 
 def get_chat_service(
@@ -357,10 +357,7 @@ async def _ingest_chat_attachments(
             status_code=400,
             detail=_error_payload(
                 code="invalid_attachment_intent",
-                message=(
-                    "Attachment intent must be either 'source_documents' or "
-                    "'chart_of_accounts'."
-                ),
+                message="Attachment intent must be 'source_documents'.",
             ),
         )
 
@@ -444,45 +441,11 @@ async def _ingest_chat_attachments(
             ),
         )
 
-    if len(files) != 1:
-        raise HTTPException(
-            status_code=400,
-            detail=_error_payload(
-                code="single_file_required",
-                message="Attach exactly one COA file when uploading a chart of accounts.",
-            ),
-        )
-
-    file = files[0]
-    workspace = coa_service.upload_manual_coa(
-        actor_user=actor_user,
-        entity_id=entity_id,
-        filename=file.filename or "coa_upload",
-        payload=await file.read(),
-        source_surface=AuditSourceSurface.DESKTOP,
-        trace_id=trace_id,
-    )
-    attachment = {
-        "filename": file.filename or "coa_upload",
-        "content_type": file.content_type,
-        "intent": normalized_intent,
-        "active_coa_source": workspace.active_set.source,
-        "active_coa_version_no": workspace.active_set.version_no,
-        "account_count": workspace.active_set.account_count,
-    }
-    summary = (
-        f"Chart of accounts uploaded and activated as version "
-        f"{workspace.active_set.version_no} with {workspace.active_set.account_count} accounts."
-    )
-    return ChatInlineAttachmentResult(
-        attachment_intent=normalized_intent,
-        files=(attachment,),
-        summary=summary,
-        operator_prompt=_build_inline_attachment_prompt(
-            attachment_intent=normalized_intent,
-            content=content,
-            filenames=(attachment["filename"],),
-            summary=summary,
+    raise HTTPException(
+        status_code=400,
+        detail=_error_payload(
+            code="invalid_attachment_intent",
+            message="Only source-document uploads are supported in chat.",
         ),
     )
 
@@ -505,11 +468,6 @@ def _build_inline_attachment_prompt(
     )
     if cleaned_content:
         return f"{cleaned_content}\n\n{preamble}"
-    if attachment_intent == "chart_of_accounts":
-        return (
-            "A chart of accounts file was attached through chat. Confirm that the active "
-            f"COA changed successfully and explain any remaining prerequisites. {preamble}"
-        )
     return (
         "Source documents were attached through chat. Confirm parsing has started and explain "
         f"the next close-run step. {preamble}"

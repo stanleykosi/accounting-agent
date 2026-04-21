@@ -55,7 +55,7 @@ export type ChatThreadDeleteResponse = {
   deleted_thread_title: string | null;
 };
 
-export type ChatAttachmentIntent = "chart_of_accounts" | "source_documents";
+export type ChatAttachmentIntent = "source_documents";
 
 export type AgentMemorySummary = {
   last_action_status: string | null;

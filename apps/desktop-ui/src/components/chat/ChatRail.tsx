@@ -1,11 +1,3 @@
-/*
-Purpose: Provide a compact embedded rail and a full accounting-agent workbench
-surface for grounded chat operations.
-Scope: Thread list, message history, action-capable composer, agent memory,
-registered tools, and recent trace visibility.
-Dependencies: React and the same-origin chat API helpers.
-*/
-
 "use client";
 
 import {
@@ -15,28 +7,21 @@ import {
   useRef,
   useState,
   type CSSProperties,
-  type ReactNode,
+  type ReactElement,
 } from "react";
-import { ActionComposer } from "./ActionComposer";
+import { ActionComposer, type ComposerDraft } from "./ActionComposer";
 import {
-  extractToolSchemaFields,
-  summarizeToolSchema,
-  type AgentTraceRecord,
-  type AgentToolManifestItem,
-  type ChatToolManifest,
-  type ChatMessageRecord,
-  type ChatThreadSummary,
-  type ChatThreadWorkspace,
-  type GroundingContext,
-  type ToolSchemaField,
   ChatApiError,
   createChatThread,
   deleteChatThread,
   getChatThread,
   getChatThreadWorkspace,
   listChatThreads,
+  type ChatActionResponse,
+  type ChatMessageRecord,
+  type ChatThreadSummary,
+  type ChatThreadWorkspace,
 } from "../../lib/chat";
-import { AgentReadinessPanel } from "./AgentReadinessPanel";
 
 export type ChatRailProps = {
   closeRunId?: string;
@@ -44,32 +29,61 @@ export type ChatRailProps = {
   presentation?: "rail" | "workspace";
 };
 
-export function ChatRail({ closeRunId, entityId, presentation = "rail" }: Readonly<ChatRailProps>) {
+type PendingTurn = {
+  assistantContent: string | null;
+  draft: ComposerDraft;
+};
+
+type RenderableMessage = ChatMessageRecord & {
+  displayTime: string;
+};
+
+export function ChatRail({
+  closeRunId,
+  entityId,
+  presentation = "rail",
+}: Readonly<ChatRailProps>): ReactElement {
   const [threads, setThreads] = useState<ChatThreadSummary[]>([]);
   const [selectedThread, setSelectedThread] = useState<ChatThreadSummary | null>(null);
   const [messages, setMessages] = useState<ChatMessageRecord[]>([]);
   const [workspace, setWorkspace] = useState<ChatThreadWorkspace | null>(null);
-  const [isLoading, setIsLoading] = useState(false);
-  const [isExpanded, setIsExpanded] = useState(true);
+  const [pendingTurn, setPendingTurn] = useState<PendingTurn | null>(null);
   const [deletingThreadId, setDeletingThreadId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [isBootstrapping, setIsBootstrapping] = useState(true);
+  const [isLoadingThread, setIsLoadingThread] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const loadThreads = useCallback(async (): Promise<ChatThreadSummary[]> => {
-    const options: { closeRunId?: string; limit?: number } = { limit: 50 };
-    if (closeRunId) {
-      options.closeRunId = closeRunId;
-    }
-    const response = await listChatThreads(entityId, options);
+    const response = await listChatThreads(
+      entityId,
+      closeRunId
+        ? {
+            closeRunId,
+            limit: 50,
+          }
+        : {
+            limit: 50,
+          },
+    );
     setThreads(response.threads);
     return response.threads;
   }, [closeRunId, entityId]);
 
   const loadThreadWorkspace = useCallback(
-    async (thread: ChatThreadSummary): Promise<void> => {
+    async (
+      thread: ChatThreadSummary,
+      options?: {
+        showLoader?: boolean;
+      },
+    ): Promise<void> => {
+      const showLoader = options?.showLoader ?? true;
       setSelectedThread(thread);
-      setIsLoading(true);
+      if (showLoader) {
+        setIsLoadingThread(true);
+      }
       setError(null);
+
       try {
         const [threadDetail, threadWorkspace] = await Promise.all([
           getChatThread(thread.id, entityId),
@@ -77,42 +91,98 @@ export function ChatRail({ closeRunId, entityId, presentation = "rail" }: Readon
         ]);
         setMessages(threadDetail.messages);
         setWorkspace(threadWorkspace);
-      } catch (err: unknown) {
-        if (err instanceof ChatApiError && err.status !== 401) {
-          setError("Failed to load the selected agent thread.");
+        setPendingTurn(null);
+      } catch (error: unknown) {
+        if (error instanceof ChatApiError && error.status !== 401) {
+          setError("The selected chat could not be loaded.");
         }
       } finally {
-        setIsLoading(false);
+        if (showLoader) {
+          setIsLoadingThread(false);
+        }
       }
     },
     [entityId],
   );
 
+  const handleCreateThread = useCallback(async (): Promise<ChatThreadSummary | null> => {
+    try {
+      const response = await createChatThread(
+        closeRunId
+          ? {
+              close_run_id: closeRunId,
+              entity_id: entityId,
+            }
+          : {
+              entity_id: entityId,
+            },
+      );
+      const nextThread = response.thread;
+      setThreads((current) => dedupeThreads([nextThread, ...current]));
+      await loadThreadWorkspace(nextThread, { showLoader: false });
+      setError(null);
+      return nextThread;
+    } catch (error: unknown) {
+      if (error instanceof ChatApiError && error.status !== 401) {
+        setError("A new chat could not be created.");
+      }
+      return null;
+    }
+  }, [closeRunId, entityId, loadThreadWorkspace]);
+
   useEffect(() => {
-    void (async () => {
+    let isMounted = true;
+
+    async function bootstrap(): Promise<void> {
+      setIsBootstrapping(true);
+      setError(null);
+      setPendingTurn(null);
+      setMessages([]);
+      setWorkspace(null);
+      setSelectedThread(null);
+
       try {
         const loadedThreads = await loadThreads();
-        const firstThread = loadedThreads[0];
-        if (presentation === "workspace" && firstThread !== undefined && selectedThread === null) {
-          await loadThreadWorkspace(firstThread);
+        if (!isMounted) {
+          return;
         }
-      } catch (err: unknown) {
-        if (err instanceof ChatApiError && err.status !== 401) {
-          setError("Failed to load chat threads.");
+
+        if (loadedThreads[0] !== undefined) {
+          await loadThreadWorkspace(loadedThreads[0], { showLoader: false });
+          return;
+        }
+
+        if (presentation === "workspace") {
+          await handleCreateThread();
+        }
+      } catch (error: unknown) {
+        if (error instanceof ChatApiError && error.status !== 401) {
+          setError("The assistant workspace could not be prepared.");
+        }
+      } finally {
+        if (isMounted) {
+          setIsBootstrapping(false);
         }
       }
-    })();
-  }, [loadThreads, loadThreadWorkspace, presentation, selectedThread]);
+    }
+
+    void bootstrap();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [handleCreateThread, loadThreadWorkspace, loadThreads, presentation]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
+  }, [messages, pendingTurn, isLoadingThread]);
 
   const refreshSelectedThread = useCallback(async (): Promise<void> => {
     if (selectedThread === null) {
       return;
     }
-    await loadThreadWorkspace(selectedThread);
+
+    await loadThreadWorkspace(selectedThread, { showLoader: false });
     try {
       await loadThreads();
     } catch {
@@ -120,31 +190,10 @@ export function ChatRail({ closeRunId, entityId, presentation = "rail" }: Readon
     }
   }, [loadThreadWorkspace, loadThreads, selectedThread]);
 
-  const handleCreateThread = useCallback(async () => {
-    try {
-      const request: { close_run_id?: string; entity_id: string; title?: string } = {
-        entity_id: entityId,
-      };
-      if (closeRunId) {
-        request.close_run_id = closeRunId;
-        request.title = "Accounting agent workspace";
-      }
-      const response = await createChatThread(request);
-      setThreads((prev) => [response.thread, ...prev]);
-      await loadThreadWorkspace(response.thread);
-      setError(null);
-    } catch (err: unknown) {
-      const apiError = err instanceof ChatApiError ? err : null;
-      if (apiError && apiError.status !== 401) {
-        setError("Failed to create a new chat thread.");
-      }
-    }
-  }, [closeRunId, entityId, loadThreadWorkspace]);
-
   const handleDeleteThread = useCallback(
-    async (thread: ChatThreadSummary) => {
+    async (thread: ChatThreadSummary): Promise<void> => {
       const confirmed = window.confirm(
-        `Delete "${thread.title ?? "Untitled thread"}"? This removes the full conversation history.`,
+        `Delete "${formatThreadTitle(thread)}"? This removes the full conversation history.`,
       );
       if (!confirmed) {
         return;
@@ -161,694 +210,350 @@ export function ChatRail({ closeRunId, entityId, presentation = "rail" }: Readon
           return;
         }
 
-        const nextThread = remainingThreads[0] ?? null;
-        if (nextThread === null) {
-          setSelectedThread(null);
-          setMessages([]);
-          setWorkspace(null);
+        if (remainingThreads[0] !== undefined) {
+          await loadThreadWorkspace(remainingThreads[0], { showLoader: false });
           return;
         }
-        await loadThreadWorkspace(nextThread);
-      } catch (err: unknown) {
-        const apiError = err instanceof ChatApiError ? err : null;
-        if (apiError && apiError.status !== 401) {
-          setError("Failed to delete the selected chat thread.");
+
+        setMessages([]);
+        setWorkspace(null);
+        setSelectedThread(null);
+        setPendingTurn(null);
+
+        if (presentation === "workspace") {
+          await handleCreateThread();
+        }
+      } catch (error: unknown) {
+        if (error instanceof ChatApiError && error.status !== 401) {
+          setError("The selected chat could not be deleted.");
         }
       } finally {
         setDeletingThreadId(null);
       }
     },
-    [entityId, loadThreadWorkspace, selectedThread, threads],
+    [entityId, handleCreateThread, loadThreadWorkspace, presentation, selectedThread, threads],
   );
 
-  const grounding = selectedThread?.grounding ?? workspace?.grounding ?? null;
-  const panel =
-    presentation === "workspace" ? (
-      <div style={workbenchShellStyle}>
-        <ThreadSidebar
-          deletingThreadId={deletingThreadId}
-          threads={threads}
-          onDeleteThread={(thread) => {
-            void handleDeleteThread(thread);
-          }}
-          selectedThreadId={selectedThread?.id ?? null}
-          onCreateThread={() => {
-            void handleCreateThread();
-          }}
-          onSelectThread={(thread) => {
-            void loadThreadWorkspace(thread);
-          }}
-        />
-        <section style={conversationPaneStyle}>
-          <ConversationHeader
-            error={error}
-            grounding={grounding}
-            memorySummary={workspace?.memory.progress_summary ?? null}
-          />
-          <MessageList isLoading={isLoading} messages={messages} />
-          <ActionComposer
-            closeRunId={selectedThread?.close_run_id ?? closeRunId}
-            disabled={isLoading || selectedThread === null}
-            entityId={entityId}
-            onActionStateChange={() => {
-              void refreshSelectedThread();
-            }}
-            onMessageSent={() => {
-              void refreshSelectedThread();
-            }}
-            threadId={selectedThread?.id ?? ""}
-            workspace={workspace}
-          />
-          <div ref={messagesEndRef} />
-        </section>
-        <AgentWorkspacePanel
-          closeRunId={closeRunId}
-          entityId={entityId}
-          onRefresh={() => {
-            void refreshSelectedThread();
-          }}
-          workspace={workspace}
-        />
-      </div>
-    ) : (
-      <CompactRail
-        closeRunId={closeRunId}
-        entityId={entityId}
-        error={error}
-        grounding={grounding}
-        isExpanded={isExpanded}
-        isLoading={isLoading}
-        messages={messages}
+  const renderableMessages = useMemo(
+    () => buildRenderableMessages(messages),
+    [messages],
+  );
+
+  const isAwaitingReply = pendingTurn !== null && pendingTurn.assistantContent === null;
+
+  return (
+    <div
+      style={
+        presentation === "workspace"
+          ? workbenchShellStyle
+          : { ...workbenchShellStyle, gridTemplateColumns: "minmax(240px, 280px) minmax(0, 1fr)" }
+      }
+    >
+      <ThreadSidebar
         deletingThreadId={deletingThreadId}
-        onCollapse={() => setIsExpanded(false)}
+        isBootstrapping={isBootstrapping}
+        selectedThreadId={selectedThread?.id ?? null}
+        threads={threads}
         onCreateThread={() => {
           void handleCreateThread();
         }}
         onDeleteThread={(thread) => {
           void handleDeleteThread(thread);
         }}
-        onExpand={() => setIsExpanded(true)}
-        onRefresh={() => {
-          void refreshSelectedThread();
-        }}
         onSelectThread={(thread) => {
           void loadThreadWorkspace(thread);
         }}
-        selectedThread={selectedThread}
-        threads={threads}
-        threadId={selectedThread?.id ?? ""}
-        workspace={workspace}
       />
-    );
 
-  return panel;
-}
-
-type CompactRailProps = {
-  closeRunId: string | undefined;
-  deletingThreadId: string | null;
-  entityId: string;
-  error: string | null;
-  grounding: GroundingContext | null;
-  isExpanded: boolean;
-  isLoading: boolean;
-  messages: ChatMessageRecord[];
-  onCollapse: () => void;
-  onCreateThread: () => void;
-  onDeleteThread: (thread: ChatThreadSummary) => void;
-  onExpand: () => void;
-  onRefresh: () => void;
-  onSelectThread: (thread: ChatThreadSummary) => void;
-  selectedThread: ChatThreadSummary | null;
-  threadId: string;
-  threads: ChatThreadSummary[];
-  workspace: ChatThreadWorkspace | null;
-};
-
-function CompactRail({
-  closeRunId,
-  deletingThreadId,
-  entityId,
-  error,
-  grounding,
-  isExpanded,
-  isLoading,
-  messages,
-  onCollapse,
-  onCreateThread,
-  onDeleteThread,
-  onExpand,
-  onRefresh,
-  onSelectThread,
-  selectedThread,
-  threadId,
-  threads,
-  workspace,
-}: Readonly<CompactRailProps>) {
-  if (!isExpanded) {
-    return (
-      <button
-        aria-label="Expand chat rail"
-        onClick={onExpand}
-        style={expandButtonStyle}
-        type="button"
-      >
-        Agent
-      </button>
-    );
-  }
-
-  return (
-    <aside aria-label="Chat rail" style={railContainerStyle}>
-      <header style={railHeaderStyle}>
-        <div style={{ display: "grid", gap: 2 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <h3 style={railTitleStyle}>Accounting Agent</h3>
-            {grounding ? (
-              <span style={groundingBadgeStyle}>
-                {grounding.entity_name}
-                {grounding.period_label ? ` · ${grounding.period_label}` : ""}
-              </span>
-            ) : null}
-          </div>
-          <p style={railSubtitleStyle}>
-            {threads.length} {threads.length === 1 ? "thread" : "threads"}
-          </p>
-        </div>
-        <button
-          aria-label="Collapse chat rail"
-          onClick={onCollapse}
-          style={ghostButtonStyle}
-          type="button"
-        >
-          Collapse
-        </button>
-      </header>
-
-      {selectedThread === null ? (
-        <ThreadSidebar
-          deletingThreadId={deletingThreadId}
-          threads={threads}
-          onDeleteThread={onDeleteThread}
-          selectedThreadId={null}
-          onCreateThread={onCreateThread}
-          onSelectThread={onSelectThread}
+      <section style={conversationPaneStyle}>
+        <ConversationHeader
+          error={error}
+          isLoading={isLoadingThread || isBootstrapping}
+          thread={selectedThread}
         />
-      ) : (
-        <>
-          {error ? <StatusBanner tone="danger">{error}</StatusBanner> : null}
-          <MessageList isLoading={isLoading} messages={messages} />
-          <ActionComposer
-            closeRunId={selectedThread?.close_run_id ?? closeRunId}
-            disabled={isLoading}
-            entityId={entityId}
-            onActionStateChange={() => {
-              void onRefresh();
-            }}
-            onMessageSent={() => {
-              void onRefresh();
-            }}
-            threadId={threadId}
-            workspace={workspace}
-          />
-        </>
-      )}
-    </aside>
+
+        <MessageList
+          isAwaitingReply={isAwaitingReply}
+          isLoading={isLoadingThread || isBootstrapping}
+          messages={renderableMessages}
+          pendingTurn={pendingTurn}
+        />
+
+        <ActionComposer
+          closeRunId={selectedThread?.close_run_id ?? closeRunId}
+          disabled={isLoadingThread || isBootstrapping || selectedThread === null}
+          entityId={entityId}
+          onActionStateChange={() => {
+            void refreshSelectedThread();
+          }}
+          onMessageSent={(response: ChatActionResponse, draft: ComposerDraft) => {
+            setPendingTurn({
+              assistantContent: response.content,
+              draft,
+            });
+            void refreshSelectedThread();
+          }}
+          onSubmissionError={() => {
+            setPendingTurn(null);
+          }}
+          onSubmissionStart={(draft: ComposerDraft) => {
+            setPendingTurn({
+              assistantContent: null,
+              draft,
+            });
+          }}
+          threadId={selectedThread?.id ?? ""}
+          workspace={workspace}
+        />
+
+        <div ref={messagesEndRef} />
+      </section>
+    </div>
   );
 }
 
 type ThreadSidebarProps = {
   deletingThreadId: string | null;
+  isBootstrapping: boolean;
   onCreateThread: () => void;
   onDeleteThread: (thread: ChatThreadSummary) => void;
   onSelectThread: (thread: ChatThreadSummary) => void;
   selectedThreadId: string | null;
-  threads: ChatThreadSummary[];
+  threads: readonly ChatThreadSummary[];
 };
 
 function ThreadSidebar({
   deletingThreadId,
+  isBootstrapping,
   onCreateThread,
   onDeleteThread,
   onSelectThread,
   selectedThreadId,
   threads,
-}: Readonly<ThreadSidebarProps>) {
+}: Readonly<ThreadSidebarProps>): ReactElement {
   return (
-    <section style={threadSidebarStyle}>
+    <aside style={threadSidebarStyle}>
       <div style={threadSidebarHeaderStyle}>
-        <div>
-          <p style={panelEyebrowStyle}>Threads</p>
-          <h2 style={panelTitleStyle}>Operator sessions</h2>
+        <div style={{ display: "grid", gap: 6 }}>
+          <p style={sidebarEyebrowStyle}>Assistant</p>
+          <h2 style={sidebarTitleStyle}>Chats</h2>
+          <p style={sidebarBodyStyle}>
+            One clean workspace for questions, approvals, and source-document uploads.
+          </p>
         </div>
-        <button onClick={onCreateThread} style={primaryButtonStyle} type="button">
-          New thread
+        <button onClick={onCreateThread} style={newChatButtonStyle} type="button">
+          New chat
         </button>
       </div>
 
-      {threads.length === 0 ? (
-        <div style={emptyStateCardStyle}>
-          <p style={emptyTitleStyle}>No agent threads yet</p>
-          <p style={emptyBodyStyle}>
-            Open a thread to inspect close progress, ask questions, and route deterministic actions.
+      {isBootstrapping ? (
+        <div style={emptySidebarCardStyle}>
+          <p style={emptySidebarTitleStyle}>Preparing assistant…</p>
+          <p style={emptySidebarBodyStyle}>Loading the latest chat workspace.</p>
+        </div>
+      ) : threads.length === 0 ? (
+        <div style={emptySidebarCardStyle}>
+          <p style={emptySidebarTitleStyle}>No chats yet</p>
+          <p style={emptySidebarBodyStyle}>
+            A new chat will open automatically when you begin working here.
           </p>
         </div>
       ) : (
         <ul style={threadListStyle}>
-          {threads.map((thread) => (
-            <li key={thread.id}>
-              <div style={threadRowStyle}>
-                <button
-                  onClick={() => onSelectThread(thread)}
-                  style={
-                    thread.id === selectedThreadId
-                      ? { ...threadItemStyle, ...threadItemActiveStyle }
-                      : threadItemStyle
-                  }
-                  type="button"
-                >
-                  <div style={{ display: "grid", gap: 4 }}>
-                    <span style={threadTitleStyle}>{thread.title ?? "Untitled thread"}</span>
-                    <span style={threadMetaStyle}>
-                      {thread.grounding.period_label ?? "Workspace scope"} · {thread.message_count}{" "}
-                      messages
-                    </span>
-                  </div>
-                </button>
-                <button
-                  aria-label={`Delete ${thread.title ?? "thread"}`}
-                  disabled={deletingThreadId === thread.id}
-                  onClick={() => onDeleteThread(thread)}
-                  style={threadDeleteButtonStyle}
-                  title="Delete thread"
-                  type="button"
-                >
-                  x
-                </button>
-              </div>
-            </li>
-          ))}
+          {threads.map((thread) => {
+            const isActive = thread.id === selectedThreadId;
+            return (
+              <li key={thread.id}>
+                <div style={threadRowStyle}>
+                  <button
+                    onClick={() => onSelectThread(thread)}
+                    style={isActive ? { ...threadCardStyle, ...threadCardActiveStyle } : threadCardStyle}
+                    type="button"
+                  >
+                    <div style={{ display: "grid", gap: 6 }}>
+                      <span style={threadTitleStyle}>{formatThreadTitle(thread)}</span>
+                      <span style={threadMetaStyle}>
+                        {formatThreadSubtitle(thread)} · {formatThreadTime(thread.updated_at)}
+                      </span>
+                    </div>
+                  </button>
+                  <button
+                    aria-label={`Delete ${formatThreadTitle(thread)}`}
+                    disabled={deletingThreadId === thread.id}
+                    onClick={() => onDeleteThread(thread)}
+                    style={threadDeleteButtonStyle(deletingThreadId === thread.id)}
+                    title="Delete chat"
+                    type="button"
+                  >
+                    {deletingThreadId === thread.id ? "…" : "×"}
+                  </button>
+                </div>
+              </li>
+            );
+          })}
         </ul>
       )}
-    </section>
+    </aside>
   );
 }
 
 type ConversationHeaderProps = {
   error: string | null;
-  grounding: GroundingContext | null;
-  memorySummary: string | null;
+  isLoading: boolean;
+  thread: ChatThreadSummary | null;
 };
 
 function ConversationHeader({
   error,
-  grounding,
-  memorySummary,
-}: Readonly<ConversationHeaderProps>) {
+  isLoading,
+  thread,
+}: Readonly<ConversationHeaderProps>): ReactElement {
   return (
     <header style={conversationHeaderStyle}>
       <div style={{ display: "grid", gap: 6 }}>
-        <p style={panelEyebrowStyle}>Conversation</p>
-        <h2 style={panelTitleStyle}>Agent workspace</h2>
+        <p style={conversationEyebrowStyle}>Assistant Workspace</p>
+        <div style={conversationTitleRowStyle}>
+          <h2 style={conversationTitleStyle}>
+            {thread === null ? "New chat" : formatThreadTitle(thread)}
+          </h2>
+          {thread !== null ? (
+            <span style={conversationMetaPillStyle}>
+              {thread.grounding.period_label ?? "Entity scope"}
+            </span>
+          ) : null}
+        </div>
         <p style={conversationBodyStyle}>
-          {memorySummary ??
-            "Use natural language to inspect workflow state, upload files, trigger actions, review approvals, and continue the close from here."}
+          Ask questions naturally, upload source documents, and continue the close from one clean
+          conversation. Hidden workflow context stays grounded in the backend and out of the UI.
         </p>
       </div>
-      {grounding ? (
-        <div style={conversationBadgeRowStyle}>
-          <span style={groundingBadgeStyle}>{grounding.entity_name}</span>
-          {grounding.period_label ? (
-            <span style={metaPillStyle}>{grounding.period_label}</span>
-          ) : null}
-          <span style={metaPillStyle}>{grounding.autonomy_mode.replaceAll("_", " ")}</span>
+      {error ? (
+        <div style={conversationErrorStyle} role="status">
+          {error}
         </div>
       ) : null}
-      {error ? <StatusBanner tone="danger">{error}</StatusBanner> : null}
+      {isLoading ? (
+        <div style={conversationLoadingStyle}>Refreshing the latest assistant state…</div>
+      ) : null}
     </header>
   );
 }
 
 type MessageListProps = {
+  isAwaitingReply: boolean;
   isLoading: boolean;
-  messages: ChatMessageRecord[];
+  messages: readonly RenderableMessage[];
+  pendingTurn: PendingTurn | null;
 };
 
-function MessageList({ isLoading, messages }: Readonly<MessageListProps>) {
+function MessageList({
+  isAwaitingReply,
+  isLoading,
+  messages,
+  pendingTurn,
+}: Readonly<MessageListProps>): ReactElement {
+  const hasMessages = messages.length > 0 || pendingTurn !== null;
+
   return (
     <div style={messageListStyle}>
-      {messages.length === 0 && !isLoading ? (
-        <div style={emptyStateCardStyle}>
-          <p style={emptyTitleStyle}>Start with an instruction</p>
-          <p style={emptyBodyStyle}>
-            Ask about status, approvals, reporting, exports, or next steps. You can also attach
-            files and continue the workflow from chat.
+      {!hasMessages && !isLoading ? (
+        <div style={emptyConversationCardStyle}>
+          <p style={emptyConversationEyebrowStyle}>Ready</p>
+          <h3 style={emptyConversationTitleStyle}>Start the conversation</h3>
+          <p style={emptyConversationBodyStyle}>
+            Use the assistant like a modern chat workspace. Ask for the next step, resolve a
+            blocker, or upload source documents and let the agent stay grounded to this close.
           </p>
         </div>
       ) : null}
+
       {messages.map((message) => (
         <article
           key={message.id}
-          style={message.role === "user" ? userMessageStyle : assistantMessageStyle}
+          style={message.role === "user" ? userMessageContainerStyle : assistantMessageContainerStyle}
         >
-          <div style={messageHeaderStyle}>
-            <span style={messageRoleStyle}>{message.role === "user" ? "You" : "Agent"}</span>
-            {message.message_type !== "analysis" ? (
-              <span style={messageTypeBadgeStyle}>{message.message_type.replaceAll("_", " ")}</span>
-            ) : null}
-            {typeof message.model_metadata?.tool === "string" ? (
-              <span style={traceBadgeStyle}>{String(message.model_metadata.tool)}</span>
-            ) : null}
-          </div>
-          {extractInlineAttachments(message).length > 0 ? (
-            <div style={inlineAttachmentRowStyle}>
-              {extractInlineAttachments(message).map((attachment) => (
-                <span
-                  key={`${message.id}-${attachment.filename}`}
-                  style={inlineAttachmentPillStyle}
-                >
-                  {attachment.intentLabel}: {attachment.filename}
-                </span>
-              ))}
+          <div style={message.role === "user" ? userMessageBubbleStyle : assistantMessageBubbleStyle}>
+            <div style={messageHeaderStyle}>
+              <span style={messageRoleStyle(message.role)}>{message.role === "user" ? "You" : "Assistant"}</span>
+              <span style={messageTimeStyle}>{message.displayTime}</span>
             </div>
-          ) : null}
-          <p style={messageContentStyle}>{message.content}</p>
-          {typeof message.model_metadata?.trace_id === "string" ? (
-            <p style={messageMetaStyle}>Trace {String(message.model_metadata.trace_id)}</p>
-          ) : null}
+            {extractInlineAttachments(message).length > 0 ? (
+              <div style={inlineAttachmentRowStyle}>
+                {extractInlineAttachments(message).map((attachment) => (
+                  <span key={`${message.id}-${attachment.filename}`} style={inlineAttachmentPillStyle}>
+                    {attachment.intentLabel}: {attachment.filename}
+                  </span>
+                ))}
+              </div>
+            ) : null}
+            <p style={messageContentStyle}>{message.content}</p>
+          </div>
         </article>
       ))}
-      {isLoading ? (
-        <div style={assistantMessageStyle}>
-          <p style={{ color: "var(--quartz-muted)", margin: 0 }}>Refreshing agent context...</p>
-        </div>
+
+      {pendingTurn !== null ? (
+        <>
+          <article style={userMessageContainerStyle}>
+            <div style={userMessageBubbleStyle}>
+              <div style={messageHeaderStyle}>
+                <span style={messageRoleStyle("user")}>You</span>
+                <span style={messageTimeStyle}>Sending…</span>
+              </div>
+              {pendingTurn.draft.attachmentNames.length > 0 ? (
+                <div style={inlineAttachmentRowStyle}>
+                  {pendingTurn.draft.attachmentNames.map((attachmentName) => (
+                    <span key={attachmentName} style={inlineAttachmentPillStyle}>
+                      Source document: {attachmentName}
+                    </span>
+                  ))}
+                </div>
+              ) : null}
+              <p style={messageContentStyle}>{pendingTurn.draft.content}</p>
+            </div>
+          </article>
+
+          <article style={assistantMessageContainerStyle}>
+            <div style={assistantMessageBubbleStyle}>
+              <div style={messageHeaderStyle}>
+                <span style={messageRoleStyle("assistant")}>Assistant</span>
+                <span style={messageTimeStyle}>{isAwaitingReply ? "Thinking…" : "Reply ready"}</span>
+              </div>
+              {pendingTurn.assistantContent === null ? (
+                <div style={thinkingBubbleStyle}>
+                  <span className="quartz-chat-thinking-dots">
+                    <span />
+                    <span />
+                    <span />
+                  </span>
+                  <span>Working through the request</span>
+                </div>
+              ) : (
+                <p style={messageContentStyle}>{pendingTurn.assistantContent}</p>
+              )}
+            </div>
+          </article>
+        </>
       ) : null}
     </div>
   );
 }
 
-type AgentWorkspacePanelProps = {
-  closeRunId: string | undefined;
-  entityId: string;
-  onRefresh: () => void;
-  workspace: ChatThreadWorkspace | null;
-};
-
-function AgentWorkspacePanel({
-  closeRunId,
-  entityId,
-  onRefresh,
-  workspace,
-}: Readonly<AgentWorkspacePanelProps>) {
-  const [traceFilter, setTraceFilter] = useState<"all" | "applied" | "pending" | "issues">("all");
-  const toolsByIntent = useMemo(() => {
-    if (workspace === null) {
-      return [];
-    }
-    const grouped = new Map<string, AgentToolManifestItem[]>();
-    for (const tool of workspace.tools) {
-      const bucket = grouped.get(tool.intent) ?? [];
-      bucket.push(tool);
-      grouped.set(tool.intent, bucket);
-    }
-    return Array.from(grouped.entries());
-  }, [workspace]);
-  const traceSummary = useMemo(
-    () => buildTraceSummary(workspace?.recent_traces ?? []),
-    [workspace],
-  );
-  const visibleTraces = useMemo(() => {
-    if (workspace === null) {
-      return [];
-    }
-    if (traceFilter === "all") {
-      return workspace.recent_traces;
-    }
-    if (traceFilter === "issues") {
-      return workspace.recent_traces.filter((trace) => isIssueTrace(trace.action_status));
-    }
-    return workspace.recent_traces.filter((trace) => trace.action_status === traceFilter);
-  }, [traceFilter, workspace]);
-  const manifestSummary = useMemo(
-    () => summarizeManifest(workspace?.mcp_manifest ?? null, workspace?.tools ?? []),
-    [workspace],
-  );
-
-  return (
-    <aside style={workspacePanelStyle}>
-      <WorkspaceCard eyebrow="Readiness" title="Run readiness and intake">
-        <AgentReadinessPanel
-          closeRunId={closeRunId}
-          entityId={entityId}
-          onRefresh={onRefresh}
-          workspace={workspace}
-        />
-      </WorkspaceCard>
-
-      <WorkspaceCard eyebrow="Memory" title="Working context">
-        {workspace === null ? (
-          <p style={supportingTextStyle}>Select or create a thread to load agent memory.</p>
-        ) : (
-          <div style={metricGridStyle}>
-            <MetricTile
-              label="Pending approvals"
-              value={String(workspace.memory.pending_action_count)}
-            />
-            <MetricTile label="Last tool" value={workspace.memory.last_tool_name ?? "None"} />
-            <MetricTile
-              label="Last status"
-              value={workspace.memory.last_action_status?.replaceAll("_", " ") ?? "Idle"}
-            />
-            <MetricTile
-              label="Last trace"
-              value={workspace.memory.last_trace_id ?? "Not recorded"}
-            />
-          </div>
-        )}
-        {workspace?.memory.progress_summary ? (
-          <p style={supportingTextStyle}>{workspace.memory.progress_summary}</p>
-        ) : null}
-        {workspace?.memory.updated_at ? (
-          <p style={traceMetaStyle}>
-            Last refreshed {formatTimestamp(workspace.memory.updated_at)}
-          </p>
-        ) : null}
-      </WorkspaceCard>
-
-      <WorkspaceCard eyebrow="Tooling" title="Registered capabilities">
-        {workspace === null ? (
-          <p style={supportingTextStyle}>Tool metadata appears when the workspace loads.</p>
-        ) : (
-          <div style={{ display: "grid", gap: 12 }}>
-            <div style={metricGridStyle}>
-              <MetricTile label="Tools" value={String(manifestSummary.toolCount)} />
-              <MetricTile label="Schema fields" value={String(manifestSummary.schemaFieldCount)} />
-              <MetricTile label="Approval-gated" value={String(manifestSummary.approvalCount)} />
-              <MetricTile label="Protocol" value={manifestSummary.protocolVersion} />
-            </div>
-            <p style={supportingTextStyle}>
-              These deterministic tools power both the operator workbench and the MCP runtime.
-            </p>
-            {toolsByIntent.map(([intent, tools]) => (
-              <section key={intent} style={{ display: "grid", gap: 8 }}>
-                <div style={toolIntentHeaderStyle}>{intent.replaceAll("_", " ")}</div>
-                {tools.map((tool) => (
-                  <div key={tool.name} style={toolCardStyle}>
-                    <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
-                      <strong style={toolNameStyle}>{tool.name}</strong>
-                      <span style={toolPolicyPillStyle(tool.requires_human_approval)}>
-                        {tool.requires_human_approval ? "Approval" : "Auto"}
-                      </span>
-                    </div>
-                    <p style={toolDescriptionStyle}>{tool.description}</p>
-                    <code style={toolSignatureStyle}>{tool.prompt_signature}</code>
-                    <ToolSchemaPreview tool={tool} />
-                  </div>
-                ))}
-              </section>
-            ))}
-          </div>
-        )}
-      </WorkspaceCard>
-
-      <WorkspaceCard eyebrow="Trace" title="Execution timeline">
-        {workspace === null || workspace.recent_traces.length === 0 ? (
-          <p style={supportingTextStyle}>
-            Trace history appears after the agent responds or applies an action.
-          </p>
-        ) : (
-          <div style={{ display: "grid", gap: 12 }}>
-            <div style={metricGridStyle}>
-              <MetricTile label="Applied" value={String(traceSummary.appliedCount)} />
-              <MetricTile label="Pending" value={String(traceSummary.pendingCount)} />
-              <MetricTile label="Issues" value={String(traceSummary.issueCount)} />
-              <MetricTile label="Events" value={String(traceSummary.eventCount)} />
-            </div>
-            <div style={traceFilterRowStyle}>
-              {TRACE_FILTER_OPTIONS.map((option) => (
-                <button
-                  key={option.value}
-                  onClick={() => setTraceFilter(option.value)}
-                  style={traceFilterPillStyle(traceFilter === option.value)}
-                  type="button"
-                >
-                  {option.label}
-                </button>
-              ))}
-            </div>
-            <div style={{ display: "grid", gap: 8 }}>
-              {visibleTraces.map((trace) => (
-                <TraceItem key={trace.message_id} trace={trace} />
-              ))}
-            </div>
-            {visibleTraces.length === 0 ? (
-              <p style={supportingTextStyle}>
-                No trace events match the current filter. Switch filters to inspect other execution
-                states.
-              </p>
-            ) : null}
-          </div>
-        )}
-      </WorkspaceCard>
-    </aside>
-  );
-}
-
-function ToolSchemaPreview({ tool }: Readonly<{ tool: AgentToolManifestItem }>) {
-  const schemaFields = useMemo(
-    () => extractToolSchemaFields(tool.input_schema),
-    [tool.input_schema],
-  );
-  const schemaSummary = useMemo(() => summarizeToolSchema(tool.input_schema), [tool.input_schema]);
-
-  return (
-    <div style={{ display: "grid", gap: 8 }}>
-      <div style={schemaSummaryRowStyle}>
-        <span style={schemaSummaryPillStyle}>
-          {schemaSummary.fieldCount === 0
-            ? "No inputs"
-            : `${schemaSummary.fieldCount} fields · ${schemaSummary.requiredCount} required`}
-        </span>
-        {schemaFields.length > 0 ? (
-          <div style={schemaFieldChipRowStyle}>
-            {schemaFields.slice(0, 3).map((field) => (
-              <span key={`${tool.name}-${field.name}`} style={schemaFieldChipStyle(field.required)}>
-                {field.name}
-              </span>
-            ))}
-          </div>
-        ) : null}
-      </div>
-      {schemaFields.length > 0 ? (
-        <details style={toolSchemaDetailsStyle}>
-          <summary style={toolSchemaSummaryStyle}>View input contract</summary>
-          <div style={toolSchemaFieldListStyle}>
-            {schemaFields.map((field) => (
-              <ToolSchemaFieldRow key={`${tool.name}-${field.name}`} field={field} />
-            ))}
-          </div>
-        </details>
-      ) : null}
-    </div>
-  );
-}
-
-function ToolSchemaFieldRow({ field }: Readonly<{ field: ToolSchemaField }>) {
-  return (
-    <article style={toolSchemaFieldCardStyle}>
-      <div style={{ display: "grid", gap: 4 }}>
-        <div style={toolSchemaFieldHeaderStyle}>
-          <strong style={toolNameStyle}>{field.name}</strong>
-          <div style={toolFieldMetaRowStyle}>
-            <span style={toolFieldTypePillStyle}>{field.typeLabel}</span>
-            {field.required ? <span style={toolFieldRequiredPillStyle}>Required</span> : null}
-            {field.format ? <span style={toolFieldTypePillStyle}>{field.format}</span> : null}
-          </div>
-        </div>
-        <p style={toolDescriptionStyle}>{field.description ?? "No description provided."}</p>
-        {field.enumValues.length > 0 ? (
-          <div style={schemaFieldChipRowStyle}>
-            {field.enumValues.map((value) => (
-              <span key={`${field.name}-${value}`} style={toolFieldEnumPillStyle}>
-                {value}
-              </span>
-            ))}
-          </div>
-        ) : null}
-      </div>
-    </article>
-  );
-}
-
-type WorkspaceCardProps = {
-  children: ReactNode;
-  eyebrow: string;
-  title: string;
-};
-
-function WorkspaceCard({ children, eyebrow, title }: Readonly<WorkspaceCardProps>) {
-  return (
-    <section style={workspaceCardStyle}>
-      <div style={{ display: "grid", gap: 4 }}>
-        <p style={panelEyebrowStyle}>{eyebrow}</p>
-        <h3 style={workspaceCardTitleStyle}>{title}</h3>
-      </div>
-      {children}
-    </section>
-  );
-}
-
-function MetricTile({ label, value }: Readonly<{ label: string; value: string }>) {
-  return (
-    <div style={metricTileStyle}>
-      <span style={metricLabelStyle}>{label}</span>
-      <strong style={metricValueStyle}>{value}</strong>
-    </div>
-  );
-}
-
-function TraceItem({ trace }: Readonly<{ trace: AgentTraceRecord }>) {
-  return (
-    <div style={traceItemStyle}>
-      <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
-        <div style={{ display: "grid", gap: 4 }}>
-          <strong style={toolNameStyle}>{trace.tool_name ?? trace.mode ?? "agent event"}</strong>
-          <div style={traceBadgeRowStyle}>
-            {trace.mode ? (
-              <span style={toolFieldTypePillStyle}>{formatTraceMode(trace.mode)}</span>
-            ) : null}
-            {trace.trace_id ? (
-              <span style={toolFieldTypePillStyle}>trace {trace.trace_id}</span>
-            ) : null}
-          </div>
-        </div>
-        <span style={traceStatusPillStyleForValue(trace.action_status)}>
-          {formatTraceStatus(trace.action_status)}
-        </span>
-      </div>
-      {trace.summary ? <p style={toolDescriptionStyle}>{trace.summary}</p> : null}
-      <p style={traceMetaStyle}>{formatTimestamp(trace.created_at)}</p>
-    </div>
-  );
-}
-
-function StatusBanner({
-  children,
-  tone,
-}: Readonly<{ children: React.ReactNode; tone: "danger" | "info" }>) {
-  return (
-    <div style={tone === "danger" ? statusDangerStyle : statusInfoStyle} role="status">
-      {children}
-    </div>
-  );
-}
-
-function formatTimestamp(value: string): string {
-  const date = new Date(value);
-  if (Number.isNaN(date.valueOf())) {
-    return value;
-  }
-  return date.toLocaleString();
+function buildRenderableMessages(messages: readonly ChatMessageRecord[]): RenderableMessage[] {
+  return messages
+    .map((message, index) => ({ index, message }))
+    .filter(({ message }) => message.role !== "system" && !looksLikeInternalContextDump(message.content))
+    .sort((left, right) => {
+      const leftTime = Date.parse(left.message.created_at);
+      const rightTime = Date.parse(right.message.created_at);
+      if (!Number.isNaN(leftTime) && !Number.isNaN(rightTime) && leftTime !== rightTime) {
+        return leftTime - rightTime;
+      }
+      return left.index - right.index;
+    })
+    .map(({ message }) => ({
+      ...message,
+      displayTime: formatMessageTime(message.created_at),
+    }));
 }
 
 function extractInlineAttachments(message: ChatMessageRecord): Array<{
@@ -859,716 +564,442 @@ function extractInlineAttachments(message: ChatMessageRecord): Array<{
   if (!Array.isArray(rawAttachments)) {
     return [];
   }
-  const attachmentIntent =
-    typeof message.grounding_payload.attachment_intent === "string"
-      ? message.grounding_payload.attachment_intent.replaceAll("_", " ")
-      : "attachment";
+
   return rawAttachments
     .filter((item): item is Record<string, unknown> => typeof item === "object" && item !== null)
     .map((item) => ({
       filename: typeof item.filename === "string" ? item.filename : "attached file",
       intentLabel:
-        typeof item.intent === "string" ? item.intent.replaceAll("_", " ") : attachmentIntent,
+        typeof item.intent === "string" ? item.intent.replaceAll("_", " ") : "attachment",
     }));
 }
 
-function toolPolicyPillStyle(requiresApproval: boolean): CSSProperties {
-  return {
-    background: requiresApproval ? "rgba(255, 251, 235, 0.92)" : "rgba(27, 67, 50, 0.08)",
-    border: `1px solid ${requiresApproval ? "rgba(142, 115, 75, 0.22)" : "rgba(27, 67, 50, 0.18)"}`,
-    borderRadius: 999,
-    color: requiresApproval ? "var(--quartz-gold)" : "var(--quartz-success)",
-    fontSize: 11,
-    fontWeight: 700,
-    padding: "4px 10px",
-  };
+function looksLikeInternalContextDump(content: string): boolean {
+  const markers = [
+    "Close run status=",
+    "OperatingMode=",
+    "Documents=",
+    "Recommendations=",
+    "Journals=",
+    "Reconciliations=",
+    "SupportingSchedules=",
+    "Pending chat approvals=",
+    "Evidence pack not yet assembled",
+  ];
+  return markers.filter((marker) => content.includes(marker)).length >= 3;
 }
 
-const TRACE_FILTER_OPTIONS: ReadonlyArray<{
-  label: string;
-  value: "all" | "applied" | "pending" | "issues";
-}> = [
-  { label: "All", value: "all" },
-  { label: "Applied", value: "applied" },
-  { label: "Pending", value: "pending" },
-  { label: "Issues", value: "issues" },
-];
+function dedupeThreads(threads: readonly ChatThreadSummary[]): ChatThreadSummary[] {
+  const seen = new Set<string>();
+  const result: ChatThreadSummary[] = [];
 
-function buildTraceSummary(traces: readonly AgentTraceRecord[]) {
-  return traces.reduce(
-    (summary, trace) => ({
-      appliedCount: summary.appliedCount + (trace.action_status === "applied" ? 1 : 0),
-      eventCount: summary.eventCount + 1,
-      issueCount: summary.issueCount + (isIssueTrace(trace.action_status) ? 1 : 0),
-      pendingCount: summary.pendingCount + (trace.action_status === "pending" ? 1 : 0),
-    }),
-    {
-      appliedCount: 0,
-      eventCount: 0,
-      issueCount: 0,
-      pendingCount: 0,
-    },
-  );
-}
-
-function summarizeManifest(
-  manifest: ChatToolManifest | null,
-  tools: readonly AgentToolManifestItem[],
-) {
-  if (manifest === null) {
-    return {
-      approvalCount: 0,
-      protocolVersion: "unknown",
-      schemaFieldCount: 0,
-      toolCount: 0,
-    };
+  for (const thread of threads) {
+    if (seen.has(thread.id)) {
+      continue;
+    }
+    seen.add(thread.id);
+    result.push(thread);
   }
 
-  return {
-    approvalCount: tools.filter((tool) => tool.requires_human_approval).length,
-    protocolVersion: manifest.version,
-    schemaFieldCount: manifest.tools.reduce(
-      (fieldCount, tool) => fieldCount + summarizeToolSchema(tool.inputSchema).fieldCount,
-      0,
-    ),
-    toolCount: manifest.tools.length,
-  };
+  return result;
 }
 
-function isIssueTrace(actionStatus: string | null): boolean {
-  return actionStatus === "rejected" || actionStatus === "failed";
-}
-
-function formatTraceMode(mode: string): string {
-  return mode.replaceAll("_", " ");
-}
-
-function formatTraceStatus(actionStatus: string | null): string {
-  if (actionStatus === null) {
-    return "recorded";
+function formatThreadTitle(thread: ChatThreadSummary): string {
+  const title = thread.title?.trim();
+  if (!title || title === "Accounting agent workspace") {
+    return "New chat";
   }
-  return actionStatus.replaceAll("_", " ");
+  return title;
 }
 
-function traceStatusPillStyleForValue(actionStatus: string | null): CSSProperties {
-  if (actionStatus === "applied") {
-    return {
-      ...traceStatusPillStyle,
-      background: "rgba(27, 67, 50, 0.08)",
-      border: "1px solid rgba(27, 67, 50, 0.18)",
-      color: "var(--quartz-success)",
-    };
-  }
-  if (actionStatus === "pending") {
-    return {
-      ...traceStatusPillStyle,
-      background: "rgba(255, 251, 235, 0.92)",
-      border: "1px solid rgba(142, 115, 75, 0.22)",
-      color: "var(--quartz-gold)",
-    };
-  }
-  if (isIssueTrace(actionStatus)) {
-    return {
-      ...traceStatusPillStyle,
-      background: "rgba(255, 218, 214, 0.72)",
-      border: "1px solid rgba(123, 45, 38, 0.22)",
-      color: "var(--quartz-error)",
-    };
-  }
-  return traceStatusPillStyle;
+function formatThreadSubtitle(thread: ChatThreadSummary): string {
+  const scope = thread.grounding.period_label ?? "Entity scope";
+  const messageCountLabel = thread.message_count === 1 ? "1 message" : `${thread.message_count} messages`;
+  return `${scope} · ${messageCountLabel}`;
 }
 
-function traceFilterPillStyle(isActive: boolean): CSSProperties {
-  return {
-    background: isActive ? "rgba(69, 97, 123, 0.08)" : "var(--quartz-surface)",
-    border: `1px solid ${isActive ? "rgba(69, 97, 123, 0.28)" : "var(--quartz-border)"}`,
-    borderRadius: 999,
-    color: isActive ? "var(--quartz-secondary)" : "var(--quartz-muted)",
-    cursor: "pointer",
-    fontSize: 11,
-    fontWeight: 700,
-    padding: "6px 10px",
-  };
+function formatThreadTime(value: string): string {
+  const parsed = Date.parse(value);
+  if (Number.isNaN(parsed)) {
+    return "Updated recently";
+  }
+
+  const differenceInMinutes = Math.max(0, Math.round((Date.now() - parsed) / 60000));
+  if (differenceInMinutes < 1) {
+    return "Just now";
+  }
+  if (differenceInMinutes < 60) {
+    return `${differenceInMinutes}m ago`;
+  }
+  const differenceInHours = Math.round(differenceInMinutes / 60);
+  if (differenceInHours < 24) {
+    return `${differenceInHours}h ago`;
+  }
+  const differenceInDays = Math.round(differenceInHours / 24);
+  return `${differenceInDays}d ago`;
 }
 
-const workbenchShellStyle: CSSProperties = {
+function formatMessageTime(value: string): string {
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.valueOf())) {
+    return value;
+  }
+
+  return new Intl.DateTimeFormat("en-US", {
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(parsed);
+}
+
+const workbenchShellStyle = {
   display: "grid",
-  gridTemplateColumns: "minmax(240px, 280px) minmax(0, 1fr) minmax(320px, 360px)",
+  gridTemplateColumns: "minmax(250px, 292px) minmax(0, 1fr)",
   height: "100%",
   minHeight: 0,
   overflow: "hidden",
-};
+} satisfies CSSProperties;
 
-const threadSidebarStyle: CSSProperties = {
-  background: "var(--quartz-surface-low)",
+const threadSidebarStyle = {
+  background: "linear-gradient(180deg, rgba(241, 237, 236, 0.82) 0%, rgba(247, 243, 242, 0.96) 100%)",
   borderRight: "1px solid var(--quartz-border)",
-  display: "flex",
-  flexDirection: "column",
-  gap: 16,
+  display: "grid",
+  gap: 18,
   minHeight: 0,
   padding: 20,
-};
+} satisfies CSSProperties;
 
-const threadSidebarHeaderStyle: CSSProperties = {
-  display: "flex",
-  flexDirection: "column",
-  gap: 12,
-};
-
-const conversationPaneStyle: CSSProperties = {
-  background: "var(--quartz-paper)",
-  display: "flex",
-  flexDirection: "column",
-  minHeight: 0,
-};
-
-const workspacePanelStyle: CSSProperties = {
-  background: "var(--quartz-surface-low)",
-  borderLeft: "1px solid var(--quartz-border)",
-  display: "flex",
-  flexDirection: "column",
-  gap: 16,
-  minHeight: 0,
-  overflow: "auto",
-  padding: 20,
-};
-
-const workspaceCardStyle: CSSProperties = {
-  background: "var(--quartz-surface)",
-  border: "1px solid var(--quartz-border)",
-  borderRadius: 16,
+const threadSidebarHeaderStyle = {
   display: "grid",
   gap: 14,
-  padding: 16,
-};
+} satisfies CSSProperties;
 
-const railContainerStyle: CSSProperties = {
-  background: "var(--quartz-surface-low)",
-  borderLeft: "1px solid var(--quartz-border)",
-  display: "flex",
-  flexDirection: "column",
-  height: "100%",
-  width: 420,
-};
-
-const railHeaderStyle: CSSProperties = {
-  alignItems: "center",
-  borderBottom: "1px solid var(--quartz-border)",
-  display: "flex",
-  justifyContent: "space-between",
-  padding: "14px 16px",
-};
-
-const railTitleStyle: CSSProperties = {
-  color: "var(--quartz-ink)",
-  fontSize: 16,
-  fontWeight: 700,
-  margin: 0,
-};
-
-const railSubtitleStyle: CSSProperties = {
-  color: "var(--quartz-muted)",
-  fontSize: 12,
-  margin: 0,
-};
-
-const conversationHeaderStyle: CSSProperties = {
-  borderBottom: "1px solid var(--quartz-border)",
-  display: "grid",
-  gap: 12,
-  padding: "20px 24px 16px",
-};
-
-const conversationBodyStyle: CSSProperties = {
-  color: "var(--quartz-muted)",
-  fontSize: 14,
-  lineHeight: "22px",
-  margin: 0,
-  maxWidth: 760,
-};
-
-const conversationBadgeRowStyle: CSSProperties = {
-  display: "flex",
-  flexWrap: "wrap",
-  gap: 8,
-};
-
-const threadListStyle: CSSProperties = {
-  display: "grid",
-  gap: 8,
-  listStyle: "none",
-  margin: 0,
-  overflow: "auto",
-  padding: 0,
-};
-
-const threadRowStyle: CSSProperties = {
-  alignItems: "stretch",
-  display: "grid",
-  gap: 8,
-  gridTemplateColumns: "minmax(0, 1fr) auto",
-};
-
-const threadItemStyle: CSSProperties = {
-  background: "var(--quartz-surface)",
-  border: "1px solid var(--quartz-border)",
-  borderRadius: 14,
-  color: "var(--quartz-ink)",
-  cursor: "pointer",
-  display: "block",
-  padding: "14px 16px",
-  textAlign: "left",
-  width: "100%",
-};
-
-const threadItemActiveStyle: CSSProperties = {
-  borderColor: "rgba(69, 97, 123, 0.28)",
-  boxShadow: "inset 3px 0 0 var(--quartz-secondary)",
-  background: "rgba(69, 97, 123, 0.08)",
-};
-
-const threadTitleStyle: CSSProperties = {
-  color: "var(--quartz-ink)",
-  fontSize: 14,
-  fontWeight: 600,
-};
-
-const threadMetaStyle: CSSProperties = {
-  color: "var(--quartz-muted)",
-  fontSize: 12,
-};
-
-const threadDeleteButtonStyle: CSSProperties = {
-  alignItems: "center",
-  alignSelf: "stretch",
-  background: "rgba(255, 218, 214, 0.72)",
-  border: "1px solid rgba(123, 45, 38, 0.22)",
-  borderRadius: 12,
-  color: "var(--quartz-error)",
-  cursor: "pointer",
-  display: "inline-flex",
-  fontSize: 14,
-  fontWeight: 700,
-  justifyContent: "center",
-  minWidth: 40,
-  padding: "0 12px",
-};
-
-const messageListStyle: CSSProperties = {
-  display: "flex",
-  flex: 1,
-  flexDirection: "column",
-  gap: 12,
-  minHeight: 0,
-  overflow: "auto",
-  padding: "20px 24px",
-};
-
-const assistantMessageStyle: CSSProperties = {
-  alignSelf: "stretch",
-  background: "var(--quartz-surface)",
-  border: "1px solid var(--quartz-border)",
-  borderRadius: 16,
-  display: "grid",
-  gap: 8,
-  maxWidth: "88%",
-  padding: "14px 16px",
-};
-
-const userMessageStyle: CSSProperties = {
-  ...assistantMessageStyle,
-  alignSelf: "flex-end",
-  background: "rgba(69, 97, 123, 0.08)",
-  borderColor: "rgba(69, 97, 123, 0.28)",
-};
-
-const messageHeaderStyle: CSSProperties = {
-  alignItems: "center",
-  display: "flex",
-  flexWrap: "wrap",
-  gap: 8,
-};
-
-const messageRoleStyle: CSSProperties = {
-  color: "var(--quartz-ink)",
-  fontSize: 12,
-  fontWeight: 700,
-};
-
-const messageTypeBadgeStyle: CSSProperties = {
-  background: "rgba(69, 97, 123, 0.08)",
-  borderRadius: 999,
-  color: "var(--quartz-secondary)",
-  fontSize: 11,
-  padding: "2px 8px",
-};
-
-const traceBadgeStyle: CSSProperties = {
-  background: "rgba(255, 251, 235, 0.92)",
-  borderRadius: 999,
-  color: "var(--quartz-gold)",
-  fontSize: 11,
-  padding: "2px 8px",
-};
-
-const messageContentStyle: CSSProperties = {
-  color: "var(--quartz-ink)",
-  fontSize: 14,
-  lineHeight: "22px",
-  margin: 0,
-  whiteSpace: "pre-wrap",
-};
-
-const messageMetaStyle: CSSProperties = {
-  color: "var(--quartz-muted)",
-  fontSize: 11,
-  margin: 0,
-};
-
-const panelEyebrowStyle: CSSProperties = {
+const sidebarEyebrowStyle = {
   color: "var(--quartz-secondary)",
   fontSize: 11,
   fontWeight: 700,
   letterSpacing: "0.08em",
   margin: 0,
   textTransform: "uppercase",
-};
+} satisfies CSSProperties;
 
-const panelTitleStyle: CSSProperties = {
+const sidebarTitleStyle = {
   color: "var(--quartz-ink)",
-  fontSize: 20,
-  fontWeight: 700,
+  fontFamily: "var(--font-display)",
+  fontSize: 28,
+  fontWeight: 600,
+  letterSpacing: "-0.05em",
   margin: 0,
-};
+} satisfies CSSProperties;
 
-const workspaceCardTitleStyle: CSSProperties = {
+const sidebarBodyStyle = {
+  color: "var(--quartz-muted)",
+  fontSize: 13,
+  lineHeight: "20px",
+  margin: 0,
+} satisfies CSSProperties;
+
+const newChatButtonStyle = {
+  border: "1px solid var(--quartz-primary)",
+  borderRadius: 999,
+  background: "var(--quartz-primary)",
+  color: "var(--quartz-primary-contrast)",
+  cursor: "pointer",
+  fontSize: 12,
+  fontWeight: 700,
+  minHeight: 38,
+  padding: "0 16px",
+} satisfies CSSProperties;
+
+const emptySidebarCardStyle = {
+  border: "1px solid var(--quartz-border)",
+  borderRadius: 18,
+  background: "var(--quartz-surface)",
+  display: "grid",
+  gap: 8,
+  padding: 18,
+} satisfies CSSProperties;
+
+const emptySidebarTitleStyle = {
   color: "var(--quartz-ink)",
   fontSize: 16,
   fontWeight: 700,
   margin: 0,
-};
+} satisfies CSSProperties;
 
-const supportingTextStyle: CSSProperties = {
+const emptySidebarBodyStyle = {
   color: "var(--quartz-muted)",
   fontSize: 13,
   lineHeight: "20px",
   margin: 0,
-};
+} satisfies CSSProperties;
 
-const metricGridStyle: CSSProperties = {
+const threadListStyle = {
   display: "grid",
   gap: 10,
-  gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
-};
+  listStyle: "none",
+  margin: 0,
+  minHeight: 0,
+  overflow: "auto",
+  padding: 0,
+} satisfies CSSProperties;
 
-const metricTileStyle: CSSProperties = {
-  background: "var(--quartz-surface-low)",
-  border: "1px solid var(--quartz-border)",
-  borderRadius: 12,
-  display: "grid",
-  gap: 6,
-  padding: "12px 12px 10px",
-};
-
-const metricLabelStyle: CSSProperties = {
-  color: "var(--quartz-muted)",
-  fontSize: 11,
-  textTransform: "uppercase",
-};
-
-const metricValueStyle: CSSProperties = {
-  color: "var(--quartz-ink)",
-  fontSize: 14,
-};
-
-const toolIntentHeaderStyle: CSSProperties = {
-  color: "var(--quartz-muted)",
-  fontSize: 11,
-  fontWeight: 700,
-  textTransform: "uppercase",
-};
-
-const toolCardStyle: CSSProperties = {
-  background: "var(--quartz-surface-low)",
-  border: "1px solid var(--quartz-border)",
-  borderRadius: 12,
+const threadRowStyle = {
+  alignItems: "stretch",
   display: "grid",
   gap: 8,
-  padding: 12,
-};
+  gridTemplateColumns: "minmax(0, 1fr) auto",
+} satisfies CSSProperties;
 
-const toolNameStyle: CSSProperties = {
+const threadCardStyle = {
+  border: "1px solid var(--quartz-border)",
+  borderRadius: 16,
+  background: "rgba(255, 255, 255, 0.82)",
   color: "var(--quartz-ink)",
-  fontSize: 13,
-};
+  cursor: "pointer",
+  padding: "14px 16px",
+  textAlign: "left",
+  width: "100%",
+} satisfies CSSProperties;
 
-const toolDescriptionStyle: CSSProperties = {
+const threadCardActiveStyle = {
+  borderColor: "rgba(69, 97, 123, 0.28)",
+  background: "rgba(69, 97, 123, 0.1)",
+  boxShadow: "inset 3px 0 0 var(--quartz-secondary)",
+} satisfies CSSProperties;
+
+const threadTitleStyle = {
+  color: "var(--quartz-ink)",
+  fontSize: 14,
+  fontWeight: 600,
+} satisfies CSSProperties;
+
+const threadMetaStyle = {
   color: "var(--quartz-muted)",
   fontSize: 12,
   lineHeight: "18px",
-  margin: 0,
-};
+} satisfies CSSProperties;
 
-const toolSignatureStyle: CSSProperties = {
-  color: "var(--quartz-secondary)",
-  fontSize: 11,
-  overflowWrap: "anywhere",
-};
-
-const schemaSummaryRowStyle: CSSProperties = {
-  alignItems: "center",
-  display: "flex",
-  flexWrap: "wrap",
-  gap: 8,
-  justifyContent: "space-between",
-};
-
-const schemaSummaryPillStyle: CSSProperties = {
-  background: "rgba(69, 97, 123, 0.08)",
-  borderRadius: 999,
-  color: "var(--quartz-secondary)",
-  fontSize: 11,
-  fontWeight: 700,
-  padding: "4px 10px",
-};
-
-const schemaFieldChipRowStyle: CSSProperties = {
-  display: "flex",
-  flexWrap: "wrap",
-  gap: 6,
-};
-
-function schemaFieldChipStyle(isRequired: boolean): CSSProperties {
+function threadDeleteButtonStyle(disabled: boolean) {
   return {
-    background: isRequired ? "rgba(255, 251, 235, 0.92)" : "var(--quartz-surface)",
-    border: `1px solid ${isRequired ? "rgba(142, 115, 75, 0.22)" : "var(--quartz-border)"}`,
-    borderRadius: 999,
-    color: isRequired ? "var(--quartz-gold)" : "var(--quartz-muted)",
-    fontSize: 10,
-    fontWeight: 700,
-    padding: "4px 8px",
-  };
+    alignItems: "center",
+    border: "1px solid rgba(123, 45, 38, 0.2)",
+    borderRadius: 14,
+    background: "rgba(255, 218, 214, 0.62)",
+    color: "var(--quartz-error)",
+    cursor: disabled ? "not-allowed" : "pointer",
+    display: "inline-flex",
+    fontSize: 20,
+    justifyContent: "center",
+    minWidth: 40,
+    opacity: disabled ? 0.65 : 1,
+  } satisfies CSSProperties;
 }
 
-const toolSchemaDetailsStyle: CSSProperties = {
+const conversationPaneStyle = {
   background: "var(--quartz-paper)",
-  border: "1px solid var(--quartz-border)",
-  borderRadius: 10,
-  padding: "8px 10px",
-};
+  display: "flex",
+  flexDirection: "column",
+  minHeight: 0,
+} satisfies CSSProperties;
 
-const toolSchemaSummaryStyle: CSSProperties = {
-  color: "var(--quartz-ink)",
-  cursor: "pointer",
-  fontSize: 12,
-  fontWeight: 700,
-};
-
-const toolSchemaFieldListStyle: CSSProperties = {
+const conversationHeaderStyle = {
+  borderBottom: "1px solid var(--quartz-border)",
   display: "grid",
-  gap: 8,
-  marginTop: 10,
-};
+  gap: 10,
+  padding: "24px 28px 18px",
+} satisfies CSSProperties;
 
-const toolSchemaFieldCardStyle: CSSProperties = {
-  background: "var(--quartz-surface-low)",
-  border: "1px solid var(--quartz-border)",
-  borderRadius: 10,
-  padding: 10,
-};
+const conversationEyebrowStyle = {
+  color: "var(--quartz-secondary)",
+  fontSize: 11,
+  fontWeight: 700,
+  letterSpacing: "0.08em",
+  margin: 0,
+  textTransform: "uppercase",
+} satisfies CSSProperties;
 
-const toolSchemaFieldHeaderStyle: CSSProperties = {
+const conversationTitleRowStyle = {
   alignItems: "center",
   display: "flex",
   flexWrap: "wrap",
-  gap: 8,
-  justifyContent: "space-between",
-};
+  gap: 10,
+} satisfies CSSProperties;
 
-const toolFieldMetaRowStyle: CSSProperties = {
-  display: "flex",
-  flexWrap: "wrap",
-  gap: 6,
-};
-
-const toolFieldTypePillStyle: CSSProperties = {
-  background: "var(--quartz-surface)",
-  border: "1px solid var(--quartz-border)",
-  borderRadius: 999,
-  color: "var(--quartz-muted)",
-  fontSize: 10,
-  fontWeight: 700,
-  padding: "3px 8px",
-};
-
-const toolFieldRequiredPillStyle: CSSProperties = {
-  background: "rgba(255, 251, 235, 0.92)",
-  border: "1px solid rgba(142, 115, 75, 0.22)",
-  borderRadius: 999,
-  color: "var(--quartz-gold)",
-  fontSize: 10,
-  fontWeight: 700,
-  padding: "3px 8px",
-};
-
-const toolFieldEnumPillStyle: CSSProperties = {
-  background: "rgba(27, 67, 50, 0.08)",
-  border: "1px solid rgba(27, 67, 50, 0.18)",
-  borderRadius: 999,
-  color: "var(--quartz-success)",
-  fontSize: 10,
-  fontWeight: 700,
-  padding: "3px 8px",
-};
-
-const traceItemStyle: CSSProperties = {
-  background: "var(--quartz-surface-low)",
-  border: "1px solid var(--quartz-border)",
-  borderRadius: 12,
-  display: "grid",
-  gap: 6,
-  padding: 12,
-};
-
-const traceMetaStyle: CSSProperties = {
-  color: "var(--quartz-muted)",
-  fontSize: 11,
-  margin: 0,
-};
-
-const traceBadgeRowStyle: CSSProperties = {
-  display: "flex",
-  flexWrap: "wrap",
-  gap: 6,
-};
-
-const traceFilterRowStyle: CSSProperties = {
-  display: "flex",
-  flexWrap: "wrap",
-  gap: 8,
-};
-
-const inlineAttachmentRowStyle: CSSProperties = {
-  display: "flex",
-  flexWrap: "wrap",
-  gap: 6,
-  marginBottom: 8,
-};
-
-const inlineAttachmentPillStyle: CSSProperties = {
-  background: "rgba(69, 97, 123, 0.08)",
-  border: "1px solid rgba(69, 97, 123, 0.24)",
-  borderRadius: 999,
-  color: "var(--quartz-secondary)",
-  fontSize: 11,
-  padding: "4px 8px",
-  textTransform: "capitalize",
-};
-
-const traceStatusPillStyle: CSSProperties = {
-  background: "var(--quartz-surface)",
-  border: "1px solid var(--quartz-border)",
-  borderRadius: 999,
-  color: "var(--quartz-muted)",
-  fontSize: 11,
-  fontWeight: 700,
-  padding: "4px 10px",
-};
-
-const emptyStateCardStyle: CSSProperties = {
-  background: "var(--quartz-surface-low)",
-  border: "1px dashed var(--quartz-border-strong)",
-  borderRadius: 16,
-  display: "grid",
-  gap: 8,
-  padding: 18,
-};
-
-const emptyTitleStyle: CSSProperties = {
+const conversationTitleStyle = {
   color: "var(--quartz-ink)",
-  fontSize: 14,
-  fontWeight: 700,
+  fontFamily: "var(--font-display)",
+  fontSize: 34,
+  fontWeight: 600,
+  letterSpacing: "-0.06em",
+  lineHeight: 1.02,
   margin: 0,
-};
+} satisfies CSSProperties;
 
-const emptyBodyStyle: CSSProperties = {
-  color: "var(--quartz-muted)",
-  fontSize: 13,
-  lineHeight: "20px",
-  margin: 0,
-};
-
-const primaryButtonStyle: CSSProperties = {
-  background: "var(--quartz-primary)",
-  border: "1px solid var(--quartz-primary)",
-  borderRadius: 10,
-  color: "var(--quartz-primary-contrast)",
-  cursor: "pointer",
-  fontSize: 13,
-  fontWeight: 700,
-  padding: "10px 14px",
-};
-
-const ghostButtonStyle: CSSProperties = {
-  background: "var(--quartz-surface)",
+const conversationMetaPillStyle = {
   border: "1px solid var(--quartz-border)",
-  borderRadius: 10,
+  borderRadius: 999,
   color: "var(--quartz-muted)",
-  cursor: "pointer",
   fontSize: 12,
-  fontWeight: 700,
-  padding: "8px 10px",
-};
+  fontWeight: 600,
+  padding: "6px 10px",
+} satisfies CSSProperties;
 
-const groundingBadgeStyle: CSSProperties = {
-  background: "rgba(69, 97, 123, 0.08)",
-  border: "1px solid rgba(69, 97, 123, 0.24)",
-  borderRadius: 999,
-  color: "var(--quartz-secondary)",
-  fontSize: 11,
-  fontWeight: 700,
-  padding: "4px 10px",
-};
-
-const metaPillStyle: CSSProperties = {
-  background: "var(--quartz-surface)",
-  border: "1px solid var(--quartz-border)",
-  borderRadius: 999,
+const conversationBodyStyle = {
   color: "var(--quartz-muted)",
-  fontSize: 11,
-  fontWeight: 700,
-  padding: "4px 10px",
-};
+  fontSize: 14,
+  lineHeight: "22px",
+  margin: 0,
+  maxWidth: 820,
+} satisfies CSSProperties;
 
-const statusDangerStyle: CSSProperties = {
-  background: "rgba(255, 218, 214, 0.72)",
+const conversationErrorStyle = {
   border: "1px solid rgba(123, 45, 38, 0.22)",
   borderRadius: 12,
+  background: "rgba(255, 218, 214, 0.72)",
   color: "var(--quartz-error)",
   fontSize: 12,
+  lineHeight: "18px",
   padding: "10px 12px",
-};
+} satisfies CSSProperties;
 
-const statusInfoStyle: CSSProperties = {
-  background: "rgba(69, 97, 123, 0.08)",
-  border: "1px solid rgba(69, 97, 123, 0.24)",
-  borderRadius: 12,
-  color: "var(--quartz-secondary)",
+const conversationLoadingStyle = {
+  color: "var(--quartz-muted)",
   fontSize: 12,
-  padding: "10px 12px",
-};
+  fontWeight: 600,
+} satisfies CSSProperties;
 
-const expandButtonStyle: CSSProperties = {
-  background: "var(--quartz-primary)",
-  border: "1px solid var(--quartz-primary)",
-  borderRadius: 12,
-  bottom: 16,
-  color: "var(--quartz-primary-contrast)",
-  cursor: "pointer",
-  fontSize: 13,
+const messageListStyle = {
+  display: "flex",
+  flex: 1,
+  flexDirection: "column",
+  gap: 18,
+  minHeight: 0,
+  overflow: "auto",
+  padding: "28px",
+} satisfies CSSProperties;
+
+const emptyConversationCardStyle = {
+  alignSelf: "center",
+  border: "1px solid var(--quartz-border)",
+  borderRadius: 22,
+  background: "rgba(255, 255, 255, 0.86)",
+  display: "grid",
+  gap: 10,
+  marginTop: 28,
+  maxWidth: 560,
+  padding: "26px 28px",
+  textAlign: "center",
+} satisfies CSSProperties;
+
+const emptyConversationEyebrowStyle = {
+  color: "var(--quartz-secondary)",
+  fontSize: 11,
   fontWeight: 700,
-  padding: "10px 16px",
-  position: "fixed",
-  right: 16,
-  zIndex: 50,
-};
+  letterSpacing: "0.08em",
+  margin: 0,
+  textTransform: "uppercase",
+} satisfies CSSProperties;
+
+const emptyConversationTitleStyle = {
+  color: "var(--quartz-ink)",
+  fontFamily: "var(--font-display)",
+  fontSize: 30,
+  fontWeight: 600,
+  letterSpacing: "-0.05em",
+  margin: 0,
+} satisfies CSSProperties;
+
+const emptyConversationBodyStyle = {
+  color: "var(--quartz-muted)",
+  fontSize: 14,
+  lineHeight: "22px",
+  margin: 0,
+} satisfies CSSProperties;
+
+const assistantMessageContainerStyle = {
+  alignItems: "flex-start",
+  display: "flex",
+  justifyContent: "flex-start",
+} satisfies CSSProperties;
+
+const userMessageContainerStyle = {
+  alignItems: "flex-end",
+  display: "flex",
+  justifyContent: "flex-end",
+} satisfies CSSProperties;
+
+const assistantMessageBubbleStyle = {
+  border: "1px solid var(--quartz-border)",
+  borderRadius: "22px 22px 22px 8px",
+  background: "rgba(255, 255, 255, 0.88)",
+  display: "grid",
+  gap: 10,
+  maxWidth: 860,
+  padding: "16px 18px",
+  width: "min(100%, 860px)",
+} satisfies CSSProperties;
+
+const userMessageBubbleStyle = {
+  border: "1px solid rgba(69, 97, 123, 0.22)",
+  borderRadius: "22px 22px 8px 22px",
+  background: "rgba(69, 97, 123, 0.08)",
+  display: "grid",
+  gap: 10,
+  maxWidth: 720,
+  padding: "16px 18px",
+} satisfies CSSProperties;
+
+const messageHeaderStyle = {
+  alignItems: "center",
+  display: "flex",
+  gap: 10,
+  justifyContent: "space-between",
+} satisfies CSSProperties;
+
+function messageRoleStyle(role: ChatMessageRecord["role"]) {
+  return {
+    color: role === "user" ? "var(--quartz-secondary)" : "var(--quartz-ink)",
+    fontSize: 12,
+    fontWeight: 700,
+    letterSpacing: "0.04em",
+    textTransform: "uppercase",
+  } satisfies CSSProperties;
+}
+
+const messageTimeStyle = {
+  color: "var(--quartz-muted)",
+  fontSize: 12,
+} satisfies CSSProperties;
+
+const messageContentStyle = {
+  color: "var(--quartz-ink)",
+  fontSize: 15,
+  lineHeight: "24px",
+  margin: 0,
+  whiteSpace: "pre-wrap",
+} satisfies CSSProperties;
+
+const inlineAttachmentRowStyle = {
+  display: "flex",
+  flexWrap: "wrap",
+  gap: 8,
+} satisfies CSSProperties;
+
+const inlineAttachmentPillStyle = {
+  border: "1px solid var(--quartz-border)",
+  borderRadius: 999,
+  background: "var(--quartz-surface-low)",
+  color: "var(--quartz-muted)",
+  fontSize: 11,
+  fontWeight: 600,
+  padding: "6px 10px",
+} satisfies CSSProperties;
+
+const thinkingBubbleStyle = {
+  alignItems: "center",
+  color: "var(--quartz-muted)",
+  display: "inline-flex",
+  gap: 10,
+  fontSize: 14,
+  lineHeight: "22px",
+} satisfies CSSProperties;

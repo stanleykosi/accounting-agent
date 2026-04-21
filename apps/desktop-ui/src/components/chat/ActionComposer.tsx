@@ -1,17 +1,3 @@
-/*
-Purpose: Provide an action-capable chat composer that extends the basic message
-input with automatic agent routing, approval buttons, and proposed-edit controls.
-Scope: Used within the ChatRail component as the single operator entrypoint for
-grounded chat, workflow actions, and inline attachments.
-Dependencies: React, existing chat API client, enterprise design tokens.
-
-Behavior:
-- Renders one unified message input for questions, explanations, and actions
-- Messages route through the shared action endpoint so the backend chooses
-  between read-only responses and deterministic tools
-- Displays pending action badges and quick-approve/reject controls
-*/
-
 "use client";
 
 import {
@@ -23,9 +9,9 @@ import {
   type FormEvent,
   type KeyboardEvent,
 } from "react";
+import type * as React from "react";
 import {
   approveChatAction,
-  type ChatAttachmentIntent,
   type ChatActionResponse,
   type ChatActionSummary,
   type ChatThreadWorkspace,
@@ -36,84 +22,53 @@ import {
   sendChatActionWithAttachments,
 } from "../../lib/chat";
 
-/** Describe the props for the ActionComposer component. */
+export type ComposerDraft = {
+  attachmentNames: readonly string[];
+  content: string;
+  hasAttachments: boolean;
+};
+
 export type ActionComposerProps = {
-  /** Current chat thread ID used for action routing. */
-  threadId: string;
-  /** Entity workspace ID for access verification. */
-  entityId: string;
-  /** Optional close run scope; attachments use this to default routing intent. */
   closeRunId?: string | undefined;
-  /** Live workspace state used to suggest natural next prompts. */
-  workspace?: ChatThreadWorkspace | null;
-  /** Called when a message is successfully sent. */
-  onMessageSent: (response: ChatActionResponse) => void;
-  /** Called when an action is approved, rejected, or errored. */
-  onActionStateChange?: (action: ChatActionSummary) => void;
-  /** Whether the composer should render in a disabled/loading state. */
   disabled?: boolean;
+  entityId: string;
+  onActionStateChange?: (action: ChatActionSummary) => void;
+  onMessageSent: (response: ChatActionResponse, draft: ComposerDraft) => void;
+  onSubmissionError?: () => void;
+  onSubmissionStart?: (draft: ComposerDraft) => void;
+  threadId: string;
+  workspace?: ChatThreadWorkspace | null;
 };
 
-/** Map action intents to human-readable labels. */
 const ACTION_INTENT_LABELS: Record<string, string> = {
-  approval_request: "Approve/Reject",
-  document_request: "Request Document",
-  explanation: "Explain",
-  proposed_edit: "Proposed Edit",
-  reconciliation_query: "Reconciliation Query",
-  report_action: "Report Action",
-  workflow_action: "Workflow Action",
+  approval_request: "Approval",
+  document_request: "Document request",
+  explanation: "Explanation",
+  proposed_edit: "Proposed change",
+  reconciliation_query: "Reconciliation",
+  report_action: "Reporting",
+  workflow_action: "Workflow",
 };
 
-/** Map action intents to confidence color indicators. */
-const ACTION_INTENT_COLORS: Record<string, string> = {
-  approval_request: "var(--quartz-secondary)",
-  document_request: "var(--quartz-gold)",
-  explanation: "var(--quartz-neutral)",
-  proposed_edit: "var(--quartz-error)",
-  reconciliation_query: "var(--quartz-secondary)",
-  report_action: "var(--quartz-success)",
-  workflow_action: "var(--quartz-secondary)",
-};
-
-/**
- * Purpose: Render a chat composer with action mode, pending action badges,
- * and inline approve/reject controls.
- * Inputs: Thread ID, entity ID, and callbacks for message/action events.
- * Outputs: Interactive composer with one input lane and pending action controls.
- */
 export function ActionComposer({
-  threadId,
-  entityId,
   closeRunId,
-  workspace = null,
-  onMessageSent,
-  onActionStateChange,
   disabled = false,
-}: ActionComposerProps) {
+  entityId,
+  onActionStateChange,
+  onMessageSent,
+  onSubmissionError,
+  onSubmissionStart,
+  threadId,
+  workspace = null,
+}: Readonly<ActionComposerProps>) {
   const [inputValue, setInputValue] = useState("");
-  const [isLoading, setIsLoading] = useState(false);
-  const [attachmentIntent, setAttachmentIntent] = useState<ChatAttachmentIntent>(
-    closeRunId ? "source_documents" : "chart_of_accounts",
-  );
   const [attachments, setAttachments] = useState<readonly File[]>([]);
   const [pendingActions, setPendingActions] = useState<ChatActionSummary[]>([]);
   const [loadingActions, setLoadingActions] = useState<Set<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const availableAttachmentIntents = useMemo(
-    () =>
-      closeRunId
-        ? ([
-            { label: "Source documents", value: "source_documents" },
-            { label: "Chart of accounts", value: "chart_of_accounts" },
-          ] satisfies ReadonlyArray<{ label: string; value: ChatAttachmentIntent }>)
-        : ([{ label: "Chart of accounts", value: "chart_of_accounts" }] satisfies ReadonlyArray<{
-            label: string;
-            value: ChatAttachmentIntent;
-          }>),
-    [closeRunId],
-  );
+
   const starterPrompts = useMemo(
     () => buildStarterPrompts({ closeRunId, workspace }),
     [closeRunId, workspace],
@@ -124,350 +79,220 @@ export function ActionComposer({
       setPendingActions([]);
       return;
     }
+
     try {
       const actions = await listThreadActions(threadId, entityId);
       setPendingActions(actions);
-    } catch (err) {
-      // Silently fail -- pending actions are a convenience, not required
-      if (err instanceof ChatApiError && err.status !== 404) {
-        console.warn("Failed to load pending chat actions:", err);
+    } catch (error: unknown) {
+      if (error instanceof ChatApiError && error.status !== 404) {
+        console.warn("Failed to load pending chat actions:", error);
       }
     }
-  }, [threadId, entityId]);
+  }, [entityId, threadId]);
 
   useEffect(() => {
     void loadPendingActions();
   }, [loadPendingActions]);
 
   const handleSubmit = useCallback(
-    async (e: FormEvent) => {
-      e.preventDefault();
+    async (event: FormEvent) => {
+      event.preventDefault();
       const trimmed = inputValue.trim();
-      if ((trimmed.length === 0 && attachments.length === 0) || isLoading || disabled) return;
+      if ((trimmed.length === 0 && attachments.length === 0) || isLoading || disabled) {
+        return;
+      }
       if (threadId.trim().length === 0) {
-        setError("Create or select a chat thread before sending a message.");
+        setError("Open a chat before sending a message.");
         return;
       }
 
+      const draft: ComposerDraft = {
+        attachmentNames: attachments.map((file) => file.name),
+        content:
+          trimmed.length > 0
+            ? trimmed
+            : attachments.length === 1
+              ? "Uploaded 1 source document."
+              : `Uploaded ${attachments.length} source documents.`,
+        hasAttachments: attachments.length > 0,
+      };
+
       setIsLoading(true);
       setError(null);
+      onSubmissionStart?.(draft);
 
       try {
-        let actionResponse: ChatActionResponse;
-        if (attachments.length > 0) {
-          const attachmentRequest: {
-            attachmentIntent: ChatAttachmentIntent;
-            content?: string;
-            files: readonly File[];
-          } = {
-            attachmentIntent,
-            files: attachments,
-          };
-          if (trimmed.length > 0) {
-            attachmentRequest.content = trimmed;
-          }
-          actionResponse = await sendChatActionWithAttachments(
-            threadId,
-            entityId,
-            attachmentRequest,
-          );
-        } else {
-          actionResponse = await sendChatAction(threadId, entityId, trimmed);
-        }
+        const actionResponse =
+          attachments.length > 0
+            ? await sendChatActionWithAttachments(
+                threadId,
+                entityId,
+                trimmed.length > 0
+                  ? {
+                      attachmentIntent: "source_documents",
+                      content: trimmed,
+                      files: attachments,
+                    }
+                  : {
+                      attachmentIntent: "source_documents",
+                      files: attachments,
+                    },
+              )
+            : await sendChatAction(threadId, entityId, trimmed);
 
         setInputValue("");
         setAttachments([]);
         if (fileInputRef.current !== null) {
           fileInputRef.current.value = "";
         }
-        onMessageSent(actionResponse);
+        onMessageSent(actionResponse, draft);
         await loadPendingActions();
-      } catch (err) {
-        const message =
-          err instanceof ChatApiError ? err.message : "Failed to send message. Please try again.";
-        setError(message);
+      } catch (error: unknown) {
+        setError(
+          error instanceof ChatApiError
+            ? error.message
+            : "The assistant could not complete this turn. Try again.",
+        );
+        onSubmissionError?.();
       } finally {
         setIsLoading(false);
       }
     },
     [
-      inputValue,
       attachments,
-      isLoading,
       disabled,
-      attachmentIntent,
-      threadId,
       entityId,
+      inputValue,
+      isLoading,
       loadPendingActions,
       onMessageSent,
+      onSubmissionError,
+      onSubmissionStart,
+      threadId,
     ],
   );
 
   const handleActionApproval = useCallback(
     async (actionId: string) => {
-      if (loadingActions.has(actionId)) return;
-      if (threadId.trim().length === 0) {
-        setError("Select a chat thread before approving an action.");
+      if (loadingActions.has(actionId) || threadId.trim().length === 0) {
         return;
       }
 
-      setLoadingActions((prev) => new Set(prev).add(actionId));
+      setLoadingActions((current) => new Set(current).add(actionId));
       try {
         const updated = await approveChatAction(actionId, threadId, entityId);
-        setPendingActions((prev) => prev.filter((a) => a.id !== actionId));
+        setPendingActions((current) => current.filter((action) => action.id !== actionId));
         onActionStateChange?.(updated);
-      } catch (err) {
-        const message =
-          err instanceof ChatApiError ? err.message : "Failed to approve action. Please try again.";
-        setError(message);
+      } catch (error: unknown) {
+        setError(
+          error instanceof ChatApiError
+            ? error.message
+            : "The approval could not be completed. Try again.",
+        );
       } finally {
-        setLoadingActions((prev) => {
-          const next = new Set(prev);
+        setLoadingActions((current) => {
+          const next = new Set(current);
           next.delete(actionId);
           return next;
         });
       }
     },
-    [threadId, entityId, loadingActions, onActionStateChange],
+    [entityId, loadingActions, onActionStateChange, threadId],
   );
 
   const handleActionRejection = useCallback(
     async (actionId: string) => {
-      if (loadingActions.has(actionId)) return;
-      if (threadId.trim().length === 0) {
-        setError("Select a chat thread before rejecting an action.");
+      if (loadingActions.has(actionId) || threadId.trim().length === 0) {
         return;
       }
 
-      setLoadingActions((prev) => new Set(prev).add(actionId));
+      setLoadingActions((current) => new Set(current).add(actionId));
       try {
         const updated = await rejectChatAction(
           actionId,
           threadId,
           entityId,
-          "Rejected via quick action",
+          "Rejected from the assistant workspace.",
         );
-        setPendingActions((prev) => prev.filter((a) => a.id !== actionId));
+        setPendingActions((current) => current.filter((action) => action.id !== actionId));
         onActionStateChange?.(updated);
-      } catch (err) {
-        const message =
-          err instanceof ChatApiError ? err.message : "Failed to reject action. Please try again.";
-        setError(message);
+      } catch (error: unknown) {
+        setError(
+          error instanceof ChatApiError
+            ? error.message
+            : "The rejection could not be completed. Try again.",
+        );
       } finally {
-        setLoadingActions((prev) => {
-          const next = new Set(prev);
+        setLoadingActions((current) => {
+          const next = new Set(current);
           next.delete(actionId);
           return next;
         });
       }
     },
-    [threadId, entityId, loadingActions, onActionStateChange],
+    [entityId, loadingActions, onActionStateChange, threadId],
   );
 
-  const isSubmitting = isLoading || disabled;
   const hasInput = inputValue.trim().length > 0 || attachments.length > 0;
+  const isSubmitting = isLoading || disabled;
 
   return (
     <div
       style={{
         borderTop: "1px solid var(--quartz-border)",
-        background: "var(--quartz-surface-low)",
-        padding: "12px 16px",
+        background:
+          "linear-gradient(180deg, rgba(247, 243, 242, 0.94) 0%, rgba(253, 248, 248, 1) 100%)",
+        padding: "18px 24px 22px",
       }}
     >
-      {/* Pending actions strip */}
-      {pendingActions.length > 0 && (
-        <div
-          style={{
-            marginBottom: 8,
-            display: "flex",
-            gap: 6,
-            overflowX: "auto",
-            paddingBottom: 4,
-          }}
-        >
-          {pendingActions.map((action) => (
-            <div
-              key={action.id}
-              style={{
-                flexShrink: 0,
-                background: "var(--quartz-surface)",
-                border: "1px solid var(--quartz-border)",
-                borderRadius: 8,
-                padding: "6px 10px",
-                minWidth: 180,
-                maxWidth: 240,
-              }}
-            >
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 6,
-                  marginBottom: 4,
-                }}
-              >
-                <span
-                  style={{
-                    width: 6,
-                    height: 6,
-                    borderRadius: "50%",
-                    background: ACTION_INTENT_COLORS[action.intent] ?? "var(--quartz-neutral)",
-                    display: "inline-block",
-                  }}
-                />
-                <span
-                  style={{
-                    fontSize: 11,
-                    fontWeight: 500,
-                    color: "var(--quartz-ink)",
-                    lineHeight: "16px",
-                  }}
-                >
-                  {ACTION_INTENT_LABELS[action.intent] ?? action.intent}
-                </span>
-                {action.requires_human_approval && (
-                  <span
-                    style={{
-                      fontSize: 9,
-                      color: "var(--quartz-gold)",
-                      background: "rgba(255, 251, 235, 0.92)",
-                      border: "1px solid rgba(142, 115, 75, 0.22)",
-                      padding: "1px 4px",
-                      borderRadius: 4,
-                      lineHeight: "14px",
-                    }}
-                  >
-                    Review
+      {pendingActions.length > 0 ? (
+        <div style={pendingActionListStyle}>
+          {pendingActions.map((action) => {
+            const isBusy = loadingActions.has(action.id);
+            return (
+              <div key={action.id} style={pendingActionCardStyle}>
+                <div style={pendingActionHeaderStyle}>
+                  <span style={pendingActionLabelStyle}>
+                    {ACTION_INTENT_LABELS[action.intent] ?? action.intent.replaceAll("_", " ")}
                   </span>
-                )}
+                  <span style={pendingActionBadgeStyle}>Review required</span>
+                </div>
+                <div style={pendingActionButtonRowStyle}>
+                  <button
+                    disabled={isBusy}
+                    onClick={() => {
+                      void handleActionApproval(action.id);
+                    }}
+                    style={pendingApproveButtonStyle(isBusy)}
+                    type="button"
+                  >
+                    {isBusy ? "..." : "Approve"}
+                  </button>
+                  <button
+                    disabled={isBusy}
+                    onClick={() => {
+                      void handleActionRejection(action.id);
+                    }}
+                    style={pendingRejectButtonStyle(isBusy)}
+                    type="button"
+                  >
+                    {isBusy ? "..." : "Reject"}
+                  </button>
+                </div>
               </div>
-              <div
-                style={{
-                  display: "flex",
-                  gap: 4,
-                  marginTop: 4,
-                }}
-              >
-                <button
-                  type="button"
-                  onClick={() => void handleActionApproval(action.id)}
-                  disabled={loadingActions.has(action.id)}
-                  style={{
-                    flex: 1,
-                    fontSize: 11,
-                    fontWeight: 500,
-                    padding: "3px 0",
-                    borderRadius: 6,
-                    border: "1px solid rgba(27, 67, 50, 0.18)",
-                    background: "rgba(27, 67, 50, 0.08)",
-                    color: "var(--quartz-success)",
-                    cursor: loadingActions.has(action.id) ? "not-allowed" : "pointer",
-                    opacity: loadingActions.has(action.id) ? 0.6 : 1,
-                  }}
-                >
-                  {loadingActions.has(action.id) ? "..." : "Approve"}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => void handleActionRejection(action.id)}
-                  disabled={loadingActions.has(action.id)}
-                  style={{
-                    flex: 1,
-                    fontSize: 11,
-                    fontWeight: 500,
-                    padding: "3px 0",
-                    borderRadius: 6,
-                    border: "1px solid rgba(123, 45, 38, 0.22)",
-                    background: "rgba(255, 218, 214, 0.72)",
-                    color: "var(--quartz-error)",
-                    cursor: loadingActions.has(action.id) ? "not-allowed" : "pointer",
-                    opacity: loadingActions.has(action.id) ? 0.6 : 1,
-                  }}
-                >
-                  {loadingActions.has(action.id) ? "..." : "Reject"}
-                </button>
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
-      )}
+      ) : null}
 
-      {/* Error banner */}
-      {error && (
-        <div
-          style={{
-            marginBottom: 8,
-            padding: "6px 10px",
-            borderRadius: 8,
-            background: "var(--quartz-error-soft)",
-            border: "1px solid rgba(123, 45, 38, 0.22)",
-            color: "var(--quartz-error)",
-            fontSize: 12,
-            lineHeight: "18px",
-          }}
-        >
+      {error ? (
+        <div style={errorBannerStyle} role="status">
           {error}
         </div>
-      )}
+      ) : null}
 
-      <div
-        style={{
-          display: "flex",
-          alignItems: "flex-start",
-          gap: 10,
-          marginBottom: 8,
-        }}
-      >
-        <div
-          style={{
-            display: "inline-flex",
-            alignItems: "center",
-            gap: 6,
-            fontSize: 11,
-            fontWeight: 600,
-            color: "var(--quartz-secondary)",
-            background: "rgba(69, 97, 123, 0.08)",
-            border: "1px solid rgba(69, 97, 123, 0.24)",
-            borderRadius: 999,
-            padding: "4px 9px",
-          }}
-        >
-          <span
-            style={{
-              width: 8,
-              height: 8,
-              borderRadius: "50%",
-              background: "var(--quartz-secondary)",
-            }}
-          />
-          Context-aware agent
-        </div>
-        <p
-          style={{
-            margin: 0,
-            color: "var(--quartz-muted)",
-            fontSize: 11,
-            lineHeight: "17px",
-          }}
-        >
-          Questions, workflow actions, approvals, and attachments all use one message lane. The
-          agent decides when to answer directly and when to stage or apply a tool.
-        </p>
-      </div>
-
-      {!disabled &&
-      inputValue.trim().length === 0 &&
-      attachments.length === 0 &&
-      starterPrompts.length > 0 ? (
-        <div
-          style={{
-            display: "flex",
-            flexWrap: "wrap",
-            gap: 8,
-            marginBottom: 10,
-          }}
-        >
+      {!disabled && inputValue.trim().length === 0 && attachments.length === 0 && starterPrompts.length > 0 ? (
+        <div style={suggestionRowStyle}>
           {starterPrompts.map((prompt) => (
             <button
               key={prompt}
@@ -475,16 +300,7 @@ export function ActionComposer({
                 setInputValue(prompt);
                 setError(null);
               }}
-              style={{
-                background: "var(--quartz-surface)",
-                border: "1px solid var(--quartz-border)",
-                borderRadius: 999,
-                color: "var(--quartz-muted)",
-                cursor: "pointer",
-                fontSize: 11,
-                lineHeight: "16px",
-                padding: "5px 10px",
-              }}
+              style={suggestionChipStyle}
               type="button"
             >
               {prompt}
@@ -493,146 +309,16 @@ export function ActionComposer({
         </div>
       ) : null}
 
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          gap: 8,
-          marginBottom: attachments.length > 0 ? 10 : 8,
-        }}
-      >
-        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-          <button
-            onClick={() => fileInputRef.current?.click()}
-            style={{
-              background: "rgba(69, 97, 123, 0.1)",
-              border: "1px solid rgba(69, 97, 123, 0.24)",
-              borderRadius: 8,
-              color: "var(--quartz-secondary)",
-              cursor: "pointer",
-              fontSize: 11,
-              fontWeight: 600,
-              padding: "5px 9px",
-            }}
-            type="button"
-          >
-            Attach files
-          </button>
-          <input
-            accept=".pdf,.csv,.xlsx,.xls,.xlsm"
-            multiple
-            onChange={(event) => {
-              const nextFiles = Array.from(event.target.files ?? []);
-              setAttachments(nextFiles);
-              setError(null);
-            }}
-            ref={fileInputRef}
-            style={{ display: "none" }}
-            type="file"
-          />
-          {attachments.length > 0 ? (
-            <select
-              onChange={(event) => setAttachmentIntent(event.target.value as ChatAttachmentIntent)}
-              style={{
-                background: "var(--quartz-surface)",
-                border: "1px solid var(--quartz-border)",
-                borderRadius: 8,
-                color: "var(--quartz-ink)",
-                fontSize: 11,
-                padding: "5px 9px",
-              }}
-              value={attachmentIntent}
-            >
-              {availableAttachmentIntents.map((option) => (
-                <option key={option.value} value={option.value}>
-                  Route as {option.label.toLowerCase()}
-                </option>
-              ))}
-            </select>
-          ) : null}
-        </div>
-        {attachments.length > 0 ? (
-          <button
-            onClick={() => {
-              setAttachments([]);
-              setError(null);
-              if (fileInputRef.current !== null) {
-                fileInputRef.current.value = "";
-              }
-            }}
-            style={{
-              background: "transparent",
-              border: "none",
-              color: "var(--quartz-muted)",
-              cursor: "pointer",
-              fontSize: 11,
-              padding: 0,
-            }}
-            type="button"
-          >
-            Clear
-          </button>
-        ) : null}
-      </div>
-
-      {attachments.length > 0 ? (
-        <div
-          style={{
-            display: "flex",
-            flexWrap: "wrap",
-            gap: 6,
-            marginBottom: 10,
-          }}
-        >
-          {attachments.map((file) => (
-            <span
-              key={`${file.name}:${file.size}`}
-              style={{
-                background: "var(--quartz-surface)",
-                border: "1px solid var(--quartz-border)",
-                borderRadius: 999,
-                color: "var(--quartz-ink)",
-                display: "inline-flex",
-                gap: 6,
-                maxWidth: "100%",
-                padding: "5px 9px",
-              }}
-            >
-              <span
-                style={{
-                  fontSize: 11,
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
-                  whiteSpace: "nowrap",
-                }}
-              >
-                {file.name}
-              </span>
-              <span style={{ color: "var(--quartz-muted)", fontSize: 10 }}>
-                {formatByteSize(file.size)}
-              </span>
-            </span>
-          ))}
-        </div>
-      ) : null}
-
-      {/* Input form */}
       <form
         onSubmit={(event) => {
           void handleSubmit(event);
         }}
+        style={composerFormStyle}
       >
-        <div
-          style={{
-            display: "flex",
-            gap: 8,
-            alignItems: "flex-end",
-          }}
-        >
+        <div style={composerShellStyle}>
           <textarea
-            value={inputValue}
-            onChange={(e) => setInputValue(e.target.value)}
+            disabled={isSubmitting}
+            onChange={(event) => setInputValue(event.target.value)}
             onKeyDown={(event: KeyboardEvent<HTMLTextAreaElement>) => {
               if (event.key === "Enter" && !event.shiftKey && !event.metaKey) {
                 event.preventDefault();
@@ -643,52 +329,76 @@ export function ActionComposer({
             }}
             placeholder={
               attachments.length > 0
-                ? "Tell the agent what to do with the attached files..."
-                : "Ask normally, e.g. 'I need the reports', request a workflow step, approve work, or tell the agent what to change..."
+                ? "Tell the assistant what to do with these source documents..."
+                : "Ask about the close, request the next step, or upload source documents..."
             }
-            disabled={isSubmitting}
             rows={1}
-            style={{
-              flex: 1,
-              fontSize: 13,
-              lineHeight: "20px",
-              color: "var(--quartz-ink)",
-              background: "var(--quartz-surface)",
-              border: "1px solid var(--quartz-border)",
-              borderRadius: 10,
-              padding: "8px 12px",
-              resize: "none",
-              outline: "none",
-              fontFamily: "inherit",
-              maxHeight: 120,
-            }}
+            style={composerTextareaStyle}
+            value={inputValue}
           />
-          <button
-            type="submit"
-            disabled={!hasInput || isSubmitting}
-            style={{
-              width: 32,
-              height: 32,
-              borderRadius: 8,
-              border: "none",
-              background:
-                hasInput && !isSubmitting ? "var(--quartz-primary)" : "var(--quartz-surface-high)",
-              color:
-                hasInput && !isSubmitting
-                  ? "var(--quartz-primary-contrast)"
-                  : "var(--quartz-muted)",
-              cursor: hasInput && !isSubmitting ? "pointer" : "not-allowed",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              transition: "background 150ms ease",
-            }}
-          >
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-              <path d="M2 8L14 2L10 8L14 14L2 8Z" fill="currentColor" />
-            </svg>
-          </button>
+
+          {attachments.length > 0 ? (
+            <div style={attachmentListStyle}>
+              {attachments.map((file) => (
+                <span key={`${file.name}:${file.size}`} style={attachmentTokenStyle}>
+                  <span style={attachmentTokenNameStyle}>{file.name}</span>
+                  <span style={attachmentTokenMetaStyle}>{formatByteSize(file.size)}</span>
+                </span>
+              ))}
+            </div>
+          ) : null}
+
+          <div style={composerFooterStyle}>
+            <div style={composerUtilityRowStyle}>
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                style={attachmentButtonStyle}
+                type="button"
+              >
+                Upload source documents
+              </button>
+              <input
+                accept=".pdf,.csv,.xlsx,.xls,.xlsm"
+                multiple
+                onChange={(event) => {
+                  setAttachments(Array.from(event.target.files ?? []));
+                  setError(null);
+                }}
+                ref={fileInputRef}
+                style={{ display: "none" }}
+                type="file"
+              />
+              {attachments.length > 0 ? (
+                <button
+                  onClick={() => {
+                    setAttachments([]);
+                    setError(null);
+                    if (fileInputRef.current !== null) {
+                      fileInputRef.current.value = "";
+                    }
+                  }}
+                  style={clearButtonStyle}
+                  type="button"
+                >
+                  Clear files
+                </button>
+              ) : null}
+            </div>
+
+            <button
+              disabled={!hasInput || isSubmitting}
+              style={sendButtonStyle(!hasInput || isSubmitting)}
+              type="submit"
+            >
+              {isSubmitting ? "..." : "Send"}
+            </button>
+          </div>
         </div>
+
+        <p style={composerNoteStyle}>
+          Chat uploads are treated as source documents only. Use Entity Home for COA, general
+          ledger, or trial balance uploads.
+        </p>
       </form>
     </div>
   );
@@ -715,28 +425,246 @@ function buildStarterPrompts(options: {
   );
 
   if (workspace?.readiness.blockers.length) {
-    prompts.push("What's blocking this run right now?");
+    prompts.push("What is blocking this close right now?");
   }
   if ((workspace?.memory.pending_action_count ?? 0) > 0) {
-    prompts.push("What approvals are pending?");
+    prompts.push("Show me the approvals waiting for review.");
   }
   if (closeRunId && (workspace?.readiness.document_count ?? 0) > 0) {
-    prompts.push("I uploaded the wrong document by mistake.");
+    prompts.push("Which uploaded documents still need attention?");
   }
   if (closeRunId && activePhase && activePhase.phase !== "collection") {
-    prompts.push("Take this back one step.");
-    prompts.push("Take this back to Collection so I can upload more files.");
+    prompts.push("Can you move this run back to collection?");
   }
   if ((workspace?.readiness.next_actions.length ?? 0) > 0) {
     prompts.push("Continue from where we left off.");
   }
   if (closeRunId) {
-    prompts.push("I need the reports.");
-    prompts.push("What can you do next from here?");
-  } else {
-    prompts.push("Start a new run for this month.");
-    prompts.push("What can you do in this workspace?");
+    prompts.push("What should I do next in this close?");
+    prompts.push("Summarize this close for me.");
   }
 
   return Array.from(new Set(prompts)).slice(0, 5);
 }
+
+const pendingActionListStyle = {
+  display: "grid",
+  gap: 10,
+  gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+  marginBottom: 14,
+} satisfies React.CSSProperties;
+
+const pendingActionCardStyle = {
+  border: "1px solid rgba(142, 115, 75, 0.2)",
+  background: "rgba(255, 251, 235, 0.82)",
+  borderRadius: 16,
+  display: "grid",
+  gap: 10,
+  padding: "12px 14px",
+} satisfies React.CSSProperties;
+
+const pendingActionHeaderStyle = {
+  alignItems: "center",
+  display: "flex",
+  gap: 8,
+  justifyContent: "space-between",
+} satisfies React.CSSProperties;
+
+const pendingActionLabelStyle = {
+  color: "var(--quartz-ink)",
+  fontSize: 12,
+  fontWeight: 700,
+  letterSpacing: "0.02em",
+  textTransform: "uppercase",
+} satisfies React.CSSProperties;
+
+const pendingActionBadgeStyle = {
+  border: "1px solid rgba(142, 115, 75, 0.2)",
+  borderRadius: 999,
+  color: "var(--quartz-gold)",
+  fontSize: 11,
+  fontWeight: 600,
+  padding: "4px 8px",
+} satisfies React.CSSProperties;
+
+const pendingActionButtonRowStyle = {
+  display: "grid",
+  gap: 8,
+  gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+} satisfies React.CSSProperties;
+
+function pendingApproveButtonStyle(disabled: boolean) {
+  return {
+    border: "1px solid rgba(27, 67, 50, 0.18)",
+    borderRadius: 10,
+    background: "rgba(27, 67, 50, 0.08)",
+    color: "var(--quartz-success)",
+    cursor: disabled ? "not-allowed" : "pointer",
+    fontSize: 12,
+    fontWeight: 600,
+    minHeight: 34,
+    opacity: disabled ? 0.6 : 1,
+  } satisfies React.CSSProperties;
+}
+
+function pendingRejectButtonStyle(disabled: boolean) {
+  return {
+    border: "1px solid rgba(123, 45, 38, 0.22)",
+    borderRadius: 10,
+    background: "rgba(255, 218, 214, 0.72)",
+    color: "var(--quartz-error)",
+    cursor: disabled ? "not-allowed" : "pointer",
+    fontSize: 12,
+    fontWeight: 600,
+    minHeight: 34,
+    opacity: disabled ? 0.6 : 1,
+  } satisfies React.CSSProperties;
+}
+
+const errorBannerStyle = {
+  marginBottom: 12,
+  padding: "10px 12px",
+  borderRadius: 12,
+  background: "rgba(255, 218, 214, 0.72)",
+  border: "1px solid rgba(123, 45, 38, 0.22)",
+  color: "var(--quartz-error)",
+  fontSize: 12,
+  lineHeight: "18px",
+} satisfies React.CSSProperties;
+
+const suggestionRowStyle = {
+  display: "flex",
+  flexWrap: "wrap",
+  gap: 8,
+  marginBottom: 12,
+} satisfies React.CSSProperties;
+
+const suggestionChipStyle = {
+  border: "1px solid var(--quartz-border)",
+  borderRadius: 999,
+  background: "rgba(255, 255, 255, 0.74)",
+  color: "var(--quartz-muted)",
+  cursor: "pointer",
+  fontSize: 12,
+  lineHeight: "18px",
+  padding: "8px 12px",
+} satisfies React.CSSProperties;
+
+const composerFormStyle = {
+  display: "grid",
+  gap: 10,
+} satisfies React.CSSProperties;
+
+const composerShellStyle = {
+  border: "1px solid var(--quartz-border)",
+  borderRadius: 22,
+  background: "var(--quartz-surface)",
+  boxShadow: "0 10px 28px rgba(17, 24, 39, 0.06)",
+  display: "grid",
+  gap: 12,
+  padding: "14px 16px 14px",
+} satisfies React.CSSProperties;
+
+const composerTextareaStyle = {
+  width: "100%",
+  minHeight: 44,
+  maxHeight: 180,
+  border: "none",
+  background: "transparent",
+  color: "var(--quartz-ink)",
+  fontFamily: "inherit",
+  fontSize: 15,
+  lineHeight: "24px",
+  outline: "none",
+  padding: 0,
+  resize: "vertical",
+} satisfies React.CSSProperties;
+
+const attachmentListStyle = {
+  display: "flex",
+  flexWrap: "wrap",
+  gap: 8,
+} satisfies React.CSSProperties;
+
+const attachmentTokenStyle = {
+  alignItems: "center",
+  border: "1px solid var(--quartz-border)",
+  borderRadius: 999,
+  background: "var(--quartz-surface-low)",
+  color: "var(--quartz-ink)",
+  display: "inline-flex",
+  gap: 8,
+  maxWidth: "100%",
+  padding: "7px 12px",
+} satisfies React.CSSProperties;
+
+const attachmentTokenNameStyle = {
+  fontSize: 12,
+  overflow: "hidden",
+  textOverflow: "ellipsis",
+  whiteSpace: "nowrap",
+} satisfies React.CSSProperties;
+
+const attachmentTokenMetaStyle = {
+  color: "var(--quartz-muted)",
+  fontSize: 11,
+} satisfies React.CSSProperties;
+
+const composerFooterStyle = {
+  alignItems: "center",
+  display: "flex",
+  gap: 12,
+  justifyContent: "space-between",
+} satisfies React.CSSProperties;
+
+const composerUtilityRowStyle = {
+  alignItems: "center",
+  display: "flex",
+  flexWrap: "wrap",
+  gap: 10,
+} satisfies React.CSSProperties;
+
+const attachmentButtonStyle = {
+  border: "1px solid rgba(69, 97, 123, 0.22)",
+  borderRadius: 999,
+  background: "rgba(69, 97, 123, 0.08)",
+  color: "var(--quartz-secondary)",
+  cursor: "pointer",
+  fontSize: 12,
+  fontWeight: 600,
+  minHeight: 34,
+  padding: "0 12px",
+} satisfies React.CSSProperties;
+
+const clearButtonStyle = {
+  border: "none",
+  background: "transparent",
+  color: "var(--quartz-muted)",
+  cursor: "pointer",
+  fontSize: 12,
+  fontWeight: 600,
+  padding: 0,
+} satisfies React.CSSProperties;
+
+function sendButtonStyle(disabled: boolean) {
+  return {
+    border: "none",
+    borderRadius: 999,
+    background: disabled ? "var(--quartz-surface-high)" : "var(--quartz-primary)",
+    color: disabled ? "var(--quartz-muted)" : "var(--quartz-primary-contrast)",
+    cursor: disabled ? "not-allowed" : "pointer",
+    fontSize: 12,
+    fontWeight: 700,
+    minHeight: 38,
+    minWidth: 74,
+    padding: "0 16px",
+  } satisfies React.CSSProperties;
+}
+
+const composerNoteStyle = {
+  color: "var(--quartz-muted)",
+  fontSize: 11,
+  lineHeight: "17px",
+  margin: 0,
+  paddingLeft: 6,
+} satisfies React.CSSProperties;

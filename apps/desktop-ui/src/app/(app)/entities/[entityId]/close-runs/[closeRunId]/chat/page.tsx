@@ -25,11 +25,11 @@ export default async function ChatPage({ params }: Readonly<ChatPageProps>) {
     <div className="quartz-page quartz-chat-page">
       <header className="quartz-page-header">
         <div>
-          <p className="quartz-kpi-label">Assistant Workbench</p>
-          <h1>Omni-Assistant Workbench</h1>
+          <p className="quartz-kpi-label">Assistant</p>
+          <h1>Assistant Workspace</h1>
           <p className="quartz-page-subtitle">
-            Grounded accounting copilot for blockers, approvals, uploads, trace review, and
-            next-step execution.
+            Ask questions, upload source documents, and continue the close from one clean
+            conversation workspace.
           </p>
         </div>
       </header>
