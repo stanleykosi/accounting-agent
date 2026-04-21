@@ -7,14 +7,19 @@ export type QuartzIconName =
   | "bell"
   | "check"
   | "close"
+  | "dismiss"
   | "entities"
   | "filter"
+  | "folder"
   | "help"
   | "portfolio"
+  | "refresh"
   | "settings"
   | "sparkle"
+  | "trash"
   | "trendDown"
   | "trendUp"
+  | "upload"
   | "warning";
 
 type QuartzIconProps = SVGProps<SVGSVGElement> & {
@@ -90,11 +95,35 @@ export function QuartzIcon({ name, ...props }: Readonly<QuartzIconProps>): React
           />
         </svg>
       );
+    case "dismiss":
+      return (
+        <svg fill="none" viewBox="0 0 24 24" {...props}>
+          <path
+            d="M6 6l12 12M18 6L6 18"
+            stroke="currentColor"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth="1.8"
+          />
+        </svg>
+      );
     case "filter":
       return (
         <svg fill="none" viewBox="0 0 24 24" {...props}>
           <path
             d="M4 6h16M7 12h10M10 18h4"
+            stroke="currentColor"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth="1.8"
+          />
+        </svg>
+      );
+    case "folder":
+      return (
+        <svg fill="none" viewBox="0 0 24 24" {...props}>
+          <path
+            d="M3 7.5A1.5 1.5 0 014.5 6H9l1.6 2H19.5A1.5 1.5 0 0121 9.5v7A1.5 1.5 0 0119.5 18h-15A1.5 1.5 0 013 16.5v-9z"
             stroke="currentColor"
             strokeLinecap="round"
             strokeLinejoin="round"
@@ -126,6 +155,25 @@ export function QuartzIcon({ name, ...props }: Readonly<QuartzIconProps>): React
           />
         </svg>
       );
+    case "refresh":
+      return (
+        <svg fill="none" viewBox="0 0 24 24" {...props}>
+          <path
+            d="M20 6v5h-5M4 18v-5h5"
+            stroke="currentColor"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth="1.8"
+          />
+          <path
+            d="M18 11a7 7 0 00-12-2M6 13a7 7 0 0012 2"
+            stroke="currentColor"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth="1.8"
+          />
+        </svg>
+      );
     case "settings":
       return (
         <svg fill="none" viewBox="0 0 24 24" {...props}>
@@ -150,6 +198,18 @@ export function QuartzIcon({ name, ...props }: Readonly<QuartzIconProps>): React
           />
         </svg>
       );
+    case "trash":
+      return (
+        <svg fill="none" viewBox="0 0 24 24" {...props}>
+          <path
+            d="M5 7h14M9 7V5h6v2M8 10v7M12 10v7M16 10v7M7 7l1 12h8l1-12"
+            stroke="currentColor"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth="1.8"
+          />
+        </svg>
+      );
     case "trendDown":
       return (
         <svg fill="none" viewBox="0 0 24 24" {...props}>
@@ -167,6 +227,18 @@ export function QuartzIcon({ name, ...props }: Readonly<QuartzIconProps>): React
         <svg fill="none" viewBox="0 0 24 24" {...props}>
           <path
             d="M4 17l6-6 4 4 6-6M16 5h4v4"
+            stroke="currentColor"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth="1.8"
+          />
+        </svg>
+      );
+    case "upload":
+      return (
+        <svg fill="none" viewBox="0 0 24 24" {...props}>
+          <path
+            d="M12 16V5M12 5l-4 4M12 5l4 4M5 19h14"
             stroke="currentColor"
             strokeLinecap="round"
             strokeLinejoin="round"

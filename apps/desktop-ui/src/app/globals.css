@@ -3602,6 +3602,199 @@ a {
   font-weight: 600;
 }
 
+.quartz-document-table-shell {
+  overflow: hidden;
+  padding: 0;
+}
+
+.quartz-document-table .quartz-table-secondary {
+  max-width: 340px;
+  overflow-wrap: anywhere;
+}
+
+.quartz-table-icon-actions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.quartz-table-icon-action {
+  display: inline-flex;
+  width: 32px;
+  height: 32px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--quartz-border);
+  background: var(--quartz-surface);
+  color: var(--quartz-muted);
+  cursor: pointer;
+  transition:
+    border-color 180ms ease,
+    background-color 180ms ease,
+    color 180ms ease;
+}
+
+.quartz-table-icon-action:hover,
+.quartz-table-icon-action.active {
+  border-color: rgba(69, 97, 123, 0.28);
+  background: rgba(69, 97, 123, 0.08);
+  color: var(--quartz-secondary);
+}
+
+.quartz-table-icon-action.success:hover {
+  border-color: rgba(27, 67, 50, 0.22);
+  background: rgba(27, 67, 50, 0.08);
+  color: var(--quartz-success);
+}
+
+.quartz-table-icon-action.danger:hover {
+  border-color: rgba(123, 45, 38, 0.22);
+  background: rgba(255, 218, 214, 0.72);
+  color: var(--quartz-error);
+}
+
+.quartz-table-icon-action:disabled {
+  cursor: wait;
+  opacity: 0.55;
+}
+
+.quartz-table-icon-action .quartz-inline-icon {
+  width: 15px;
+  height: 15px;
+}
+
+.quartz-document-detail-row td {
+  padding: 0;
+  background: var(--quartz-surface-low);
+}
+
+.quartz-document-detail-panel {
+  display: grid;
+  gap: 16px;
+  padding: 18px;
+  border-top: 1px solid var(--quartz-border);
+}
+
+.quartz-document-detail-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.quartz-document-detail-card {
+  display: grid;
+  gap: 6px;
+  padding: 12px;
+  border: 1px solid var(--quartz-border);
+  background: var(--quartz-surface);
+}
+
+.quartz-document-detail-card span {
+  color: var(--quartz-muted);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.quartz-document-detail-card strong {
+  font-size: 0.92rem;
+  line-height: 1.45;
+}
+
+.quartz-document-issue-stack {
+  display: grid;
+  gap: 10px;
+}
+
+.quartz-document-issue-item {
+  display: grid;
+  gap: 4px;
+  padding: 12px 14px;
+  border-left: 3px solid rgba(142, 115, 75, 0.8);
+  background: var(--quartz-surface);
+}
+
+.quartz-document-issue-item.blocking {
+  border-left-color: rgba(123, 45, 38, 0.8);
+}
+
+.quartz-document-issue-item strong {
+  font-size: 0.82rem;
+  letter-spacing: 0.01em;
+}
+
+.quartz-document-issue-item span {
+  color: var(--quartz-muted);
+  font-size: 0.82rem;
+  line-height: 1.5;
+}
+
+.quartz-document-upload-modal {
+  width: min(100%, 640px);
+}
+
+.quartz-upload-choice-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.quartz-upload-choice {
+  display: grid;
+  justify-items: start;
+  gap: 10px;
+  min-height: 168px;
+  padding: 20px;
+  border: 1px solid var(--quartz-border);
+  background: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.92) 0%,
+    rgba(241, 237, 236, 0.86) 100%
+  );
+  color: var(--text-strong);
+  cursor: pointer;
+  text-align: left;
+  transition:
+    border-color 180ms ease,
+    background-color 180ms ease,
+    color 180ms ease;
+}
+
+.quartz-upload-choice:hover {
+  border-color: rgba(69, 97, 123, 0.24);
+  background: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.96) 0%,
+    rgba(194, 224, 255, 0.26) 100%
+  );
+}
+
+.quartz-upload-choice:disabled {
+  cursor: wait;
+  opacity: 0.7;
+}
+
+.quartz-upload-choice strong {
+  font-family: var(--font-display);
+  font-size: 1.12rem;
+  font-weight: 500;
+  letter-spacing: -0.03em;
+}
+
+.quartz-upload-choice span {
+  color: var(--quartz-muted);
+  font-size: 0.86rem;
+  line-height: 1.55;
+}
+
+.quartz-upload-choice-icon {
+  width: 20px;
+  height: 20px;
+  color: var(--quartz-secondary);
+}
+
 .quartz-mini-list {
   display: grid;
   gap: 12px;
@@ -3797,6 +3990,11 @@ a {
     grid-template-columns: 1fr;
   }
 
+  .quartz-document-detail-grid,
+  .quartz-upload-choice-grid {
+    grid-template-columns: 1fr;
+  }
+
   .quartz-upload-dataset-grid {
     grid-template-columns: 1fr;
   }
@@ -3807,6 +4005,10 @@ a {
 
   .quartz-upload-panel-meta {
     justify-content: flex-start;
+  }
+
+  .quartz-table-icon-actions {
+    flex-wrap: wrap;
   }
 
   .quartz-comparison-pane + .quartz-comparison-pane {
