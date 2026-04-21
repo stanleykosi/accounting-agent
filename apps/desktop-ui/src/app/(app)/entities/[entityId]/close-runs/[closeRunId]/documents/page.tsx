@@ -19,6 +19,7 @@ import {
 } from "react";
 import { DocumentUploadPanel } from "../../../../../../../components/documents/DocumentUploadPanel";
 import { ExtractionPanel } from "../../../../../../../components/documents/ExtractionPanel";
+import { QuartzAssistantRail } from "../../../../../../../components/layout/QuartzAssistantRail";
 import { QuartzIcon } from "../../../../../../../components/layout/QuartzIcons";
 import {
   deleteSourceDocument,
@@ -637,70 +638,61 @@ export default function CloseRunDocumentsPage({
         </section>
       </section>
 
-      <aside className="quartz-right-rail">
-        <div className="quartz-right-rail-header">
-          <QuartzIcon className="quartz-inline-icon" name="assistant" />
-          <div>
-            <h2 className="quartz-right-rail-title">Omni-Assistant</h2>
-            <p className="quartz-right-rail-subtitle">AI insights & actions</p>
-          </div>
-        </div>
-
-        <div className="quartz-right-rail-body">
-          <article className="quartz-card ai">
-            <p className="quartz-card-eyebrow secondary">Document intelligence</p>
-            <h3>Collection is almost clear</h3>
-            <p className="form-helper">
-              {readyItemsCount} items are ready to move into recommendations and journals.{" "}
-              {workspaceData.queueCounts.blocked} remain blocked and{" "}
-              {workspaceData.queueCounts.wrong_period} are outside the period.
-            </p>
-            <div className="quartz-mini-list">
-              <div className="quartz-mini-item">
-                <strong>{workspaceData.queueCounts.low_confidence} Low confidence</strong>
-                <span className="quartz-mini-meta">Extraction needs reviewer confirmation.</span>
-              </div>
-              <div className="quartz-mini-item">
-                <strong>{workspaceData.queueCounts.duplicate} Duplicates</strong>
-                <span className="quartz-mini-meta">
-                  Remove duplicate evidence before the workflow advances.
-                </span>
-              </div>
-            </div>
-          </article>
-
-          <article className="quartz-card">
-            <p className="quartz-card-eyebrow">Current focus</p>
-            <h3>{selectedDocument?.originalFilename ?? "Select a document"}</h3>
-            <p className="form-helper">
-              {selectedDocument
-                ? (selectedDocument.primaryIssueReason ??
-                  "This document is ready for accountant review.")
-                : "Choose a document row to inspect evidence, corrections, and review decisions."}
-            </p>
-            {selectedDocument ? (
-              <div className="quartz-button-row">
-                <button
-                  className="secondary-button"
-                  onClick={() => handleOpenEvidenceForDocument(selectedDocument.id)}
-                  type="button"
-                >
-                  Open Evidence
-                </button>
-              </div>
-            ) : null}
-          </article>
-        </div>
-
-        <div className="quartz-right-rail-footer">
+      <QuartzAssistantRail
+        footer={
           <Link
             className="primary-button"
             href={`/entities/${entityId}/close-runs/${closeRunId}/chat`}
           >
             Open Assistant Workbench
           </Link>
-        </div>
-      </aside>
+        }
+        subtitle="AI insights & actions"
+      >
+        <article className="quartz-card ai">
+          <p className="quartz-card-eyebrow secondary">Document intelligence</p>
+          <h3>Collection is almost clear</h3>
+          <p className="form-helper">
+            {readyItemsCount} items are ready to move into recommendations and journals.{" "}
+            {workspaceData.queueCounts.blocked} remain blocked and{" "}
+            {workspaceData.queueCounts.wrong_period} are outside the period.
+          </p>
+          <div className="quartz-mini-list">
+            <div className="quartz-mini-item">
+              <strong>{workspaceData.queueCounts.low_confidence} Low confidence</strong>
+              <span className="quartz-mini-meta">Extraction needs reviewer confirmation.</span>
+            </div>
+            <div className="quartz-mini-item">
+              <strong>{workspaceData.queueCounts.duplicate} Duplicates</strong>
+              <span className="quartz-mini-meta">
+                Remove duplicate evidence before the workflow advances.
+              </span>
+            </div>
+          </div>
+        </article>
+
+        <article className="quartz-card">
+          <p className="quartz-card-eyebrow">Current focus</p>
+          <h3>{selectedDocument?.originalFilename ?? "Select a document"}</h3>
+          <p className="form-helper">
+            {selectedDocument
+              ? (selectedDocument.primaryIssueReason ??
+                "This document is ready for accountant review.")
+              : "Choose a document row to inspect evidence, corrections, and review decisions."}
+          </p>
+          {selectedDocument ? (
+            <div className="quartz-button-row">
+              <button
+                className="secondary-button"
+                onClick={() => handleOpenEvidenceForDocument(selectedDocument.id)}
+                type="button"
+              >
+                Open Evidence
+              </button>
+            </div>
+          ) : null}
+        </article>
+      </QuartzAssistantRail>
     </div>
   );
 }
