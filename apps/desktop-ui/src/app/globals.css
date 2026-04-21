@@ -2291,7 +2291,7 @@ a {
 }
 
 .quartz-setup-card {
-  width: min(100%, 560px);
+  width: min(100%, 780px);
 }
 
 .quartz-auth-card::before,
@@ -2354,6 +2354,89 @@ a {
 .quartz-setup-form {
   display: grid;
   gap: 20px;
+}
+
+.quartz-setup-section {
+  display: grid;
+  gap: 14px;
+}
+
+.quartz-setup-section-header {
+  display: grid;
+  gap: 6px;
+}
+
+.quartz-setup-section-title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 1.2rem;
+  font-weight: 500;
+  letter-spacing: -0.03em;
+}
+
+.quartz-setup-section-copy {
+  margin: 0;
+  color: var(--quartz-muted);
+  font-size: 0.88rem;
+  line-height: 1.55;
+}
+
+.quartz-choice-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.quartz-choice-card {
+  display: flex;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid var(--quartz-border);
+  background: var(--quartz-surface-low);
+  cursor: pointer;
+  transition:
+    border-color 180ms ease,
+    background-color 180ms ease,
+    box-shadow 180ms ease;
+}
+
+.quartz-choice-card.selected {
+  border-color: var(--quartz-primary);
+  background: var(--quartz-surface);
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.08);
+}
+
+.quartz-choice-card input {
+  margin: 2px 0 0;
+  accent-color: var(--quartz-primary);
+}
+
+.quartz-choice-card-content {
+  display: grid;
+  gap: 6px;
+  width: 100%;
+}
+
+.quartz-choice-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.quartz-choice-card-header strong {
+  font-size: 0.95rem;
+}
+
+.quartz-choice-card-content p {
+  margin: 0;
+  color: var(--quartz-muted);
+  font-size: 0.82rem;
+  line-height: 1.55;
+}
+
+.quartz-setup-actions {
+  justify-content: flex-end;
 }
 
 .quartz-form-label {
@@ -3617,6 +3700,10 @@ a {
   .quartz-kpi-grid,
   .quartz-split-grid {
     grid-template-columns: 1fr 1fr;
+  }
+
+  .quartz-choice-grid {
+    grid-template-columns: 1fr;
   }
 
   .quartz-portfolio-summary-grid {
