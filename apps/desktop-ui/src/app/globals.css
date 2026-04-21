@@ -2546,6 +2546,10 @@ a {
   grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
+.quartz-portfolio-summary-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
 .quartz-split-grid-halves {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
@@ -3615,6 +3619,10 @@ a {
     grid-template-columns: 1fr 1fr;
   }
 
+  .quartz-portfolio-summary-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+
   .quartz-comparison-grid {
     grid-template-columns: 1fr;
   }
@@ -3644,6 +3652,10 @@ a {
 
   .quartz-kpi-grid,
   .quartz-split-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .quartz-portfolio-summary-grid {
     grid-template-columns: 1fr;
   }
 

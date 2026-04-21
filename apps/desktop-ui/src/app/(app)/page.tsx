@@ -35,6 +35,11 @@ type DashboardActivityRow = {
   lastActivity: NonNullable<EntitySummary["last_activity"]>;
 };
 
+type FocusedEntityRow = Readonly<{
+  currentCloseRun: CloseRunSummary | null;
+  entity: EntitySummary;
+}>;
+
 export default function DashboardPage(): ReactElement {
   const router = useRouter();
   const [dashboardData, setDashboardData] = useState<readonly DashboardEntityRuns[]>(
@@ -68,32 +73,18 @@ export default function DashboardPage(): ReactElement {
     [dashboardData],
   );
 
-  const reviewQueue = useMemo(() => [...flattenedRows].sort(compareDashboardRows), [flattenedRows]);
-  const featuredRow = reviewQueue[0] ?? null;
+  const focusedEntityEntry = useMemo<FocusedEntityRow | null>(
+    () => {
+      const entry = [...dashboardData].sort(compareEntityLedgerEntries)[0] ?? null;
+      if (entry === null) {
+        return null;
+      }
 
-  const entityRows = useMemo(
-    () =>
-      [...dashboardData].sort((left, right) => {
-        const leftRun = left.closeRuns[0] ?? null;
-        const rightRun = right.closeRuns[0] ?? null;
-
-        if (leftRun === null && rightRun === null) {
-          return left.entity.name.localeCompare(right.entity.name);
-        }
-
-        if (leftRun === null) {
-          return 1;
-        }
-
-        if (rightRun === null) {
-          return -1;
-        }
-
-        return compareDashboardRows(
-          { closeRun: leftRun, entity: left.entity },
-          { closeRun: rightRun, entity: right.entity },
-        );
-      }),
+      return {
+        currentCloseRun: entry.closeRuns[0] ?? null,
+        entity: entry.entity,
+      };
+    },
     [dashboardData],
   );
 
@@ -115,7 +106,7 @@ export default function DashboardPage(): ReactElement {
             new Date(right.lastActivity.created_at).valueOf() -
             new Date(left.lastActivity.created_at).valueOf(),
         )
-        .slice(0, 4),
+        .slice(0, 5),
     [dashboardData],
   );
 
@@ -133,35 +124,17 @@ export default function DashboardPage(): ReactElement {
       (phaseState) => phaseState.phase === "review_signoff" && phaseState.status === "ready",
     ),
   ).length;
-  const completionPercent =
-    flattenedRows.length === 0
-      ? 0
-      : Math.round(
-          (flattenedRows.reduce(
-            (sum, row) =>
-              sum +
-              row.closeRun.workflowState.phaseStates.filter(
-                (phaseState) => phaseState.status === "completed",
-              ).length,
-            0,
-          ) /
-            (flattenedRows.length * 5)) *
-            100,
-        );
-
   return (
-    <div className="quartz-page quartz-workspace-layout">
+    <div className="quartz-page quartz-workspace-layout quartz-portfolio-page">
       <section className="quartz-main-panel">
         <header className="quartz-page-header">
           <div>
             <h1>Portfolio Overview</h1>
             <p className="quartz-page-subtitle">
-              Executive summary of active entities and close-run pressure across the current review
-              cycle.
+              Current entity focus and the latest governed activity across active workspaces.
             </p>
           </div>
           <div>
-            <p className="quartz-kpi-label">Portfolio Health</p>
             <p className="quartz-kpi-value">{openCloseRuns} Active Closes</p>
           </div>
         </header>
@@ -178,24 +151,14 @@ export default function DashboardPage(): ReactElement {
           </section>
         ) : null}
 
-        {!isLoading && featuredRow !== null ? (
+        {!isLoading ? (
           <>
             <section className="quartz-section">
-              <div className="quartz-kpi-grid">
+              <div className="quartz-kpi-grid quartz-portfolio-summary-grid">
                 <article className="quartz-kpi-tile">
                   <p className="quartz-kpi-label">Total Entities</p>
                   <p className="quartz-kpi-value">{dashboardData.length}</p>
                   <p className="quartz-kpi-meta">Accessible workspaces</p>
-                </article>
-                <article className="quartz-kpi-tile">
-                  <p className="quartz-kpi-label">Close Progress</p>
-                  <p className="quartz-kpi-value">{completionPercent}%</p>
-                  <div className="quartz-progress-track">
-                    <div
-                      className="quartz-progress-bar"
-                      style={{ width: `${completionPercent}%` }}
-                    />
-                  </div>
                 </article>
                 <article className="quartz-kpi-tile">
                   <p className="quartz-kpi-label">Active Exceptions</p>
@@ -212,158 +175,103 @@ export default function DashboardPage(): ReactElement {
 
             <section className="quartz-section">
               <div className="quartz-section-header">
-                <h2 className="quartz-section-title">Entity Ledger</h2>
-                <span className="quartz-filter-link">
-                  <QuartzIcon className="quartz-inline-icon" name="filter" />
-                  Prioritized view
-                </span>
+                <h2 className="quartz-section-title">Current Entity</h2>
+                <Link className="quartz-filter-link" href="/entities">
+                  <QuartzIcon className="quartz-inline-icon" name="entities" />
+                  Open Entity Directory
+                </Link>
               </div>
+              <div className="quartz-split-grid quartz-split-grid-halves">
+                <article className="quartz-card">
+                  {focusedEntityEntry === null ? (
+                    <p className="form-helper">
+                      The most recent entity workspace will appear here once work begins.
+                    </p>
+                  ) : (
+                    <div className="quartz-table-shell">
+                      <table className="quartz-table">
+                        <thead>
+                          <tr>
+                            <th>Entity</th>
+                            <th>Status</th>
+                            <th>Latest Period</th>
+                            <th>Action</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          <tr
+                            className={
+                              resolveEntityAttention(focusedEntityEntry.currentCloseRun)?.tone ===
+                              "warning"
+                                ? "quartz-table-row error"
+                                : undefined
+                            }
+                          >
+                            <td>
+                              <div className="quartz-table-primary">
+                                {focusedEntityEntry.entity.name}
+                              </div>
+                              <div className="quartz-table-secondary">
+                                {focusedEntityEntry.entity.base_currency} workspace •{" "}
+                                {focusedEntityEntry.entity.member_count} members
+                              </div>
+                            </td>
+                            <td>
+                              <span
+                                className={`quartz-status-badge ${resolveEntityBadgeTone(focusedEntityEntry)}`}
+                              >
+                                {resolveEntityAttention(focusedEntityEntry.currentCloseRun)?.label ??
+                                  focusedEntityEntry.entity.status}
+                              </span>
+                            </td>
+                            <td>
+                              {focusedEntityEntry.currentCloseRun
+                                ? formatCloseRunPeriod(focusedEntityEntry.currentCloseRun)
+                                : "No close run"}
+                            </td>
+                            <td className="quartz-table-center">
+                              <Link
+                                className="quartz-action-link"
+                                href={
+                                  focusedEntityEntry.currentCloseRun
+                                    ? `/entities/${focusedEntityEntry.entity.id}/close-runs/${focusedEntityEntry.currentCloseRun.id}`
+                                    : `/entities/${focusedEntityEntry.entity.id}`
+                                }
+                              >
+                                {focusedEntityEntry.currentCloseRun ? "Review" : "Open"}
+                              </Link>
+                            </td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </article>
 
-              <div className="quartz-table-shell">
-                <table className="quartz-table">
-                  <thead>
-                    <tr>
-                      <th>Entity Name</th>
-                      <th>Country</th>
-                      <th>Status</th>
-                      <th>Progress</th>
-                      <th>Latest Period</th>
-                      <th>Action</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {entityRows.map((entry) => {
-                      const currentCloseRun = entry.closeRuns[0] ?? null;
-                      const attention = currentCloseRun
-                        ? deriveCloseRunAttention(currentCloseRun)
-                        : null;
-                      const progress = currentCloseRun
-                        ? calculateCompletionPercent(currentCloseRun)
-                        : null;
-                      const badgeTone =
-                        attention?.tone === "warning"
-                          ? "error"
-                          : entry.entity.status === "archived"
-                            ? "neutral"
-                            : "success";
-
-                      return (
-                        <tr
-                          className={
-                            attention?.tone === "warning" ? "quartz-table-row error" : undefined
-                          }
-                          key={entry.entity.id}
-                        >
-                          <td>
-                            <div className="quartz-table-primary">{entry.entity.name}</div>
-                            <div className="quartz-table-secondary">
-                              {entry.entity.base_currency} workspace • {entry.entity.member_count}{" "}
-                              members
-                            </div>
-                          </td>
-                          <td>{entry.entity.country_code}</td>
-                          <td>
-                            <span className={`quartz-status-badge ${badgeTone}`}>
-                              {attention?.label ?? entry.entity.status}
-                            </span>
-                          </td>
-                          <td className="quartz-table-numeric">
-                            {progress === null ? "—" : `${progress}%`}
-                          </td>
-                          <td>
-                            {currentCloseRun
-                              ? formatCloseRunPeriod(currentCloseRun)
-                              : "No close run"}
-                          </td>
-                          <td className="quartz-table-center">
-                            <Link
-                              className="quartz-action-link"
-                              href={
-                                currentCloseRun
-                                  ? `/entities/${entry.entity.id}/close-runs/${currentCloseRun.id}`
-                                  : `/entities/${entry.entity.id}`
-                              }
-                            >
-                              {currentCloseRun ? "Review" : "Open"}
-                            </Link>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
+                <article className="quartz-card">
+                  <div className="quartz-section-header quartz-section-header-tight">
+                    <h2 className="quartz-section-title">Recent Activity</h2>
+                  </div>
+                  <div className="quartz-mini-list">
+                    {recentActivityRows.length === 0 ? (
+                      <p className="form-helper">Recent approvals and uploads will appear here.</p>
+                    ) : (
+                      recentActivityRows.map((activity) => (
+                        <div className="quartz-mini-item" key={activity.lastActivity.id}>
+                          <strong>{activity.lastActivity.summary}</strong>
+                          <span className="quartz-mini-meta">
+                            {activity.entityName} •{" "}
+                            {formatCloseRunDateTime(activity.lastActivity.created_at)}
+                          </span>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </article>
               </div>
             </section>
           </>
         ) : null}
-      </section>
-
-      <section className="quartz-section">
-        <div className="quartz-split-grid quartz-split-grid-halves">
-          {featuredRow ? (
-            <article className="quartz-card ai">
-              <p className="quartz-card-eyebrow error">Variance detected</p>
-              <h3>{featuredRow.entity.name}</h3>
-              <p className="form-helper">{deriveCloseRunAttention(featuredRow.closeRun).detail}</p>
-              <div className="quartz-highlight-box">
-                <span className="quartz-card-eyebrow">Current period</span>
-                <p style={{ margin: "6px 0 0" }}>{formatCloseRunPeriod(featuredRow.closeRun)}</p>
-              </div>
-              <div className="quartz-button-row">
-                <Link
-                  className="secondary-button"
-                  href={`/entities/${featuredRow.entity.id}/close-runs/${featuredRow.closeRun.id}`}
-                >
-                  Investigate
-                </Link>
-              </div>
-            </article>
-          ) : (
-            <article className="quartz-card">
-              <p className="quartz-card-eyebrow secondary">Portfolio note</p>
-              <h3>No urgent close-run escalations</h3>
-              <p className="form-helper">
-                New blocker and review signals will surface here as governed workflows progress.
-              </p>
-            </article>
-          )}
-
-          <article className="quartz-card">
-            <p className="quartz-card-eyebrow secondary">Pace analysis</p>
-            <h3>Close cadence is stable</h3>
-            <p className="form-helper">
-              {openCloseRuns} active close runs are in motion. {readyForSignoffCount} periods are
-              ready for final review and {blockedPhaseCount} workflow gates currently require
-              intervention.
-            </p>
-          </article>
-        </div>
-      </section>
-
-      <section className="quartz-section">
-        <article className="quartz-card">
-          <div className="quartz-section-header quartz-section-header-tight">
-            <h2 className="quartz-section-title">Recent Activity</h2>
-            <Link className="quartz-filter-link" href="/entities">
-              Open Entity Directory
-            </Link>
-          </div>
-          <div className="quartz-mini-list">
-            {recentActivityRows.length === 0 ? (
-              <p className="form-helper">Recent approvals and uploads will appear here.</p>
-            ) : (
-              recentActivityRows.map((activity) => (
-                <div className="quartz-mini-item" key={activity.lastActivity.id}>
-                  <strong>{activity.lastActivity.summary}</strong>
-                  <span className="quartz-mini-meta">
-                    {activity.entityName} •{" "}
-                    {formatCloseRunDateTime(activity.lastActivity.created_at)}
-                  </span>
-                </div>
-              ))
-            )}
-          </div>
-        </article>
       </section>
     </div>
   );
@@ -400,6 +308,34 @@ function compareDashboardRows(left: DashboardRow, right: DashboardRow): number {
   );
 }
 
+function compareEntityLedgerEntries(left: DashboardEntityRuns, right: DashboardEntityRuns): number {
+  const leftTimestamp = resolveEntityRecencyTimestamp(left);
+  const rightTimestamp = resolveEntityRecencyTimestamp(right);
+
+  if (leftTimestamp !== rightTimestamp) {
+    return rightTimestamp - leftTimestamp;
+  }
+
+  const leftRun = left.closeRuns[0] ?? null;
+  const rightRun = right.closeRuns[0] ?? null;
+  if (leftRun !== null && rightRun !== null) {
+    return compareDashboardRows(
+      { closeRun: leftRun, entity: left.entity },
+      { closeRun: rightRun, entity: right.entity },
+    );
+  }
+
+  if (leftRun !== null) {
+    return -1;
+  }
+
+  if (rightRun !== null) {
+    return 1;
+  }
+
+  return left.entity.name.localeCompare(right.entity.name);
+}
+
 function dashboardPriority(closeRun: CloseRunSummary): number {
   if (findBlockingPhase(closeRun) !== null) {
     return 0;
@@ -428,9 +364,34 @@ function compareUpdatedAt(left: CloseRunSummary, right: CloseRunSummary): number
   return new Date(right.updatedAt).valueOf() - new Date(left.updatedAt).valueOf();
 }
 
-function calculateCompletionPercent(closeRun: Readonly<CloseRunSummary>): number {
-  const completed = closeRun.workflowState.phaseStates.filter(
-    (phaseState) => phaseState.status === "completed",
-  ).length;
-  return Math.round((completed / closeRun.workflowState.phaseStates.length) * 100);
+function resolveEntityRecencyTimestamp(entry: DashboardEntityRuns): number {
+  const activityTimestamp = entry.entity.last_activity?.created_at;
+  if (typeof activityTimestamp === "string") {
+    return new Date(activityTimestamp).valueOf();
+  }
+
+  const closeRunTimestamp = entry.closeRuns[0]?.updatedAt;
+  if (typeof closeRunTimestamp === "string") {
+    return new Date(closeRunTimestamp).valueOf();
+  }
+
+  return Number.NEGATIVE_INFINITY;
+}
+
+function resolveEntityAttention(closeRun: CloseRunSummary | null) {
+  return closeRun === null ? null : deriveCloseRunAttention(closeRun);
+}
+
+function resolveEntityBadgeTone(
+  entry: Readonly<{
+    currentCloseRun?: CloseRunSummary | null;
+    entity: EntitySummary;
+  }>,
+): "error" | "neutral" | "success" {
+  const attention = resolveEntityAttention(entry.currentCloseRun ?? null);
+  if (attention?.tone === "warning") {
+    return "error";
+  }
+
+  return entry.entity.status === "archived" ? "neutral" : "success";
 }
