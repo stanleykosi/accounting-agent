@@ -693,7 +693,7 @@ export default function EntityWorkspacePage({
           role="dialog"
         >
           <div
-            className="quartz-modal-card quartz-modal-card-wide"
+            className="quartz-modal-card quartz-modal-card-wide quartz-entity-upload-modal"
             onClick={(event) => event.stopPropagation()}
             role="document"
           >

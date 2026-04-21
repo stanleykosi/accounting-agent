@@ -2436,6 +2436,14 @@ a {
   width: min(100%, 760px);
 }
 
+.quartz-entity-upload-modal {
+  width: min(100%, 680px);
+  max-height: min(84vh, 760px);
+  gap: 14px;
+  padding: 20px;
+  overflow-y: auto;
+}
+
 .quartz-icon-button {
   display: inline-flex;
   width: 36px;
@@ -2690,14 +2698,14 @@ a {
 
 .quartz-upload-dataset-grid {
   display: grid;
-  gap: 12px;
+  gap: 10px;
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
 .quartz-upload-dataset-card {
   display: grid;
-  gap: 6px;
-  padding: 14px 16px;
+  gap: 4px;
+  padding: 12px 14px;
   border: 1px solid var(--quartz-border);
   background: var(--quartz-surface-low);
   color: var(--text-strong);
@@ -2710,8 +2718,8 @@ a {
 }
 
 .quartz-upload-dataset-card strong {
-  font-size: 0.92rem;
-  line-height: 1.45;
+  font-size: 0.86rem;
+  line-height: 1.35;
   overflow-wrap: anywhere;
 }
 
@@ -2733,8 +2741,8 @@ a {
 
 .quartz-upload-panel {
   display: grid;
-  gap: 16px;
-  padding: 20px;
+  gap: 14px;
+  padding: 16px;
   border: 1px solid var(--quartz-border);
   background: var(--quartz-surface-low);
 }
@@ -2743,13 +2751,13 @@ a {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 16px;
+  gap: 12px;
 }
 
 .quartz-upload-panel-title {
   margin: 0;
   font-family: var(--font-display);
-  font-size: 1.1rem;
+  font-size: 1rem;
   font-weight: 500;
   letter-spacing: -0.03em;
 }
@@ -2764,12 +2772,12 @@ a {
 .quartz-upload-chip {
   display: inline-flex;
   align-items: center;
-  min-height: 30px;
-  padding: 0 10px;
+  min-height: 26px;
+  padding: 0 8px;
   border: 1px solid var(--quartz-border);
   background: var(--quartz-surface);
   color: var(--quartz-muted);
-  font-size: 0.74rem;
+  font-size: 0.7rem;
   font-weight: 600;
   letter-spacing: 0.03em;
   overflow-wrap: anywhere;
@@ -2782,7 +2790,7 @@ a {
   background: rgba(255, 255, 255, 0.78);
   color: var(--text-strong);
   font: inherit;
-  padding: 16px;
+  padding: 12px;
 }
 
 .quartz-kpi-tile.highlight {
