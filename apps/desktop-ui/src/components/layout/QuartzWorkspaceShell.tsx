@@ -46,6 +46,7 @@ export function QuartzWorkspaceShell({
     () => closeContext ?? rememberedCloseContext ?? resolveFallbackCloseContext(),
     [closeContext, rememberedCloseContext],
   );
+  const entityContext = useMemo(() => resolveEntityContext(pathname), [pathname]);
   const breadcrumbs = useMemo(() => resolveBreadcrumbs(pathname), [pathname]);
   const isChatWorkspace = pathname.endsWith("/chat");
   const navItems = useMemo<readonly NavItem[]>(
@@ -59,7 +60,10 @@ export function QuartzWorkspaceShell({
       {
         href: "/entities",
         icon: "entities",
-        isActive: pathname.startsWith("/entities") && !pathname.includes("/close-runs/"),
+        isActive:
+          pathname.startsWith("/entities") &&
+          !pathname.includes("/close-runs/") &&
+          !pathname.endsWith("/assistant"),
         label: "Entities",
       },
       {
@@ -69,13 +73,16 @@ export function QuartzWorkspaceShell({
         label: "Close",
       },
       {
-        href: fallbackCloseContext?.chatHref ?? "/entities",
+        href: resolveAssistantHref({
+          closeContext,
+          entityContext,
+        }),
         icon: "assistant",
-        isActive: pathname.endsWith("/chat"),
+        isActive: pathname === "/assistant" || pathname.endsWith("/assistant") || pathname.endsWith("/chat"),
         label: "Assistant",
       },
     ],
-    [fallbackCloseContext?.chatHref, fallbackCloseContext?.overviewHref, pathname],
+    [closeContext, entityContext, fallbackCloseContext?.overviewHref, pathname],
   );
 
   useEffect(() => {
@@ -228,6 +235,53 @@ function resolveCloseContext(pathname: string): {
   };
 }
 
+function resolveEntityContext(pathname: string): {
+  assistantHref: string;
+  entityId: string;
+  homeHref: string;
+} | null {
+  const match = pathname.match(/^\/entities\/([^/]+)(?:\/.*)?$/u);
+  if (match === null) {
+    return null;
+  }
+
+  const entityId = match[1];
+  if (typeof entityId !== "string" || entityId.length === 0 || entityId === "new") {
+    return null;
+  }
+  if (pathname.includes("/close-runs/")) {
+    return null;
+  }
+
+  return {
+    assistantHref: `/entities/${entityId}/assistant`,
+    entityId,
+    homeHref: `/entities/${entityId}`,
+  };
+}
+
+function resolveAssistantHref(options: {
+  closeContext: {
+    chatHref: string;
+    closeRunId: string;
+    entityId: string;
+    overviewHref: string;
+  } | null;
+  entityContext: {
+    assistantHref: string;
+    entityId: string;
+    homeHref: string;
+  } | null;
+}): string {
+  if (options.closeContext !== null) {
+    return options.closeContext.chatHref;
+  }
+  if (options.entityContext !== null) {
+    return options.entityContext.assistantHref;
+  }
+  return "/assistant";
+}
+
 function resolveFallbackCloseContext(): RememberedCloseContext | null {
   const dashboardSnapshot = readDashboardBootstrapSnapshot();
   return dashboardSnapshot === null
@@ -236,6 +290,13 @@ function resolveFallbackCloseContext(): RememberedCloseContext | null {
 }
 
 function resolveBreadcrumbs(pathname: string): readonly { href: string; label: string }[] {
+  if (pathname === "/assistant") {
+    return [
+      { href: "/", label: "Portfolio Overview" },
+      { href: "/assistant", label: "Assistant Hub" },
+    ];
+  }
+
   if (pathname === "/") {
     return [{ href: "/", label: "Portfolio Overview" }];
   }
@@ -255,12 +316,22 @@ function resolveBreadcrumbs(pathname: string): readonly { href: string; label: s
     ];
   }
 
+  if (/^\/entities\/[^/]+\/assistant$/u.test(pathname)) {
+    const entityHomePath = pathname.replace(/\/assistant$/u, "");
+    return [
+      { href: "/", label: "Portfolio Overview" },
+      { href: "/entities", label: "Entities" },
+      { href: entityHomePath, label: "Entity Home" },
+      { href: pathname, label: "Entity Assistant" },
+    ];
+  }
+
   if (pathname.endsWith("/chat")) {
     return [
       { href: "/", label: "Portfolio Overview" },
       { href: "/entities", label: "Entities" },
       { href: pathname.replace(/\/chat$/u, ""), label: "Close Mission Control" },
-      { href: pathname, label: "Assistant" },
+      { href: pathname, label: "Close Assistant" },
     ];
   }
 

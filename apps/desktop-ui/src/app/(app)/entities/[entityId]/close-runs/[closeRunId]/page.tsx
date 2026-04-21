@@ -10,6 +10,7 @@ import { getWorkflowPhaseDefinition, type WorkflowPhase } from "@accounting-ai-a
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { use, useEffect, useState, type ReactElement } from "react";
+import { QuartzIcon } from "../../../../../../components/layout/QuartzIcons";
 import {
   approveCloseRun,
   archiveCloseRun,
@@ -206,6 +207,13 @@ export default function CloseRunOverviewPage({
             </p>
           </div>
           <div className="quartz-page-toolbar">
+            <Link
+              className="secondary-button quartz-toolbar-button"
+              href={`/entities/${entityId}/close-runs/${closeRunId}/chat`}
+            >
+              <QuartzIcon className="quartz-inline-icon" name="assistant" />
+              Open Assistant
+            </Link>
             <span className={`quartz-status-badge ${mapAttentionToneToBadge(attention.tone)}`}>
               {attention.label}
             </span>

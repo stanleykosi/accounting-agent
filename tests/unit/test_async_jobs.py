@@ -46,7 +46,16 @@ def test_build_celery_configuration_uses_canonical_queue_defaults() -> None:
     assert configuration["task_routes"][TaskName.SYSTEM_TRACE_PROBE.value]["queue"] == (
         TaskQueue.CONTROL.value
     )
+    assert configuration["task_routes"][TaskName.CHAT_RESUME_OPERATOR_TURN.value]["queue"] == (
+        TaskQueue.CONTROL.value
+    )
     assert configuration["task_routes"][TaskName.REPORTING_GENERATE_CLOSE_RUN_PACK.value][
+        "queue"
+    ] == TaskQueue.REPORTING.value
+    assert configuration["task_routes"][TaskName.EXPORTS_GENERATE_CLOSE_RUN_PACKAGE.value][
+        "queue"
+    ] == TaskQueue.REPORTING.value
+    assert configuration["task_routes"][TaskName.EXPORTS_ASSEMBLE_EVIDENCE_PACK.value][
         "queue"
     ] == TaskQueue.REPORTING.value
     assert task_queue_names(include_dead_letter=False) == (

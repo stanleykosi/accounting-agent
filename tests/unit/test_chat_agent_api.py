@@ -20,6 +20,7 @@ from fastapi import Response
 from services.contracts.chat_models import (
     AgentCoaSummary,
     AgentMemorySummary,
+    AgentOperatorControl,
     AgentRunPhaseState,
     AgentRunReadiness,
     AgentToolManifestItem,
@@ -202,6 +203,7 @@ class FakeChatActionExecutor:
 
     def __init__(self) -> None:
         now = datetime.now(tz=UTC)
+        self.async_group_calls: list[dict[str, object]] = []
         self.workspace = ChatThreadWorkspaceResponse(
             thread_id=str(uuid4()),
             grounding=GroundingContext(
@@ -261,6 +263,13 @@ class FakeChatActionExecutor:
             tools=(
                 AgentToolManifestItem(
                     name="generate_reports",
+                    namespace="reporting_and_release",
+                    namespace_label="Reporting and Release",
+                    specialist_name="Reporting Controller",
+                    specialist_mission=(
+                        "Owns supporting schedules, commentary, reporting, export "
+                        "packaging, evidence packs, and release records."
+                    ),
                     prompt_signature=(
                         "generate_reports(template_id?, generate_commentary?, "
                         "use_llm_commentary?)"
@@ -283,14 +292,69 @@ class FakeChatActionExecutor:
                     created_at=now,
                     mode="mcp",
                     tool_name="generate_reports",
+                    tool_namespace="reporting_and_release",
+                    specialist_name="Reporting Controller",
+                    tool_intent="report_action",
                     trace_id="trace-123",
+                    planner_policy_version="2026-04-21.operator-planner.v1",
+                    confirmation_policy_version="2026-04-21.operator-confirmation.v1",
                     action_status="applied",
                     summary="generate_reports completed",
+                    eval_tags=("mode:mcp", "status:applied"),
+                ),
+            ),
+            operator_controls=(
+                AgentOperatorControl(
+                    id="confirm_pending_action",
+                    label="Confirm pending action",
+                    command="confirm",
+                    kind="governed_action",
+                    scope="close_run",
+                    description="Confirm the governed action currently waiting in this thread.",
+                    requires_confirmation=True,
+                    enabled=True,
+                    disabled_reason=None,
+                ),
+                AgentOperatorControl(
+                    id="next_action_1",
+                    label="Generate reports",
+                    command="Generate reports and commentary for the current close run.",
+                    kind="next_step",
+                    scope="close_run",
+                    description="Suggested next action derived from current workspace readiness.",
+                    requires_confirmation=False,
+                    enabled=True,
+                    disabled_reason=None,
                 ),
             ),
             mcp_manifest={
                 "protocol": "model-context-protocol",
                 "version": "2025-11-25",
+                "namespaces": [
+                    {
+                        "name": "reporting_and_release",
+                        "label": "Reporting and Release",
+                        "specialist_name": "Reporting Controller",
+                        "specialist_mission": (
+                            "Owns supporting schedules, commentary, reporting, export "
+                            "packaging, evidence packs, and release records."
+                        ),
+                    }
+                ],
+                "operator_policy": {
+                    "planner_policy_version": "2026-04-21.operator-planner.v1",
+                    "confirmation_policy_version": "2026-04-21.operator-confirmation.v1",
+                    "eval_schema_version": "2026-04-21.operator-eval.v1",
+                },
+                "operator_controls": {
+                    "delivery": "natural_language_command",
+                    "kinds": [
+                        "governed_action",
+                        "next_step",
+                        "recovery",
+                        "status_check",
+                    ],
+                },
                 "tools": [
                     {
                         "name": "generate_reports",
@@ -300,6 +364,13 @@ class FakeChatActionExecutor:
                             "properties": {
                                 "generate_commentary": {"type": "boolean"},
                             },
+                        },
+                        "annotations": {
+                            "namespace": "reporting_and_release",
+                            "namespaceLabel": "Reporting and Release",
+                            "specialistName": "Reporting Controller",
+                            "requiresHumanApproval": False,
+                            "intent": "report_action",
                         },
                     }
                 ],
@@ -320,6 +391,36 @@ class FakeChatActionExecutor:
 
     def list_registered_tools(self) -> tuple[AgentToolManifestItem, ...]:
         return self.workspace.tools
+
+    def read_mcp_manifest(self) -> dict[str, object]:
+        return self.workspace.mcp_manifest
+
+    def activate_async_job_group(
+        self,
+        *,
+        thread_id,
+        entity_id,
+        actor_user,
+        continuation_group_id,
+        objective,
+        originating_tool,
+        job_count,
+        source_surface,
+        trace_id,
+    ) -> None:
+        self.async_group_calls.append(
+            {
+                "thread_id": str(thread_id),
+                "entity_id": str(entity_id),
+                "actor_user_id": str(actor_user.id),
+                "continuation_group_id": str(continuation_group_id),
+                "objective": objective,
+                "originating_tool": originating_tool,
+                "job_count": job_count,
+                "source_surface": source_surface.value,
+                "trace_id": trace_id,
+            }
+        )
 
     def execute_registered_tool(
         self,
@@ -381,7 +482,7 @@ class FakeChatActionExecutor:
 
 class FakeChatRepository:
     def __init__(self, *, close_run_id) -> None:
-        self.thread = SimpleNamespace(close_run_id=close_run_id)
+        self.thread = SimpleNamespace(id=uuid4(), close_run_id=close_run_id)
         self.messages: list[dict[str, object]] = []
         self.commit_count = 0
         self.rollback_count = 0
@@ -433,6 +534,7 @@ class FakeChatRepository:
 class FakeDocumentUploadService:
     def __init__(self) -> None:
         self.calls: list[dict[str, object]] = []
+        self.parse_queue_calls: list[dict[str, object]] = []
 
     def upload_documents(
         self,
@@ -466,6 +568,29 @@ class FakeDocumentUploadService:
                     )
                 ),
             )
+        )
+
+    def queue_specific_uploaded_documents_for_parse(
+        self,
+        *,
+        actor_user,
+        entity_id,
+        close_run_id,
+        document_ids,
+        source_surface,
+        trace_id,
+        checkpoint_payload,
+    ) -> None:
+        self.parse_queue_calls.append(
+            {
+                "actor_user_id": str(actor_user.id),
+                "entity_id": str(entity_id),
+                "close_run_id": str(close_run_id),
+                "document_ids": tuple(str(document_id) for document_id in document_ids),
+                "source_surface": source_surface.value,
+                "trace_id": trace_id,
+                "checkpoint_payload": checkpoint_payload,
+            }
         )
 
 
@@ -512,7 +637,10 @@ def test_chat_workspace_endpoint_returns_memory_tools_and_traces(monkeypatch) ->
     assert payload["readiness"]["status"] == "attention_required"
     assert payload["memory"]["pending_action_count"] == 2
     assert payload["tools"][0]["name"] == "generate_reports"
+    assert payload["tools"][0]["namespace"] == "reporting_and_release"
     assert payload["recent_traces"][0]["tool_name"] == "generate_reports"
+    assert payload["recent_traces"][0]["tool_namespace"] == "reporting_and_release"
+    assert payload["operator_controls"][0]["command"] == "confirm"
     assert payload["mcp_manifest"]["version"] == "2025-11-25"
     assert executor.workspace.progress_summary in payload["progress_summary"]
 
@@ -549,6 +677,7 @@ def test_chat_tool_manifest_route_authenticates_with_current_session_api(monkeyp
 
     assert captured_call["session_token"] == "session-token"
     assert manifest["version"] == "2025-11-25"
+    assert manifest["tools"][0]["annotations"]["namespace"] == "reporting_and_release"
     assert manifest["tools"][0]["name"] == "generate_reports"
 
 
@@ -721,7 +850,7 @@ def test_chat_action_attachment_route_ingests_source_documents(monkeypatch) -> N
     )
     attachments = executor.sent_action_message["message_grounding_payload"]["attachments"]
     assert attachments[0]["filename"] == "invoice.pdf"
-    assert "staged for parsing" in executor.sent_action_message["content"]
+    assert "parsing started" in executor.sent_action_message["content"]
 
 
 def test_chat_action_route_uses_shared_agent_lane_for_plain_conversation(monkeypatch) -> None:
@@ -756,6 +885,7 @@ def test_chat_action_route_uses_shared_agent_lane_for_plain_conversation(monkeyp
     assert executor.sent_action_message is not None
     assert executor.sent_action_message["content"] == "hello"
     assert executor.sent_action_message["source_surface"] == "desktop"
+    assert result.operator_controls[0].command == "confirm"
 
 
 def test_chat_action_attachment_route_reports_partial_success_when_follow_up_fails(
@@ -803,6 +933,7 @@ def test_chat_action_attachment_route_reports_partial_success_when_follow_up_fai
     assert result.action_plan is None
     assert "upload completed successfully" in result.content.lower()
     assert "without re-uploading the files" in result.content
+    assert result.operator_controls == ()
     assert document_upload_service.calls[0]["file_count"] == 1
     assert repository.commit_count == 1
     assert repository.rollback_count == 0

@@ -58,14 +58,32 @@ export type ChatThreadDeleteResponse = {
 export type ChatAttachmentIntent = "source_documents";
 
 export type AgentMemorySummary = {
+  active_async_last_failure: string | null;
+  active_async_objective: string | null;
+  active_async_originating_tool: string | null;
+  active_async_retry_count: number;
+  active_async_status: string | null;
   last_action_status: string | null;
   last_assistant_response: string | null;
+  last_async_note: string | null;
+  last_async_objective: string | null;
+  last_async_status: string | null;
   last_operator_message: string | null;
   last_tool_name: string | null;
+  last_tool_namespace: string | null;
   last_trace_id: string | null;
   pending_action_count: number;
+  preferred_confirmation_style: string;
+  preferred_explanation_depth: string;
   progress_summary: string | null;
+  recent_entity_names: string[];
+  recent_objectives: string[];
+  recent_period_labels: string[];
   recent_tool_names: string[];
+  recent_tool_namespaces: string[];
+  recovery_actions: string[];
+  recovery_state: string | null;
+  recovery_summary: string | null;
   updated_at: string | null;
 };
 
@@ -129,6 +147,18 @@ export type AgentTraceRecord = {
   trace_id: string | null;
 };
 
+export type AgentOperatorControl = {
+  command: string;
+  description: string | null;
+  disabled_reason: string | null;
+  enabled: boolean;
+  id: string;
+  kind: string;
+  label: string;
+  requires_confirmation: boolean;
+  scope: string;
+};
+
 export type ToolSchemaNode = {
   additionalProperties?: boolean | ToolSchemaNode;
   description?: string;
@@ -166,6 +196,7 @@ export type ChatThreadWorkspace = {
   grounding: GroundingContext;
   mcp_manifest: ChatToolManifest;
   memory: AgentMemorySummary;
+  operator_controls: AgentOperatorControl[];
   progress_summary: string | null;
   readiness: AgentRunReadiness;
   recent_traces: AgentTraceRecord[];
@@ -328,6 +359,9 @@ export async function getChatThreadWorkspace(
   return {
     ...workspace,
     mcp_manifest: normalizeChatToolManifest(workspace.mcp_manifest as Record<string, unknown>),
+    operator_controls: normalizeOperatorControls(
+      (workspace as Record<string, unknown>).operator_controls,
+    ),
   };
 }
 
@@ -385,6 +419,7 @@ export type ChatActionResponse = {
   content: string;
   is_read_only: boolean;
   message_id: string;
+  operator_controls: AgentOperatorControl[];
 };
 
 export type ApproveChatActionRequest = {
@@ -406,13 +441,19 @@ export async function sendChatAction(
   entityId: string,
   content: string,
 ): Promise<ChatActionResponse> {
-  return fetchJson<ChatActionResponse>(
+  const response = await fetchJson<ChatActionResponse>(
     `${API_BASE}/threads/${threadId}/actions?entity_id=${encodeURIComponent(entityId)}`,
     {
       body: JSON.stringify({ content } satisfies SendChatActionRequest),
       method: "POST",
     },
   );
+  return {
+    ...response,
+    operator_controls: normalizeOperatorControls(
+      (response as Record<string, unknown>).operator_controls,
+    ),
+  };
 }
 
 export async function sendChatActionWithAttachments(
@@ -451,7 +492,49 @@ export async function sendChatActionWithAttachments(
     );
   }
 
-  return (await parseJsonResponse(response)) as ChatActionResponse;
+  const payload = (await parseJsonResponse(response)) as ChatActionResponse;
+  return {
+    ...payload,
+    operator_controls: normalizeOperatorControls(
+      (payload as Record<string, unknown>).operator_controls,
+    ),
+  };
+}
+
+function normalizeOperatorControls(value: unknown): AgentOperatorControl[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.flatMap((item) => {
+    if (!isRecord(item)) {
+      return [];
+    }
+    if (
+      typeof item.id !== "string" ||
+      typeof item.label !== "string" ||
+      typeof item.command !== "string" ||
+      typeof item.kind !== "string" ||
+      typeof item.scope !== "string"
+    ) {
+      return [];
+    }
+
+    return [
+      {
+        command: item.command,
+        description: typeof item.description === "string" ? item.description : null,
+        disabled_reason:
+          typeof item.disabled_reason === "string" ? item.disabled_reason : null,
+        enabled: item.enabled !== false,
+        id: item.id,
+        kind: item.kind,
+        label: item.label,
+        requires_confirmation: item.requires_confirmation === true,
+        scope: item.scope,
+      },
+    ];
+  });
 }
 
 /**

@@ -442,6 +442,10 @@ function buildStarterPrompts(options: {
   if (closeRunId) {
     prompts.push("What should I do next in this close?");
     prompts.push("Summarize this close for me.");
+  } else {
+    prompts.push("Show me the active close runs in this workspace.");
+    prompts.push("Start a new close run for this entity.");
+    prompts.push("What workspace data is missing before the next close?");
   }
 
   return Array.from(new Set(prompts)).slice(0, 5);

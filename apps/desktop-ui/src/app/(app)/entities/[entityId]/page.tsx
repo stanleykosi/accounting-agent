@@ -486,6 +486,13 @@ export default function EntityWorkspacePage({
             </p>
           </div>
           <div className="quartz-page-toolbar">
+            <Link
+              className="secondary-button quartz-toolbar-button"
+              href={`/entities/${entityId}/assistant`}
+            >
+              <QuartzIcon className="quartz-inline-icon" name="assistant" />
+              Open Assistant
+            </Link>
             <button
               className="secondary-button quartz-toolbar-button"
               onClick={() => openUploadDialog()}
@@ -591,12 +598,20 @@ export default function EntityWorkspacePage({
                         </td>
                         <td>{formatCloseRunDateTime(closeRun.updatedAt)}</td>
                         <td className="quartz-table-center">
-                          <Link
-                            className="quartz-action-link"
-                            href={`/entities/${entity.id}/close-runs/${closeRun.id}`}
-                          >
-                            Open
-                          </Link>
+                          <div className="quartz-table-actions">
+                            <Link
+                              className="quartz-action-link"
+                              href={`/entities/${entity.id}/close-runs/${closeRun.id}`}
+                            >
+                              Open
+                            </Link>
+                            <Link
+                              className="quartz-action-link"
+                              href={`/entities/${entity.id}/close-runs/${closeRun.id}/chat`}
+                            >
+                              Assistant
+                            </Link>
+                          </div>
                         </td>
                       </tr>
                     );

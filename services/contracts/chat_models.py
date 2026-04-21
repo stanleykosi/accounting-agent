@@ -231,6 +231,10 @@ class AgentMemorySummary(ContractModel):
         default=None,
         description="Most recent deterministic tool used by the agent, if any.",
     )
+    last_tool_namespace: str | None = Field(
+        default=None,
+        description="Most recent operator namespace used by the agent, if any.",
+    )
     last_action_status: str | None = Field(
         default=None,
         description="Outcome state of the last recorded agent action.",
@@ -238,6 +242,14 @@ class AgentMemorySummary(ContractModel):
     last_trace_id: str | None = Field(
         default=None,
         description="Trace identifier linked to the most recent agent turn.",
+    )
+    preferred_explanation_depth: str = Field(
+        default="balanced",
+        description="Preferred answer depth inferred from recent operator instructions.",
+    )
+    preferred_confirmation_style: str = Field(
+        default="confirm_high_risk",
+        description="Preferred action-confirmation style inferred from operator instructions.",
     )
     pending_action_count: int = Field(
         default=0,
@@ -251,6 +263,70 @@ class AgentMemorySummary(ContractModel):
     recent_tool_names: tuple[str, ...] = Field(
         default=(),
         description="Recently used tool names retained in compact thread memory.",
+    )
+    recent_tool_namespaces: tuple[str, ...] = Field(
+        default=(),
+        description="Recently used operator namespaces retained in compact thread memory.",
+    )
+    recent_objectives: tuple[str, ...] = Field(
+        default=(),
+        description="Recent operator objectives retained for conversational continuity.",
+    )
+    recent_entity_names: tuple[str, ...] = Field(
+        default=(),
+        description="Recent workspace names retained to help the agent target the right scope.",
+    )
+    recent_period_labels: tuple[str, ...] = Field(
+        default=(),
+        description="Recent period labels retained for conversational targeting.",
+    )
+    active_async_status: str | None = Field(
+        default=None,
+        description="Status of the currently active async workflow owned by this thread.",
+    )
+    active_async_objective: str | None = Field(
+        default=None,
+        description="Objective currently waiting on background work, when present.",
+    )
+    active_async_originating_tool: str | None = Field(
+        default=None,
+        description="Originating tool for the active async workflow, when present.",
+    )
+    active_async_retry_count: int = Field(
+        default=0,
+        ge=0,
+        description="Number of async recovery retries attempted for the active workflow.",
+    )
+    active_async_last_failure: str | None = Field(
+        default=None,
+        description="Most recent recovery failure note attached to the active async workflow.",
+    )
+    last_async_status: str | None = Field(
+        default=None,
+        description="Final status of the most recently completed or superseded async workflow.",
+    )
+    last_async_objective: str | None = Field(
+        default=None,
+        description="Objective of the most recent async workflow retained for resume guidance.",
+    )
+    last_async_note: str | None = Field(
+        default=None,
+        description="Final note retained from the most recent async workflow outcome.",
+    )
+    recovery_state: str | None = Field(
+        default=None,
+        description="Operator-facing recovery state derived from active or recent async workflows.",
+    )
+    recovery_summary: str | None = Field(
+        default=None,
+        description=(
+            "Compact recovery guidance shown when async work needs monitoring or "
+            "intervention."
+        ),
+    )
+    recovery_actions: tuple[str, ...] = Field(
+        default=(),
+        description="Suggested operator recovery actions derived from async workflow state.",
     )
     updated_at: datetime | None = Field(
         default=None,
@@ -379,6 +455,14 @@ class AgentToolManifestItem(ContractModel):
     """Describe one registered agent tool surfaced to UI and external runtimes."""
 
     name: str = Field(description="Stable registered tool name.")
+    namespace: str = Field(description="Operator namespace that owns this tool.")
+    namespace_label: str = Field(description="Human-readable label for the tool namespace.")
+    specialist_name: str = Field(
+        description="Internal specialist persona that owns this tool namespace."
+    )
+    specialist_mission: str = Field(
+        description="Compact mission statement for the internal specialist domain."
+    )
     prompt_signature: str = Field(description="Prompt-facing function signature.")
     description: str = Field(description="Operator-facing summary of what the tool does.")
     intent: str = Field(description="Intent bucket used for routing and review.")
@@ -398,12 +482,66 @@ class AgentTraceRecord(ContractModel):
     created_at: datetime = Field(description="UTC timestamp when the trace was recorded.")
     mode: str | None = Field(default=None, description="Planner or system execution mode.")
     tool_name: str | None = Field(default=None, description="Deterministic tool name when present.")
+    tool_namespace: str | None = Field(
+        default=None,
+        description="Operator namespace that owned the tool decision, when present.",
+    )
+    specialist_name: str | None = Field(
+        default=None,
+        description="Internal specialist persona associated with the tool, when present.",
+    )
+    tool_intent: str | None = Field(
+        default=None,
+        description="Intent bucket associated with the tool, when present.",
+    )
     trace_id: str | None = Field(default=None, description="Request trace identifier when present.")
+    planner_policy_version: str | None = Field(
+        default=None,
+        description="Planner policy version applied to this turn when recorded.",
+    )
+    confirmation_policy_version: str | None = Field(
+        default=None,
+        description="Confirmation policy version applied to this turn when recorded.",
+    )
     action_status: str | None = Field(
         default=None,
         description="Action status linked to the trace.",
     )
     summary: str | None = Field(default=None, description="Compact summary of what happened.")
+    eval_tags: tuple[str, ...] = Field(
+        default=(),
+        description="Compact evaluation tags attached to the trace for analytics and QA.",
+    )
+
+
+class AgentOperatorControl(ContractModel):
+    """Describe one channel-portable operator action suggestion."""
+
+    id: str = Field(description="Stable control identifier for analytics and deduplication.")
+    label: str = Field(description="Short operator-facing label for the control.")
+    command: str = Field(
+        description="Canonical natural-language command that can be sent back to the agent.",
+    )
+    kind: str = Field(
+        description="Control type such as next_step, recovery, governed_action, or status_check.",
+    )
+    scope: str = Field(description="Control scope such as global, entity, or close_run.")
+    description: str | None = Field(
+        default=None,
+        description="Optional longer explanation of what the control will do.",
+    )
+    requires_confirmation: bool = Field(
+        default=False,
+        description="Whether using this control will still lead into governed confirmation.",
+    )
+    enabled: bool = Field(
+        default=True,
+        description="Whether the control is currently actionable.",
+    )
+    disabled_reason: str | None = Field(
+        default=None,
+        description="Reason the control is unavailable when enabled is false.",
+    )
 
 
 class ChatThreadWorkspaceResponse(ContractModel):
@@ -428,6 +566,13 @@ class ChatThreadWorkspaceResponse(ContractModel):
         default=(),
         description="Recent trace events emitted by the agent in this thread.",
     )
+    operator_controls: tuple[AgentOperatorControl, ...] = Field(
+        default=(),
+        description=(
+            "Channel-portable suggested commands and governed-action controls that "
+            "non-web clients can surface directly."
+        ),
+    )
     mcp_manifest: dict[str, object] = Field(
         default_factory=dict,
         description="Portable MCP-style tool manifest for external agent integrations.",
@@ -440,6 +585,7 @@ __all__ = [
     "AgentCoaAccountSummary",
     "AgentCoaSummary",
     "AgentMemorySummary",
+    "AgentOperatorControl",
     "AgentRunPhaseState",
     "AgentRunReadiness",
     "AgentToolManifestItem",

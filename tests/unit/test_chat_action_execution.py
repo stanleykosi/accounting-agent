@@ -16,6 +16,10 @@ from services.chat.action_execution import (
     ChatActionExecutionErrorCode,
     ChatActionExecutor,
 )
+from services.chat.continuation_state import (
+    build_pending_async_turn_payload,
+    new_chat_operator_continuation,
+)
 from services.db.repositories.chat_action_repo import ChatActionPlanRecord
 from services.db.repositories.entity_repo import EntityUserRecord
 
@@ -274,6 +278,39 @@ def test_hydrate_planning_result_resolves_journal_apply_to_internal_ledger() -> 
     assert hydrated.tool_arguments["posting_target"] == "internal_ledger"
 
 
+def test_hydrate_planning_result_resolves_export_distribution_target() -> None:
+    """The chat executor should resolve the latest completed export before distribution."""
+
+    export_id = uuid4()
+    executor = ChatActionExecutor.__new__(ChatActionExecutor)
+
+    hydrated = executor._hydrate_planning_result(
+        planning=AgentPlanningResult(
+            mode="tool",
+            assistant_response="**I'll record the release.**",
+            reasoning="There is one completed export ready for distribution.",
+            tool_name="distribute_export",
+            tool_arguments={
+                "recipient_name": "Adaobi Nwosu",
+                "recipient_email": "adaobi@example.com",
+            },
+        ),
+        snapshot={
+            "exports": [
+                {
+                    "id": str(export_id),
+                    "status": "completed",
+                    "distribution_count": 0,
+                }
+            ]
+        },
+        operator_content="Send it to Adaobi.",
+    )
+
+    assert hydrated.tool_arguments["export_id"] == str(export_id)
+    assert "*" not in hydrated.assistant_response
+
+
 def test_hydrate_planning_result_resolves_single_reconciliation_item_disposition() -> None:
     """The chat executor should resolve one pending reconciliation exception in chat."""
 
@@ -443,6 +480,125 @@ def test_hydrate_planning_result_resolves_named_workspace_delete() -> None:
     assert hydrated.tool_arguments["workspace_id"] == str(target_workspace_id)
 
 
+def test_send_action_message_asks_for_workspace_clarification_before_delete() -> None:
+    """Ambiguous governed actions should ask one compact clarification instead of failing."""
+
+    actor_user = EntityUserRecord(id=uuid4(), email="ops@example.com", full_name="Finance Ops")
+    thread_id = uuid4()
+    entity_id = uuid4()
+    thread = SimpleNamespace(id=thread_id, close_run_id=None, context_payload={})
+    grounding = SimpleNamespace(
+        entity=SimpleNamespace(name="Apex Meridian Nigeria Ltd"),
+        context=SimpleNamespace(
+            entity_id=str(entity_id),
+            entity_name="Apex Meridian Nigeria Ltd",
+            close_run_id=None,
+            period_label=None,
+            autonomy_mode="human_review",
+            base_currency="NGN",
+        ),
+    )
+    db_session = _FakeLoopDbSession()
+    chat_repo = _FakeLoopChatRepository()
+    memory_updates: list[dict[str, object]] = []
+    executor = ChatActionExecutor.__new__(ChatActionExecutor)
+    executor._db_session = db_session
+    executor._chat_repo = chat_repo
+    executor._action_repo = SimpleNamespace()
+    executor._tool_registry = SimpleNamespace(
+        get_tool=lambda **kwargs: SimpleNamespace(input_schema={"required": ["workspace_id"]})
+    )
+    executor._ensure_entity_coa_available = lambda **kwargs: None
+    executor._load_thread_context = lambda **kwargs: (grounding, thread)  # type: ignore[method-assign]
+    executor._handle_pending_plan_reply = lambda **kwargs: None  # type: ignore[method-assign]
+    executor._snapshot_for_thread = lambda **kwargs: {  # type: ignore[method-assign]
+        "workspace": {"id": str(uuid4()), "name": "Apex Meridian Nigeria Ltd"},
+        "accessible_workspaces": [
+            {"id": str(uuid4()), "name": "Apex Meridian Nigeria Ltd"},
+            {"id": str(uuid4()), "name": "Apex Meridian Ghana Ltd"},
+        ],
+    }
+    executor._plan_action = lambda **kwargs: AgentPlanningResult(  # type: ignore[method-assign]
+        mode="tool",
+        assistant_response="I'll delete that workspace.",
+        reasoning="The operator asked to delete a workspace.",
+        tool_name="delete_workspace",
+        tool_arguments={},
+    )
+    executor._build_grounding_payload = lambda *args, **kwargs: {}  # type: ignore[method-assign]
+    executor._build_trace_metadata = lambda **kwargs: {}  # type: ignore[method-assign]
+    executor._update_thread_memory = lambda **kwargs: memory_updates.append(kwargs)  # type: ignore[method-assign]
+    executor._resolve_action = lambda **kwargs: (_ for _ in ()).throw(  # type: ignore[method-assign]
+        AssertionError("The runtime should clarify before resolving the tool.")
+    )
+
+    outcome = executor.send_action_message(
+        thread_id=thread_id,
+        entity_id=entity_id,
+        actor_user=actor_user,
+        content="Delete the workspace.",
+        source_surface="desktop",
+        trace_id="trace-clarify-workspace",
+    )
+
+    assert outcome.is_read_only is True
+    assert "Which workspace should I use?" in outcome.assistant_content
+    assert "Apex Meridian Nigeria Ltd" in outcome.assistant_content
+    assert "Apex Meridian Ghana Ltd" in outcome.assistant_content
+    assert memory_updates[-1]["action_status"] == "read_only"
+
+
+def test_handle_pending_plan_reply_confirms_single_pending_action() -> None:
+    """A single pending governed action should be confirmable directly from chat."""
+
+    thread_id = uuid4()
+    entity_id = uuid4()
+    actor_user = EntityUserRecord(id=uuid4(), email="ops@example.com", full_name="Finance Ops")
+    pending_plan = _build_plan(
+        close_run_id=uuid4(),
+        action_plan_id=uuid4(),
+        thread_id=thread_id,
+        entity_id=entity_id,
+    )
+    approved_calls: list[dict[str, object]] = []
+    executor = ChatActionExecutor.__new__(ChatActionExecutor)
+    executor._action_repo = SimpleNamespace(
+        list_pending_actions_for_thread=lambda **kwargs: (pending_plan,),
+    )
+    executor.approve_action_plan = lambda **kwargs: approved_calls.append(kwargs) or pending_plan  # type: ignore[method-assign]
+    executor.reject_action_plan = lambda **kwargs: (_ for _ in ()).throw(  # type: ignore[method-assign]
+        AssertionError("Reject should not be called for confirm.")
+    )
+    assistant_message = SimpleNamespace(id=uuid4(), content="I archived this close run.")
+    executor._chat_repo = SimpleNamespace(
+        list_messages_for_thread=lambda **kwargs: (assistant_message,),
+    )
+
+    outcome = executor._handle_pending_plan_reply(
+        thread_id=thread_id,
+        entity_id=entity_id,
+        actor_user=actor_user,
+        content="confirm",
+        source_surface="desktop",
+        trace_id="trace-confirm-pending",
+    )
+
+    assert outcome is not None
+    assert outcome.assistant_content == assistant_message.content
+    assert outcome.is_read_only is False
+    assert approved_calls == [
+        {
+            "action_plan_id": pending_plan.id,
+            "thread_id": thread_id,
+            "entity_id": entity_id,
+            "actor_user": actor_user,
+            "reason": "Confirmed by operator in chat.",
+            "source_surface": "desktop",
+            "trace_id": "trace-confirm-pending",
+        }
+    ]
+
+
 def test_handoff_thread_scope_moves_to_workspace_after_close_run_delete() -> None:
     """Deleting the active close run should move the chat thread back to workspace scope."""
 
@@ -484,6 +640,756 @@ def test_handoff_thread_scope_moves_to_workspace_after_close_run_delete() -> Non
     assert updated_thread.close_run_id is None
     assert handoff_message is not None
     assert "workspace scope" in handoff_message
+
+
+def test_send_action_message_executes_multiple_steps_before_replying() -> None:
+    """The operator lane should chain safe actions before returning one reply."""
+
+    close_run_id = uuid4()
+    actor_user = EntityUserRecord(id=uuid4(), email="ops@example.com", full_name="Finance Ops")
+    thread = SimpleNamespace(close_run_id=close_run_id, context_payload={})
+    grounding = SimpleNamespace(
+        entity=SimpleNamespace(name="Apex Meridian Nigeria Ltd"),
+        context=SimpleNamespace(
+            entity_id=str(uuid4()),
+            entity_name="Apex Meridian Nigeria Ltd",
+            close_run_id=str(close_run_id),
+            period_label="Mar 2026",
+            autonomy_mode="human_review",
+            base_currency="NGN",
+        ),
+    )
+    snapshots = iter(
+        (
+            {
+                "progress_summary": "One document is awaiting review.",
+                "readiness": {
+                    "next_actions": ["Generate recommendations for the approved documents."]
+                },
+            },
+            {
+                "progress_summary": "Recommendation generation is ready.",
+                "readiness": {
+                    "next_actions": ["Run reconciliation for the current close run."]
+                },
+            },
+            {
+                "progress_summary": "The close is ready for reconciliation.",
+                "readiness": {
+                    "next_actions": ["Run reconciliation for the current close run."]
+                },
+            },
+        )
+    )
+    plans = iter(
+        (
+            AgentPlanningResult(
+                mode="tool",
+                assistant_response="I'll clear the remaining document review first.",
+                reasoning="One document is clearly awaiting review.",
+                tool_name="review_document",
+                tool_arguments={"document_id": str(uuid4()), "decision": "approved"},
+            ),
+            AgentPlanningResult(
+                mode="tool",
+                assistant_response="Then I'll queue the recommendation pass.",
+                reasoning="The next safe step is recommendation generation.",
+                tool_name="generate_recommendations",
+                tool_arguments={},
+            ),
+            AgentPlanningResult(
+                mode="read_only",
+                assistant_response="The close is ready for reconciliation now.",
+                reasoning="The main objective for this turn is complete.",
+                tool_name=None,
+                tool_arguments={},
+            ),
+        )
+    )
+    db_session = _FakeLoopDbSession()
+    chat_repo = _FakeLoopChatRepository()
+    action_repo = _FakeLoopActionRepository(close_run_id=close_run_id)
+    load_calls: list[int] = []
+    memory_updates: list[dict[str, object]] = []
+
+    executor = ChatActionExecutor.__new__(ChatActionExecutor)
+    executor._db_session = db_session
+    executor._chat_repo = chat_repo
+    executor._action_repo = action_repo
+    executor._ensure_entity_coa_available = lambda **kwargs: None
+    executor._load_thread_context = lambda **kwargs: (  # type: ignore[method-assign]
+        load_calls.append(1),
+        (grounding, thread),
+    )[1]
+    executor._snapshot_for_thread = lambda **kwargs: next(snapshots)  # type: ignore[method-assign]
+    executor._plan_action = lambda **kwargs: next(plans)  # type: ignore[method-assign]
+    executor._hydrate_planning_result = lambda **kwargs: kwargs["planning"]  # type: ignore[method-assign]
+    executor._resolve_action = lambda **kwargs: _resolve_fake_action(  # type: ignore[method-assign]
+        kwargs["planning"]
+    )
+    executor._build_execution_context = lambda **kwargs: SimpleNamespace()  # type: ignore[method-assign]
+    executor._requires_human_approval = lambda **kwargs: False  # type: ignore[method-assign]
+    executor._execute_action = lambda **kwargs: _execute_fake_loop_action(  # type: ignore[method-assign]
+        kwargs["action"].tool.name
+    )
+    executor._handoff_thread_scope_if_needed = lambda **kwargs: (  # type: ignore[method-assign]
+        grounding,
+        thread,
+        None,
+    )
+    executor._build_grounding_payload = lambda *args, **kwargs: {}  # type: ignore[method-assign]
+    executor._build_trace_metadata = lambda **kwargs: {}  # type: ignore[method-assign]
+    executor._update_thread_memory = lambda **kwargs: memory_updates.append(kwargs)  # type: ignore[method-assign]
+
+    outcome = executor.send_action_message(
+        thread_id=uuid4(),
+        entity_id=uuid4(),
+        actor_user=actor_user,
+        content="Finish the intake work and get this ready for reconciliation.",
+        source_surface="desktop",
+        trace_id="trace-loop",
+    )
+
+    assert outcome.is_read_only is False
+    assert outcome.action_plan is not None
+    assert "I approved invoice.pdf for this close run." in outcome.assistant_content
+    assert "I queued recommendation generation for 1 document." in outcome.assistant_content
+    assert "The close is ready for reconciliation now." in outcome.assistant_content
+    assert len(chat_repo.messages) == 2
+    assert db_session.commit_calls == 3
+    assert len(load_calls) == 3
+    assert memory_updates[-1]["action_status"] == "applied"
+
+
+def test_send_action_message_returns_partial_progress_when_later_step_blocks() -> None:
+    """A later failure should keep earlier loop progress and respond naturally."""
+
+    close_run_id = uuid4()
+    actor_user = EntityUserRecord(id=uuid4(), email="ops@example.com", full_name="Finance Ops")
+    thread = SimpleNamespace(close_run_id=close_run_id, context_payload={})
+    grounding = SimpleNamespace(
+        entity=SimpleNamespace(name="Apex Meridian Nigeria Ltd"),
+        context=SimpleNamespace(
+            entity_id=str(uuid4()),
+            entity_name="Apex Meridian Nigeria Ltd",
+            close_run_id=str(close_run_id),
+            period_label="Mar 2026",
+            autonomy_mode="human_review",
+            base_currency="NGN",
+        ),
+    )
+    snapshots = iter(
+        (
+            {
+                "progress_summary": "One document is awaiting review.",
+                "readiness": {"next_actions": ["Run reconciliation for the current close run."]},
+            },
+            {
+                "progress_summary": "Documents are approved and reconciliation is next.",
+                "readiness": {"next_actions": ["Run reconciliation for the current close run."]},
+            },
+            {
+                "progress_summary": "Documents are approved and reconciliation is blocked.",
+                "readiness": {"next_actions": ["Run reconciliation for the current close run."]},
+            },
+        )
+    )
+    plans = iter(
+        (
+            AgentPlanningResult(
+                mode="tool",
+                assistant_response="I'll approve the remaining document first.",
+                reasoning="One document is clearly awaiting review.",
+                tool_name="review_document",
+                tool_arguments={"document_id": str(uuid4()), "decision": "approved"},
+            ),
+            AgentPlanningResult(
+                mode="tool",
+                assistant_response="Next I'll run reconciliation.",
+                reasoning="Reconciliation is the next requested step.",
+                tool_name="run_reconciliation",
+                tool_arguments={},
+            ),
+        )
+    )
+    db_session = _FakeLoopDbSession()
+    chat_repo = _FakeLoopChatRepository()
+    action_repo = _FakeLoopActionRepository(close_run_id=close_run_id)
+    memory_updates: list[dict[str, object]] = []
+    execution_count = {"count": 0}
+
+    executor = ChatActionExecutor.__new__(ChatActionExecutor)
+    executor._db_session = db_session
+    executor._chat_repo = chat_repo
+    executor._action_repo = action_repo
+    executor._ensure_entity_coa_available = lambda **kwargs: None
+    executor._load_thread_context = lambda **kwargs: (grounding, thread)  # type: ignore[method-assign]
+    executor._snapshot_for_thread = lambda **kwargs: next(snapshots)  # type: ignore[method-assign]
+    executor._plan_action = lambda **kwargs: next(plans)  # type: ignore[method-assign]
+    executor._hydrate_planning_result = lambda **kwargs: kwargs["planning"]  # type: ignore[method-assign]
+    executor._resolve_action = lambda **kwargs: _resolve_fake_action(  # type: ignore[method-assign]
+        kwargs["planning"]
+    )
+    executor._build_execution_context = lambda **kwargs: SimpleNamespace()  # type: ignore[method-assign]
+    executor._requires_human_approval = lambda **kwargs: False  # type: ignore[method-assign]
+    executor._execute_action = lambda **kwargs: _execute_fake_loop_action_with_block(  # type: ignore[method-assign]
+        kwargs["action"].tool.name,
+        execution_count,
+    )
+    executor._handoff_thread_scope_if_needed = lambda **kwargs: (  # type: ignore[method-assign]
+        grounding,
+        thread,
+        None,
+    )
+    executor._build_grounding_payload = lambda *args, **kwargs: {}  # type: ignore[method-assign]
+    executor._build_trace_metadata = lambda **kwargs: {}  # type: ignore[method-assign]
+    executor._update_thread_memory = lambda **kwargs: memory_updates.append(kwargs)  # type: ignore[method-assign]
+
+    outcome = executor.send_action_message(
+        thread_id=uuid4(),
+        entity_id=uuid4(),
+        actor_user=actor_user,
+        content="Approve the intake and then run reconciliation.",
+        source_surface="desktop",
+        trace_id="trace-partial",
+    )
+
+    assert outcome.is_read_only is False
+    assert "I completed part of that request" in outcome.assistant_content
+    assert "I approved invoice.pdf for this close run." in outcome.assistant_content
+    assert (
+        "Reconciliation is blocked by unresolved matching exceptions."
+        in outcome.assistant_content
+    )
+    assert db_session.rollback_calls == 1
+    assert db_session.commit_calls == 2
+    assert memory_updates[-1]["action_status"] == "partial"
+
+
+def test_send_action_message_stops_after_async_dispatch_and_marks_pending_group() -> None:
+    """Async tool results should end the turn, register the pending group, and wait cleanly."""
+
+    close_run_id = uuid4()
+    continuation_group_id = uuid4()
+    actor_user = EntityUserRecord(id=uuid4(), email="ops@example.com", full_name="Finance Ops")
+    thread = SimpleNamespace(close_run_id=close_run_id, context_payload={})
+    grounding = SimpleNamespace(
+        entity=SimpleNamespace(name="Apex Meridian Nigeria Ltd"),
+        context=SimpleNamespace(
+            entity_id=str(uuid4()),
+            entity_name="Apex Meridian Nigeria Ltd",
+            close_run_id=str(close_run_id),
+            period_label="Mar 2026",
+            autonomy_mode="human_review",
+            base_currency="NGN",
+        ),
+    )
+    snapshots = iter(
+        (
+            {
+                "progress_summary": "Approved documents are ready for recommendation generation.",
+                "readiness": {"next_actions": ["Wait for recommendation generation to finish."]},
+            },
+            {
+                "progress_summary": "Recommendation generation is running in the background.",
+                "readiness": {"next_actions": ["Wait for recommendation generation to finish."]},
+            },
+        )
+    )
+    db_session = _FakeLoopDbSession()
+    chat_repo = _FakeLoopChatRepository()
+    action_repo = _FakeLoopActionRepository(close_run_id=close_run_id)
+    memory_updates: list[dict[str, object]] = []
+
+    executor = ChatActionExecutor.__new__(ChatActionExecutor)
+    executor._db_session = db_session
+    executor._chat_repo = chat_repo
+    executor._action_repo = action_repo
+    executor._ensure_entity_coa_available = lambda **kwargs: None
+    executor._load_thread_context = lambda **kwargs: (grounding, thread)  # type: ignore[method-assign]
+    executor._snapshot_for_thread = lambda **kwargs: next(snapshots)  # type: ignore[method-assign]
+    executor._plan_action = lambda **kwargs: AgentPlanningResult(  # type: ignore[method-assign]
+        mode="tool",
+        assistant_response="I'll start recommendation generation now.",
+        reasoning="The next safe step is to queue recommendations.",
+        tool_name="generate_recommendations",
+        tool_arguments={},
+    )
+    executor._hydrate_planning_result = lambda **kwargs: kwargs["planning"]  # type: ignore[method-assign]
+    executor._resolve_action = lambda **kwargs: _resolve_fake_action(  # type: ignore[method-assign]
+        kwargs["planning"]
+    )
+    executor._build_execution_context = lambda **kwargs: SimpleNamespace()  # type: ignore[method-assign]
+    executor._requires_human_approval = lambda **kwargs: False  # type: ignore[method-assign]
+    executor._execute_action = lambda **kwargs: {  # type: ignore[method-assign]
+        "tool": "generate_recommendations",
+        "queued_count": 2,
+        "async_job_group": {
+            "continuation_group_id": str(continuation_group_id),
+            "job_count": 2,
+        },
+    }
+    executor._handoff_thread_scope_if_needed = lambda **kwargs: (  # type: ignore[method-assign]
+        grounding,
+        thread,
+        None,
+    )
+    executor._build_grounding_payload = lambda *args, **kwargs: {}  # type: ignore[method-assign]
+    executor._build_trace_metadata = lambda **kwargs: {}  # type: ignore[method-assign]
+    executor._update_thread_memory = lambda **kwargs: memory_updates.append(kwargs)  # type: ignore[method-assign]
+
+    outcome = executor.send_action_message(
+        thread_id=uuid4(),
+        entity_id=uuid4(),
+        actor_user=actor_user,
+        content="Start the recommendation pass and keep going when it's done.",
+        source_surface="desktop",
+        trace_id="trace-async",
+    )
+
+    assert outcome.is_read_only is False
+    assert "I'll keep going automatically" in outcome.assistant_content
+    assert db_session.commit_calls == 2
+    async_turn = memory_updates[-1]["existing_payload"]["agent_async_turn"]
+    assert async_turn["status"] == "pending"
+    assert async_turn["continuation_group_id"] == str(continuation_group_id)
+
+
+def test_resume_operator_turn_can_queue_export_after_report_generation_finishes() -> None:
+    """A resumed operator turn should be able to launch the next async release step."""
+
+    close_run_id = uuid4()
+    continuation_group_id = uuid4()
+    actor_user = EntityUserRecord(id=uuid4(), email="ops@example.com", full_name="Finance Ops")
+    thread = SimpleNamespace(id=uuid4(), close_run_id=close_run_id, context_payload={})
+    grounding = SimpleNamespace(
+        entity=SimpleNamespace(name="Apex Meridian Nigeria Ltd"),
+        context=SimpleNamespace(
+            entity_id=str(uuid4()),
+            entity_name="Apex Meridian Nigeria Ltd",
+            close_run_id=str(close_run_id),
+            period_label="Mar 2026",
+            autonomy_mode="human_review",
+            base_currency="NGN",
+        ),
+    )
+    db_session = _FakeLoopDbSession()
+    chat_repo = _FakeLoopChatRepository()
+    action_repo = _FakeLoopActionRepository(close_run_id=close_run_id)
+    memory_updates: list[dict[str, object]] = []
+
+    executor = ChatActionExecutor.__new__(ChatActionExecutor)
+    executor._db_session = db_session
+    executor._chat_repo = chat_repo
+    executor._action_repo = action_repo
+    executor._ensure_entity_coa_available = lambda **kwargs: None
+    executor._load_thread_context = lambda **kwargs: (grounding, thread)  # type: ignore[method-assign]
+    executor._snapshot_for_thread = lambda **kwargs: {  # type: ignore[method-assign]
+        "progress_summary": "Reports are complete and the close is ready for export packaging.",
+        "report_runs": [{"id": str(uuid4()), "status": "completed"}],
+        "exports": [],
+        "readiness": {"next_actions": ["Create the export package."]},
+    }
+    executor._plan_action = lambda **kwargs: AgentPlanningResult(  # type: ignore[method-assign]
+        mode="tool",
+        assistant_response="I'll package the export now.",
+        reasoning="Report generation finished, so export packaging is the next release step.",
+        tool_name="generate_export",
+        tool_arguments={"include_evidence_pack": True},
+    )
+    executor._resolve_action = lambda **kwargs: _resolve_fake_action(  # type: ignore[method-assign]
+        kwargs["planning"]
+    )
+    executor._build_execution_context = lambda **kwargs: SimpleNamespace()  # type: ignore[method-assign]
+    executor._requires_human_approval = lambda **kwargs: False  # type: ignore[method-assign]
+    executor._execute_action = lambda **kwargs: {  # type: ignore[method-assign]
+        "tool": "generate_export",
+        "job_id": "job-export-1",
+        "status": "queued",
+        "async_job_group": {
+            "continuation_group_id": str(continuation_group_id),
+            "job_count": 1,
+        },
+    }
+    executor._handoff_thread_scope_if_needed = lambda **kwargs: (  # type: ignore[method-assign]
+        grounding,
+        thread,
+        None,
+    )
+    executor._build_grounding_payload = lambda *args, **kwargs: {}  # type: ignore[method-assign]
+    executor._build_trace_metadata = lambda **kwargs: {}  # type: ignore[method-assign]
+    executor._update_thread_memory = lambda **kwargs: memory_updates.append(kwargs)  # type: ignore[method-assign]
+
+    outcome = executor.resume_operator_turn(
+        thread_id=thread.id,
+        entity_id=uuid4(),
+        actor_user=actor_user,
+        objective="Finish reporting, package the export, and keep going.",
+        completed_jobs=(
+            SimpleNamespace(
+                status=SimpleNamespace(value="completed"),
+                task_name="reporting.generate_close_run_pack",
+                blocking_reason=None,
+                failure_reason=None,
+            ),
+        ),
+        source_surface="desktop",
+        trace_id="trace-resume-export",
+    )
+
+    assert outcome.is_read_only is False
+    assert "started packaging the export" in outcome.assistant_content.lower()
+    assert "keep going automatically" in outcome.assistant_content
+    async_turn = memory_updates[-1]["existing_payload"]["agent_async_turn"]
+    assert async_turn["status"] == "pending"
+    assert async_turn["continuation_group_id"] == str(continuation_group_id)
+
+
+def test_build_trace_metadata_includes_namespace_specialist_and_policy_versions() -> None:
+    """Trace metadata should expose operator-domain and policy details for audit and eval."""
+
+    executor = ChatActionExecutor.__new__(ChatActionExecutor)
+    executor._tool_registry = SimpleNamespace(
+        get_tool=lambda **kwargs: SimpleNamespace(
+            namespace="reporting_and_release",
+            namespace_label="Reporting and Release",
+            specialist_name="Reporting Controller",
+            specialist_mission=(
+                "Owns supporting schedules, commentary, reporting, export packaging, "
+                "evidence packs, and release records."
+            ),
+            intent="report_action",
+            requires_human_approval=False,
+        )
+    )
+
+    metadata = executor._build_trace_metadata(
+        trace_id="trace-operator-1",
+        mode="planner",
+        tool_name="generate_reports",
+        action_status="applied",
+        summary="Queued the report generation run.",
+    )
+
+    assert metadata["tool"] == "generate_reports"
+    assert metadata["tool_namespace"] == "reporting_and_release"
+    assert metadata["specialist_name"] == "Reporting Controller"
+    assert metadata["tool_intent"] == "report_action"
+    assert metadata["planner_policy_version"] == "2026-04-21.operator-planner.v1"
+    assert metadata["confirmation_policy_version"] == "2026-04-21.operator-confirmation.v1"
+    assert metadata["eval_schema_version"] == "2026-04-21.operator-eval.v1"
+    assert "namespace:reporting_and_release" in metadata["eval_tags"]
+
+
+def test_build_mcp_manifest_includes_namespaces_and_operator_policy() -> None:
+    """The MCP manifest should expose grouped operator domains and policy metadata."""
+
+    executor = ChatActionExecutor.__new__(ChatActionExecutor)
+    executor._tool_registry = SimpleNamespace(
+        list_tools=lambda: (
+            SimpleNamespace(
+                name="generate_reports",
+                namespace="reporting_and_release",
+                namespace_label="Reporting and Release",
+                specialist_name="Reporting Controller",
+                specialist_mission=(
+                    "Owns supporting schedules, commentary, reporting, export packaging, "
+                    "evidence packs, and release records."
+                ),
+                prompt_signature="generate_reports(template_id?, generate_commentary?)",
+                description="Create a report run and queue report generation.",
+                intent="report_action",
+                requires_human_approval=False,
+                input_schema={"type": "object", "properties": {}},
+            ),
+        ),
+        list_namespaces=lambda: (
+            SimpleNamespace(
+                name="reporting_and_release",
+                label="Reporting and Release",
+                specialist_name="Reporting Controller",
+                specialist_mission=(
+                    "Owns supporting schedules, commentary, reporting, export packaging, "
+                    "evidence packs, and release records."
+                ),
+                tool_names=("generate_reports",),
+            ),
+        ),
+    )
+
+    manifest = executor._build_mcp_manifest()
+
+    assert manifest["version"] == "2025-11-25"
+    assert manifest["operator_policy"]["planner_policy_version"] == (
+        "2026-04-21.operator-planner.v1"
+    )
+    assert manifest["operator_controls"]["delivery"] == "natural_language_command"
+    assert manifest["namespaces"][0]["name"] == "reporting_and_release"
+    assert manifest["tools"][0]["annotations"]["namespace"] == "reporting_and_release"
+
+
+def test_build_operator_controls_surfaces_pending_governance_and_next_steps() -> None:
+    """Workspace controls should expose portable confirm/cancel and next-step commands."""
+
+    executor = ChatActionExecutor.__new__(ChatActionExecutor)
+    controls = executor._build_operator_controls(
+        thread=SimpleNamespace(close_run_id=uuid4()),
+        snapshot={
+            "readiness": {
+                "next_actions": [
+                    "Generate the export package.",
+                    "Assemble the evidence pack.",
+                ]
+            },
+        },
+        operator_memory=executor._memory_from_context_payload({}),
+        pending_actions=(
+            SimpleNamespace(
+                payload={
+                    "tool_name": "delete_workspace",
+                    "tool_arguments": {
+                        "workspace_id": str(uuid4()),
+                    },
+                }
+            ),
+        ),
+    )
+
+    commands = {control.command for control in controls}
+    assert "confirm" in commands
+    assert "cancel" in commands
+    assert "Generate the export package." in commands
+
+
+def test_send_action_message_surfaces_action_failure_in_thread() -> None:
+    """Early execution failures should return a grounded assistant reply instead of raising."""
+
+    close_run_id = uuid4()
+    actor_user = EntityUserRecord(id=uuid4(), email="ops@example.com", full_name="Finance Ops")
+    thread = SimpleNamespace(close_run_id=close_run_id, context_payload={})
+    grounding = SimpleNamespace(
+        entity=SimpleNamespace(name="Apex Meridian Nigeria Ltd"),
+        context=SimpleNamespace(
+            entity_id=str(uuid4()),
+            entity_name="Apex Meridian Nigeria Ltd",
+            close_run_id=str(close_run_id),
+            period_label="Mar 2026",
+            autonomy_mode="human_review",
+            base_currency="NGN",
+        ),
+    )
+    db_session = _FakeLoopDbSession()
+    chat_repo = _FakeLoopChatRepository()
+    action_repo = _FakeLoopActionRepository(close_run_id=close_run_id)
+    memory_updates: list[dict[str, object]] = []
+
+    executor = ChatActionExecutor.__new__(ChatActionExecutor)
+    executor._db_session = db_session
+    executor._chat_repo = chat_repo
+    executor._action_repo = action_repo
+    executor._ensure_entity_coa_available = lambda **kwargs: None
+    executor._load_thread_context = lambda **kwargs: (grounding, thread)  # type: ignore[method-assign]
+    executor._snapshot_for_thread = lambda **kwargs: {  # type: ignore[method-assign]
+        "readiness": {
+            "blockers": ["Reconciliation is blocked by unresolved matching exceptions."],
+            "next_actions": ["Clear the reconciliation exceptions before retrying."],
+        },
+    }
+    executor._plan_action = lambda **kwargs: AgentPlanningResult(  # type: ignore[method-assign]
+        mode="tool",
+        assistant_response="I'll run reconciliation now.",
+        reasoning="The operator asked to continue reconciliation.",
+        tool_name="run_reconciliation",
+        tool_arguments={},
+    )
+    executor._hydrate_planning_result = lambda **kwargs: kwargs["planning"]  # type: ignore[method-assign]
+    executor._resolve_action = lambda **kwargs: _resolve_fake_action(  # type: ignore[method-assign]
+        kwargs["planning"]
+    )
+    executor._build_execution_context = lambda **kwargs: SimpleNamespace()  # type: ignore[method-assign]
+    executor._requires_human_approval = lambda **kwargs: False  # type: ignore[method-assign]
+    executor._execute_action = lambda **kwargs: (_ for _ in ()).throw(  # type: ignore[method-assign]
+        ChatActionExecutionError(
+            status_code=409,
+            code=ChatActionExecutionErrorCode.INVALID_ACTION_PLAN,
+            message="Reconciliation is blocked by unresolved matching exceptions.",
+        )
+    )
+    executor._build_grounding_payload = lambda *args, **kwargs: {}  # type: ignore[method-assign]
+    executor._build_trace_metadata = lambda **kwargs: {}  # type: ignore[method-assign]
+    executor._update_thread_memory = lambda **kwargs: memory_updates.append(kwargs)  # type: ignore[method-assign]
+
+    outcome = executor.send_action_message(
+        thread_id=uuid4(),
+        entity_id=uuid4(),
+        actor_user=actor_user,
+        content="Run reconciliation now.",
+        source_surface="desktop",
+        trace_id="trace-failure-surface",
+    )
+
+    assert outcome.is_read_only is True
+    assert "I couldn't finish the run reconciliation step yet." in outcome.assistant_content
+    assert (
+        "Reconciliation is blocked by unresolved matching exceptions."
+        in outcome.assistant_content
+    )
+    assert (
+        "Next, I can clear the reconciliation exceptions before retrying."
+        in outcome.assistant_content
+    )
+    assert db_session.rollback_calls == 1
+    assert db_session.commit_calls == 1
+    assert memory_updates[-1]["action_status"] == "failed"
+
+
+def test_update_thread_memory_tracks_preferences_targets_and_recent_objectives() -> None:
+    """Thread memory should retain operator preferences and recent workspace targets."""
+
+    captured_payloads: list[dict[str, object]] = []
+    executor = ChatActionExecutor.__new__(ChatActionExecutor)
+    executor._tool_registry = SimpleNamespace(
+        get_tool=lambda **kwargs: SimpleNamespace(namespace="reporting_and_release")
+    )
+    executor._chat_repo = SimpleNamespace(
+        update_thread_context=lambda **kwargs: captured_payloads.append(kwargs["context_payload"])
+    )
+
+    executor._update_thread_memory(
+        thread_id=uuid4(),
+        existing_payload={
+            "entity_name": "Apex Meridian Nigeria Ltd",
+            "period_label": "Mar 2026",
+        },
+        operator_message="Keep it brief and just do it.",
+        assistant_response="Queued reporting run.",
+        tool_name="generate_reports",
+        action_status="applied",
+        trace_id="trace-memory-1",
+        snapshot={"pending_action_count": 1, "progress_summary": "Reporting is queued."},
+    )
+
+    payload = captured_payloads[-1]
+    memory = payload["agent_memory"]
+    assert memory["preferred_explanation_depth"] == "brief"
+    assert memory["preferred_confirmation_style"] == "direct_when_clear"
+    assert memory["recent_objectives"] == ("Keep it brief and just do it.",)
+    assert memory["recent_entity_names"] == ("Apex Meridian Nigeria Ltd",)
+    assert memory["recent_period_labels"] == ("Mar 2026",)
+    assert memory["last_tool_namespace"] == "reporting_and_release"
+
+
+def test_memory_from_context_payload_surfaces_active_and_last_async_workflows() -> None:
+    """Derived memory should surface resumable workflow context from thread payload state."""
+
+    continuation = new_chat_operator_continuation(
+        thread_id=uuid4(),
+        entity_id=uuid4(),
+        actor_user_id=uuid4(),
+        objective="Generate the report pack and keep going.",
+        originating_tool="generate_reports",
+        source_surface="desktop",
+    )
+    executor = ChatActionExecutor.__new__(ChatActionExecutor)
+    payload = build_pending_async_turn_payload(
+        existing_payload={
+            "agent_memory": {
+                "preferred_explanation_depth": "detailed",
+                "preferred_confirmation_style": "confirm_before_destructive",
+            },
+            "agent_recent_objectives": ("Finish the month-end close.",),
+        },
+        continuation=continuation,
+        job_count=2,
+        trace_id="trace-async-memory",
+    )
+    payload["agent_last_async_turn"] = {
+        "status": "completed",
+        "objective": "Run reconciliation and keep going.",
+        "final_note": "Reconciliation finished cleanly.",
+    }
+
+    memory = executor._memory_from_context_payload(payload)
+
+    assert memory.preferred_explanation_depth == "detailed"
+    assert memory.preferred_confirmation_style == "confirm_before_destructive"
+    assert memory.recent_objectives == ("Finish the month-end close.",)
+    assert memory.active_async_status == "pending"
+    assert memory.active_async_objective == "Generate the report pack and keep going."
+    assert memory.active_async_originating_tool == "generate_reports"
+    assert memory.active_async_retry_count == 0
+    assert memory.last_async_status == "completed"
+    assert memory.last_async_note == "Reconciliation finished cleanly."
+
+
+def test_memory_for_thread_merges_recent_cross_thread_preferences() -> None:
+    """Executor memory reads should carry preferences and recent objectives across threads."""
+
+    current_thread_id = uuid4()
+    executor = ChatActionExecutor.__new__(ChatActionExecutor)
+    executor._chat_repo = SimpleNamespace(
+        list_recent_threads_for_entity_any_scope=lambda **kwargs: (
+            SimpleNamespace(
+                context_payload={
+                    "agent_memory": {
+                        "preferred_explanation_depth": "brief",
+                        "preferred_confirmation_style": "direct_when_clear",
+                    },
+                    "agent_recent_objectives": ("Close March quickly.",),
+                    "agent_recent_entity_names": ("Apex Meridian Nigeria Ltd",),
+                    "agent_recent_period_labels": ("Mar 2026",),
+                }
+            ),
+        ),
+        list_recent_threads_for_user_any_scope=lambda **kwargs: (
+            SimpleNamespace(
+                context_payload={
+                    "agent_memory": {
+                        "preferred_explanation_depth": "brief",
+                        "preferred_confirmation_style": "direct_when_clear",
+                        "recent_tool_names": ("generate_reports",),
+                        "recent_tool_namespaces": ("reporting_and_release",),
+                    }
+                }
+            ),
+        ),
+    )
+
+    memory = executor._memory_for_thread(
+        thread_id=current_thread_id,
+        entity_id=uuid4(),
+        actor_user_id=uuid4(),
+        context_payload={"entity_name": "Apex Meridian Nigeria Ltd"},
+    )
+
+    assert memory.preferred_explanation_depth == "brief"
+    assert memory.preferred_confirmation_style == "direct_when_clear"
+    assert memory.recent_objectives == ("Close March quickly.",)
+    assert memory.recent_entity_names == ("Apex Meridian Nigeria Ltd",)
+    assert memory.recent_period_labels == ("Mar 2026",)
+    assert memory.recent_tool_names == ("generate_reports",)
+    assert memory.recent_tool_namespaces == ("reporting_and_release",)
+
+
+def test_memory_from_context_payload_surfaces_recovery_guidance_for_failed_async() -> None:
+    """Derived memory should surface operator-facing recovery guidance after async failures."""
+
+    executor = ChatActionExecutor.__new__(ChatActionExecutor)
+    memory = executor._memory_from_context_payload(
+        {
+            "agent_last_async_turn": {
+                "status": "failed",
+                "objective": "Generate the export package.",
+                "final_note": "The export worker failed before packaging finished.",
+            }
+        }
+    )
+
+    assert memory.recovery_state == "attention_required"
+    assert "Generate the export package." in (memory.recovery_summary or "")
+    assert memory.recovery_actions == (
+        "Retry the workflow in chat after checking worker health and recent traces.",
+    )
 
 
 def _build_plan(
@@ -605,3 +1511,143 @@ class _FakeGroundingService:
         if period_label is not None:
             payload["period_label"] = period_label
         return payload
+
+
+class _FakeLoopDbSession:
+    def __init__(self) -> None:
+        self.commit_calls = 0
+        self.rollback_calls = 0
+
+    def commit(self) -> None:
+        self.commit_calls += 1
+
+    def rollback(self) -> None:
+        self.rollback_calls += 1
+
+
+class _FakeLoopChatRepository:
+    def __init__(self) -> None:
+        self.messages: list[SimpleNamespace] = []
+        self.updated_context_payload: dict[str, object] | None = None
+
+    def create_message(self, **kwargs):
+        message = SimpleNamespace(
+            id=uuid4(),
+            content=kwargs["content"],
+            role=kwargs["role"],
+            model_metadata=kwargs.get("model_metadata"),
+        )
+        self.messages.append(message)
+        return message
+
+    def update_thread_context(self, *, thread_id: UUID, context_payload: dict[str, object]) -> None:
+        del thread_id
+        self.updated_context_payload = context_payload
+
+
+class _FakeLoopActionRepository:
+    def __init__(self, *, close_run_id: UUID) -> None:
+        self.close_run_id = close_run_id
+        self.created_records: list[ChatActionPlanRecord] = []
+
+    def create_action_plan(self, **kwargs) -> ChatActionPlanRecord:
+        record = _build_plan(
+            close_run_id=kwargs["close_run_id"] or self.close_run_id,
+            action_plan_id=uuid4(),
+            thread_id=kwargs["thread_id"],
+            entity_id=kwargs["entity_id"],
+        )
+        self.created_records.append(record)
+        return record
+
+    def update_action_plan_status(
+        self,
+        *,
+        action_plan_id: UUID,
+        status: str,
+        applied_result: dict[str, object] | None = None,
+        rejected_reason: str | None = None,
+        superseded_by_id: UUID | None = None,
+    ) -> ChatActionPlanRecord | None:
+        del rejected_reason, superseded_by_id
+        for record in self.created_records:
+            if record.id != action_plan_id:
+                continue
+            return record.__class__(
+                id=record.id,
+                thread_id=record.thread_id,
+                message_id=record.message_id,
+                entity_id=record.entity_id,
+                close_run_id=record.close_run_id,
+                actor_user_id=record.actor_user_id,
+                intent=record.intent,
+                target_type=record.target_type,
+                target_id=record.target_id,
+                payload=record.payload,
+                confidence=record.confidence,
+                autonomy_mode=record.autonomy_mode,
+                status=status,
+                requires_human_approval=record.requires_human_approval,
+                reasoning=record.reasoning,
+                applied_result=applied_result,
+                rejected_reason=record.rejected_reason,
+                superseded_by_id=record.superseded_by_id,
+                created_at=record.created_at,
+                updated_at=record.updated_at,
+            )
+        return None
+
+
+def _resolve_fake_action(planning: AgentPlanningResult):
+    if planning.mode == "read_only" or planning.tool_name is None:
+        return None
+    return SimpleNamespace(
+        planning=planning,
+        tool=SimpleNamespace(
+            name=planning.tool_name,
+            namespace="close_operator",
+            namespace_label="Close Operations",
+            specialist_name="Close Run Operator",
+            specialist_mission=(
+                "Owns close-run lifecycle, phase movement, sign-off, archive, and reopen "
+                "control."
+            ),
+            intent="workflow_action",
+            requires_human_approval=False,
+        ),
+        target_type=None,
+        target_id=None,
+    )
+
+
+def _execute_fake_loop_action(tool_name: str) -> dict[str, object]:
+    if tool_name == "review_document":
+        return {
+            "tool": "review_document",
+            "document_filename": "invoice.pdf",
+            "decision": "approved",
+        }
+    if tool_name == "generate_recommendations":
+        return {
+            "tool": "generate_recommendations",
+            "queued_count": 1,
+        }
+    raise AssertionError(f"Unexpected tool for fake execution: {tool_name}")
+
+
+def _execute_fake_loop_action_with_block(
+    tool_name: str,
+    execution_count: dict[str, int],
+) -> dict[str, object]:
+    execution_count["count"] += 1
+    if execution_count["count"] == 1:
+        return {
+            "tool": "review_document",
+            "document_filename": "invoice.pdf",
+            "decision": "approved",
+        }
+    raise ChatActionExecutionError(
+        status_code=409,
+        code=ChatActionExecutionErrorCode.INVALID_ACTION_PLAN,
+        message="Reconciliation is blocked by unresolved matching exceptions.",
+    )

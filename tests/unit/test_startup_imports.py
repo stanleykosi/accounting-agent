@@ -55,4 +55,7 @@ def test_worker_startup_import_skips_pdf_builder_until_report_generation(
 
     assert module.celery_app is not None
     assert TaskName.RECONCILIATION_EXECUTE_CLOSE_RUN.value in module.celery_app.tasks
+    assert TaskName.CHAT_RESUME_OPERATOR_TURN.value in module.celery_app.tasks
+    assert TaskName.EXPORTS_GENERATE_CLOSE_RUN_PACKAGE.value in module.celery_app.tasks
+    assert TaskName.EXPORTS_ASSEMBLE_EVIDENCE_PACK.value in module.celery_app.tasks
     assert "services.reporting.pdf_builder" not in sys.modules

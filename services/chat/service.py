@@ -20,6 +20,7 @@ from services.chat.grounding import (
     ChatGroundingError,
     ChatGroundingService,
 )
+from services.chat.operator_memory import seed_context_payload_with_operator_memory
 from services.contracts.chat_models import (
     ChatMessageRecord,
     ChatMessageResponse,
@@ -108,6 +109,24 @@ class ChatRepositoryProtocol(Protocol):
         limit: int,
     ) -> tuple[ChatThreadWithCountRecord, ...]:
         """Return threads for an entity with message counts."""
+
+    def list_recent_threads_for_entity_any_scope(
+        self,
+        *,
+        entity_id: UUID,
+        limit: int,
+        exclude_thread_id: UUID | None = None,
+    ) -> tuple[ChatThreadRecord, ...]:
+        """Return recent threads across all scopes for one entity."""
+
+    def list_recent_threads_for_user_any_scope(
+        self,
+        *,
+        user_id: UUID,
+        limit: int,
+        exclude_thread_id: UUID | None = None,
+    ) -> tuple[ChatThreadRecord, ...]:
+        """Return recent threads across all accessible workspaces for one user."""
 
     def create_message(
         self,
@@ -205,6 +224,25 @@ class ChatService:
             )
             context_payload = self._grounding.build_context_payload(
                 context=grounding_record.context
+            )
+            recent_threads = self._repository.list_recent_threads_for_entity_any_scope(
+                entity_id=grounding_record.entity.id,
+                limit=8,
+            )
+            cross_workspace_recent_threads = (
+                self._repository.list_recent_threads_for_user_any_scope(
+                    user_id=user_id,
+                    limit=12,
+                )
+            )
+            context_payload = seed_context_payload_with_operator_memory(
+                context_payload=context_payload,
+                recent_context_payloads=tuple(
+                    thread.context_payload for thread in recent_threads
+                ),
+                cross_workspace_recent_context_payloads=tuple(
+                    thread.context_payload for thread in cross_workspace_recent_threads
+                ),
             )
 
             thread = self._repository.create_thread(

@@ -14,6 +14,7 @@ from typing import Any
 from uuid import UUID
 
 from services.db.models.chat import ChatMessage, ChatThread
+from services.db.models.entity import EntityMembership
 from sqlalchemy import desc, func, select
 from sqlalchemy.orm import Session
 
@@ -206,6 +207,48 @@ class ChatRepository:
             )
             for thread, message_count, last_message_at in rows
         )
+
+    def list_recent_threads_for_entity_any_scope(
+        self,
+        *,
+        entity_id: UUID,
+        limit: int,
+        exclude_thread_id: UUID | None = None,
+    ) -> tuple[ChatThreadRecord, ...]:
+        """Return recent threads for an entity across all scopes, newest-first."""
+
+        statement = select(ChatThread).where(ChatThread.entity_id == entity_id)
+        if exclude_thread_id is not None:
+            statement = statement.where(ChatThread.id != exclude_thread_id)
+        statement = statement.order_by(
+            desc(ChatThread.updated_at),
+            desc(ChatThread.id),
+        ).limit(limit)
+        threads = self._db_session.execute(statement).scalars().all()
+        return tuple(_map_thread(thread) for thread in threads)
+
+    def list_recent_threads_for_user_any_scope(
+        self,
+        *,
+        user_id: UUID,
+        limit: int,
+        exclude_thread_id: UUID | None = None,
+    ) -> tuple[ChatThreadRecord, ...]:
+        """Return recent threads across all workspaces accessible to one user."""
+
+        statement = (
+            select(ChatThread)
+            .join(EntityMembership, EntityMembership.entity_id == ChatThread.entity_id)
+            .where(EntityMembership.user_id == user_id)
+        )
+        if exclude_thread_id is not None:
+            statement = statement.where(ChatThread.id != exclude_thread_id)
+        statement = statement.order_by(
+            desc(ChatThread.updated_at),
+            desc(ChatThread.id),
+        ).limit(limit)
+        threads = self._db_session.execute(statement).scalars().all()
+        return tuple(_map_thread(thread) for thread in threads)
 
     def create_message(
         self,

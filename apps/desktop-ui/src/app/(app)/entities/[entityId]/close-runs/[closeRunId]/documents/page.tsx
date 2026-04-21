@@ -6,6 +6,7 @@ Dependencies: Document review API helpers, shared Quartz styles, and the close-r
 
 "use client";
 
+import Link from "next/link";
 import {
   Fragment,
   use,
@@ -481,6 +482,13 @@ export default function CloseRunDocumentsPage({
                 value={searchQuery}
               />
             </label>
+            <Link
+              className="secondary-button quartz-toolbar-button"
+              href={`/entities/${entityId}/close-runs/${closeRunId}/chat`}
+            >
+              <QuartzIcon className="quartz-inline-icon" name="assistant" />
+              Open Assistant
+            </Link>
             <button
               className="primary-button quartz-toolbar-button"
               onClick={openUploadDialog}

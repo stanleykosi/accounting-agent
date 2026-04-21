@@ -461,11 +461,68 @@ class DocumentUploadService:
                 message="No newly uploaded source documents are waiting to be parsed.",
             )
 
+        return self.queue_specific_uploaded_documents_for_parse(
+            actor_user=actor_user,
+            entity_id=entity_id,
+            close_run_id=close_run_id,
+            document_ids=tuple(document.id for document in uploaded_documents),
+            source_surface=source_surface,
+            trace_id=trace_id,
+            checkpoint_payload=None,
+        )
+
+    def queue_specific_uploaded_documents_for_parse(
+        self,
+        *,
+        actor_user: EntityUserRecord,
+        entity_id: UUID,
+        close_run_id: UUID,
+        document_ids: tuple[UUID, ...],
+        source_surface: AuditSourceSurface,
+        trace_id: str | None,
+        checkpoint_payload: JsonObject | None,
+    ) -> BatchQueueDocumentsForParseResponse:
+        """Queue one explicit set of uploaded documents for parsing."""
+
+        access_record = self._require_close_run_access(
+            actor_user=actor_user,
+            entity_id=entity_id,
+            close_run_id=close_run_id,
+        )
+        normalized_document_ids = tuple(dict.fromkeys(document_ids))
+        if not normalized_document_ids:
+            raise DocumentUploadServiceError(
+                status_code=400,
+                code=DocumentUploadServiceErrorCode.EMPTY_BATCH,
+                message="Select at least one uploaded document before parsing starts.",
+            )
+
         queued_documents: list[QueuedDocumentParseResult] = []
         try:
-            for document in uploaded_documents:
+            for document_id in normalized_document_ids:
+                access_document = self._repository.get_document_for_user(
+                    entity_id=entity_id,
+                    close_run_id=close_run_id,
+                    document_id=document_id,
+                    user_id=actor_user.id,
+                )
+                if access_document is None:
+                    raise DocumentUploadServiceError(
+                        status_code=404,
+                        code=DocumentUploadServiceErrorCode.DOCUMENT_NOT_FOUND,
+                        message="One selected document was not found in this close run.",
+                    )
+                if access_document.document.status is not DocumentStatus.UPLOADED:
+                    raise DocumentUploadServiceError(
+                        status_code=409,
+                        code=DocumentUploadServiceErrorCode.NO_UPLOADED_DOCUMENTS,
+                        message=(
+                            "Selected documents must still be in uploaded status before "
+                            "parsing can start."
+                        ),
+                    )
                 updated_document = self._repository.update_document_status(
-                    document_id=document.id,
+                    document_id=document_id,
                     status=DocumentStatus.PROCESSING,
                 )
                 dispatch = self._dispatch_parse_task(
@@ -474,6 +531,7 @@ class DocumentUploadService:
                     close_run_id=access_record.close_run.id,
                     actor_user_id=actor_user.id,
                     trace_id=trace_id,
+                    checkpoint_payload=checkpoint_payload,
                 )
                 self._repository.create_activity_event(
                     entity_id=access_record.close_run.entity_id,
@@ -673,6 +731,7 @@ class DocumentUploadService:
                 close_run_id=access_record.close_run.id,
                 actor_user_id=actor_user.id,
                 trace_id=trace_id,
+                checkpoint_payload=None,
             )
             self._repository.create_activity_event(
                 entity_id=access_record.close_run.entity_id,
@@ -814,6 +873,7 @@ class DocumentUploadService:
         close_run_id: UUID,
         actor_user_id: UUID,
         trace_id: str | None,
+        checkpoint_payload: JsonObject | None,
     ) -> UploadDispatchReceipt:
         """Dispatch the downstream parser task with only JSON-serializable identifiers."""
 
@@ -831,6 +891,7 @@ class DocumentUploadService:
             document_id=document.id,
             actor_user_id=actor_user_id,
             trace_id=trace_id,
+            checkpoint_payload=checkpoint_payload,
         )
         return UploadDispatchReceipt(
             task_id=serialize_uuid(job.id),

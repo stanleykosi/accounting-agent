@@ -19,7 +19,9 @@ from services.contracts.api_models import ContractModel
 class AgentPlanningResult(ContractModel):
     """Capture the planner's decision to answer directly or invoke one tool."""
 
-    mode: Literal["read_only", "tool"] = Field(description="Whether to answer directly or call a tool.")
+    mode: Literal["read_only", "tool"] = Field(
+        description="Whether to answer directly or call a tool."
+    )
     assistant_response: str = Field(
         min_length=1,
         description="Assistant response shown to the operator.",
@@ -45,11 +47,26 @@ class AgentToolDefinition:
     """Describe one registered deterministic tool exposed to the agent planner."""
 
     name: str
+    namespace: str
+    namespace_label: str
+    specialist_name: str
+    specialist_mission: str
     prompt_signature: str
     description: str
     intent: str
     requires_human_approval: bool
     input_schema: dict[str, Any]
+
+
+@dataclass(frozen=True, slots=True)
+class AgentToolNamespaceDefinition:
+    """Describe one grouped operator domain exposed to the planner and MCP clients."""
+
+    name: str
+    label: str
+    specialist_name: str
+    specialist_mission: str
+    tool_names: tuple[str, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -61,6 +78,7 @@ class AgentExecutionContext:
     close_run_id: UUID | None
     source_close_run_id: UUID | None
     thread_id: UUID | None
+    operator_objective: str | None
     trace_id: str | None
     source_surface: Any
 

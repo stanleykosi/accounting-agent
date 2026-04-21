@@ -487,6 +487,7 @@ class AccountingWorkspaceContextBuilder(WorkspaceContextBuilder):
         snapshot["exports"] = [
             {
                 "id": export.id,
+                "version_no": export.version_no,
                 "status": export.status,
                 "artifact_count": export.artifact_count,
                 "distribution_count": export.distribution_count,

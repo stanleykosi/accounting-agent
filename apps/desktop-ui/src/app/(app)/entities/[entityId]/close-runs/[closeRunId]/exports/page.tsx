@@ -317,6 +317,13 @@ export default function CloseRunExportsPage({
           </div>
 
           <div className="quartz-page-toolbar">
+            <Link
+              className="secondary-button quartz-toolbar-button"
+              href={`/entities/${entityId}/close-runs/${closeRunId}/chat`}
+            >
+              <QuartzIcon className="quartz-inline-icon" name="assistant" />
+              Open Assistant
+            </Link>
             {closeRun.status === "approved" || closeRun.status === "archived" ? (
               <Link
                 className="secondary-button"

@@ -6,8 +6,10 @@ Dependencies: Individual task modules under apps/worker/app/tasks/.
 
 __all__ = [
     "extract_documents",
+    "generate_exports",
     "generate_recommendations",
     "generate_reports",
     "parse_documents",
+    "resume_chat_operator",
     "run_reconciliation",
 ]

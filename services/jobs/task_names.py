@@ -26,12 +26,15 @@ class TaskName(StrEnum):
     """Enumerate canonical Celery task identifiers that must not drift across services."""
 
     SYSTEM_TRACE_PROBE = "system.trace_probe"
+    CHAT_RESUME_OPERATOR_TURN = "chat.resume_operator_turn"
     DOCUMENT_PARSE_AND_EXTRACT = "documents.parse_and_extract"
     DOCUMENT_EXTRACT = "documents.extract_document"
     DOCUMENT_REPROCESS = "documents.reprocess_document"
     ACCOUNTING_RECOMMEND_CLOSE_RUN = "accounting.recommend_close_run"
     RECONCILIATION_EXECUTE_CLOSE_RUN = "reconciliation.execute_close_run"
     REPORTING_GENERATE_CLOSE_RUN_PACK = "reporting.generate_close_run_pack"
+    EXPORTS_GENERATE_CLOSE_RUN_PACKAGE = "exports.generate_close_run_package"
+    EXPORTS_ASSEMBLE_EVIDENCE_PACK = "exports.assemble_evidence_pack"
     QUICKBOOKS_SYNC_CHART_OF_ACCOUNTS = "integrations.quickbooks.sync_chart_of_accounts"
 
 
@@ -49,6 +52,11 @@ TASK_ROUTE_DEFINITIONS: dict[TaskName, TaskRouteDefinition] = {
         queue=TaskQueue.CONTROL,
         routing_key="control.system.trace_probe",
         max_retries=3,
+    ),
+    TaskName.CHAT_RESUME_OPERATOR_TURN: TaskRouteDefinition(
+        queue=TaskQueue.CONTROL,
+        routing_key="control.chat.resume_operator_turn",
+        max_retries=4,
     ),
     TaskName.DOCUMENT_PARSE_AND_EXTRACT: TaskRouteDefinition(
         queue=TaskQueue.DOCUMENTS,
@@ -78,6 +86,16 @@ TASK_ROUTE_DEFINITIONS: dict[TaskName, TaskRouteDefinition] = {
     TaskName.REPORTING_GENERATE_CLOSE_RUN_PACK: TaskRouteDefinition(
         queue=TaskQueue.REPORTING,
         routing_key="reporting.generate_close_run_pack",
+        max_retries=4,
+    ),
+    TaskName.EXPORTS_GENERATE_CLOSE_RUN_PACKAGE: TaskRouteDefinition(
+        queue=TaskQueue.REPORTING,
+        routing_key="reporting.exports.generate_close_run_package",
+        max_retries=4,
+    ),
+    TaskName.EXPORTS_ASSEMBLE_EVIDENCE_PACK: TaskRouteDefinition(
+        queue=TaskQueue.REPORTING,
+        routing_key="reporting.exports.assemble_evidence_pack",
         max_retries=4,
     ),
     TaskName.QUICKBOOKS_SYNC_CHART_OF_ACCOUNTS: TaskRouteDefinition(

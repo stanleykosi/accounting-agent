@@ -18,6 +18,7 @@ from services.common.enums import CloseRunStatus, WorkflowPhase
 from services.db.models.documents import Document
 from services.db.models.recommendations import Recommendation
 from services.db.repositories.entity_repo import EntityUserRecord
+from services.jobs.task_names import TaskName
 
 
 class _FakeCloseRunService:
@@ -164,6 +165,35 @@ def test_signoff_and_distribution_actions_still_stage_for_confirmation() -> None
     )
 
 
+def test_registry_groups_tools_by_operator_namespace_for_prompting() -> None:
+    """The tool registry should expose grouped specialist domains for planner reliability."""
+
+    toolset = _make_toolset(
+        close_run_service=_FakeCloseRunService(
+            close_run=SimpleNamespace(
+                status=CloseRunStatus.REOPENED,
+                workflow_state=SimpleNamespace(active_phase=WorkflowPhase.REPORTING),
+            )
+        )
+    )
+
+    registry = toolset.build_registry()
+    prompt_lines = registry.describe_tools_for_prompt()
+    tools = registry.list_tools()
+
+    assert any("[workspace_admin / Workspace Admin]" in line for line in prompt_lines)
+    assert any("[close_operator / Close Operations]" in line for line in prompt_lines)
+    assert any("[reporting_and_release / Reporting and Release]" in line for line in prompt_lines)
+    assert any(
+        tool.name == "create_workspace" and tool.namespace == "workspace_admin"
+        for tool in tools
+    )
+    assert any(
+        tool.name == "generate_reports" and tool.specialist_name == "Reporting Controller"
+        for tool in tools
+    )
+
+
 def test_resolve_document_id_for_scope_preserves_duplicate_upload_order() -> None:
     """Reopened duplicate uploads should remap by peer index instead of failing as ambiguous."""
 
@@ -275,6 +305,7 @@ def test_delete_workspace_rejects_current_workspace_scope() -> None:
                 close_run_id=None,
                 source_close_run_id=None,
                 thread_id=uuid4(),
+                operator_objective=None,
                 trace_id=None,
                 source_surface=None,
             ),
@@ -317,6 +348,7 @@ def test_delete_close_run_returns_canonical_result_payload() -> None:
             close_run_id=close_run_id,
             source_close_run_id=None,
             thread_id=uuid4(),
+            operator_objective=None,
             trace_id=None,
             source_surface=None,
         ),
@@ -429,6 +461,7 @@ def test_queue_recommendation_jobs_skips_bank_statements(
         actor_user=actor,
         document_ids=None,
         force=False,
+        context=_build_execution_context(actor=actor, close_run_id=close_run_id),
         trace_id=None,
     )
 
@@ -443,6 +476,106 @@ def test_queue_recommendation_jobs_skips_bank_statements(
             "force": False,
         }
     ]
+
+
+def test_queue_export_generation_dispatches_async_release_job_with_continuation() -> None:
+    """Release packaging should use the tracked job path and preserve chat ownership."""
+
+    actor = EntityUserRecord(id=uuid4(), email="ops@example.com", full_name="Finance Ops")
+    entity_id = uuid4()
+    close_run_id = uuid4()
+    captured_dispatch: dict[str, object] = {}
+    toolset = _make_toolset()
+
+    class _FakeJobService:
+        def dispatch_job(self, **kwargs):
+            captured_dispatch.update(kwargs)
+            return SimpleNamespace(
+                id=uuid4(),
+                task_name=TaskName.EXPORTS_GENERATE_CLOSE_RUN_PACKAGE.value,
+                status=SimpleNamespace(value="queued"),
+            )
+
+    toolset._job_service = _FakeJobService()
+
+    dispatch = toolset._queue_export_generation(
+        entity_id=entity_id,
+        close_run_id=close_run_id,
+        actor_user=actor,
+        include_evidence_pack=True,
+        include_audit_trail=True,
+        action_qualifier="full_export",
+        context=_build_execution_context(
+            actor=actor,
+            close_run_id=close_run_id,
+            thread_id=uuid4(),
+            operator_objective="Create the export package and keep going when it's ready.",
+            source_surface="desktop",
+        ),
+        trace_id="trace-export",
+    )
+
+    assert dispatch.job_status == "queued"
+    assert dispatch.continuation_group_id is not None
+    assert captured_dispatch["task_name"] == TaskName.EXPORTS_GENERATE_CLOSE_RUN_PACKAGE
+    assert captured_dispatch["payload"] == {
+        "entity_id": str(entity_id),
+        "close_run_id": str(close_run_id),
+        "actor_user_id": str(actor.id),
+        "include_evidence_pack": True,
+        "include_audit_trail": True,
+        "action_qualifier": "full_export",
+    }
+    checkpoint_payload = captured_dispatch["checkpoint_payload"]
+    assert isinstance(checkpoint_payload, dict)
+    assert "chat_operator_continuation" in checkpoint_payload
+
+
+def test_queue_evidence_pack_assembly_dispatches_async_release_job_with_continuation() -> None:
+    """Evidence-pack assembly should follow the same async chat-owned release path."""
+
+    actor = EntityUserRecord(id=uuid4(), email="ops@example.com", full_name="Finance Ops")
+    entity_id = uuid4()
+    close_run_id = uuid4()
+    captured_dispatch: dict[str, object] = {}
+    toolset = _make_toolset()
+
+    class _FakeJobService:
+        def dispatch_job(self, **kwargs):
+            captured_dispatch.update(kwargs)
+            return SimpleNamespace(
+                id=uuid4(),
+                task_name=TaskName.EXPORTS_ASSEMBLE_EVIDENCE_PACK.value,
+                status=SimpleNamespace(value="queued"),
+            )
+
+    toolset._job_service = _FakeJobService()
+
+    dispatch = toolset._queue_evidence_pack_assembly(
+        entity_id=entity_id,
+        close_run_id=close_run_id,
+        actor_user=actor,
+        context=_build_execution_context(
+            actor=actor,
+            close_run_id=close_run_id,
+            thread_id=uuid4(),
+            operator_objective="Assemble the evidence pack and continue the release workflow.",
+            source_surface="desktop",
+        ),
+        trace_id="trace-evidence-pack",
+    )
+
+    assert dispatch.job_status == "queued"
+    assert dispatch.continuation_group_id is not None
+    assert captured_dispatch["task_name"] == TaskName.EXPORTS_ASSEMBLE_EVIDENCE_PACK
+    assert captured_dispatch["payload"] == {
+        "entity_id": str(entity_id),
+        "close_run_id": str(close_run_id),
+        "actor_user_id": str(actor.id),
+    }
+    checkpoint_payload = captured_dispatch["checkpoint_payload"]
+    assert isinstance(checkpoint_payload, dict)
+    assert "chat_operator_continuation" in checkpoint_payload
 
 
 def _make_toolset(
@@ -480,6 +613,9 @@ def _build_execution_context(
     *,
     actor: EntityUserRecord,
     close_run_id: UUID,
+    thread_id: UUID | None = None,
+    operator_objective: str | None = None,
+    source_surface: object | None = None,
 ) -> AgentExecutionContext:
     """Return the minimum execution context needed for approval checks."""
 
@@ -488,9 +624,10 @@ def _build_execution_context(
         entity_id=uuid4(),
         close_run_id=close_run_id,
         source_close_run_id=None,
-        thread_id=None,
+        thread_id=thread_id,
+        operator_objective=operator_objective,
         trace_id=None,
-        source_surface=None,
+        source_surface=source_surface,
     )
 
 

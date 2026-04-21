@@ -341,6 +341,12 @@ export default function CloseRunCompletePage({
           <div className="quartz-inline-action-row quartz-complete-secondary-actions">
             <Link
               className="secondary-button"
+              href={`/entities/${entityId}/close-runs/${closeRunId}/chat`}
+            >
+              Open Assistant
+            </Link>
+            <Link
+              className="secondary-button"
               href={`/entities/${entityId}/close-runs/${closeRunId}/exports`}
             >
               View Signed-Off Close

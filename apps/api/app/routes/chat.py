@@ -63,6 +63,10 @@ from services.chat.action_models import (
     SendChatActionRequest,
 )
 from services.chat.action_router import ChatActionRouter
+from services.chat.continuation_state import (
+    embed_continuation_in_checkpoint,
+    new_chat_operator_continuation,
+)
 from services.chat.grounding import ChatGroundingService
 from services.chat.proposed_changes import ProposedChangesService
 from services.chat.service import ChatService, ChatServiceError
@@ -436,26 +440,45 @@ async def _ingest_chat_attachments(
             }
             for uploaded in result.uploaded_documents
         )
+        summary = (
+            f"{len(attachments)} source document"
+            f"{'' if len(attachments) == 1 else 's'} uploaded and parsing started."
+        )
+        operator_prompt = _build_inline_attachment_prompt(
+            attachment_intent=normalized_intent,
+            content=content,
+            filenames=tuple(
+                str(item["filename"]) for item in attachments if isinstance(item["filename"], str)
+            ),
+            summary=summary,
+        )
+        continuation = new_chat_operator_continuation(
+            thread_id=chat_thread.id,
+            entity_id=entity_id,
+            actor_user_id=actor_user.id,
+            objective=operator_prompt,
+            originating_tool="upload_source_documents",
+            source_surface=AuditSourceSurface.DESKTOP.value,
+        )
+        document_upload_service.queue_specific_uploaded_documents_for_parse(
+            actor_user=actor_user,
+            entity_id=entity_id,
+            close_run_id=chat_thread.close_run_id,
+            document_ids=tuple(uploaded.document.id for uploaded in result.uploaded_documents),
+            source_surface=AuditSourceSurface.DESKTOP,
+            trace_id=trace_id,
+            checkpoint_payload=embed_continuation_in_checkpoint(
+                checkpoint_payload=None,
+                continuation=continuation,
+            ),
+        )
         return ChatInlineAttachmentResult(
             attachment_intent=normalized_intent,
             files=attachments,
-            summary=(
-                f"{len(attachments)} source document"
-                f"{'' if len(attachments) == 1 else 's'} uploaded and staged for parsing."
-            ),
-            operator_prompt=_build_inline_attachment_prompt(
-                attachment_intent=normalized_intent,
-                content=content,
-                filenames=tuple(
-                    str(item["filename"])
-                    for item in attachments
-                    if isinstance(item["filename"], str)
-                ),
-                summary=(
-                    f"{len(attachments)} source document"
-                    f"{'' if len(attachments) == 1 else 's'} uploaded and staged for parsing."
-                ),
-            ),
+            summary=summary,
+            operator_prompt=operator_prompt,
+            continuation_group_id=str(continuation.continuation_group_id),
+            job_count=len(result.uploaded_documents),
         )
 
     raise HTTPException(
@@ -551,6 +574,7 @@ def _persist_inline_attachment_partial_success(
         content=assistant_content,
         action_plan=None,
         is_read_only=True,
+        operator_controls=(),
     )
 
 
@@ -789,11 +813,22 @@ def send_chat_action(
             detail=_error_payload(code=error.code.value, message=error.message),
         ) from error
 
+    try:
+        workspace = action_executor.get_thread_workspace(
+            thread_id=thread_id,
+            entity_id=entity_id,
+            actor_user=_to_entity_user(session_result),
+        )
+        operator_controls = workspace.operator_controls
+    except ChatActionExecutionError:
+        operator_controls = ()
+
     return ChatActionResponse(
         message_id=outcome.assistant_message_id,
         content=outcome.assistant_content,
         action_plan=_to_chat_action_summary(outcome.action_plan),
         is_read_only=outcome.is_read_only,
+        operator_controls=operator_controls,
     )
 
 
@@ -805,6 +840,8 @@ class ChatInlineAttachmentResult:
     files: tuple[dict[str, object], ...]
     operator_prompt: str
     summary: str
+    continuation_group_id: str
+    job_count: int
 
 
 @router.post(
@@ -862,6 +899,17 @@ async def send_chat_action_with_attachments(
             files=files,
             trace_id=trace_id,
         )
+        action_executor.activate_async_job_group(
+            thread_id=thread_id,
+            entity_id=entity_id,
+            actor_user=_to_entity_user(session_result),
+            continuation_group_id=UUID(inline_result.continuation_group_id),
+            objective=inline_result.operator_prompt,
+            originating_tool="upload_source_documents",
+            job_count=inline_result.job_count,
+            source_surface=AuditSourceSurface.DESKTOP,
+            trace_id=trace_id,
+        )
         outcome = action_executor.send_action_message(
             thread_id=thread_id,
             entity_id=entity_id,
@@ -900,11 +948,22 @@ async def send_chat_action_with_attachments(
         for file in files:
             await file.close()
 
+    try:
+        workspace = action_executor.get_thread_workspace(
+            thread_id=thread_id,
+            entity_id=entity_id,
+            actor_user=_to_entity_user(session_result),
+        )
+        operator_controls = workspace.operator_controls
+    except ChatActionExecutionError:
+        operator_controls = ()
+
     return ChatActionResponse(
         message_id=outcome.assistant_message_id,
         content=outcome.assistant_content,
         action_plan=_to_chat_action_summary(outcome.action_plan),
         is_read_only=outcome.is_read_only,
+        operator_controls=operator_controls,
     )
 
 
@@ -963,21 +1022,7 @@ def read_chat_tool_manifest(
         auth_service=auth_service,
         settings=settings,
     )
-    workspace = {
-        "tools": [tool.model_dump() for tool in action_executor.list_registered_tools()],
-    }
-    return {
-        "protocol": "model-context-protocol",
-        "version": MCP_PROTOCOL_VERSION,
-        "tools": [
-            {
-                "name": tool["name"],
-                "description": tool["description"],
-                "inputSchema": tool["input_schema"],
-            }
-            for tool in workspace["tools"]
-        ],
-    }
+    return action_executor.read_mcp_manifest()
 
 
 @router.post(
@@ -1043,16 +1088,39 @@ async def handle_chat_mcp_request(
     if method == "ping":
         return _mcp_success_response(request_id=request_id, result={})
     if method == "tools/list":
+        registered_tools = action_executor.list_registered_tools()
+        namespace_manifest: list[dict[str, object]] = []
+        seen_namespaces: set[str] = set()
+        for tool in registered_tools:
+            if tool.namespace in seen_namespaces:
+                continue
+            seen_namespaces.add(tool.namespace)
+            namespace_manifest.append(
+                {
+                    "name": tool.namespace,
+                    "label": tool.namespace_label,
+                    "specialist_name": tool.specialist_name,
+                    "specialist_mission": tool.specialist_mission,
+                }
+            )
         return _mcp_success_response(
             request_id=request_id,
             result={
+                "namespaces": namespace_manifest,
                 "tools": [
                     {
                         "name": tool.name,
                         "description": tool.description,
                         "inputSchema": tool.input_schema,
+                        "annotations": {
+                            "namespace": tool.namespace,
+                            "namespaceLabel": tool.namespace_label,
+                            "specialistName": tool.specialist_name,
+                            "requiresHumanApproval": tool.requires_human_approval,
+                            "intent": tool.intent,
+                        },
                     }
-                    for tool in action_executor.list_registered_tools()
+                    for tool in registered_tools
                 ]
             },
         )

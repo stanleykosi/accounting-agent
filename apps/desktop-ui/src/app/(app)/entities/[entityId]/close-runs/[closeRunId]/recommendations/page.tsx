@@ -10,6 +10,7 @@ Dependencies: Close-run context reads, recommendation/journal API helpers, and
 
 import Link from "next/link";
 import { use, useCallback, useEffect, useMemo, useState, type ReactElement } from "react";
+import { QuartzIcon } from "../../../../../../../components/layout/QuartzIcons";
 import {
   CloseRunApiError,
   formatCloseRunPeriod,
@@ -310,6 +311,13 @@ export default function RecommendationsPage({
           </div>
 
           <div className="quartz-page-toolbar">
+            <Link
+              className="secondary-button quartz-toolbar-button"
+              href={`/entities/${entityId}/close-runs/${closeRunId}/chat`}
+            >
+              <QuartzIcon className="quartz-inline-icon" name="assistant" />
+              Open Assistant
+            </Link>
             <button
               className="secondary-button"
               disabled={isGenerating}

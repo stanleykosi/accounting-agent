@@ -10,7 +10,9 @@ Dependencies: Close-run context, reconciliation review APIs, job polling, and
 
 import { EvidenceDrawer } from "@accounting-ai-agent/ui";
 import type { EvidenceDrawerReference } from "@accounting-ai-agent/ui";
+import Link from "next/link";
 import { use, useCallback, useEffect, useMemo, useRef, useState, type ReactElement } from "react";
+import { QuartzIcon } from "../../../../../../../components/layout/QuartzIcons";
 import {
   CloseRunApiError,
   formatCloseRunPeriod,
@@ -422,6 +424,13 @@ export default function CloseRunReconciliationPage({
           </div>
 
           <div className="quartz-page-toolbar">
+            <Link
+              className="secondary-button quartz-toolbar-button"
+              href={`/entities/${entityId}/close-runs/${closeRunId}/chat`}
+            >
+              <QuartzIcon className="quartz-inline-icon" name="assistant" />
+              Open Assistant
+            </Link>
             <button
               className="secondary-button"
               disabled={isRefreshing}

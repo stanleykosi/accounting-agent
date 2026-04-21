@@ -21,14 +21,13 @@ from uuid import UUID
 
 from pydantic import Field, field_validator, model_validator
 from services.common.enums import (
-    ArtifactType,
     AutonomyMode,
     DocumentType,
     ReconciliationType,
-    ReviewStatus,
     WorkflowPhase,
 )
 from services.contracts.api_models import ContractModel
+from services.contracts.chat_models import AgentOperatorControl
 
 # ---------------------------------------------------------------------------
 # Chat action intent classification
@@ -73,7 +72,10 @@ class ChatActionIntent(ContractModel):
     )
     target_type: str | None = Field(
         default=None,
-        description="The business object type the action targets (e.g. 'recommendation', 'journal').",
+        description=(
+            "The business object type the action targets "
+            "(e.g. 'recommendation', 'journal')."
+        ),
     )
     target_id: UUID | None = Field(
         default=None,
@@ -114,7 +116,10 @@ class ProposedEditPayload(ContractModel):
 
     target_type: str = Field(
         min_length=1,
-        description="The business object type being edited (e.g. 'recommendation', 'journal', 'extracted_field').",
+        description=(
+            "The business object type being edited "
+            "(e.g. 'recommendation', 'journal', 'extracted_field')."
+        ),
     )
     target_id: UUID = Field(
         description="UUID of the business object being edited.",
@@ -406,6 +411,13 @@ class ChatActionResponse(ContractModel):
     is_read_only: bool = Field(
         default=True,
         description="True when the response is pure analysis with no state changes.",
+    )
+    operator_controls: tuple[AgentOperatorControl, ...] = Field(
+        default=(),
+        description=(
+            "Channel-portable suggested commands and governed-action controls returned "
+            "with the assistant reply."
+        ),
     )
 
 

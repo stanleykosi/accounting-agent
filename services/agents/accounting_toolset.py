@@ -16,6 +16,11 @@ from uuid import UUID
 from services.accounting.recommendation_apply import ActorContext, RecommendationApplyService
 from services.agents.models import AgentExecutionContext, AgentToolDefinition
 from services.agents.registry import ToolRegistry
+from services.chat.continuation_state import (
+    ChatOperatorContinuation,
+    embed_continuation_in_checkpoint,
+    new_chat_operator_continuation,
+)
 from services.close_runs.delete_service import CloseRunDeleteService
 from services.close_runs.service import CloseRunService
 from services.close_runs.workflow_guards import require_active_phase
@@ -34,7 +39,6 @@ from services.contracts.close_run_models import CreateCloseRunRequest
 from services.contracts.entity_models import CreateEntityRequest, UpdateEntityRequest
 from services.contracts.export_models import (
     EXPORT_DELIVERY_CHANNELS,
-    CreateExportRequest,
     DistributeExportRequest,
 )
 from services.contracts.journal_models import JOURNAL_POSTING_TARGETS
@@ -74,6 +78,35 @@ class PreparedMutationScope:
     metadata: dict[str, Any]
 
 
+@dataclass(frozen=True, slots=True)
+class ReportGenerationDispatch:
+    """Describe one queued report-generation job together with its report run."""
+
+    report_run: Any
+    job_id: str
+    job_status: str
+    continuation_group_id: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class AsyncToolDispatch:
+    """Describe one queued async job started from a chat-owned tool invocation."""
+
+    job_id: str
+    job_status: str
+    continuation_group_id: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class OperatorToolNamespace:
+    """Describe one internal operator specialist domain."""
+
+    name: str
+    label: str
+    specialist_name: str
+    specialist_mission: str
+
+
 _RELEASED_CLOSE_RUN_STATUSES = frozenset(
     {
         CloseRunStatus.APPROVED,
@@ -91,6 +124,58 @@ _STAGED_CHAT_CONFIRMATION_TOOLS = frozenset(
         "delete_workspace",
     }
 )
+
+_TOOL_NAMESPACES = {
+    "workspace_admin": OperatorToolNamespace(
+        name="workspace_admin",
+        label="Workspace Admin",
+        specialist_name="Workspace Steward",
+        specialist_mission=(
+            "Owns workspace lifecycle, settings, and safe cross-workspace administration."
+        ),
+    ),
+    "close_operator": OperatorToolNamespace(
+        name="close_operator",
+        label="Close Operations",
+        specialist_name="Close Run Operator",
+        specialist_mission=(
+            "Owns close-run lifecycle, phase movement, sign-off, archive, and reopen control."
+        ),
+    ),
+    "document_control": OperatorToolNamespace(
+        name="document_control",
+        label="Document Control",
+        specialist_name="Document Controller",
+        specialist_mission=(
+            "Owns source-document intake, review, extraction correction, and collection readiness."
+        ),
+    ),
+    "treatment_and_journals": OperatorToolNamespace(
+        name="treatment_and_journals",
+        label="Treatment and Journals",
+        specialist_name="Journal Specialist",
+        specialist_mission=(
+            "Owns accounting treatment, recommendation review, and journal approval/application."
+        ),
+    ),
+    "reconciliation_control": OperatorToolNamespace(
+        name="reconciliation_control",
+        label="Reconciliation Control",
+        specialist_name="Reconciliation Analyst",
+        specialist_mission=(
+            "Owns reconciliation runs, exception disposition, and anomaly resolution."
+        ),
+    ),
+    "reporting_and_release": OperatorToolNamespace(
+        name="reporting_and_release",
+        label="Reporting and Release",
+        specialist_name="Reporting Controller",
+        specialist_mission=(
+            "Owns supporting schedules, commentary, reporting, export packaging, "
+            "evidence packs, and release records."
+        ),
+    ),
+}
 
 
 class AccountingToolset:
@@ -147,6 +232,49 @@ class AccountingToolset:
         del tool_arguments, context
         return tool_name in _STAGED_CHAT_CONFIRMATION_TOOLS
 
+    def _build_chat_continuation(
+        self,
+        *,
+        context: AgentExecutionContext,
+        originating_tool: str,
+    ) -> ChatOperatorContinuation | None:
+        """Return chat-owned continuation metadata when the execution context is resumable."""
+
+        if context.thread_id is None:
+            return None
+        if context.operator_objective is None or not context.operator_objective.strip():
+            return None
+
+        raw_source_surface = context.source_surface
+        source_surface = (
+            raw_source_surface.value
+            if isinstance(raw_source_surface, AuditSourceSurface)
+            else str(raw_source_surface)
+        )
+        return new_chat_operator_continuation(
+            thread_id=context.thread_id,
+            entity_id=context.entity_id,
+            actor_user_id=self._require_actor(context).id,
+            objective=context.operator_objective,
+            originating_tool=originating_tool,
+            source_surface=source_surface,
+        )
+
+    def _build_async_group_result(
+        self,
+        *,
+        continuation: ChatOperatorContinuation | None,
+        job_count: int,
+    ) -> dict[str, Any] | None:
+        """Return compact async-group metadata for chat execution results."""
+
+        if continuation is None or job_count <= 0:
+            return None
+        return {
+            "continuation_group_id": str(continuation.continuation_group_id),
+            "job_count": job_count,
+        }
+
     def build_registry(self) -> ToolRegistry:
         """Return the registered accounting tool registry."""
 
@@ -154,6 +282,7 @@ class AccountingToolset:
         self._register(
             registry=registry,
             name="create_workspace",
+            namespace="workspace_admin",
             prompt_signature=(
                 "create_workspace(name, legal_name?, base_currency?, country_code?, timezone?, "
                 "accounting_standard?, autonomy_mode?)"
@@ -194,6 +323,7 @@ class AccountingToolset:
         self._register(
             registry=registry,
             name="update_workspace",
+            namespace="workspace_admin",
             prompt_signature=(
                 "update_workspace(workspace_id?, name?, legal_name?, base_currency?, "
                 "country_code?, timezone?, accounting_standard?, autonomy_mode?)"
@@ -235,6 +365,7 @@ class AccountingToolset:
         self._register(
             registry=registry,
             name="delete_workspace",
+            namespace="workspace_admin",
             prompt_signature="delete_workspace(workspace_id)",
             description=(
                 "Delete one accessible workspace that is not the workspace anchoring the current "
@@ -255,6 +386,7 @@ class AccountingToolset:
         self._register(
             registry=registry,
             name="review_document",
+            namespace="document_control",
             prompt_signature=(
                 "review_document("
                 "document_id, decision: approved|rejected|needs_info, reason?"
@@ -293,6 +425,7 @@ class AccountingToolset:
         self._register(
             registry=registry,
             name="ignore_document",
+            namespace="document_control",
             prompt_signature="ignore_document(document_id, reason?)",
             description=(
                 "Mark a mistaken upload as ignored for this close run. If source-document "
@@ -317,6 +450,7 @@ class AccountingToolset:
         self._register(
             registry=registry,
             name="correct_extracted_field",
+            namespace="document_control",
             prompt_signature=(
                 "correct_extracted_field("
                 "field_id, corrected_value, corrected_type, reason?"
@@ -344,6 +478,7 @@ class AccountingToolset:
         self._register(
             registry=registry,
             name="create_close_run",
+            namespace="close_operator",
             prompt_signature=(
                 "create_close_run(period_start, period_end, reporting_currency?, "
                 "allow_duplicate_period?, duplicate_period_reason?)"
@@ -380,6 +515,7 @@ class AccountingToolset:
         self._register(
             registry=registry,
             name="delete_close_run",
+            namespace="close_operator",
             prompt_signature="delete_close_run(close_run_id?)",
             description=(
                 "Delete one mutable close run from the current workspace. Defaults to the "
@@ -401,6 +537,7 @@ class AccountingToolset:
         self._register(
             registry=registry,
             name="advance_close_run",
+            namespace="close_operator",
             prompt_signature="advance_close_run(target_phase, reason?)",
             description=(
                 "Advance the close run into the next workflow phase after gate "
@@ -425,6 +562,7 @@ class AccountingToolset:
         self._register(
             registry=registry,
             name="rewind_close_run",
+            namespace="close_operator",
             prompt_signature="rewind_close_run(target_phase, reason?)",
             description=(
                 "Move a mutable close run back into an earlier workflow phase so the "
@@ -447,6 +585,7 @@ class AccountingToolset:
         self._register(
             registry=registry,
             name="approve_close_run",
+            namespace="close_operator",
             prompt_signature="approve_close_run(reason?)",
             description="Sign off the close run when the final review gate is ready.",
             intent="approval_request",
@@ -461,6 +600,7 @@ class AccountingToolset:
         self._register(
             registry=registry,
             name="archive_close_run",
+            namespace="close_operator",
             prompt_signature="archive_close_run(reason?)",
             description="Archive an approved or exported close run while preserving its history.",
             intent="approval_request",
@@ -477,6 +617,7 @@ class AccountingToolset:
         self._register(
             registry=registry,
             name="reopen_close_run",
+            namespace="close_operator",
             prompt_signature="reopen_close_run(reason?)",
             description=(
                 "Create a reopened working version of an approved, exported, or archived close run "
@@ -496,6 +637,7 @@ class AccountingToolset:
         self._register(
             registry=registry,
             name="generate_recommendations",
+            namespace="treatment_and_journals",
             prompt_signature="generate_recommendations(force?, document_ids?)",
             description="Queue accounting recommendation generation jobs for eligible documents.",
             intent="workflow_action",
@@ -515,6 +657,7 @@ class AccountingToolset:
         self._register(
             registry=registry,
             name="approve_recommendation",
+            namespace="treatment_and_journals",
             prompt_signature="approve_recommendation(recommendation_id, reason?)",
             description=(
                 "Approve one accounting recommendation and optionally create its "
@@ -536,6 +679,7 @@ class AccountingToolset:
         self._register(
             registry=registry,
             name="reject_recommendation",
+            namespace="treatment_and_journals",
             prompt_signature="reject_recommendation(recommendation_id, reason)",
             description="Reject one accounting recommendation with a reviewer reason.",
             intent="approval_request",
@@ -554,6 +698,7 @@ class AccountingToolset:
         self._register(
             registry=registry,
             name="approve_journal",
+            namespace="treatment_and_journals",
             prompt_signature="approve_journal(journal_id, reason?)",
             description="Approve one journal draft for the current close run.",
             intent="approval_request",
@@ -572,6 +717,7 @@ class AccountingToolset:
         self._register(
             registry=registry,
             name="apply_journal",
+            namespace="treatment_and_journals",
             prompt_signature="apply_journal(journal_id, posting_target, reason?)",
             description=(
                 "Post one approved journal draft either internally or as an "
@@ -601,6 +747,7 @@ class AccountingToolset:
         self._register(
             registry=registry,
             name="reject_journal",
+            namespace="treatment_and_journals",
             prompt_signature="reject_journal(journal_id, reason)",
             description="Reject one journal draft with a reviewer reason.",
             intent="approval_request",
@@ -619,6 +766,7 @@ class AccountingToolset:
         self._register(
             registry=registry,
             name="run_reconciliation",
+            namespace="reconciliation_control",
             prompt_signature="run_reconciliation(reconciliation_types?)",
             description="Queue reconciliation execution for one or more reconciliation types.",
             intent="reconciliation_query",
@@ -638,6 +786,7 @@ class AccountingToolset:
         self._register(
             registry=registry,
             name="upsert_supporting_schedule_row",
+            namespace="reporting_and_release",
             prompt_signature="upsert_supporting_schedule_row(schedule_type, row_payload, row_id?)",
             description="Create or update one Step 6 supporting-schedule workpaper row.",
             intent="proposed_edit",
@@ -660,6 +809,7 @@ class AccountingToolset:
         self._register(
             registry=registry,
             name="delete_supporting_schedule_row",
+            namespace="reporting_and_release",
             prompt_signature="delete_supporting_schedule_row(schedule_type, row_id)",
             description="Delete one Step 6 supporting-schedule workpaper row.",
             intent="proposed_edit",
@@ -681,6 +831,7 @@ class AccountingToolset:
         self._register(
             registry=registry,
             name="set_supporting_schedule_status",
+            namespace="reporting_and_release",
             prompt_signature="set_supporting_schedule_status(schedule_type, status, note?)",
             description="Review, approve, or mark a Step 6 supporting schedule not applicable.",
             intent="approval_request",
@@ -712,6 +863,7 @@ class AccountingToolset:
         self._register(
             registry=registry,
             name="approve_reconciliation",
+            namespace="reconciliation_control",
             prompt_signature="approve_reconciliation(reconciliation_id, reason?)",
             description="Approve one reconciliation result after reviewing its disposition.",
             intent="reconciliation_query",
@@ -730,6 +882,7 @@ class AccountingToolset:
         self._register(
             registry=registry,
             name="disposition_reconciliation_item",
+            namespace="reconciliation_control",
             prompt_signature=(
                 "disposition_reconciliation_item("
                 "item_id, disposition: resolved|adjusted|accepted_as_is|escalated|pending_info, "
@@ -764,6 +917,7 @@ class AccountingToolset:
         self._register(
             registry=registry,
             name="resolve_reconciliation_anomaly",
+            namespace="reconciliation_control",
             prompt_signature="resolve_reconciliation_anomaly(anomaly_id, resolution_note)",
             description=(
                 "Resolve one reconciliation anomaly after the reviewer verifies the issue."
@@ -786,6 +940,7 @@ class AccountingToolset:
         self._register(
             registry=registry,
             name="generate_reports",
+            namespace="reporting_and_release",
             prompt_signature=(
                 "generate_reports("
                 "template_id?, generate_commentary?, use_llm_commentary?"
@@ -815,6 +970,7 @@ class AccountingToolset:
         self._register(
             registry=registry,
             name="generate_export",
+            namespace="reporting_and_release",
             prompt_signature=(
                 "generate_export("
                 "include_evidence_pack?, include_audit_trail?, action_qualifier?"
@@ -844,6 +1000,7 @@ class AccountingToolset:
         self._register(
             registry=registry,
             name="assemble_evidence_pack",
+            namespace="reporting_and_release",
             prompt_signature="assemble_evidence_pack()",
             description="Assemble or reuse the canonical evidence pack for the close run.",
             intent="report_action",
@@ -854,6 +1011,7 @@ class AccountingToolset:
         self._register(
             registry=registry,
             name="distribute_export",
+            namespace="reporting_and_release",
             prompt_signature=(
                 "distribute_export(export_id, recipient_name, recipient_email, "
                 "recipient_role?, delivery_channel?, note?)"
@@ -889,6 +1047,7 @@ class AccountingToolset:
         self._register(
             registry=registry,
             name="update_commentary",
+            namespace="reporting_and_release",
             prompt_signature="update_commentary(report_run_id, section_key, body)",
             description="Edit one report commentary section in the current report run.",
             intent="report_action",
@@ -908,6 +1067,7 @@ class AccountingToolset:
         self._register(
             registry=registry,
             name="approve_commentary",
+            namespace="reporting_and_release",
             prompt_signature="approve_commentary(report_run_id, section_key, body?, reason?)",
             description="Approve one commentary section for release in the report run.",
             intent="report_action",
@@ -932,6 +1092,7 @@ class AccountingToolset:
         *,
         registry: ToolRegistry,
         name: str,
+        namespace: str,
         prompt_signature: str,
         description: str,
         intent: str,
@@ -943,9 +1104,17 @@ class AccountingToolset:
     ) -> None:
         """Register one typed accounting tool."""
 
+        namespace_definition = _TOOL_NAMESPACES.get(namespace)
+        if namespace_definition is None:
+            raise ValueError(f"Unknown operator tool namespace: {namespace}")
+
         registry.register_tool(
             definition=AgentToolDefinition(
                 name=name,
+                namespace=namespace_definition.name,
+                namespace_label=namespace_definition.label,
+                specialist_name=namespace_definition.specialist_name,
+                specialist_mission=namespace_definition.specialist_mission,
                 prompt_signature=prompt_signature,
                 description=description,
                 intent=intent,
@@ -1476,14 +1645,24 @@ class AccountingToolset:
             actor_user=actor_user,
             document_ids=document_ids or None,
             force=bool(arguments.get("force", False)),
+            context=context,
             trace_id=context.trace_id,
         )
+        async_job_group = None
+        if queued_jobs:
+            first_group_id = queued_jobs[0].get("continuation_group_id")
+            if isinstance(first_group_id, str):
+                async_job_group = {
+                    "continuation_group_id": first_group_id,
+                    "job_count": len(queued_jobs),
+                }
         return self._with_scope_metadata(
             prepared=prepared,
             result={
                 "tool": "generate_recommendations",
                 "queued_jobs": queued_jobs,
                 "queued_count": len(queued_jobs),
+                "async_job_group": async_job_group,
             },
         )
 
@@ -1645,6 +1824,10 @@ class AccountingToolset:
             ReconciliationType(reconciliation_type)
             for reconciliation_type in _optional_string_list(arguments, "reconciliation_types")
         ]
+        continuation = self._build_chat_continuation(
+            context=context,
+            originating_tool="run_reconciliation",
+        )
         job = self._job_service.dispatch_job(
             dispatcher=self._task_dispatcher,
             task_name=TaskName.RECONCILIATION_EXECUTE_CLOSE_RUN,
@@ -1663,6 +1846,14 @@ class AccountingToolset:
             document_id=None,
             actor_user_id=actor_user.id,
             trace_id=context.trace_id,
+            checkpoint_payload=(
+                embed_continuation_in_checkpoint(
+                    checkpoint_payload=None,
+                    continuation=continuation,
+                )
+                if continuation is not None
+                else None
+            ),
         )
         return self._with_scope_metadata(
             prepared=prepared,
@@ -1670,6 +1861,10 @@ class AccountingToolset:
                 "tool": "run_reconciliation",
                 "job_id": str(job.id),
                 "status": job.status.value,
+                "async_job_group": self._build_async_group_result(
+                    continuation=continuation,
+                    job_count=1,
+                ),
             },
         )
 
@@ -1984,22 +2179,32 @@ class AccountingToolset:
             source_surface=cast(AuditSourceSurface, context.source_surface),
             trace_id=context.trace_id,
         )
-        run_record = self._queue_report_generation(
+        dispatch = self._queue_report_generation(
             entity_id=context.entity_id,
             close_run_id=prepared.close_run_id,
             actor_user=actor_user,
             template_id=_optional_string(arguments, "template_id"),
             generate_commentary=bool(arguments.get("generate_commentary", True)),
             use_llm_commentary=bool(arguments.get("use_llm_commentary", False)),
+            context=context,
             trace_id=context.trace_id,
         )
         return self._with_scope_metadata(
             prepared=prepared,
             result={
                 "tool": "generate_reports",
-                "report_run_id": str(run_record.id),
-                "status": run_record.status.value,
-                "version_no": run_record.version_no,
+                "report_run_id": str(dispatch.report_run.id),
+                "job_id": dispatch.job_id,
+                "status": dispatch.job_status,
+                "version_no": dispatch.report_run.version_no,
+                "async_job_group": (
+                    {
+                        "continuation_group_id": dispatch.continuation_group_id,
+                        "job_count": 1,
+                    }
+                    if dispatch.continuation_group_id is not None
+                    else None
+                ),
             },
         )
 
@@ -2023,24 +2228,30 @@ class AccountingToolset:
             source_surface=cast(AuditSourceSurface, context.source_surface),
             trace_id=context.trace_id,
         )
-        export_detail = self._export_service.trigger_export(
-            actor_user=actor_user,
+        dispatch = self._queue_export_generation(
             entity_id=context.entity_id,
             close_run_id=prepared.close_run_id,
-            request=CreateExportRequest(
-                include_evidence_pack=bool(arguments.get("include_evidence_pack", True)),
-                include_audit_trail=bool(arguments.get("include_audit_trail", True)),
-                action_qualifier=_optional_string(arguments, "action_qualifier"),
-            ),
+            actor_user=actor_user,
+            include_evidence_pack=bool(arguments.get("include_evidence_pack", True)),
+            include_audit_trail=bool(arguments.get("include_audit_trail", True)),
+            action_qualifier=_optional_string(arguments, "action_qualifier"),
+            context=context,
+            trace_id=context.trace_id,
         )
         return self._with_scope_metadata(
             prepared=prepared,
             result={
                 "tool": "generate_export",
-                "export_id": export_detail.id,
-                "status": export_detail.status,
-                "artifact_count": export_detail.artifact_count,
-                "has_evidence_pack": export_detail.evidence_pack is not None,
+                "job_id": dispatch.job_id,
+                "status": dispatch.job_status,
+                "async_job_group": (
+                    {
+                        "continuation_group_id": dispatch.continuation_group_id,
+                        "job_count": 1,
+                    }
+                    if dispatch.continuation_group_id is not None
+                    else None
+                ),
             },
         )
 
@@ -2064,19 +2275,27 @@ class AccountingToolset:
             source_surface=cast(AuditSourceSurface, context.source_surface),
             trace_id=context.trace_id,
         )
-        evidence_pack = self._export_service.assemble_evidence_pack(
-            actor_user=actor_user,
+        dispatch = self._queue_evidence_pack_assembly(
             entity_id=context.entity_id,
             close_run_id=prepared.close_run_id,
+            actor_user=actor_user,
+            context=context,
+            trace_id=context.trace_id,
         )
         return self._with_scope_metadata(
             prepared=prepared,
             result={
                 "tool": "assemble_evidence_pack",
-                "version_no": evidence_pack.version_no,
-                "generated_at": evidence_pack.generated_at,
-                "storage_key": evidence_pack.storage_key,
-                "size_bytes": evidence_pack.size_bytes,
+                "job_id": dispatch.job_id,
+                "status": dispatch.job_status,
+                "async_job_group": (
+                    {
+                        "continuation_group_id": dispatch.continuation_group_id,
+                        "job_count": 1,
+                    }
+                    if dispatch.continuation_group_id is not None
+                    else None
+                ),
             },
         )
 
@@ -2339,6 +2558,7 @@ class AccountingToolset:
         actor_user: EntityUserRecord,
         document_ids: list[UUID] | None,
         force: bool,
+        context: AgentExecutionContext,
         trace_id: str | None,
     ) -> list[dict[str, Any]]:
         """Queue recommendation generation for collection-approved documents only."""
@@ -2373,6 +2593,10 @@ class AccountingToolset:
             }
 
         queued_jobs: list[dict[str, Any]] = []
+        continuation = self._build_chat_continuation(
+            context=context,
+            originating_tool="generate_recommendations",
+        )
         imported_gl_representation = evaluate_documents_imported_gl_representation(
             session=self._db_session,
             close_run_id=close_run_id,
@@ -2403,14 +2627,25 @@ class AccountingToolset:
                 document_id=document.id,
                 actor_user_id=actor_user.id,
                 trace_id=trace_id,
+                checkpoint_payload=(
+                    embed_continuation_in_checkpoint(
+                        checkpoint_payload=None,
+                        continuation=continuation,
+                    )
+                    if continuation is not None
+                    else None
+                ),
             )
+            job_payload = {
+                "job_id": str(job.id),
+                "document_id": str(document.id),
+                "task_name": job.task_name,
+                "status": job.status.value,
+            }
+            if continuation is not None:
+                job_payload["continuation_group_id"] = str(continuation.continuation_group_id)
             queued_jobs.append(
-                {
-                    "job_id": str(job.id),
-                    "document_id": str(document.id),
-                    "task_name": job.task_name,
-                    "status": job.status.value,
-                }
+                job_payload
             )
         return queued_jobs
 
@@ -2423,8 +2658,9 @@ class AccountingToolset:
         template_id: str | None,
         generate_commentary: bool,
         use_llm_commentary: bool,
+        context: AgentExecutionContext,
         trace_id: str | None,
-    ) -> Any:
+    ) -> ReportGenerationDispatch:
         """Create a report run and dispatch the background generation job."""
 
         if template_id is not None:
@@ -2447,7 +2683,11 @@ class AccountingToolset:
             },
             generated_by_user_id=actor_user.id,
         )
-        self._job_service.dispatch_job(
+        continuation = self._build_chat_continuation(
+            context=context,
+            originating_tool="generate_reports",
+        )
+        job = self._job_service.dispatch_job(
             dispatcher=self._task_dispatcher,
             task_name=TaskName.REPORTING_GENERATE_CLOSE_RUN_PACK,
             payload={
@@ -2462,8 +2702,125 @@ class AccountingToolset:
             document_id=None,
             actor_user_id=actor_user.id,
             trace_id=trace_id,
+            checkpoint_payload=(
+                embed_continuation_in_checkpoint(
+                    checkpoint_payload=None,
+                    continuation=continuation,
+                )
+                if continuation is not None
+                else None
+            ),
         )
-        return run_record
+        return ReportGenerationDispatch(
+            report_run=run_record,
+            job_id=str(job.id),
+            job_status=job.status.value,
+            continuation_group_id=(
+                str(continuation.continuation_group_id)
+                if continuation is not None
+                else None
+            ),
+        )
+
+    def _queue_export_generation(
+        self,
+        *,
+        entity_id: UUID,
+        close_run_id: UUID,
+        actor_user: EntityUserRecord,
+        include_evidence_pack: bool,
+        include_audit_trail: bool,
+        action_qualifier: str | None,
+        context: AgentExecutionContext,
+        trace_id: str | None,
+    ) -> AsyncToolDispatch:
+        """Dispatch async export-package generation for the current close run."""
+
+        continuation = self._build_chat_continuation(
+            context=context,
+            originating_tool="generate_export",
+        )
+        job = self._job_service.dispatch_job(
+            dispatcher=self._task_dispatcher,
+            task_name=TaskName.EXPORTS_GENERATE_CLOSE_RUN_PACKAGE,
+            payload={
+                "entity_id": str(entity_id),
+                "close_run_id": str(close_run_id),
+                "actor_user_id": str(actor_user.id),
+                "include_evidence_pack": include_evidence_pack,
+                "include_audit_trail": include_audit_trail,
+                "action_qualifier": action_qualifier,
+            },
+            entity_id=entity_id,
+            close_run_id=close_run_id,
+            document_id=None,
+            actor_user_id=actor_user.id,
+            trace_id=trace_id,
+            checkpoint_payload=(
+                embed_continuation_in_checkpoint(
+                    checkpoint_payload=None,
+                    continuation=continuation,
+                )
+                if continuation is not None
+                else None
+            ),
+        )
+        return AsyncToolDispatch(
+            job_id=str(job.id),
+            job_status=job.status.value,
+            continuation_group_id=(
+                str(continuation.continuation_group_id)
+                if continuation is not None
+                else None
+            ),
+        )
+
+    def _queue_evidence_pack_assembly(
+        self,
+        *,
+        entity_id: UUID,
+        close_run_id: UUID,
+        actor_user: EntityUserRecord,
+        context: AgentExecutionContext,
+        trace_id: str | None,
+    ) -> AsyncToolDispatch:
+        """Dispatch async evidence-pack assembly for the current close run."""
+
+        continuation = self._build_chat_continuation(
+            context=context,
+            originating_tool="assemble_evidence_pack",
+        )
+        job = self._job_service.dispatch_job(
+            dispatcher=self._task_dispatcher,
+            task_name=TaskName.EXPORTS_ASSEMBLE_EVIDENCE_PACK,
+            payload={
+                "entity_id": str(entity_id),
+                "close_run_id": str(close_run_id),
+                "actor_user_id": str(actor_user.id),
+            },
+            entity_id=entity_id,
+            close_run_id=close_run_id,
+            document_id=None,
+            actor_user_id=actor_user.id,
+            trace_id=trace_id,
+            checkpoint_payload=(
+                embed_continuation_in_checkpoint(
+                    checkpoint_payload=None,
+                    continuation=continuation,
+                )
+                if continuation is not None
+                else None
+            ),
+        )
+        return AsyncToolDispatch(
+            job_id=str(job.id),
+            job_status=job.status.value,
+            continuation_group_id=(
+                str(continuation.continuation_group_id)
+                if continuation is not None
+                else None
+            ),
+        )
 
     def _require_actor(self, context: AgentExecutionContext) -> EntityUserRecord:
         """Return the typed entity actor required by the accounting services."""

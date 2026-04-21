@@ -333,10 +333,12 @@ export function ChatRail({
 
         <section style={conversationPaneStyle}>
           <ConversationHeader
+            assistantLabel={closeRunId ? "Close Assistant" : "Entity Assistant"}
             error={error}
             isCreatingThread={isCreatingThread}
             isLoading={isBusy}
             thread={selectedThread}
+            workspace={workspace}
           />
 
           <MessageList
@@ -487,39 +489,66 @@ function ThreadSidebar({
 }
 
 type ConversationHeaderProps = {
+  assistantLabel: string;
   error: string | null;
   isCreatingThread: boolean;
   isLoading: boolean;
   thread: ChatThreadSummary | null;
+  workspace: ChatThreadWorkspace | null;
 };
 
 function ConversationHeader({
+  assistantLabel,
   error,
   isCreatingThread,
   isLoading,
   thread,
+  workspace,
 }: Readonly<ConversationHeaderProps>): ReactElement {
   const scopeLabel = thread?.grounding.period_label ?? "Entity scope";
+  const recoveryActions = workspace?.memory.recovery_actions ?? [];
+  const recoveryState = workspace?.memory.recovery_state ?? null;
+  const recoverySummary = workspace?.memory.recovery_summary ?? null;
 
   return (
     <header style={conversationHeaderStyle}>
-      <div style={conversationTitleBlockStyle}>
-        <div style={conversationHeaderMetaStyle}>
-          <p style={conversationEyebrowStyle}>Assistant Workspace</p>
-          <span style={conversationScopePillStyle}>{scopeLabel}</span>
+      <div style={conversationHeaderTopRowStyle}>
+        <div style={conversationTitleBlockStyle}>
+          <div style={conversationHeaderMetaStyle}>
+            <p style={conversationEyebrowStyle}>{assistantLabel}</p>
+            <span style={conversationScopePillStyle}>{scopeLabel}</span>
+          </div>
+          <h2 style={conversationTitleStyle}>
+            {thread === null ? "New chat" : formatThreadTitle(thread)}
+          </h2>
         </div>
-        <h2 style={conversationTitleStyle}>{thread === null ? "New chat" : formatThreadTitle(thread)}</h2>
+
+        <div style={conversationStatusRowStyle}>
+          {isCreatingThread ? <span style={conversationStatusPillStyle}>Starting chat</span> : null}
+          {isLoading ? <span style={conversationMutedPillStyle}>Syncing</span> : null}
+          {error ? (
+            <div role="status" style={conversationErrorStyle}>
+              {error}
+            </div>
+          ) : null}
+        </div>
       </div>
 
-      <div style={conversationStatusRowStyle}>
-        {isCreatingThread ? <span style={conversationStatusPillStyle}>Starting chat</span> : null}
-        {isLoading ? <span style={conversationMutedPillStyle}>Syncing</span> : null}
-        {error ? (
-          <div role="status" style={conversationErrorStyle}>
-            {error}
+      {recoverySummary ? (
+        <div style={conversationRecoveryCardStyle(recoveryState)}>
+          <div style={conversationRecoveryHeaderStyle}>
+            <span style={conversationRecoveryStateStyle(recoveryState)}>
+              {formatRecoveryState(recoveryState)}
+            </span>
           </div>
-        ) : null}
-      </div>
+          <p style={conversationRecoverySummaryStyle}>{recoverySummary}</p>
+          {recoveryActions.length > 0 ? (
+            <p style={conversationRecoveryActionsStyle}>
+              {recoveryActions.slice(0, 2).join(" ")}
+            </p>
+          ) : null}
+        </div>
+      ) : null}
     </header>
   );
 }
@@ -820,6 +849,22 @@ function formatMessageTime(value: string): string {
   }).format(parsed);
 }
 
+function formatRecoveryState(value: string | null): string {
+  if (value === "attention_required") {
+    return "Attention required";
+  }
+  if (value === "resuming") {
+    return "Resuming";
+  }
+  if (value === "working") {
+    return "Working";
+  }
+  if (value === "paused") {
+    return "Paused";
+  }
+  return "Recovery";
+}
+
 function buildNewThreadTitle(options: {
   closeRunId: string | undefined;
   selectedThread: ChatThreadSummary | null;
@@ -1011,12 +1056,17 @@ const conversationPaneStyle = {
 } satisfies CSSProperties;
 
 const conversationHeaderStyle = {
-  alignItems: "flex-start",
   borderBottom: "1px solid var(--quartz-border)",
+  display: "grid",
+  gap: 14,
+  padding: "22px 28px 16px",
+} satisfies CSSProperties;
+
+const conversationHeaderTopRowStyle = {
+  alignItems: "flex-start",
   display: "flex",
   gap: 16,
   justifyContent: "space-between",
-  padding: "22px 28px 16px",
 } satisfies CSSProperties;
 
 const conversationTitleBlockStyle = {
@@ -1069,6 +1119,69 @@ const conversationStatusRowStyle = {
   flexWrap: "wrap",
   gap: 8,
   justifyContent: "flex-end",
+} satisfies CSSProperties;
+
+function conversationRecoveryCardStyle(recoveryState: string | null) {
+  const accentColor =
+    recoveryState === "attention_required"
+      ? "rgba(123, 45, 38, 0.24)"
+      : recoveryState === "paused"
+        ? "rgba(142, 115, 75, 0.24)"
+        : "rgba(69, 97, 123, 0.18)";
+  const backgroundColor =
+    recoveryState === "attention_required"
+      ? "rgba(255, 245, 243, 0.94)"
+      : recoveryState === "paused"
+        ? "rgba(255, 250, 244, 0.94)"
+        : "rgba(244, 248, 252, 0.92)";
+
+  return {
+    background: backgroundColor,
+    border: `1px solid ${accentColor}`,
+    borderRadius: 16,
+    display: "grid",
+    gap: 6,
+    marginTop: 14,
+    padding: "12px 14px",
+  } satisfies CSSProperties;
+}
+
+const conversationRecoveryHeaderStyle = {
+  alignItems: "center",
+  display: "flex",
+  gap: 10,
+  justifyContent: "space-between",
+} satisfies CSSProperties;
+
+function conversationRecoveryStateStyle(recoveryState: string | null) {
+  const color =
+    recoveryState === "attention_required"
+      ? "var(--quartz-danger)"
+      : recoveryState === "paused"
+        ? "var(--quartz-accent)"
+        : "var(--quartz-secondary)";
+
+  return {
+    color,
+    fontSize: 11,
+    fontWeight: 700,
+    letterSpacing: "0.08em",
+    textTransform: "uppercase",
+  } satisfies CSSProperties;
+}
+
+const conversationRecoverySummaryStyle = {
+  color: "var(--quartz-ink)",
+  fontSize: 13,
+  lineHeight: "20px",
+  margin: 0,
+} satisfies CSSProperties;
+
+const conversationRecoveryActionsStyle = {
+  color: "var(--quartz-muted)",
+  fontSize: 12,
+  lineHeight: "18px",
+  margin: 0,
 } satisfies CSSProperties;
 
 const conversationStatusPillStyle = {

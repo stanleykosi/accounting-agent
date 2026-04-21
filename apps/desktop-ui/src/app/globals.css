@@ -2513,6 +2513,15 @@ a {
   gap: 12px;
 }
 
+.quartz-page-toolbar,
+.quartz-table-actions {
+  flex-wrap: wrap;
+}
+
+.quartz-table-actions {
+  justify-content: center;
+}
+
 .quartz-form-row {
   justify-content: space-between;
 }

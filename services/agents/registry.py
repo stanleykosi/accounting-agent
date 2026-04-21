@@ -7,11 +7,16 @@ Dependencies: Agent model contracts and Python callables only.
 
 from __future__ import annotations
 
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 from uuid import UUID
 
 from jsonschema import Draft202012Validator, SchemaError, ValidationError
-from services.agents.models import AgentExecutionContext, AgentToolDefinition
+from services.agents.models import (
+    AgentExecutionContext,
+    AgentToolDefinition,
+    AgentToolNamespaceDefinition,
+)
 
 ToolExecutor = Callable[[dict[str, Any], AgentExecutionContext], dict[str, Any]]
 TargetDeriver = Callable[[dict[str, Any]], tuple[str | None, UUID | None]]
@@ -60,14 +65,56 @@ class ToolRegistry:
         return tool
 
     def describe_tools_for_prompt(self) -> tuple[str, ...]:
-        """Return prompt-ready tool signature lines in registration order."""
+        """Return prompt-ready tool lines grouped by operator namespace."""
 
-        return tuple(f"- {tool.prompt_signature}" for tool in self._definitions.values())
+        lines: list[str] = []
+        definitions = tuple(self._definitions.values())
+        for namespace in self.list_namespaces():
+            lines.append(
+                "["
+                f"{namespace.name} / {namespace.label}"
+                "] "
+                f"{namespace.specialist_name}: {namespace.specialist_mission}"
+            )
+            for tool in definitions:
+                if tool.namespace != namespace.name:
+                    continue
+                lines.append(
+                    f"- {tool.prompt_signature} :: {tool.description}"
+                )
+        return tuple(lines)
 
     def list_tools(self) -> tuple[AgentToolDefinition, ...]:
         """Return registered tool definitions in registration order."""
 
         return tuple(self._definitions.values())
+
+    def list_namespaces(self) -> tuple[AgentToolNamespaceDefinition, ...]:
+        """Return registered operator namespaces in first-seen order."""
+
+        grouped: dict[str, dict[str, Any]] = {}
+        for tool in self._definitions.values():
+            namespace = grouped.setdefault(
+                tool.namespace,
+                {
+                    "label": tool.namespace_label,
+                    "specialist_name": tool.specialist_name,
+                    "specialist_mission": tool.specialist_mission,
+                    "tool_names": [],
+                },
+            )
+            namespace["tool_names"].append(tool.name)
+
+        return tuple(
+            AgentToolNamespaceDefinition(
+                name=name,
+                label=str(payload["label"]),
+                specialist_name=str(payload["specialist_name"]),
+                specialist_mission=str(payload["specialist_mission"]),
+                tool_names=tuple(str(tool_name) for tool_name in payload["tool_names"]),
+            )
+            for name, payload in grouped.items()
+        )
 
     def derive_target(
         self,

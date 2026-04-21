@@ -17,6 +17,7 @@ from typing import Any, TypeVar
 from uuid import UUID
 
 from apps.worker.app.celery_app import ObservedTask
+from services.chat.continuation_state import parse_checkpoint_continuation
 from services.common.enums import JobStatus
 from services.common.logging import get_logger
 from services.common.types import JsonObject, JsonValue, utc_now
@@ -28,7 +29,8 @@ from services.jobs.retry_policy import (
     classify_job_failure,
 )
 from services.jobs.service import JobRecord, JobService
-from services.observability.context import current_trace_metadata
+from services.jobs.task_names import TaskName, resolve_task_route
+from services.observability.context import current_trace_metadata, inject_trace_context
 
 TJobServiceReturn = TypeVar("TJobServiceReturn")
 LOGGER = get_logger(__name__)
@@ -139,7 +141,8 @@ class TrackedJobTask(ObservedTask):
             context.ensure_not_canceled()
             result = runner(context)
             result_payload = _coerce_json_object(result)
-            self._mark_completed(job_id=job_id, result_payload=result_payload)
+            completed_job = self._mark_completed(job_id=job_id, result_payload=result_payload)
+            self._dispatch_chat_continuation_if_needed(job_record=completed_job)
             LOGGER.info(
                 "Tracked job execution completed.",
                 job_id=str(job_id),
@@ -147,11 +150,12 @@ class TrackedJobTask(ObservedTask):
             )
             return result
         except JobCancellationRequestedError as error:
-            self._mark_canceled(
+            canceled_job = self._mark_canceled(
                 job_id=job_id,
                 failure_reason=error.message,
                 failure_details=error.details,
             )
+            self._dispatch_chat_continuation_if_needed(job_record=canceled_job)
             LOGGER.warning(
                 "Tracked job execution canceled.",
                 job_id=str(job_id),
@@ -164,11 +168,12 @@ class TrackedJobTask(ObservedTask):
                 "message": error.message,
             }
         except BlockedJobError as error:
-            self._mark_blocked(
+            blocked_job = self._mark_blocked(
                 job_id=job_id,
                 blocking_reason=error.message,
                 failure_details=error.details,
             )
+            self._dispatch_chat_continuation_if_needed(job_record=blocked_job)
             LOGGER.warning(
                 "Tracked job execution blocked.",
                 job_id=str(job_id),
@@ -199,24 +204,25 @@ class TrackedJobTask(ObservedTask):
                 ) from error
 
             if decision.action is JobControlAction.CANCEL:
-                self._mark_canceled(
+                terminal_job = self._mark_canceled(
                     job_id=job_id,
                     failure_reason=decision.failure_reason,
                     failure_details=decision.failure_details,
                 )
             elif decision.action is JobControlAction.BLOCK:
-                self._mark_blocked(
+                terminal_job = self._mark_blocked(
                     job_id=job_id,
                     blocking_reason=decision.failure_reason,
                     failure_details=decision.failure_details,
                 )
             else:
-                self._mark_failed(
+                terminal_job = self._mark_failed(
                     job_id=job_id,
                     failure_reason=decision.failure_reason,
                     failure_details=decision.failure_details,
                     dead_letter=decision.dead_letter,
                 )
+            self._dispatch_chat_continuation_if_needed(job_record=terminal_job)
             LOGGER.exception(
                 "Tracked job execution failed.",
                 job_id=str(job_id),
@@ -343,6 +349,39 @@ class TrackedJobTask(ObservedTask):
         with get_session_factory()() as session:
             service = JobService(db_session=session)
             return callback(service)
+
+    def _dispatch_chat_continuation_if_needed(self, *, job_record: JobRecord) -> None:
+        """Dispatch the control-lane chat continuation task for chat-owned terminal jobs."""
+
+        try:
+            continuation = parse_checkpoint_continuation(
+                checkpoint_payload=job_record.checkpoint_payload,
+            )
+        except RuntimeError:
+            LOGGER.exception(
+                "Worker found malformed chat continuation metadata on a terminal job.",
+                job_id=str(job_record.id),
+                task_name=self.name,
+            )
+            return
+        if continuation is None:
+            return
+
+        route = resolve_task_route(TaskName.CHAT_RESUME_OPERATOR_TURN)
+        try:
+            self.app.send_task(
+                TaskName.CHAT_RESUME_OPERATOR_TURN.value,
+                kwargs={"job_id": str(job_record.id)},
+                headers=inject_trace_context(source_surface="worker"),
+                queue=route.queue.value,
+                routing_key=route.routing_key,
+            )
+        except Exception:
+            LOGGER.exception(
+                "Worker could not dispatch the chat continuation control task.",
+                job_id=str(job_record.id),
+                task_name=self.name,
+            )
 
 
 def _coerce_json_object(value: dict[str, Any]) -> JsonObject:

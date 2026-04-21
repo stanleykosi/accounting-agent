@@ -263,6 +263,13 @@ export default function CloseRunReportsPage({
           </div>
 
           <div className="quartz-page-toolbar">
+            <Link
+              className="secondary-button quartz-toolbar-button"
+              href={`/entities/${entityId}/close-runs/${closeRunId}/chat`}
+            >
+              <QuartzIcon className="quartz-inline-icon" name="assistant" />
+              Open Assistant
+            </Link>
             {selectedArtifactHref ? (
               <a className="secondary-button" href={selectedArtifactHref}>
                 Preview Final
