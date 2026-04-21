@@ -29,6 +29,7 @@ export type ComposerDraft = {
 };
 
 export type ActionComposerProps = {
+  assistantMode?: "close_run" | "entity" | "global";
   closeRunId?: string | undefined;
   disabled?: boolean;
   entityId: string;
@@ -51,6 +52,7 @@ const ACTION_INTENT_LABELS: Record<string, string> = {
 };
 
 export function ActionComposer({
+  assistantMode,
   closeRunId,
   disabled = false,
   entityId,
@@ -68,10 +70,12 @@ export function ActionComposer({
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const resolvedAssistantMode = assistantMode ?? (closeRunId ? "close_run" : "entity");
+  const allowAttachments = resolvedAssistantMode === "close_run";
 
   const starterPrompts = useMemo(
-    () => buildStarterPrompts({ closeRunId, workspace }),
-    [closeRunId, workspace],
+    () => buildStarterPrompts({ assistantMode: resolvedAssistantMode, closeRunId, workspace }),
+    [closeRunId, resolvedAssistantMode, workspace],
   );
 
   const resetComposer = useCallback(() => {
@@ -118,14 +122,14 @@ export function ActionComposer({
       }
 
       const draft: ComposerDraft = {
-        attachmentNames: attachments.map((file) => file.name),
+        attachmentNames: allowAttachments ? attachments.map((file) => file.name) : [],
         content:
           trimmed.length > 0
             ? trimmed
             : attachments.length === 1
               ? "Uploaded 1 source document."
               : `Uploaded ${attachments.length} source documents.`,
-        hasAttachments: attachments.length > 0,
+        hasAttachments: allowAttachments && attachments.length > 0,
       };
 
       setIsLoading(true);
@@ -134,7 +138,7 @@ export function ActionComposer({
 
       try {
         const actionResponse =
-          attachments.length > 0
+          allowAttachments && attachments.length > 0
             ? await sendChatActionWithAttachments(
                 threadId,
                 entityId,
@@ -167,6 +171,7 @@ export function ActionComposer({
     },
     [
       attachments,
+      allowAttachments,
       disabled,
       entityId,
       inputValue,
@@ -332,9 +337,13 @@ export function ActionComposer({
               }
             }}
             placeholder={
-              attachments.length > 0
+              attachments.length > 0 && allowAttachments
                 ? "Tell the assistant what to do with these documents..."
-                : "Ask about the close, request the next step, or upload documents..."
+                : resolvedAssistantMode === "global"
+                  ? "Ask across workspaces, choose where to work next, or request a new workspace..."
+                  : resolvedAssistantMode === "entity"
+                    ? "Ask about this workspace, its close runs, or what to do next..."
+                    : "Ask about the close, request the next step, or upload documents..."
             }
             rows={2}
             style={composerTextareaStyle}
@@ -354,39 +363,43 @@ export function ActionComposer({
 
           <div style={composerFooterStyle}>
             <div style={composerUtilityRowStyle}>
-              <button
-                onClick={() => fileInputRef.current?.click()}
-                style={attachmentButtonStyle}
-                type="button"
-              >
-                Upload documents
-              </button>
-              <input
-                accept=".pdf,.csv,.xlsx,.xls,.xlsm"
-                multiple
-                onChange={(event) => {
-                  setAttachments(Array.from(event.target.files ?? []));
-                  setError(null);
-                }}
-                ref={fileInputRef}
-                style={{ display: "none" }}
-                type="file"
-              />
+              {allowAttachments ? (
+                <>
+                  <button
+                    onClick={() => fileInputRef.current?.click()}
+                    style={attachmentButtonStyle}
+                    type="button"
+                  >
+                    Upload documents
+                  </button>
+                  <input
+                    accept=".pdf,.csv,.xlsx,.xls,.xlsm"
+                    multiple
+                    onChange={(event) => {
+                      setAttachments(Array.from(event.target.files ?? []));
+                      setError(null);
+                    }}
+                    ref={fileInputRef}
+                    style={{ display: "none" }}
+                    type="file"
+                  />
 
-              {attachments.length > 0 ? (
-                <button
-                  onClick={() => {
-                    setAttachments([]);
-                    setError(null);
-                    if (fileInputRef.current !== null) {
-                      fileInputRef.current.value = "";
-                    }
-                  }}
-                  style={clearButtonStyle}
-                  type="button"
-                >
-                  Clear files
-                </button>
+                  {attachments.length > 0 ? (
+                    <button
+                      onClick={() => {
+                        setAttachments([]);
+                        setError(null);
+                        if (fileInputRef.current !== null) {
+                          fileInputRef.current.value = "";
+                        }
+                      }}
+                      style={clearButtonStyle}
+                      type="button"
+                    >
+                      Clear files
+                    </button>
+                  ) : null}
+                </>
               ) : null}
             </div>
 
@@ -415,14 +428,25 @@ function formatByteSize(value: number): string {
 }
 
 function buildStarterPrompts(options: {
+  assistantMode: "close_run" | "entity" | "global";
   closeRunId: string | undefined;
   workspace: ChatThreadWorkspace | null;
 }): string[] {
   const prompts: string[] = [];
-  const { closeRunId, workspace } = options;
+  const { assistantMode, closeRunId, workspace } = options;
   const activePhase = workspace?.readiness.phase_states.find(
     (phaseState) => phaseState.status !== "completed",
   );
+
+  if (assistantMode === "global") {
+    prompts.push("Show me the workspaces that need attention.");
+    prompts.push("Which workspace should I work on first?");
+    prompts.push("Switch this chat to another workspace.");
+    prompts.push("Summarize the active close runs across my workspaces.");
+    prompts.push("Create a new workspace.");
+    prompts.push("Which workspace has blockers right now?");
+    return Array.from(new Set(prompts)).slice(0, 5);
+  }
 
   if (workspace?.readiness.blockers.length) {
     prompts.push("What is blocking this close right now?");

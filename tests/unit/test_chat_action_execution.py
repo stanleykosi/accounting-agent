@@ -66,6 +66,7 @@ def test_handoff_thread_scope_rebinds_pending_actions_to_reopened_close_run() ->
         entity_id=entity_id,
         thread_id=thread_id,
         thread=SimpleNamespace(
+            entity_id=entity_id,
             close_run_id=previous_close_run_id,
             context_payload={"mode": "chat"},
         ),
@@ -111,6 +112,7 @@ def test_handoff_thread_scope_supersedes_old_pending_actions_for_created_close_r
         entity_id=entity_id,
         thread_id=thread_id,
         thread=SimpleNamespace(
+            entity_id=entity_id,
             close_run_id=previous_close_run_id,
             context_payload={"mode": "chat"},
         ),
@@ -210,6 +212,45 @@ def test_hydrate_planning_result_resolves_single_document_and_review_flags() -> 
     assert hydrated.tool_arguments["verified_authorized"] is True
     assert hydrated.tool_arguments["verified_period"] is True
     assert "*" not in hydrated.assistant_response
+
+
+def test_handoff_thread_scope_moves_thread_to_switched_workspace() -> None:
+    """Workspace switching should move the thread anchor to the requested workspace scope."""
+
+    previous_entity_id = uuid4()
+    switched_entity_id = uuid4()
+    actor_user = EntityUserRecord(id=uuid4(), email="ops@example.com", full_name="Finance Ops")
+    thread_id = uuid4()
+    fake_action_repo = _FakeActionRepository()
+    fake_chat_repo = _FakeChatRepository(reopened_close_run_id=uuid4())
+    fake_grounding = _FakeGroundingService(
+        reopened_close_run_id=uuid4(),
+        entity_id=switched_entity_id,
+    )
+    executor = ChatActionExecutor.__new__(ChatActionExecutor)
+    executor._action_repo = fake_action_repo
+    executor._chat_repo = fake_chat_repo
+    executor._grounding = fake_grounding
+
+    _, updated_thread, handoff_message = executor._handoff_thread_scope_if_needed(
+        actor_user=actor_user,
+        entity_id=previous_entity_id,
+        thread_id=thread_id,
+        thread=SimpleNamespace(
+            entity_id=previous_entity_id,
+            close_run_id=None,
+            context_payload={"mode": "chat"},
+        ),
+        grounding=SimpleNamespace(context=SimpleNamespace()),
+        applied_result={
+            "switched_workspace_id": str(switched_entity_id),
+            "workspace_name": "Zenith Shared Services",
+        },
+    )
+
+    assert updated_thread.entity_id == switched_entity_id
+    assert updated_thread.close_run_id is None
+    assert handoff_message is None
 
 
 def test_hydrate_planning_result_resolves_recommendation_rejection_in_chat() -> None:
@@ -486,7 +527,12 @@ def test_send_action_message_asks_for_workspace_clarification_before_delete() ->
     actor_user = EntityUserRecord(id=uuid4(), email="ops@example.com", full_name="Finance Ops")
     thread_id = uuid4()
     entity_id = uuid4()
-    thread = SimpleNamespace(id=thread_id, close_run_id=None, context_payload={})
+    thread = SimpleNamespace(
+        id=thread_id,
+        entity_id=entity_id,
+        close_run_id=None,
+        context_payload={},
+    )
     grounding = SimpleNamespace(
         entity=SimpleNamespace(name="Apex Meridian Nigeria Ltd"),
         context=SimpleNamespace(
@@ -572,6 +618,10 @@ def test_handle_pending_plan_reply_confirms_single_pending_action() -> None:
     assistant_message = SimpleNamespace(id=uuid4(), content="I archived this close run.")
     executor._chat_repo = SimpleNamespace(
         list_messages_for_thread=lambda **kwargs: (assistant_message,),
+        get_thread_by_id=lambda **kwargs: SimpleNamespace(
+            entity_id=entity_id,
+            close_run_id=pending_plan.close_run_id,
+        ),
     )
 
     outcome = executor._handle_pending_plan_reply(
@@ -622,6 +672,7 @@ def test_handoff_thread_scope_moves_to_workspace_after_close_run_delete() -> Non
         entity_id=entity_id,
         thread_id=thread_id,
         thread=SimpleNamespace(
+            entity_id=entity_id,
             close_run_id=deleted_close_run_id,
             context_payload={"mode": "chat"},
         ),
@@ -645,13 +696,18 @@ def test_handoff_thread_scope_moves_to_workspace_after_close_run_delete() -> Non
 def test_send_action_message_executes_multiple_steps_before_replying() -> None:
     """The operator lane should chain safe actions before returning one reply."""
 
+    entity_id = uuid4()
     close_run_id = uuid4()
     actor_user = EntityUserRecord(id=uuid4(), email="ops@example.com", full_name="Finance Ops")
-    thread = SimpleNamespace(close_run_id=close_run_id, context_payload={})
+    thread = SimpleNamespace(
+        entity_id=entity_id,
+        close_run_id=close_run_id,
+        context_payload={},
+    )
     grounding = SimpleNamespace(
         entity=SimpleNamespace(name="Apex Meridian Nigeria Ltd"),
         context=SimpleNamespace(
-            entity_id=str(uuid4()),
+            entity_id=str(entity_id),
             entity_name="Apex Meridian Nigeria Ltd",
             close_run_id=str(close_run_id),
             period_label="Mar 2026",
@@ -743,7 +799,7 @@ def test_send_action_message_executes_multiple_steps_before_replying() -> None:
 
     outcome = executor.send_action_message(
         thread_id=uuid4(),
-        entity_id=uuid4(),
+        entity_id=entity_id,
         actor_user=actor_user,
         content="Finish the intake work and get this ready for reconciliation.",
         source_surface="desktop",
@@ -764,13 +820,18 @@ def test_send_action_message_executes_multiple_steps_before_replying() -> None:
 def test_send_action_message_returns_partial_progress_when_later_step_blocks() -> None:
     """A later failure should keep earlier loop progress and respond naturally."""
 
+    entity_id = uuid4()
     close_run_id = uuid4()
     actor_user = EntityUserRecord(id=uuid4(), email="ops@example.com", full_name="Finance Ops")
-    thread = SimpleNamespace(close_run_id=close_run_id, context_payload={})
+    thread = SimpleNamespace(
+        entity_id=entity_id,
+        close_run_id=close_run_id,
+        context_payload={},
+    )
     grounding = SimpleNamespace(
         entity=SimpleNamespace(name="Apex Meridian Nigeria Ltd"),
         context=SimpleNamespace(
-            entity_id=str(uuid4()),
+            entity_id=str(entity_id),
             entity_name="Apex Meridian Nigeria Ltd",
             close_run_id=str(close_run_id),
             period_label="Mar 2026",
@@ -847,7 +908,7 @@ def test_send_action_message_returns_partial_progress_when_later_step_blocks() -
 
     outcome = executor.send_action_message(
         thread_id=uuid4(),
-        entity_id=uuid4(),
+        entity_id=entity_id,
         actor_user=actor_user,
         content="Approve the intake and then run reconciliation.",
         source_surface="desktop",
@@ -869,14 +930,19 @@ def test_send_action_message_returns_partial_progress_when_later_step_blocks() -
 def test_send_action_message_stops_after_async_dispatch_and_marks_pending_group() -> None:
     """Async tool results should end the turn, register the pending group, and wait cleanly."""
 
+    entity_id = uuid4()
     close_run_id = uuid4()
     continuation_group_id = uuid4()
     actor_user = EntityUserRecord(id=uuid4(), email="ops@example.com", full_name="Finance Ops")
-    thread = SimpleNamespace(close_run_id=close_run_id, context_payload={})
+    thread = SimpleNamespace(
+        entity_id=entity_id,
+        close_run_id=close_run_id,
+        context_payload={},
+    )
     grounding = SimpleNamespace(
         entity=SimpleNamespace(name="Apex Meridian Nigeria Ltd"),
         context=SimpleNamespace(
-            entity_id=str(uuid4()),
+            entity_id=str(entity_id),
             entity_name="Apex Meridian Nigeria Ltd",
             close_run_id=str(close_run_id),
             period_label="Mar 2026",
@@ -940,7 +1006,7 @@ def test_send_action_message_stops_after_async_dispatch_and_marks_pending_group(
 
     outcome = executor.send_action_message(
         thread_id=uuid4(),
-        entity_id=uuid4(),
+        entity_id=entity_id,
         actor_user=actor_user,
         content="Start the recommendation pass and keep going when it's done.",
         source_surface="desktop",
@@ -958,14 +1024,20 @@ def test_send_action_message_stops_after_async_dispatch_and_marks_pending_group(
 def test_resume_operator_turn_can_queue_export_after_report_generation_finishes() -> None:
     """A resumed operator turn should be able to launch the next async release step."""
 
+    entity_id = uuid4()
     close_run_id = uuid4()
     continuation_group_id = uuid4()
     actor_user = EntityUserRecord(id=uuid4(), email="ops@example.com", full_name="Finance Ops")
-    thread = SimpleNamespace(id=uuid4(), close_run_id=close_run_id, context_payload={})
+    thread = SimpleNamespace(
+        id=uuid4(),
+        entity_id=entity_id,
+        close_run_id=close_run_id,
+        context_payload={},
+    )
     grounding = SimpleNamespace(
         entity=SimpleNamespace(name="Apex Meridian Nigeria Ltd"),
         context=SimpleNamespace(
-            entity_id=str(uuid4()),
+            entity_id=str(entity_id),
             entity_name="Apex Meridian Nigeria Ltd",
             close_run_id=str(close_run_id),
             period_label="Mar 2026",
@@ -1022,7 +1094,7 @@ def test_resume_operator_turn_can_queue_export_after_report_generation_finishes(
 
     outcome = executor.resume_operator_turn(
         thread_id=thread.id,
-        entity_id=uuid4(),
+        entity_id=entity_id,
         actor_user=actor_user,
         objective="Finish reporting, package the export, and keep going.",
         completed_jobs=(
@@ -1164,13 +1236,18 @@ def test_build_operator_controls_surfaces_pending_governance_and_next_steps() ->
 def test_send_action_message_surfaces_action_failure_in_thread() -> None:
     """Early execution failures should return a grounded assistant reply instead of raising."""
 
+    entity_id = uuid4()
     close_run_id = uuid4()
     actor_user = EntityUserRecord(id=uuid4(), email="ops@example.com", full_name="Finance Ops")
-    thread = SimpleNamespace(close_run_id=close_run_id, context_payload={})
+    thread = SimpleNamespace(
+        entity_id=entity_id,
+        close_run_id=close_run_id,
+        context_payload={},
+    )
     grounding = SimpleNamespace(
         entity=SimpleNamespace(name="Apex Meridian Nigeria Ltd"),
         context=SimpleNamespace(
-            entity_id=str(uuid4()),
+            entity_id=str(entity_id),
             entity_name="Apex Meridian Nigeria Ltd",
             close_run_id=str(close_run_id),
             period_label="Mar 2026",
@@ -1221,7 +1298,7 @@ def test_send_action_message_surfaces_action_failure_in_thread() -> None:
 
     outcome = executor.send_action_message(
         thread_id=uuid4(),
-        entity_id=uuid4(),
+        entity_id=entity_id,
         actor_user=actor_user,
         content="Run reconciliation now.",
         source_surface="desktop",
@@ -1470,11 +1547,16 @@ class _FakeChatRepository:
         self,
         *,
         thread_id: UUID,
+        entity_id: UUID,
         close_run_id: UUID | None,
         context_payload: dict[str, object],
     ):
         del thread_id
-        return SimpleNamespace(close_run_id=close_run_id, context_payload=context_payload)
+        return SimpleNamespace(
+            entity_id=entity_id,
+            close_run_id=close_run_id,
+            context_payload=context_payload,
+        )
 
 
 class _FakeGroundingService:

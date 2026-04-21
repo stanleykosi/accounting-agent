@@ -2702,6 +2702,113 @@ a {
   color: var(--quartz-error);
 }
 
+.quartz-settings-card {
+  display: grid;
+  gap: 16px;
+  align-content: start;
+}
+
+.quartz-settings-form {
+  display: grid;
+  gap: 16px;
+}
+
+.quartz-settings-summary-grid {
+  display: grid;
+  gap: 12px;
+}
+
+.quartz-settings-summary-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--quartz-border);
+}
+
+.quartz-settings-summary-row:last-child {
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+
+.quartz-settings-summary-row dt {
+  color: var(--quartz-muted);
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.quartz-settings-summary-row dd {
+  margin: 0;
+  text-align: right;
+  font-weight: 600;
+}
+
+.quartz-settings-info-stack {
+  display: grid;
+  gap: 10px;
+  align-content: start;
+}
+
+.quartz-settings-module-grid {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.quartz-settings-module-card {
+  gap: 14px;
+}
+
+.quartz-settings-checkbox {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  color: var(--quartz-ink);
+  font-size: 0.86rem;
+  font-weight: 600;
+}
+
+.quartz-settings-checkbox input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+}
+
+.quartz-settings-checkbox-inline {
+  min-height: auto;
+  justify-content: center;
+  font-weight: 500;
+}
+
+.quartz-inline-select {
+  min-width: 140px;
+}
+
+.quartz-inline-button {
+  min-height: 36px;
+  justify-content: center;
+}
+
+.quartz-danger-button {
+  border-color: rgba(123, 45, 38, 0.22);
+  color: var(--quartz-error);
+}
+
+.quartz-danger-button:hover {
+  background: rgba(255, 218, 214, 0.72);
+}
+
+.quartz-settings-danger-card {
+  gap: 16px;
+}
+
+.quartz-empty-state-compact {
+  min-height: 120px;
+}
+
 .quartz-page-header {
   display: flex;
   align-items: flex-end;
@@ -2726,6 +2833,10 @@ a {
   font-size: 0.92rem;
 }
 
+.quartz-page-subtitle-tight {
+  margin-top: 4px;
+}
+
 .quartz-kpi-grid,
 .quartz-split-grid {
   display: grid;
@@ -2748,6 +2859,10 @@ a {
 
 .quartz-split-grid-halves {
   grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.quartz-settings-layout {
+  grid-template-columns: minmax(0, 1.15fr) minmax(320px, 0.85fr);
 }
 
 .quartz-kpi-tile {
@@ -2886,6 +3001,12 @@ a {
   font-size: clamp(1.35rem, 2vw, 2rem);
   font-weight: 600;
   letter-spacing: -0.04em;
+}
+
+.quartz-kpi-value-small {
+  font-size: clamp(1rem, 1.5vw, 1.35rem);
+  line-height: 1.25;
+  overflow-wrap: anywhere;
 }
 
 .quartz-kpi-meta {
@@ -4171,6 +4292,10 @@ a {
     grid-template-columns: 1fr 1fr;
   }
 
+  .quartz-settings-module-grid {
+    grid-template-columns: 1fr;
+  }
+
   .quartz-portfolio-summary-grid {
     grid-template-columns: 1fr 1fr;
   }
@@ -4208,6 +4333,14 @@ a {
 
   .quartz-form-grid {
     grid-template-columns: 1fr;
+  }
+
+  .quartz-settings-summary-row {
+    flex-direction: column;
+  }
+
+  .quartz-settings-summary-row dd {
+    text-align: left;
   }
 }
 

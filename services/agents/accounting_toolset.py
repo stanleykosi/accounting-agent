@@ -48,7 +48,7 @@ from services.db.models.extractions import DocumentExtraction, ExtractedField
 from services.db.models.recommendations import Recommendation
 from services.db.models.reporting import ReportRunStatus as ReportRunStatusModel
 from services.db.repositories.document_repo import DocumentRepository
-from services.db.repositories.entity_repo import EntityUserRecord
+from services.db.repositories.entity_repo import EntityRepository, EntityUserRecord
 from services.db.repositories.recommendation_journal_repo import RecommendationJournalRepository
 from services.db.repositories.reconciliation_repo import ReconciliationRepository
 from services.db.repositories.report_repo import ReportRepository
@@ -189,6 +189,7 @@ class AccountingToolset:
         close_run_delete_service: CloseRunDeleteService,
         document_review_service: DocumentReviewService,
         document_repository: DocumentRepository,
+        entity_repository: EntityRepository,
         entity_service: EntityService,
         entity_delete_service: EntityDeleteService,
         export_service: ExportService,
@@ -207,6 +208,7 @@ class AccountingToolset:
         self._close_run_delete_service = close_run_delete_service
         self._document_review_service = document_review_service
         self._document_repo = document_repository
+        self._entity_repo = entity_repository
         self._entity_service = entity_service
         self._entity_delete_service = entity_delete_service
         self._export_service = export_service
@@ -279,6 +281,27 @@ class AccountingToolset:
         """Return the registered accounting tool registry."""
 
         registry = ToolRegistry()
+        self._register(
+            registry=registry,
+            name="switch_workspace",
+            namespace="workspace_admin",
+            prompt_signature="switch_workspace(workspace_id)",
+            description=(
+                "Move the current conversation onto another accessible workspace and clear any "
+                "close-run scope."
+            ),
+            intent="workflow_action",
+            requires_human_approval=False,
+            executor=self._switch_workspace,
+            target_type="workspace",
+            target_id_field="workspace_id",
+            input_schema=_schema_object(
+                properties={
+                    "workspace_id": _uuid_property("Accessible workspace UUID to switch into."),
+                },
+                required=("workspace_id",),
+            ),
+        )
         self._register(
             registry=registry,
             name="create_workspace",
@@ -1321,6 +1344,35 @@ class AccountingToolset:
             "workspace_name": result.name,
             "base_currency": result.base_currency,
             "autonomy_mode": result.autonomy_mode.value,
+        }
+
+    def _switch_workspace(
+        self,
+        arguments: dict[str, Any],
+        context: AgentExecutionContext,
+    ) -> dict[str, Any]:
+        actor_user = self._require_actor(context)
+        if context.close_run_id is not None:
+            raise ValueError(
+                "Switch workspaces from the global assistant or a workspace-level assistant, "
+                "not from a close-run-scoped thread."
+            )
+
+        workspace_id = UUID(_require_string(arguments, "workspace_id"))
+        access = self._entity_repo.get_entity_for_user(
+            entity_id=workspace_id,
+            user_id=actor_user.id,
+        )
+        if access is None:
+            raise ValueError("That workspace is not accessible to the current operator.")
+
+        return {
+            "tool": "switch_workspace",
+            "switched_workspace_id": access.entity.id,
+            "workspace_id": access.entity.id,
+            "workspace_name": access.entity.name,
+            "base_currency": access.entity.base_currency,
+            "autonomy_mode": access.entity.autonomy_mode.value,
         }
 
     def _update_workspace(

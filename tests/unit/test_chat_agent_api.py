@@ -477,12 +477,18 @@ class FakeChatActionExecutor:
             assistant_content="Inline attachments acknowledged.",
             action_plan=None,
             is_read_only=True,
+            thread_entity_id=str(entity_id),
+            thread_close_run_id=None,
         )
 
 
 class FakeChatRepository:
     def __init__(self, *, close_run_id) -> None:
-        self.thread = SimpleNamespace(id=uuid4(), close_run_id=close_run_id)
+        self.thread = SimpleNamespace(
+            id=uuid4(),
+            entity_id=uuid4(),
+            close_run_id=close_run_id,
+        )
         self.messages: list[dict[str, object]] = []
         self.commit_count = 0
         self.rollback_count = 0

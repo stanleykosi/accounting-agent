@@ -2,21 +2,23 @@
 Purpose: Render the entity report-template management workspace.
 Scope: Template listing, creation, activation, guardrail validation, and commentary
 overview for report generation runs within an entity workspace.
-Dependencies: React hooks, route params, shared SurfaceCard, and the reports API helper module.
+Dependencies: React hooks, route params, Next links, and the reports API helper module.
 */
 
 "use client";
 
-import { SurfaceCard } from "@accounting-ai-agent/ui";
+import Link from "next/link";
 import {
   use,
   useCallback,
   useEffect,
   useState,
   useTransition,
+  type ChangeEvent,
   type FormEvent,
   type ReactElement,
 } from "react";
+import { QuartzIcon } from "../../../../../../components/layout/QuartzIcons";
 import {
   ReportApiError,
   activateReportTemplate,
@@ -25,7 +27,6 @@ import {
   validateReportTemplateGuardrails,
   type CreateReportTemplateRequest,
   type GuardrailValidationResponse,
-  type GuardrailViolation,
   type ReportSectionDefinition,
   type ReportTemplateSummary,
 } from "../../../../../../lib/reports";
@@ -165,191 +166,240 @@ export default function ReportTemplatesPage({ params }: ReportTemplatesPageProps
     }
   };
 
+  const handleCreateFieldChange =
+    (fieldName: "description" | "name") =>
+    (event: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>): void => {
+      const nextValue = event.target.value;
+      setCreateForm((currentState) => ({
+        ...currentState,
+        [fieldName]: nextValue,
+      }));
+    };
+
+  const handleActivateImmediatelyChange = (event: ChangeEvent<HTMLInputElement>): void => {
+    setCreateForm((currentState) => ({
+      ...currentState,
+      activateImmediately: event.currentTarget.checked,
+    }));
+  };
+
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold text-gray-900">Report Templates</h1>
-          <p className="mt-1 text-sm text-gray-500">
-            Manage report templates with mandatory section guardrails. Templates must include all
-            five required workflow sections.
-          </p>
-        </div>
-        <button
-          type="button"
-          onClick={() => setShowCreateForm((prev) => !prev)}
-          className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-indigo-500"
-        >
-          {showCreateForm ? "Cancel" : "New Template"}
-        </button>
-      </div>
-
-      {/* Guardrail validation result */}
-      {guardrailResult && (
-        <div className="mb-4">
-          <SurfaceCard title="Guardrail Validation">
-            <div
-              className={`rounded-md p-4 ${
-                guardrailResult.is_valid ? "bg-green-50 text-green-800" : "bg-red-50 text-red-800"
-              }`}
-            >
-              <p className="font-medium">
-                {guardrailResult.is_valid
-                  ? "Template passes all guardrail checks."
-                  : "Template has guardrail violations:"}
-              </p>
-              {guardrailResult.violations.length > 0 && (
-                <ul className="mt-2 list-disc space-y-1 pl-5 text-sm">
-                  {guardrailResult.violations.map((v: GuardrailViolation, i: number) => (
-                    <li key={i}>
-                      {v.section_key && <span className="font-mono text-xs">{v.section_key}</span>}{" "}
-                      {v.message}
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-          </SurfaceCard>
-        </div>
-      )}
-
-      {/* Create template form */}
-      {showCreateForm && (
-        <SurfaceCard title="Create Report Template">
-          <form
-            onSubmit={(event) => {
-              handleCreateTemplate(event);
-            }}
-            className="space-y-4"
-          >
-            <div>
-              <label htmlFor="template-name" className="block text-sm font-medium text-gray-700">
-                Template name
-              </label>
-              <input
-                id="template-name"
-                type="text"
-                required
-                value={createForm.name}
-                onChange={(e) => setCreateForm((prev) => ({ ...prev, name: e.target.value }))}
-                className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
-                placeholder="e.g. Monthly Management Pack"
-              />
-            </div>
-
-            <div>
-              <label htmlFor="template-desc" className="block text-sm font-medium text-gray-700">
-                Description (optional)
-              </label>
-              <textarea
-                id="template-desc"
-                value={createForm.description}
-                onChange={(e) =>
-                  setCreateForm((prev) => ({
-                    ...prev,
-                    description: e.target.value,
-                  }))
-                }
-                className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
-                rows={2}
-                placeholder="Optional description of this template..."
-              />
-            </div>
-
-            {/* Sections */}
-            <div>
-              <label className="block text-sm font-medium text-gray-700">Report sections</label>
-              <p className="mt-1 text-xs text-gray-500">
-                All five mandatory sections are included and cannot be removed.
-              </p>
-              <div className="mt-2 divide-y divide-gray-100 rounded-md border border-gray-200">
-                {createForm.sections.map((section, index) => (
-                  <div
-                    key={section.section_key}
-                    className="flex items-center justify-between px-3 py-2"
-                  >
-                    <div className="flex items-center gap-3">
-                      <span className="text-sm font-medium text-gray-900">{index + 1}.</span>
-                      <span className="text-sm text-gray-700">{section.label}</span>
-                      <code className="rounded bg-gray-100 px-1.5 py-0.5 text-xs text-gray-500">
-                        {section.section_key}
-                      </code>
-                    </div>
-                    <span className="rounded-full bg-indigo-50 px-2 py-0.5 text-xs font-medium text-indigo-700">
-                      Required
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            <div className="flex items-center gap-2">
-              <input
-                id="activate-immediately"
-                type="checkbox"
-                checked={createForm.activateImmediately}
-                onChange={(e) =>
-                  setCreateForm((prev) => ({
-                    ...prev,
-                    activateImmediately: e.target.checked,
-                  }))
-                }
-                className="rounded border-gray-300"
-              />
-              <label htmlFor="activate-immediately" className="text-sm text-gray-700">
-                Activate this template immediately
-              </label>
-            </div>
-
-            {createError && (
-              <div className="rounded-md bg-red-50 p-3 text-sm text-red-800">{createError}</div>
-            )}
-
-            <div className="flex justify-end">
-              <button
-                type="submit"
-                disabled={isPending || !createForm.name.trim()}
-                className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-indigo-500 disabled:opacity-50"
-              >
-                {isPending ? "Creating..." : "Create Template"}
-              </button>
-            </div>
-          </form>
-        </SurfaceCard>
-      )}
-
-      {/* Template list */}
-      <SurfaceCard title="Templates">
-        {loading ? (
-          <p className="py-8 text-center text-sm text-gray-500">Loading templates...</p>
-        ) : error ? (
-          <div className="rounded-md bg-red-50 p-4 text-sm text-red-800">{error}</div>
-        ) : templates.length === 0 ? (
-          <div className="py-8 text-center">
-            <p className="text-sm text-gray-500">
-              No report templates yet. Create one to get started.
+    <div className="quartz-page quartz-workspace-layout">
+      <section className="quartz-main-panel">
+        <header className="quartz-page-header">
+          <div>
+            <h1>Report Templates</h1>
+            <p className="quartz-page-subtitle">
+              Manage governed report templates for this entity. Every template must include the
+              five canonical workflow sections before it can become active.
             </p>
           </div>
-        ) : (
-          <div className="divide-y divide-gray-100">
-            {templates.map((template) => (
-              <TemplateRow
-                key={template.id}
-                template={template}
-                isActive={template.id === activeTemplateId}
-                onActivate={() => {
-                  handleActivateTemplate(template.id);
-                }}
-                onValidate={() => {
-                  void handleValidateGuardrails(template.id);
-                }}
-                guardrailLoading={guardrailLoading}
-              />
-            ))}
+          <div className="quartz-page-toolbar">
+            <Link
+              className="secondary-button quartz-toolbar-button"
+              href={`/entities/${entityId}/settings`}
+            >
+              <QuartzIcon className="quartz-inline-icon" name="settings" />
+              Workspace Settings
+            </Link>
+            <button
+              className="primary-button"
+              onClick={() => setShowCreateForm((prev) => !prev)}
+              type="button"
+            >
+              {showCreateForm ? "Close Template Form" : "New Template"}
+            </button>
           </div>
-        )}
-      </SurfaceCard>
+        </header>
+
+        {guardrailResult ? (
+          <section className="quartz-section">
+            <article className="quartz-card quartz-settings-card">
+              <div className="quartz-section-header quartz-section-header-tight">
+                <div>
+                  <p className="quartz-card-eyebrow">Guardrail Validation</p>
+                  <h2 className="quartz-section-title">
+                    {guardrailResult.is_valid
+                      ? "Template passes all guardrails"
+                      : "Template has guardrail violations"}
+                  </h2>
+                </div>
+              </div>
+              {guardrailResult.violations.length > 0 ? (
+                <div className="quartz-reasoning-list">
+                  {guardrailResult.violations.map((violation, index) => (
+                    <div className="quartz-reasoning-item" key={`${violation.section_key ?? "global"}-${index}`}>
+                      <strong>{violation.section_key ?? "Template rule"}</strong>
+                      <span>{violation.message}</span>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="status-banner success" role="status">
+                  No violations found.
+                </div>
+              )}
+            </article>
+          </section>
+        ) : null}
+
+        <section className="quartz-section">
+          <div className="quartz-kpi-grid quartz-kpi-grid-triple">
+            <article className="quartz-kpi-tile">
+              <p className="quartz-kpi-label">Template Count</p>
+              <p className="quartz-kpi-value">{templates.length}</p>
+              <p className="quartz-kpi-meta">Available report template versions</p>
+            </article>
+            <article className="quartz-kpi-tile">
+              <p className="quartz-kpi-label">Active Template</p>
+              <p className="quartz-kpi-value quartz-kpi-value-small">
+                {templates.find((template) => template.id === activeTemplateId)?.name ?? "None active"}
+              </p>
+              <p className="quartz-kpi-meta">Current reporting baseline</p>
+            </article>
+            <article className="quartz-kpi-tile highlight">
+              <p className="quartz-kpi-label">Mandatory Sections</p>
+              <p className="quartz-kpi-value">{MANDATORY_SECTION_KEYS.length}</p>
+              <p className="quartz-kpi-meta">Required sections on every template</p>
+            </article>
+          </div>
+        </section>
+
+        {showCreateForm ? (
+          <section className="quartz-section">
+            <article className="quartz-card quartz-settings-card">
+              <div className="quartz-section-header quartz-section-header-tight">
+                <div>
+                  <p className="quartz-card-eyebrow">Creation</p>
+                  <h2 className="quartz-section-title">Create Report Template</h2>
+                </div>
+              </div>
+              <form className="quartz-settings-form" onSubmit={handleCreateTemplate}>
+                <div className="quartz-form-grid">
+                  <label className="quartz-form-label">
+                    <span>Template Name</span>
+                    <input
+                      className="text-input"
+                      onChange={handleCreateFieldChange("name")}
+                      placeholder="e.g. Monthly Management Pack"
+                      required
+                      type="text"
+                      value={createForm.name}
+                    />
+                  </label>
+                  <label className="quartz-settings-checkbox">
+                    <input
+                      checked={createForm.activateImmediately}
+                      onChange={handleActivateImmediatelyChange}
+                      type="checkbox"
+                    />
+                    <span>Activate immediately after creation</span>
+                  </label>
+                </div>
+
+                <label className="quartz-form-label">
+                  <span>Description</span>
+                  <textarea
+                    className="text-input quartz-compact-textarea"
+                    onChange={handleCreateFieldChange("description")}
+                    placeholder="Optional description of this template..."
+                    value={createForm.description}
+                  />
+                </label>
+
+                <article className="quartz-card soft quartz-settings-card">
+                  <div className="quartz-section-header quartz-section-header-tight">
+                    <div>
+                      <p className="quartz-card-eyebrow">Sections</p>
+                      <h3>Mandatory Template Blocks</h3>
+                    </div>
+                  </div>
+                  <div className="quartz-summary-list">
+                    {createForm.sections.map((section, index) => (
+                      <div className="quartz-summary-row" key={section.section_key}>
+                        <div>
+                          <strong>
+                            {index + 1}. {section.label}
+                          </strong>
+                          <div className="quartz-table-secondary">{section.section_key}</div>
+                        </div>
+                        <span className="quartz-status-badge success">Required</span>
+                      </div>
+                    ))}
+                  </div>
+                </article>
+
+                {createError ? (
+                  <div className="status-banner danger" role="alert">
+                    {createError}
+                  </div>
+                ) : null}
+
+                <div className="quartz-button-row">
+                  <button
+                    className="primary-button"
+                    disabled={isPending || !createForm.name.trim()}
+                    type="submit"
+                  >
+                    {isPending ? "Creating..." : "Create Template"}
+                  </button>
+                </div>
+              </form>
+            </article>
+          </section>
+        ) : null}
+
+        <section className="quartz-section">
+          <article className="quartz-card quartz-card-table-shell">
+            <div className="quartz-section-header">
+              <div>
+                <h2 className="quartz-section-title">Templates</h2>
+                <p className="quartz-page-subtitle quartz-page-subtitle-tight">
+                  Activate or validate the versions available for this entity.
+                </p>
+              </div>
+            </div>
+            {loading ? (
+              <div className="quartz-empty-state">Loading report templates...</div>
+            ) : error ? (
+              <div className="status-banner danger" role="alert">
+                {error}
+              </div>
+            ) : templates.length === 0 ? (
+              <div className="quartz-empty-state">
+                No report templates exist yet. Create one to establish the reporting baseline.
+              </div>
+            ) : (
+              <table className="quartz-table">
+                <thead>
+                  <tr>
+                    <th>Template</th>
+                    <th>Coverage</th>
+                    <th>Status</th>
+                    <th>Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {templates.map((template) => (
+                    <TemplateRow
+                      guardrailLoading={guardrailLoading}
+                      isActive={template.id === activeTemplateId}
+                      key={template.id}
+                      onActivate={() => {
+                        handleActivateTemplate(template.id);
+                      }}
+                      onValidate={() => {
+                        void handleValidateGuardrails(template.id);
+                      }}
+                      template={template}
+                    />
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </article>
+        </section>
+      </section>
     </div>
   );
 }
@@ -374,47 +424,43 @@ function TemplateRow({
   guardrailLoading,
 }: TemplateRowProps): ReactElement {
   return (
-    <div className="flex items-center justify-between px-4 py-3">
-      <div className="flex-1">
-        <div className="flex items-center gap-2">
-          <span className="text-sm font-medium text-gray-900">{template.name}</span>
-          {isActive && (
-            <span className="rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-800">
-              Active
-            </span>
-          )}
-          <span className="text-xs text-gray-400">v{template.version_no}</span>
+    <tr>
+      <td>
+        <div className="quartz-table-primary">
+          {template.name} <span className="quartz-table-secondary">v{template.version_no}</span>
         </div>
-        <div className="mt-1 flex items-center gap-4 text-xs text-gray-500">
-          <span>{template.section_count} sections</span>
-          <span>Source: {template.source}</span>
-          {template.has_required_sections ? (
-            <span className="text-green-600">All required sections present</span>
-          ) : (
-            <span className="text-red-600">Missing required sections</span>
-          )}
+        <div className="quartz-table-secondary">Source: {template.source}</div>
+      </td>
+      <td>
+        <div className="quartz-table-primary">{template.section_count} sections</div>
+        <div className="quartz-table-secondary">
+          {template.has_required_sections
+            ? "All required sections present"
+            : "Missing required sections"}
         </div>
-      </div>
-
-      <div className="flex items-center gap-2">
-        <button
-          type="button"
-          onClick={onValidate}
-          disabled={guardrailLoading}
-          className="rounded-md border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
-        >
-          {guardrailLoading ? "Checking..." : "Validate"}
-        </button>
-        {!isActive && (
+      </td>
+      <td>
+        <span className={`quartz-status-badge ${isActive ? "success" : "neutral"}`}>
+          {isActive ? "Active" : "Inactive"}
+        </span>
+      </td>
+      <td className="quartz-table-center">
+        <div className="quartz-inline-actions">
           <button
+            className="secondary-button quartz-inline-button"
+            disabled={guardrailLoading}
+            onClick={onValidate}
             type="button"
-            onClick={onActivate}
-            className="rounded-md bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-500"
           >
-            Activate
+            {guardrailLoading ? "Checking..." : "Validate"}
           </button>
-        )}
-      </div>
-    </div>
+          {!isActive ? (
+            <button className="primary-button quartz-inline-button" onClick={onActivate} type="button">
+              Activate
+            </button>
+          ) : null}
+        </div>
+      </td>
+    </tr>
   );
 }

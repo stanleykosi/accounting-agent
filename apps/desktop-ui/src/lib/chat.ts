@@ -419,6 +419,8 @@ export type ChatActionResponse = {
   content: string;
   is_read_only: boolean;
   message_id: string;
+  thread_close_run_id: string | null;
+  thread_entity_id: string;
   operator_controls: AgentOperatorControl[];
 };
 

@@ -128,6 +128,8 @@ class ChatExecutionOutcome:
     assistant_content: str
     action_plan: ChatActionPlanRecord | None
     is_read_only: bool
+    thread_entity_id: str
+    thread_close_run_id: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -220,6 +222,7 @@ class ChatActionExecutor:
             close_run_delete_service=close_run_delete_service,
             document_review_service=document_review_service,
             document_repository=document_repository,
+            entity_repository=entity_repository,
             entity_service=entity_service,
             entity_delete_service=entity_delete_service,
             export_service=export_service,
@@ -241,6 +244,28 @@ class ChatActionExecutor:
             model_gateway=model_gateway,
             tool_registry=tool_registry,
             execution_policy=ExecutionPolicy(tool_registry=tool_registry),
+        )
+
+    def _build_execution_outcome(
+        self,
+        *,
+        assistant_message_id: str,
+        assistant_content: str,
+        action_plan: ChatActionPlanRecord | None,
+        is_read_only: bool,
+        thread: Any,
+    ) -> ChatExecutionOutcome:
+        """Build one canonical chat execution outcome from the current persisted thread scope."""
+
+        return ChatExecutionOutcome(
+            assistant_message_id=assistant_message_id,
+            assistant_content=assistant_content,
+            action_plan=action_plan,
+            is_read_only=is_read_only,
+            thread_entity_id=serialize_uuid(thread.entity_id),
+            thread_close_run_id=serialize_uuid(thread.close_run_id)
+            if thread.close_run_id is not None
+            else None,
         )
 
     def send_action_message(
@@ -311,10 +336,11 @@ class ChatActionExecutor:
     ) -> ChatExecutionOutcome:
         """Execute one bounded operator turn with optional user-message persistence."""
 
-        self._ensure_entity_coa_available(actor_user=actor_user, entity_id=entity_id)
+        active_entity_id = entity_id
+        self._ensure_entity_coa_available(actor_user=actor_user, entity_id=active_entity_id)
         grounding, thread = self._load_thread_context(
             thread_id=thread_id,
-            entity_id=entity_id,
+            entity_id=active_entity_id,
             user_id=actor_user.id,
         )
         user_message = None
@@ -339,7 +365,7 @@ class ChatActionExecutor:
                 )
                 pending_confirmation_outcome = self._handle_pending_plan_reply(
                     thread_id=thread_id,
-                    entity_id=entity_id,
+                    entity_id=active_entity_id,
                     actor_user=actor_user,
                     content=content,
                     source_surface=source_surface,
@@ -358,13 +384,13 @@ class ChatActionExecutor:
                 )
                 last_snapshot = self._snapshot_for_thread(
                     actor_user=actor_user,
-                    entity_id=entity_id,
+                    entity_id=active_entity_id,
                     close_run_id=thread.close_run_id,
                     thread_id=thread_id,
                 )
                 planning = self._plan_action(
                     thread_id=thread_id,
-                    entity_id=entity_id,
+                    entity_id=active_entity_id,
                     actor_user=actor_user,
                     content=content,
                     grounding=grounding,
@@ -417,11 +443,12 @@ class ChatActionExecutor:
                         snapshot=last_snapshot,
                     )
                     self._db_session.commit()
-                    return ChatExecutionOutcome(
+                    return self._build_execution_outcome(
                         assistant_message_id=serialize_uuid(assistant_message.id),
                         assistant_content=assistant_message.content,
                         action_plan=final_record,
                         is_read_only=not applied_results,
+                        thread=thread,
                     )
                 action = self._resolve_action(planning=planning)
 
@@ -462,11 +489,12 @@ class ChatActionExecutor:
                         snapshot=last_snapshot,
                     )
                     self._db_session.commit()
-                    return ChatExecutionOutcome(
+                    return self._build_execution_outcome(
                         assistant_message_id=serialize_uuid(assistant_message.id),
                         assistant_content=assistant_message.content,
                         action_plan=final_record,
                         is_read_only=not applied_results,
+                        thread=thread,
                     )
 
                 action_signature = _build_operator_loop_action_signature(action)
@@ -511,17 +539,18 @@ class ChatActionExecutor:
                         snapshot=last_snapshot,
                     )
                     self._db_session.commit()
-                    return ChatExecutionOutcome(
+                    return self._build_execution_outcome(
                         assistant_message_id=serialize_uuid(assistant_message.id),
                         assistant_content=assistant_message.content,
                         action_plan=final_record,
                         is_read_only=not applied_results,
+                        thread=thread,
                     )
                 seen_action_signatures.add(action_signature)
 
                 execution_context = self._build_execution_context(
                     actor_user=actor_user,
-                    entity_id=entity_id,
+                    entity_id=active_entity_id,
                     close_run_id=thread.close_run_id,
                     source_close_run_id=thread.close_run_id,
                     thread_id=thread_id,
@@ -536,7 +565,7 @@ class ChatActionExecutor:
                 record = self._action_repo.create_action_plan(
                     thread_id=thread_id,
                     message_id=action_message_id,
-                    entity_id=entity_id,
+                    entity_id=active_entity_id,
                     close_run_id=thread.close_run_id,
                     actor_user_id=actor_user.id,
                     intent=action.tool.intent,
@@ -617,11 +646,12 @@ class ChatActionExecutor:
                         snapshot=last_snapshot,
                     )
                     self._db_session.commit()
-                    return ChatExecutionOutcome(
+                    return self._build_execution_outcome(
                         assistant_message_id=serialize_uuid(assistant_message.id),
                         assistant_content=assistant_message.content,
                         action_plan=record,
                         is_read_only=False,
+                        thread=thread,
                     )
 
                 applied_result = self._execute_action(
@@ -630,12 +660,13 @@ class ChatActionExecutor:
                 )
                 grounding, thread, _ = self._handoff_thread_scope_if_needed(
                     actor_user=actor_user,
-                    entity_id=entity_id,
+                    entity_id=active_entity_id,
                     thread_id=thread_id,
                     thread=thread,
                     grounding=grounding,
                     applied_result=applied_result,
                 )
+                active_entity_id = thread.entity_id
                 final_record = self._action_repo.update_action_plan_status(
                     action_plan_id=record.id,
                     status="applied",
@@ -650,22 +681,23 @@ class ChatActionExecutor:
                 self._db_session.commit()
                 grounding, thread = self._load_thread_context(
                     thread_id=thread_id,
-                    entity_id=entity_id,
+                    entity_id=active_entity_id,
                     user_id=actor_user.id,
                 )
+                active_entity_id = thread.entity_id
 
                 async_job_group = _extract_async_job_group(applied_result=applied_result)
                 if async_job_group is not None:
                     last_snapshot = self._snapshot_for_thread(
                         actor_user=actor_user,
-                        entity_id=entity_id,
+                        entity_id=active_entity_id,
                         close_run_id=thread.close_run_id,
                         thread_id=thread_id,
                     )
                     continuation = ChatOperatorContinuation(
                         continuation_group_id=UUID(async_job_group["continuation_group_id"]),
                         thread_id=thread_id,
-                        entity_id=entity_id,
+                        entity_id=active_entity_id,
                         actor_user_id=actor_user.id,
                         objective=content,
                         originating_tool=last_tool_name or "async_workflow",
@@ -712,17 +744,18 @@ class ChatActionExecutor:
                         snapshot=last_snapshot,
                     )
                     self._db_session.commit()
-                    return ChatExecutionOutcome(
+                    return self._build_execution_outcome(
                         assistant_message_id=serialize_uuid(assistant_message.id),
                         assistant_content=assistant_message.content,
                         action_plan=final_record,
                         is_read_only=False,
+                        thread=thread,
                     )
 
                 if iteration == _MAX_OPERATOR_LOOP_STEPS:
                     last_snapshot = self._snapshot_for_thread(
                         actor_user=actor_user,
-                        entity_id=entity_id,
+                        entity_id=active_entity_id,
                         close_run_id=thread.close_run_id,
                         thread_id=thread_id,
                     )
@@ -760,23 +793,24 @@ class ChatActionExecutor:
                         snapshot=last_snapshot,
                     )
                     self._db_session.commit()
-                    return ChatExecutionOutcome(
+                    return self._build_execution_outcome(
                         assistant_message_id=serialize_uuid(assistant_message.id),
                         assistant_content=assistant_message.content,
                         action_plan=final_record,
                         is_read_only=False,
+                        thread=thread,
                     )
         except ChatActionExecutionError as error:
             if applied_results:
                 self._db_session.rollback()
                 grounding, thread = self._load_thread_context(
                     thread_id=thread_id,
-                    entity_id=entity_id,
+                    entity_id=active_entity_id,
                     user_id=actor_user.id,
                 )
                 last_snapshot = self._snapshot_for_thread(
                     actor_user=actor_user,
-                    entity_id=entity_id,
+                    entity_id=active_entity_id,
                     close_run_id=thread.close_run_id,
                     thread_id=thread_id,
                 )
@@ -814,16 +848,17 @@ class ChatActionExecutor:
                     snapshot=last_snapshot,
                 )
                 self._db_session.commit()
-                return ChatExecutionOutcome(
+                return self._build_execution_outcome(
                     assistant_message_id=serialize_uuid(assistant_message.id),
                     assistant_content=assistant_message.content,
                     action_plan=final_record,
                     is_read_only=False,
+                    thread=thread,
                 )
             self._db_session.rollback()
             surfaced_outcome = self._surface_operator_error_in_thread(
                 thread_id=thread_id,
-                entity_id=entity_id,
+                entity_id=active_entity_id,
                 actor_user=actor_user,
                 content=content,
                 operator_message_for_memory=operator_message_for_memory,
@@ -923,11 +958,12 @@ class ChatActionExecutor:
                 snapshot=snapshot,
             )
             self._db_session.commit()
-            return ChatExecutionOutcome(
+            return self._build_execution_outcome(
                 assistant_message_id=serialize_uuid(assistant_message.id),
                 assistant_content=assistant_content,
                 action_plan=None,
                 is_read_only=True,
+                thread=thread,
             )
         except Exception:
             self._db_session.rollback()
@@ -1657,11 +1693,12 @@ class ChatActionExecutor:
                     snapshot=snapshot,
                 )
             self._db_session.commit()
-            return ChatExecutionOutcome(
+            return self._build_execution_outcome(
                 assistant_message_id=serialize_uuid(assistant_message.id),
                 assistant_content=assistant_message.content,
                 action_plan=None,
                 is_read_only=True,
+                thread=thread,
             )
 
         plan = pending_actions[0]
@@ -1695,11 +1732,19 @@ class ChatActionExecutor:
                 ),
             )
         latest_message = messages[-1]
-        return ChatExecutionOutcome(
+        latest_thread = self._chat_repo.get_thread_by_id(thread_id=thread_id)
+        if latest_thread is None:
+            raise ChatActionExecutionError(
+                status_code=500,
+                code=ChatActionExecutionErrorCode.EXECUTION_FAILED,
+                message="The updated thread scope could not be read after the governed action.",
+            )
+        return self._build_execution_outcome(
             assistant_message_id=serialize_uuid(latest_message.id),
             assistant_content=latest_message.content,
             action_plan=updated_plan,
             is_read_only=False,
+            thread=latest_thread,
         )
 
     def _build_runtime_clarification(
@@ -1795,6 +1840,10 @@ class ChatActionExecutor:
         if applied_result is None:
             return grounding, thread, None
 
+        switched_workspace_id = _optional_uuid_from_result(
+            applied_result=applied_result,
+            key="switched_workspace_id",
+        )
         reopened_close_run_id = _optional_uuid_from_result(
             applied_result=applied_result,
             key="reopened_close_run_id",
@@ -1808,10 +1857,37 @@ class ChatActionExecutor:
             key="deleted_close_run_id",
         )
         target_close_run_id = reopened_close_run_id or created_close_run_id
-        if target_close_run_id is None and deleted_close_run_id is None:
+        if (
+            switched_workspace_id is None
+            and target_close_run_id is None
+            and deleted_close_run_id is None
+        ):
             return grounding, thread, None
 
         previous_close_run_id = thread.close_run_id
+        if switched_workspace_id is not None:
+            workspace_grounding = self._grounding.resolve_context(
+                entity_id=switched_workspace_id,
+                close_run_id=None,
+                user_id=actor_user.id,
+            )
+            updated_payload = {
+                **thread.context_payload,
+                **self._grounding.build_context_payload(context=workspace_grounding.context),
+            }
+            updated_thread = self._chat_repo.update_thread_scope(
+                thread_id=thread_id,
+                entity_id=switched_workspace_id,
+                close_run_id=None,
+                context_payload=updated_payload,
+            )
+            if previous_close_run_id is not None:
+                self._action_repo.supersede_pending_actions_for_close_run_scope(
+                    thread_id=thread_id,
+                    close_run_id=previous_close_run_id,
+                )
+            return workspace_grounding, updated_thread or thread, None
+
         if deleted_close_run_id is not None:
             if previous_close_run_id != deleted_close_run_id:
                 return grounding, thread, None
@@ -1826,6 +1902,7 @@ class ChatActionExecutor:
             }
             updated_thread = self._chat_repo.update_thread_scope(
                 thread_id=thread_id,
+                entity_id=entity_id,
                 close_run_id=None,
                 context_payload=updated_payload,
             )
@@ -1847,6 +1924,7 @@ class ChatActionExecutor:
         }
         updated_thread = self._chat_repo.update_thread_scope(
             thread_id=thread_id,
+            entity_id=entity_id,
             close_run_id=target_close_run_id,
             context_payload=updated_payload,
         )
@@ -2694,6 +2772,16 @@ class ChatActionExecutor:
                     "request is explicit and the target is clear."
                 ),
                 (
+                    "When the operator asks to switch this conversation to another accessible "
+                    "workspace, use the switch_workspace action instead of asking them to use "
+                    "a visible selector."
+                ),
+                (
+                    "Do not switch workspaces from a close-run-scoped thread. In that case ask "
+                    "the operator to open the global assistant or a workspace-level assistant "
+                    "first."
+                ),
+                (
                     "If the operator asks to delete the workspace anchoring this exact chat "
                     "thread, tell them to switch to another workspace chat first so you can "
                     "delete it safely without dropping the current conversation scope."
@@ -2944,7 +3032,7 @@ class ChatActionExecutor:
                 tool_arguments=tool_arguments,
                 snapshot=snapshot,
             )
-        elif planning.tool_name in {"update_workspace", "delete_workspace"}:
+        elif planning.tool_name in {"switch_workspace", "update_workspace", "delete_workspace"}:
             tool_arguments = _hydrate_workspace_arguments(
                 tool_name=planning.tool_name,
                 tool_arguments=tool_arguments,
@@ -3264,7 +3352,7 @@ def _build_target_clarification(
             "I can package one first if you want."
         )
 
-    if tool_name in {"update_workspace", "delete_workspace"} and not isinstance(
+    if tool_name in {"switch_workspace", "update_workspace", "delete_workspace"} and not isinstance(
         tool_arguments.get("workspace_id"),
         str,
     ):
@@ -4621,6 +4709,12 @@ def _humanize_applied_result(applied_result: dict[str, Any]) -> str:
             return f"I updated the {workspace_name} workspace settings."
         return "I updated the workspace settings."
 
+    if tool_name == "switch_workspace":
+        workspace_name = _optional_result_text(applied_result, "workspace_name")
+        if workspace_name is not None:
+            return f"I switched this conversation to the {workspace_name} workspace."
+        return "I switched this conversation to the requested workspace."
+
     if tool_name == "delete_workspace":
         workspace_name = _optional_result_text(applied_result, "deleted_workspace_name")
         if workspace_name is not None:
@@ -5036,6 +5130,8 @@ def _summarize_applied_result(applied_result: dict[str, Any] | None) -> str | No
             parts.append(f"reopened as version {version_no}")
         else:
             parts.append("reopened into a working version")
+    elif isinstance(applied_result.get("switched_workspace_id"), str):
+        parts.append("switched the conversation workspace")
     elif isinstance(applied_result.get("created_close_run_id"), str):
         if isinstance(version_no, int):
             parts.append(f"started close run version {version_no}")

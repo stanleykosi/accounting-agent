@@ -1,12 +1,11 @@
 /*
-Purpose: Render the entity imported-ledger workspace with GL/TB upload controls.
+Purpose: Render the entity imported-ledger workspace with Quartz-aligned GL/TB upload controls.
 Scope: Client-side ledger workspace reads plus baseline upload actions through same-origin APIs.
-Dependencies: React hooks, route params, shared SurfaceCard, and the ledger API helper module.
+Dependencies: React hooks, route params, Next links, and the ledger API helper module.
 */
 
 "use client";
 
-import { SurfaceCard } from "@accounting-ai-agent/ui";
 import Link from "next/link";
 import {
   use,
@@ -17,6 +16,7 @@ import {
   type FormEvent,
   type ReactElement,
 } from "react";
+import { QuartzIcon } from "../../../../../components/layout/QuartzIcons";
 import {
   LedgerApiError,
   readLedgerWorkspace,
@@ -148,169 +148,297 @@ export default function EntityLedgerPage({ params }: Readonly<LedgerPageProps>):
 
   if (isLoading) {
     return (
-      <div className="app-shell coa-page">
-        <SurfaceCard title="Loading Imported Ledger" subtitle="Entity ledger baselines">
-          <p className="form-helper">Loading imported GL/TB baselines and close-run bindings...</p>
-        </SurfaceCard>
+      <div className="quartz-page quartz-workspace-layout">
+        <section className="quartz-main-panel">
+          <div className="quartz-empty-state">Loading imported ledger workspace...</div>
+        </section>
       </div>
     );
   }
 
   if (workspace === null) {
     return (
-      <div className="app-shell coa-page">
-        <SurfaceCard title="Ledger Workspace Unavailable" subtitle="Entity ledger baselines">
+      <div className="quartz-page quartz-workspace-layout">
+        <section className="quartz-main-panel">
           <div className="status-banner danger" role="alert">
             {errorMessage ?? "The imported-ledger workspace could not be loaded."}
           </div>
-        </SurfaceCard>
+        </section>
       </div>
     );
   }
 
   return (
-    <div className="app-shell coa-page">
-      <section className="hero-grid entity-hero-grid">
-        <div className="hero-copy">
-          <p className="eyebrow">Imported Ledger</p>
-          <h1>Ledger Baselines</h1>
-          <p className="lede">
-            Upload an entity-level general ledger or trial balance baseline for a period. Close
-            runs still work without these imports, but matching-period runs can bind to them and
-            reconcile against the imported baseline plus current-run journals.
-          </p>
-          <div className="coa-hero-actions">
-            <Link className="secondary-button" href={`/entities/${entityId}`}>
-              Back to workspace
+    <div className="quartz-page quartz-workspace-layout">
+      <section className="quartz-main-panel">
+        <header className="quartz-page-header">
+          <div>
+            <h1>Imported Ledger</h1>
+            <p className="quartz-page-subtitle">
+              Upload entity-level general ledger and trial balance baselines. Matching close runs
+              can bind to these imports and reconcile against them while preserving audit-ready
+              lineage.
+            </p>
+          </div>
+          <div className="quartz-page-toolbar">
+            <Link className="secondary-button quartz-toolbar-button" href={`/entities/${entityId}/settings`}>
+              <QuartzIcon className="quartz-inline-icon" name="settings" />
+              Workspace Settings
+            </Link>
+            <Link className="secondary-button quartz-toolbar-button" href={`/entities/${entityId}`}>
+              <QuartzIcon className="quartz-inline-icon" name="entities" />
+              Entity Home
             </Link>
           </div>
-        </div>
+        </header>
 
-        <SurfaceCard title="Current Baseline State" subtitle="At a glance" tone="accent">
-          <dl className="entity-meta-grid workspace-snapshot-grid">
-            <div>
-              <dt>GL imports</dt>
-              <dd>{workspace.general_ledger_imports.length}</dd>
-            </div>
-            <div>
-              <dt>TB imports</dt>
-              <dd>{workspace.trial_balance_imports.length}</dd>
-            </div>
-            <div>
-              <dt>Bound close runs</dt>
-              <dd>{workspace.close_run_bindings.length}</dd>
-            </div>
-            <div>
-              <dt>Runs without imports</dt>
-              <dd>Allowed</dd>
-            </div>
-          </dl>
-        </SurfaceCard>
-      </section>
-
-      {statusMessage ? (
-        <div className="status-banner success" role="status">
-          {statusMessage}
-        </div>
-      ) : null}
-      {errorMessage ? (
-        <div className="status-banner danger" role="alert">
-          {errorMessage}
-        </div>
-      ) : null}
-
-      <section className="coa-grid">
-        <SurfaceCard title="Upload General Ledger" subtitle="CSV or XLSX baseline">
-          <form className="coa-upload-form" onSubmit={handleGlUpload}>
-            <label className="field">
-              <span>Period start</span>
-              <input onChange={handlePeriodChange("gl", "periodStart")} type="date" value={glForm.periodStart} />
-            </label>
-            <label className="field">
-              <span>Period end</span>
-              <input onChange={handlePeriodChange("gl", "periodEnd")} type="date" value={glForm.periodEnd} />
-            </label>
-            <label className="field">
-              <span>GL file</span>
-              <input accept=".csv,.xlsx,.xlsm" onChange={handleFileChange("gl")} type="file" />
-            </label>
-            <button className="primary-button" disabled={isPending} type="submit">
-              {isPending ? "Uploading..." : "Upload GL baseline"}
-            </button>
-          </form>
-        </SurfaceCard>
-
-        <SurfaceCard title="Upload Trial Balance" subtitle="CSV or XLSX baseline">
-          <form className="coa-upload-form" onSubmit={handleTbUpload}>
-            <label className="field">
-              <span>Period start</span>
-              <input onChange={handlePeriodChange("tb", "periodStart")} type="date" value={tbForm.periodStart} />
-            </label>
-            <label className="field">
-              <span>Period end</span>
-              <input onChange={handlePeriodChange("tb", "periodEnd")} type="date" value={tbForm.periodEnd} />
-            </label>
-            <label className="field">
-              <span>TB file</span>
-              <input accept=".csv,.xlsx,.xlsm" onChange={handleFileChange("tb")} type="file" />
-            </label>
-            <button className="primary-button" disabled={isPending} type="submit">
-              {isPending ? "Uploading..." : "Upload trial balance"}
-            </button>
-          </form>
-        </SurfaceCard>
-      </section>
-
-      <section className="coa-grid">
-        <SurfaceCard title="General Ledger Imports" subtitle="Newest first">
-          {workspace.general_ledger_imports.length === 0 ? (
-            <p className="form-helper">No GL baselines uploaded yet.</p>
-          ) : (
-            <div className="coa-set-list">
-              {workspace.general_ledger_imports.map((item) => (
-                <article className="coa-set-card" key={item.id}>
-                  <h3>{item.uploaded_filename}</h3>
-                  <p>{item.period_start} to {item.period_end}</p>
-                  <p>{item.row_count} row(s) • {item.source_format.toUpperCase()}</p>
-                </article>
-              ))}
-            </div>
-          )}
-        </SurfaceCard>
-
-        <SurfaceCard title="Trial Balance Imports" subtitle="Newest first">
-          {workspace.trial_balance_imports.length === 0 ? (
-            <p className="form-helper">No trial balance baselines uploaded yet.</p>
-          ) : (
-            <div className="coa-set-list">
-              {workspace.trial_balance_imports.map((item) => (
-                <article className="coa-set-card" key={item.id}>
-                  <h3>{item.uploaded_filename}</h3>
-                  <p>{item.period_start} to {item.period_end}</p>
-                  <p>{item.row_count} row(s) • {item.source_format.toUpperCase()}</p>
-                </article>
-              ))}
-            </div>
-          )}
-        </SurfaceCard>
-      </section>
-
-      <SurfaceCard title="Close-Run Bindings" subtitle="Current imported baselines in use">
-        {workspace.close_run_bindings.length === 0 ? (
-          <p className="form-helper">No close runs are currently bound to imported GL/TB baselines.</p>
-        ) : (
-          <div className="coa-set-list">
-            {workspace.close_run_bindings.map((binding) => (
-              <article className="coa-set-card" key={binding.close_run_id}>
-                <h3>Close run {binding.close_run_id.slice(0, 8)}</h3>
-                <p>Binding source: {binding.binding_source}</p>
-                <p>GL: {binding.general_ledger_import_batch_id ? binding.general_ledger_import_batch_id.slice(0, 8) : "none"}</p>
-                <p>TB: {binding.trial_balance_import_batch_id ? binding.trial_balance_import_batch_id.slice(0, 8) : "none"}</p>
-              </article>
-            ))}
+        {statusMessage ? (
+          <div className="status-banner success quartz-section" role="status">
+            {statusMessage}
           </div>
-        )}
-      </SurfaceCard>
+        ) : null}
+        {errorMessage ? (
+          <div className="status-banner danger quartz-section" role="alert">
+            {errorMessage}
+          </div>
+        ) : null}
+
+        <section className="quartz-section">
+          <div className="quartz-kpi-grid">
+            <article className="quartz-kpi-tile">
+              <p className="quartz-kpi-label">GL Imports</p>
+              <p className="quartz-kpi-value">{workspace.general_ledger_imports.length}</p>
+              <p className="quartz-kpi-meta">Uploaded general ledger baselines</p>
+            </article>
+            <article className="quartz-kpi-tile">
+              <p className="quartz-kpi-label">TB Imports</p>
+              <p className="quartz-kpi-value">{workspace.trial_balance_imports.length}</p>
+              <p className="quartz-kpi-meta">Uploaded trial balance baselines</p>
+            </article>
+            <article className="quartz-kpi-tile">
+              <p className="quartz-kpi-label">Bound Close Runs</p>
+              <p className="quartz-kpi-value">{workspace.close_run_bindings.length}</p>
+              <p className="quartz-kpi-meta">Runs currently using imported baselines</p>
+            </article>
+            <article className="quartz-kpi-tile highlight">
+              <p className="quartz-kpi-label">Canonical Mode</p>
+              <p className="quartz-kpi-value">Entity level</p>
+              <p className="quartz-kpi-meta">Imports are governed before close-run binding</p>
+            </article>
+          </div>
+        </section>
+
+        <section className="quartz-section">
+          <div className="quartz-split-grid quartz-split-grid-halves">
+            <article className="quartz-card quartz-settings-card">
+              <div className="quartz-section-header quartz-section-header-tight">
+                <div>
+                  <p className="quartz-card-eyebrow">General Ledger</p>
+                  <h2 className="quartz-section-title">Upload GL Baseline</h2>
+                </div>
+              </div>
+              <form className="quartz-settings-form" onSubmit={handleGlUpload}>
+                <div className="quartz-form-grid">
+                  <label className="quartz-form-label">
+                    <span>Period Start</span>
+                    <input
+                      className="text-input"
+                      onChange={handlePeriodChange("gl", "periodStart")}
+                      type="date"
+                      value={glForm.periodStart}
+                    />
+                  </label>
+                  <label className="quartz-form-label">
+                    <span>Period End</span>
+                    <input
+                      className="text-input"
+                      onChange={handlePeriodChange("gl", "periodEnd")}
+                      type="date"
+                      value={glForm.periodEnd}
+                    />
+                  </label>
+                </div>
+                <label className="quartz-form-label">
+                  <span>GL File</span>
+                  <input
+                    accept=".csv,.xlsx,.xlsm"
+                    className="text-input"
+                    onChange={handleFileChange("gl")}
+                    type="file"
+                  />
+                </label>
+                <div className="quartz-button-row">
+                  <button className="primary-button" disabled={isPending} type="submit">
+                    {isPending ? "Uploading..." : "Upload GL Baseline"}
+                  </button>
+                </div>
+              </form>
+            </article>
+
+            <article className="quartz-card quartz-settings-card">
+              <div className="quartz-section-header quartz-section-header-tight">
+                <div>
+                  <p className="quartz-card-eyebrow">Trial Balance</p>
+                  <h2 className="quartz-section-title">Upload TB Baseline</h2>
+                </div>
+              </div>
+              <form className="quartz-settings-form" onSubmit={handleTbUpload}>
+                <div className="quartz-form-grid">
+                  <label className="quartz-form-label">
+                    <span>Period Start</span>
+                    <input
+                      className="text-input"
+                      onChange={handlePeriodChange("tb", "periodStart")}
+                      type="date"
+                      value={tbForm.periodStart}
+                    />
+                  </label>
+                  <label className="quartz-form-label">
+                    <span>Period End</span>
+                    <input
+                      className="text-input"
+                      onChange={handlePeriodChange("tb", "periodEnd")}
+                      type="date"
+                      value={tbForm.periodEnd}
+                    />
+                  </label>
+                </div>
+                <label className="quartz-form-label">
+                  <span>TB File</span>
+                  <input
+                    accept=".csv,.xlsx,.xlsm"
+                    className="text-input"
+                    onChange={handleFileChange("tb")}
+                    type="file"
+                  />
+                </label>
+                <div className="quartz-button-row">
+                  <button className="primary-button" disabled={isPending} type="submit">
+                    {isPending ? "Uploading..." : "Upload Trial Balance"}
+                  </button>
+                </div>
+              </form>
+            </article>
+          </div>
+        </section>
+
+        <section className="quartz-section">
+          <div className="quartz-split-grid quartz-split-grid-halves">
+            <article className="quartz-card quartz-settings-card">
+              <div className="quartz-section-header quartz-section-header-tight">
+                <div>
+                  <p className="quartz-card-eyebrow">History</p>
+                  <h2 className="quartz-section-title">General Ledger Imports</h2>
+                </div>
+              </div>
+              {workspace.general_ledger_imports.length === 0 ? (
+                <div className="quartz-empty-state quartz-empty-state-compact">
+                  No general ledger baselines uploaded yet.
+                </div>
+              ) : (
+                <div className="quartz-summary-list">
+                  {workspace.general_ledger_imports.map((item) => (
+                    <div className="quartz-summary-row" key={item.id}>
+                      <div>
+                        <strong>{item.uploaded_filename}</strong>
+                        <div className="quartz-table-secondary">
+                          {item.period_start} to {item.period_end}
+                        </div>
+                      </div>
+                      <strong>
+                        {item.row_count} rows • {item.source_format.toUpperCase()}
+                      </strong>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </article>
+
+            <article className="quartz-card quartz-settings-card">
+              <div className="quartz-section-header quartz-section-header-tight">
+                <div>
+                  <p className="quartz-card-eyebrow">History</p>
+                  <h2 className="quartz-section-title">Trial Balance Imports</h2>
+                </div>
+              </div>
+              {workspace.trial_balance_imports.length === 0 ? (
+                <div className="quartz-empty-state quartz-empty-state-compact">
+                  No trial balance baselines uploaded yet.
+                </div>
+              ) : (
+                <div className="quartz-summary-list">
+                  {workspace.trial_balance_imports.map((item) => (
+                    <div className="quartz-summary-row" key={item.id}>
+                      <div>
+                        <strong>{item.uploaded_filename}</strong>
+                        <div className="quartz-table-secondary">
+                          {item.period_start} to {item.period_end}
+                        </div>
+                      </div>
+                      <strong>
+                        {item.row_count} rows • {item.source_format.toUpperCase()}
+                      </strong>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </article>
+          </div>
+        </section>
+
+        <section className="quartz-section">
+          <article className="quartz-card quartz-card-table-shell">
+            <div className="quartz-section-header">
+              <div>
+                <h2 className="quartz-section-title">Close-Run Bindings</h2>
+                <p className="quartz-page-subtitle quartz-page-subtitle-tight">
+                  Current imported baselines in active operational use.
+                </p>
+              </div>
+            </div>
+            {workspace.close_run_bindings.length === 0 ? (
+              <div className="quartz-empty-state">
+                No close runs are currently bound to imported GL or TB baselines.
+              </div>
+            ) : (
+              <table className="quartz-table">
+                <thead>
+                  <tr>
+                    <th>Close Run</th>
+                    <th>Binding Source</th>
+                    <th>GL Batch</th>
+                    <th>TB Batch</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {workspace.close_run_bindings.map((binding) => (
+                    <tr key={binding.close_run_id}>
+                      <td>
+                        <div className="quartz-table-primary">
+                          {binding.close_run_id.slice(0, 8)}
+                        </div>
+                      </td>
+                      <td>
+                        <div className="quartz-table-primary">{binding.binding_source}</div>
+                      </td>
+                      <td>
+                        <div className="quartz-table-secondary">
+                          {binding.general_ledger_import_batch_id?.slice(0, 8) ?? "None"}
+                        </div>
+                      </td>
+                      <td>
+                        <div className="quartz-table-secondary">
+                          {binding.trial_balance_import_batch_id?.slice(0, 8) ?? "None"}
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </article>
+        </section>
+      </section>
     </div>
   );
 }

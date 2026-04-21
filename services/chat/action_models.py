@@ -412,6 +412,13 @@ class ChatActionResponse(ContractModel):
         default=True,
         description="True when the response is pure analysis with no state changes.",
     )
+    thread_entity_id: str = Field(
+        description="Entity workspace UUID that now anchors the thread after this turn.",
+    )
+    thread_close_run_id: str | None = Field(
+        default=None,
+        description="Close run UUID anchoring the thread after this turn, if any.",
+    )
     operator_controls: tuple[AgentOperatorControl, ...] = Field(
         default=(),
         description=(

@@ -49,6 +49,15 @@ export function QuartzWorkspaceShell({
   const entityContext = useMemo(() => resolveEntityContext(pathname), [pathname]);
   const breadcrumbs = useMemo(() => resolveBreadcrumbs(pathname), [pathname]);
   const isChatWorkspace = pathname.endsWith("/chat");
+  const settingsHref = useMemo(
+    () =>
+      resolveSettingsHref({
+        closeContext,
+        entityContext,
+      }),
+    [closeContext, entityContext],
+  );
+  const isSettingsActive = pathname === "/settings" || pathname.endsWith("/settings");
   const navItems = useMemo<readonly NavItem[]>(
     () => [
       {
@@ -73,16 +82,13 @@ export function QuartzWorkspaceShell({
         label: "Close",
       },
       {
-        href: resolveAssistantHref({
-          closeContext,
-          entityContext,
-        }),
+        href: "/assistant",
         icon: "assistant",
         isActive: pathname === "/assistant" || pathname.endsWith("/assistant") || pathname.endsWith("/chat"),
         label: "Assistant",
       },
     ],
-    [closeContext, entityContext, fallbackCloseContext?.overviewHref, pathname],
+    [fallbackCloseContext?.overviewHref, pathname],
   );
 
   useEffect(() => {
@@ -103,14 +109,19 @@ export function QuartzWorkspaceShell({
   }, []);
 
   useEffect(() => {
-    const prefetchTargets = new Set<string>(["/", "/entities", ...navItems.map((item) => item.href)]);
+    const prefetchTargets = new Set<string>([
+      "/",
+      "/entities",
+      settingsHref,
+      ...navItems.map((item) => item.href),
+    ]);
 
     prefetchTargets.forEach((href) => {
       if (href !== pathname) {
         router.prefetch(href);
       }
     });
-  }, [navItems, pathname, router]);
+  }, [navItems, pathname, router, settingsHref]);
 
   const handleLogout = (): void => {
     startTransition(async () => {
@@ -148,9 +159,14 @@ export function QuartzWorkspaceShell({
         </nav>
 
         <div className="quartz-sidebar-footer">
-          <Link className="quartz-nav-link" href="/setup" title="Runtime setup">
+          <Link
+            aria-current={isSettingsActive ? "page" : undefined}
+            className={isSettingsActive ? "quartz-nav-link active" : "quartz-nav-link"}
+            href={settingsHref}
+            title="Settings"
+          >
             <QuartzIcon className="quartz-nav-icon" name="settings" />
-            <span>Setup</span>
+            <span>Settings</span>
           </Link>
           <button
             className="quartz-nav-button"
@@ -260,7 +276,7 @@ function resolveEntityContext(pathname: string): {
   };
 }
 
-function resolveAssistantHref(options: {
+function resolveSettingsHref(options: {
   closeContext: {
     chatHref: string;
     closeRunId: string;
@@ -274,12 +290,14 @@ function resolveAssistantHref(options: {
   } | null;
 }): string {
   if (options.closeContext !== null) {
-    return options.closeContext.chatHref;
+    return `/entities/${options.closeContext.entityId}/settings`;
   }
+
   if (options.entityContext !== null) {
-    return options.entityContext.assistantHref;
+    return `/entities/${options.entityContext.entityId}/settings`;
   }
-  return "/assistant";
+
+  return "/settings";
 }
 
 function resolveFallbackCloseContext(): RememberedCloseContext | null {
@@ -290,10 +308,17 @@ function resolveFallbackCloseContext(): RememberedCloseContext | null {
 }
 
 function resolveBreadcrumbs(pathname: string): readonly { href: string; label: string }[] {
+  if (pathname === "/settings") {
+    return [
+      { href: "/", label: "Portfolio Overview" },
+      { href: "/settings", label: "Settings" },
+    ];
+  }
+
   if (pathname === "/assistant") {
     return [
       { href: "/", label: "Portfolio Overview" },
-      { href: "/assistant", label: "Assistant Hub" },
+      { href: "/assistant", label: "Global Assistant" },
     ];
   }
 
@@ -326,6 +351,16 @@ function resolveBreadcrumbs(pathname: string): readonly { href: string; label: s
     ];
   }
 
+  if (/^\/entities\/[^/]+\/settings$/u.test(pathname)) {
+    const entityHomePath = pathname.replace(/\/settings$/u, "");
+    return [
+      { href: "/", label: "Portfolio Overview" },
+      { href: "/entities", label: "Entities" },
+      { href: entityHomePath, label: "Entity Home" },
+      { href: pathname, label: "Workspace Settings" },
+    ];
+  }
+
   if (pathname.endsWith("/chat")) {
     return [
       { href: "/", label: "Portfolio Overview" },
@@ -349,6 +384,19 @@ function resolveBreadcrumbs(pathname: string): readonly { href: string; label: s
     ];
   }
 
+  const entityWorkspaceLabel = resolveEntityWorkspaceLabel(pathname);
+  if (entityWorkspaceLabel !== null) {
+    const entityHomePath = pathname
+      .replace(/\/reports\/templates$/u, "")
+      .replace(/\/(coa|ledger|integrations)$/u, "");
+    return [
+      { href: "/", label: "Portfolio Overview" },
+      { href: "/entities", label: "Entities" },
+      { href: entityHomePath, label: "Entity Home" },
+      { href: pathname, label: entityWorkspaceLabel },
+    ];
+  }
+
   if (pathname.includes("/close-runs/")) {
     return [
       { href: "/", label: "Portfolio Overview" },
@@ -366,6 +414,26 @@ function resolveBreadcrumbs(pathname: string): readonly { href: string; label: s
   }
 
   return [{ href: "/", label: "Portfolio Overview" }];
+}
+
+function resolveEntityWorkspaceLabel(pathname: string): string | null {
+  if (/\/entities\/[^/]+\/coa$/u.test(pathname)) {
+    return "Chart of Accounts";
+  }
+
+  if (/\/entities\/[^/]+\/ledger$/u.test(pathname)) {
+    return "Imported Ledger";
+  }
+
+  if (/\/entities\/[^/]+\/integrations$/u.test(pathname)) {
+    return "Integrations";
+  }
+
+  if (/\/entities\/[^/]+\/reports\/templates$/u.test(pathname)) {
+    return "Report Templates";
+  }
+
+  return null;
 }
 
 function resolveCloseRunWorkspaceLabel(pathname: string): string | null {

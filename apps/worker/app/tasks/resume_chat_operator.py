@@ -11,10 +11,10 @@ from __future__ import annotations
 from typing import Any
 from uuid import UUID
 
-from apps.api.app.dependencies.tasks import TaskDispatcher
 from apps.worker.app.celery_app import ObservedTask, celery_app
 from services.chat.job_continuation import ChatJobContinuationResult, ChatJobContinuationService
 from services.db.session import get_session_factory
+from services.jobs.dispatcher import TaskDispatcher
 from services.jobs.task_names import TaskName, resolve_task_route
 from services.observability.context import current_trace_metadata
 
@@ -29,7 +29,7 @@ def _run_resume_chat_operator(
     with get_session_factory()() as db_session:
         service = ChatJobContinuationService(
             db_session=db_session,
-            task_dispatcher=TaskDispatcher(celery_app=celery_app),
+            task_dispatcher=TaskDispatcher(celery_app=celery_app, source_surface="worker"),
         )
         try:
             result = service.continue_for_job(

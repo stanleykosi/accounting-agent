@@ -56,6 +56,15 @@ class _FakeDocumentRepository:
         return self.documents_by_close_run_id[close_run_id]
 
 
+class _FakeEntityRepository:
+    def __init__(self, *, accessible_workspaces: dict[UUID, object] | None = None) -> None:
+        self.accessible_workspaces = accessible_workspaces or {}
+
+    def get_entity_for_user(self, *, entity_id: UUID, user_id: UUID):
+        del user_id
+        return self.accessible_workspaces.get(entity_id)
+
+
 def test_operational_chat_tools_execute_directly_even_when_scope_must_reopen() -> None:
     """The chat surface is the approval surface for normal operational requests."""
 
@@ -312,6 +321,50 @@ def test_delete_workspace_rejects_current_workspace_scope() -> None:
         )
 
     assert "switch to another workspace chat first" in str(error.value).lower()
+
+
+def test_switch_workspace_returns_canonical_result_payload() -> None:
+    """Workspace switching should validate access and return a stable result payload."""
+
+    actor = EntityUserRecord(id=uuid4(), email="ops@example.com", full_name="Finance Ops")
+    workspace_id = uuid4()
+    toolset = _make_toolset(
+        entity_repository=_FakeEntityRepository(
+            accessible_workspaces={
+                workspace_id: SimpleNamespace(
+                    entity=SimpleNamespace(
+                        id=workspace_id,
+                        name="Zenith Shared Services",
+                        base_currency="USD",
+                        autonomy_mode=SimpleNamespace(value="human_review"),
+                    )
+                )
+            }
+        )
+    )
+
+    result = toolset._switch_workspace(
+        {"workspace_id": str(workspace_id)},
+        AgentExecutionContext(
+            actor=actor,
+            entity_id=uuid4(),
+            close_run_id=None,
+            source_close_run_id=None,
+            thread_id=uuid4(),
+            operator_objective=None,
+            trace_id=None,
+            source_surface=None,
+        ),
+    )
+
+    assert result == {
+        "tool": "switch_workspace",
+        "switched_workspace_id": workspace_id,
+        "workspace_id": workspace_id,
+        "workspace_name": "Zenith Shared Services",
+        "base_currency": "USD",
+        "autonomy_mode": "human_review",
+    }
 
 
 def test_delete_close_run_returns_canonical_result_payload() -> None:
@@ -583,6 +636,7 @@ def _make_toolset(
     close_run_service: object | None = None,
     document_repository: object | None = None,
     close_run_delete_service: object | None = None,
+    entity_repository: object | None = None,
     entity_service: object | None = None,
     entity_delete_service: object | None = None,
 ) -> AccountingToolset:
@@ -594,6 +648,7 @@ def _make_toolset(
         close_run_delete_service=close_run_delete_service or SimpleNamespace(),
         document_review_service=SimpleNamespace(),
         document_repository=document_repository or SimpleNamespace(),
+        entity_repository=entity_repository or _FakeEntityRepository(),
         entity_service=entity_service or SimpleNamespace(),
         entity_delete_service=entity_delete_service or SimpleNamespace(),
         export_service=SimpleNamespace(),

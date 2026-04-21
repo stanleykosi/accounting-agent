@@ -17,6 +17,11 @@ import {
   createEntity,
   type CreateEntityRequest,
 } from "../../../../lib/entities/api";
+import {
+  accountingStandardOptions,
+  countryOptions,
+  timezoneOptions,
+} from "../../../../lib/entities/options";
 
 type WorkspaceSetupFormState = {
   accountingStandard: string;
@@ -37,37 +42,6 @@ const defaultFormState: WorkspaceSetupFormState = {
   name: "",
   timezone: "Africa/Lagos",
 };
-
-const countryOptions = [
-  { code: "NG", label: "Nigeria", timezone: "Africa/Lagos" },
-  { code: "GH", label: "Ghana", timezone: "Africa/Accra" },
-  { code: "KE", label: "Kenya", timezone: "Africa/Nairobi" },
-  { code: "ZA", label: "South Africa", timezone: "Africa/Johannesburg" },
-  { code: "AE", label: "United Arab Emirates", timezone: "Asia/Dubai" },
-  { code: "GB", label: "United Kingdom", timezone: "Europe/London" },
-  { code: "US", label: "United States", timezone: "America/New_York" },
-] as const;
-
-const timezoneOptions = [
-  "Africa/Lagos",
-  "Africa/Accra",
-  "Africa/Nairobi",
-  "Africa/Johannesburg",
-  "Asia/Dubai",
-  "Europe/London",
-  "America/New_York",
-  "America/Chicago",
-  "America/Los_Angeles",
-] as const;
-
-const accountingStandardOptions = [
-  "IFRS",
-  "US GAAP",
-  "UK GAAP",
-  "IPSAS",
-  "Local GAAP",
-  "Other",
-] as const;
 
 export default function WorkspaceCreationPage(): ReactElement {
   const router = useRouter();

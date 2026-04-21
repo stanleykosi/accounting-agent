@@ -25,6 +25,7 @@ import {
 } from "../../lib/chat";
 
 export type ChatRailProps = {
+  assistantMode?: "close_run" | "entity" | "global";
   closeRunId?: string;
   entityId: string;
   presentation?: "rail" | "workspace";
@@ -44,10 +45,13 @@ type CreateThreadOptions = {
 };
 
 export function ChatRail({
+  assistantMode,
   closeRunId,
   entityId,
   presentation = "rail",
 }: Readonly<ChatRailProps>): ReactElement {
+  const resolvedAssistantMode = assistantMode ?? (closeRunId ? "close_run" : "entity");
+  const [activeEntityId, setActiveEntityId] = useState(entityId);
   const [threads, setThreads] = useState<ChatThreadSummary[]>([]);
   const [selectedThread, setSelectedThread] = useState<ChatThreadSummary | null>(null);
   const [messages, setMessages] = useState<ChatMessageRecord[]>([]);
@@ -60,6 +64,7 @@ export function ChatRail({
   const [isCreatingThread, setIsCreatingThread] = useState(false);
   const [isLoadingThread, setIsLoadingThread] = useState(false);
   const isCreatingThreadRef = useRef(false);
+  const activeEntityIdRef = useRef(entityId);
   const selectedThreadRef = useRef<ChatThreadSummary | null>(null);
   const threadsRef = useRef<readonly ChatThreadSummary[]>([]);
   const workspaceRef = useRef<ChatThreadWorkspace | null>(null);
@@ -70,6 +75,15 @@ export function ChatRail({
   }, [selectedThread]);
 
   useEffect(() => {
+    activeEntityIdRef.current = activeEntityId;
+  }, [activeEntityId]);
+
+  useEffect(() => {
+    activeEntityIdRef.current = entityId;
+    setActiveEntityId(entityId);
+  }, [entityId]);
+
+  useEffect(() => {
     threadsRef.current = threads;
   }, [threads]);
 
@@ -77,9 +91,11 @@ export function ChatRail({
     workspaceRef.current = workspace;
   }, [workspace]);
 
-  const loadThreads = useCallback(async (): Promise<ChatThreadSummary[]> => {
+  const loadThreads = useCallback(
+    async (options?: { entityIdOverride?: string }): Promise<ChatThreadSummary[]> => {
+      const resolvedEntityId = options?.entityIdOverride ?? activeEntityIdRef.current;
     const response = await listChatThreads(
-      entityId,
+      resolvedEntityId,
       closeRunId
         ? {
             closeRunId,
@@ -97,15 +113,19 @@ export function ChatRail({
       return response.threads.find((thread) => thread.id === current.id) ?? current;
     });
     return response.threads;
-  }, [closeRunId, entityId]);
+    },
+    [closeRunId],
+  );
 
   const loadThreadWorkspace = useCallback(
     async (
       thread: ChatThreadSummary,
       options?: {
+        entityIdOverride?: string;
         showLoader?: boolean;
       },
     ): Promise<void> => {
+      const resolvedEntityId = options?.entityIdOverride ?? activeEntityIdRef.current;
       const showLoader = options?.showLoader ?? true;
       setSelectedThread(thread);
       if (showLoader) {
@@ -115,12 +135,15 @@ export function ChatRail({
 
       try {
         const [threadDetail, threadWorkspace] = await Promise.all([
-          getChatThread(thread.id, entityId),
-          getChatThreadWorkspace(thread.id, entityId),
+          getChatThread(thread.id, resolvedEntityId),
+          getChatThreadWorkspace(thread.id, resolvedEntityId),
         ]);
+        activeEntityIdRef.current = threadDetail.thread.entity_id;
+        setActiveEntityId(threadDetail.thread.entity_id);
         setMessages(threadDetail.messages);
         setWorkspace(threadWorkspace);
         setPendingTurn(null);
+        setSelectedThread(threadDetail.thread);
       } catch (caughtError: unknown) {
         if (caughtError instanceof ChatApiError && caughtError.status !== 401) {
           setError("The selected chat could not be loaded.");
@@ -131,7 +154,7 @@ export function ChatRail({
         }
       }
     },
-    [entityId],
+    [],
   );
 
   const createFreshThread = useCallback(
@@ -146,6 +169,7 @@ export function ChatRail({
       setPendingTurn(null);
 
       try {
+        const resolvedEntityId = activeEntityIdRef.current;
         const nextThreadTitle = buildNewThreadTitle({
           closeRunId,
           selectedThread: selectedThreadRef.current,
@@ -156,11 +180,11 @@ export function ChatRail({
           closeRunId
             ? {
                 close_run_id: closeRunId,
-                entity_id: entityId,
+                entity_id: resolvedEntityId,
                 title: nextThreadTitle ?? "Close run chat",
               }
             : {
-                entity_id: entityId,
+                entity_id: resolvedEntityId,
               },
         );
         const nextThread = response.thread;
@@ -168,7 +192,10 @@ export function ChatRail({
         setMessages([]);
         setWorkspace(null);
         setSelectedThread(nextThread);
-        await loadThreadWorkspace(nextThread, { showLoader: false });
+        await loadThreadWorkspace(nextThread, {
+          entityIdOverride: resolvedEntityId,
+          showLoader: false,
+        });
         return nextThread;
       } catch (caughtError: unknown) {
         if (
@@ -184,7 +211,7 @@ export function ChatRail({
         setIsCreatingThread(false);
       }
     },
-    [closeRunId, entityId, loadThreadWorkspace],
+    [closeRunId, loadThreadWorkspace],
   );
 
   useEffect(() => {
@@ -228,7 +255,7 @@ export function ChatRail({
     return () => {
       isMounted = false;
     };
-  }, [createFreshThread, loadThreadWorkspace, loadThreads, presentation]);
+  }, [createFreshThread, entityId, loadThreadWorkspace, loadThreads, presentation]);
 
   const renderableMessages = useMemo(() => buildRenderableMessages(messages), [messages]);
 
@@ -239,18 +266,23 @@ export function ChatRail({
     });
   }, [pendingTurn, renderableMessages.length]);
 
-  const refreshSelectedThread = useCallback(async (): Promise<void> => {
-    if (selectedThread === null) {
+  const refreshSelectedThread = useCallback(async (options?: { entityIdOverride?: string }): Promise<void> => {
+    const thread = selectedThreadRef.current;
+    if (thread === null) {
       return;
     }
+    const resolvedEntityId = options?.entityIdOverride ?? activeEntityIdRef.current;
 
-    await loadThreadWorkspace(selectedThread, { showLoader: false });
+    await loadThreadWorkspace(thread, {
+      entityIdOverride: resolvedEntityId,
+      showLoader: false,
+    });
     try {
-      await loadThreads();
+      await loadThreads({ entityIdOverride: resolvedEntityId });
     } catch {
       // Keep the current thread visible even if the thread index refresh fails.
     }
-  }, [loadThreadWorkspace, loadThreads, selectedThread]);
+  }, [loadThreadWorkspace, loadThreads]);
 
   const confirmThreadDeletion = useCallback(async (): Promise<void> => {
     if (pendingDeletionThread === null) {
@@ -262,7 +294,7 @@ export function ChatRail({
     setPendingDeletionThread(null);
 
     try {
-      await deleteChatThread(thread.id, entityId);
+      await deleteChatThread(thread.id, thread.entity_id);
       const remainingThreads = threads.filter((candidate) => candidate.id !== thread.id);
       setThreads(remainingThreads);
       setError(null);
@@ -272,7 +304,10 @@ export function ChatRail({
       }
 
       if (remainingThreads[0] !== undefined) {
-        await loadThreadWorkspace(remainingThreads[0], { showLoader: false });
+        await loadThreadWorkspace(remainingThreads[0], {
+          entityIdOverride: remainingThreads[0].entity_id,
+          showLoader: false,
+        });
         return;
       }
 
@@ -293,7 +328,6 @@ export function ChatRail({
     }
   }, [
     createFreshThread,
-    entityId,
     loadThreadWorkspace,
     pendingDeletionThread,
     presentation,
@@ -333,7 +367,7 @@ export function ChatRail({
 
         <section style={conversationPaneStyle}>
           <ConversationHeader
-            assistantLabel={closeRunId ? "Close Assistant" : "Entity Assistant"}
+            assistantMode={resolvedAssistantMode}
             error={error}
             isCreatingThread={isCreatingThread}
             isLoading={isBusy}
@@ -342,6 +376,7 @@ export function ChatRail({
           />
 
           <MessageList
+            assistantMode={resolvedAssistantMode}
             isAwaitingReply={isAwaitingReply}
             isLoading={isBusy}
             messages={renderableMessages}
@@ -349,9 +384,10 @@ export function ChatRail({
           />
 
           <ActionComposer
+            assistantMode={resolvedAssistantMode}
             closeRunId={selectedThread?.close_run_id ?? closeRunId}
             disabled={isBusy || selectedThread === null}
-            entityId={entityId}
+            entityId={activeEntityId}
             onActionStateChange={() => {
               void refreshSelectedThread();
             }}
@@ -360,7 +396,11 @@ export function ChatRail({
                 assistantContent: response.content,
                 draft,
               });
-              void refreshSelectedThread();
+              activeEntityIdRef.current = response.thread_entity_id;
+              setActiveEntityId(response.thread_entity_id);
+              void refreshSelectedThread({
+                entityIdOverride: response.thread_entity_id,
+              });
             }}
             onSubmissionError={() => {
               setPendingTurn(null);
@@ -489,7 +529,7 @@ function ThreadSidebar({
 }
 
 type ConversationHeaderProps = {
-  assistantLabel: string;
+  assistantMode: "close_run" | "entity" | "global";
   error: string | null;
   isCreatingThread: boolean;
   isLoading: boolean;
@@ -498,14 +538,29 @@ type ConversationHeaderProps = {
 };
 
 function ConversationHeader({
-  assistantLabel,
+  assistantMode,
   error,
   isCreatingThread,
   isLoading,
   thread,
   workspace,
 }: Readonly<ConversationHeaderProps>): ReactElement {
-  const scopeLabel = thread?.grounding.period_label ?? "Entity scope";
+  const assistantLabel =
+    assistantMode === "global"
+      ? "Global Assistant"
+      : assistantMode === "close_run"
+        ? "Close Assistant"
+        : "Entity Assistant";
+  const scopeLabel =
+    assistantMode === "global"
+      ? "All workspaces"
+      : assistantMode === "close_run"
+        ? thread?.grounding.period_label ?? "Close scope"
+        : thread?.grounding.entity_name ?? "Entity scope";
+  const activeWorkspaceLabel =
+    assistantMode === "global" ? workspace?.grounding.entity_name ?? null : null;
+  const activePeriodLabel =
+    assistantMode === "global" ? workspace?.grounding.period_label ?? null : null;
   const recoveryActions = workspace?.memory.recovery_actions ?? [];
   const recoveryState = workspace?.memory.recovery_state ?? null;
   const recoverySummary = workspace?.memory.recovery_summary ?? null;
@@ -521,6 +576,12 @@ function ConversationHeader({
           <h2 style={conversationTitleStyle}>
             {thread === null ? "New chat" : formatThreadTitle(thread)}
           </h2>
+          {activeWorkspaceLabel ? (
+            <p style={conversationAnchorStyle}>
+              Current workspace: {activeWorkspaceLabel}
+              {activePeriodLabel ? ` / ${activePeriodLabel}` : ""}
+            </p>
+          ) : null}
         </div>
 
         <div style={conversationStatusRowStyle}>
@@ -554,6 +615,7 @@ function ConversationHeader({
 }
 
 type MessageListProps = {
+  assistantMode: "close_run" | "entity" | "global";
   isAwaitingReply: boolean;
   isLoading: boolean;
   messages: readonly RenderableMessage[];
@@ -561,6 +623,7 @@ type MessageListProps = {
 };
 
 function MessageList({
+  assistantMode,
   isAwaitingReply,
   isLoading,
   messages,
@@ -576,8 +639,11 @@ function MessageList({
             <p style={emptyConversationEyebrowStyle}>Ready</p>
             <h3 style={emptyConversationTitleStyle}>Start a new conversation</h3>
             <p style={emptyConversationBodyStyle}>
-              Ask for the next close action, resolve a blocker, or upload source documents directly
-              into the thread.
+              {assistantMode === "global"
+                ? "Ask across workspaces, identify what needs attention, or tell me to switch this chat to another workspace."
+                : assistantMode === "entity"
+                  ? "Ask about this workspace, review its close runs, or decide what to do next."
+                  : "Ask for the next close action, resolve a blocker, or upload source documents directly into the thread."}
             </p>
           </div>
         ) : null}
@@ -1111,6 +1177,13 @@ const conversationTitleStyle = {
   overflow: "hidden",
   textOverflow: "ellipsis",
   whiteSpace: "nowrap",
+} satisfies CSSProperties;
+
+const conversationAnchorStyle = {
+  color: "var(--quartz-muted)",
+  fontSize: 12,
+  lineHeight: "18px",
+  margin: 0,
 } satisfies CSSProperties;
 
 const conversationStatusRowStyle = {

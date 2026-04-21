@@ -1,12 +1,11 @@
 /*
-Purpose: Render the entity chart-of-accounts workspace with upload, activation, and account editing flows.
+Purpose: Render the entity chart-of-accounts workspace with Quartz-aligned upload, activation, and account editing flows.
 Scope: Client-side COA reads plus versioned account creation/update actions through same-origin APIs.
-Dependencies: React hooks, route params, shared SurfaceCard, and the COA API helper module.
+Dependencies: React hooks, route params, Next links, and the COA API helper module.
 */
 
 "use client";
 
-import { SurfaceCard } from "@accounting-ai-agent/ui";
 import Link from "next/link";
 import {
   use,
@@ -18,6 +17,7 @@ import {
   type FormEvent,
   type ReactElement,
 } from "react";
+import { QuartzIcon } from "../../../../../components/layout/QuartzIcons";
 import {
   CoaApiError,
   activateCoaSet,
@@ -244,322 +244,393 @@ export default function EntityCoaPage({ params }: Readonly<CoaPageProps>): React
 
   if (isLoading) {
     return (
-      <div className="app-shell coa-page">
-        <SurfaceCard title="Loading Chart of Accounts" subtitle="Entity COA workspace">
-          <p className="form-helper">Loading chart-of-accounts sets, accounts, and version history...</p>
-        </SurfaceCard>
+      <div className="quartz-page quartz-workspace-layout">
+        <section className="quartz-main-panel">
+          <div className="quartz-empty-state">Loading chart of accounts workspace...</div>
+        </section>
       </div>
     );
   }
 
   if (workspace === null) {
     return (
-      <div className="app-shell coa-page">
-        <SurfaceCard title="COA Workspace Unavailable" subtitle="Entity COA workspace">
+      <div className="quartz-page quartz-workspace-layout">
+        <section className="quartz-main-panel">
           <div className="status-banner danger" role="alert">
             {errorMessage ?? "The chart-of-accounts workspace could not be loaded."}
           </div>
-        </SurfaceCard>
+        </section>
       </div>
     );
   }
 
   return (
-    <div className="app-shell coa-page">
-      <section className="hero-grid coa-hero-grid">
-        <div className="hero-copy">
-          <p className="eyebrow">Chart of Accounts</p>
-          <h1>Versioned COA workspace for mapped, review-safe accounting output.</h1>
-          <p className="lede">
-            Manual uploads create new COA versions. Account edits also materialize immutable
-            revisions so every code change and activation decision remains auditable.
-          </p>
-          <div className="coa-hero-actions">
-            <Link className="secondary-button" href={`/entities/${entityId}`}>
-              Back to entity workspace
+    <div className="quartz-page quartz-workspace-layout">
+      <section className="quartz-main-panel">
+        <header className="quartz-page-header">
+          <div>
+            <h1>Chart of Accounts</h1>
+            <p className="quartz-page-subtitle">
+              Manage the versioned COA workspace used for mapped, review-safe accounting output.
+              Manual uploads and account edits both materialize auditable revisions.
+            </p>
+          </div>
+          <div className="quartz-page-toolbar">
+            <Link className="secondary-button quartz-toolbar-button" href={`/entities/${entityId}/settings`}>
+              <QuartzIcon className="quartz-inline-icon" name="settings" />
+              Workspace Settings
+            </Link>
+            <Link className="secondary-button quartz-toolbar-button" href={`/entities/${entityId}`}>
+              <QuartzIcon className="quartz-inline-icon" name="entities" />
+              Entity Home
             </Link>
           </div>
-        </div>
+        </header>
 
-        <SurfaceCard title="Active COA Set" subtitle="Current precedence result" tone="accent">
-          <dl className="entity-meta-grid coa-summary-grid">
-            <div>
-              <dt>Source</dt>
-              <dd>{workspace.active_set.source.replaceAll("_", " ")}</dd>
-            </div>
-            <div>
-              <dt>Version</dt>
-              <dd>v{workspace.active_set.version_no}</dd>
-            </div>
-            <div>
-              <dt>Accounts</dt>
-              <dd>{workspace.active_set.account_count}</dd>
-            </div>
-            <div>
-              <dt>Activated</dt>
-              <dd>{formatDateTime(workspace.active_set.activated_at ?? workspace.active_set.created_at)}</dd>
-            </div>
-          </dl>
-
-          <p className="form-helper coa-precedence-label">
-            Precedence: {workspace.precedence_order.join(" → ")}
-          </p>
-        </SurfaceCard>
-      </section>
-
-      {errorMessage ? (
-        <div className="status-banner danger" role="alert">
-          {errorMessage}
-        </div>
-      ) : null}
-
-      <section className="coa-grid">
-        <SurfaceCard title="Upload Manual COA" subtitle="CSV or XLSX import">
-          <form className="entity-form" onSubmit={handleUpload}>
-            <label className="field">
-              <span>COA file</span>
-              <input accept=".csv,.xlsx,.xlsm" onChange={handleUploadFileChange} type="file" />
-            </label>
-
-            {uploadError ? (
-              <div className="status-banner warning" role="alert">
-                {uploadError}
-              </div>
-            ) : null}
-
-            <button className="primary-button" disabled={isPending} type="submit">
-              {isPending ? "Uploading COA..." : "Upload COA"}
-            </button>
-          </form>
-        </SurfaceCard>
-
-        <SurfaceCard title="Create Account" subtitle="Versioned account editor">
-          <form className="entity-form" onSubmit={handleCreateAccount}>
-            <div className="entity-form-row">
-              <label className="field">
-                <span>Account code</span>
-                <input
-                  className="text-input"
-                  onChange={handleCreateFieldChange("accountCode")}
-                  required
-                  type="text"
-                  value={createForm.accountCode}
-                />
-              </label>
-
-              <label className="field">
-                <span>Account type</span>
-                <input
-                  className="text-input"
-                  onChange={handleCreateFieldChange("accountType")}
-                  required
-                  type="text"
-                  value={createForm.accountType}
-                />
-              </label>
-            </div>
-
-            <label className="field">
-              <span>Account name</span>
-              <input
-                className="text-input"
-                onChange={handleCreateFieldChange("accountName")}
-                required
-                type="text"
-                value={createForm.accountName}
-              />
-            </label>
-
-            <div className="entity-form-row">
-              <label className="field">
-                <span>Parent account</span>
-                <select
-                  className="text-input"
-                  onChange={handleCreateFieldChange("parentAccountId")}
-                  value={createForm.parentAccountId}
-                >
-                  <option value="">No parent</option>
-                  {parentAccountOptions.map((account) => (
-                    <option key={account.id} value={account.id}>
-                      {account.account_code} · {account.account_name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-
-              <label className="field">
-                <span>External reference</span>
-                <input
-                  className="text-input"
-                  onChange={handleCreateFieldChange("externalRef")}
-                  type="text"
-                  value={createForm.externalRef}
-                />
-              </label>
-            </div>
-
-            <div className="coa-toggle-row">
-              <label className="checkbox-field">
-                <input
-                  checked={createForm.isPostable}
-                  onChange={handleCreateFieldChange("isPostable")}
-                  type="checkbox"
-                />
-                <span>Postable account</span>
-              </label>
-              <label className="checkbox-field">
-                <input
-                  checked={createForm.isActive}
-                  onChange={handleCreateFieldChange("isActive")}
-                  type="checkbox"
-                />
-                <span>Active account</span>
-              </label>
-            </div>
-
-            <button className="secondary-button" disabled={isPending} type="submit">
-              {isPending ? "Creating account..." : "Create account"}
-            </button>
-          </form>
-        </SurfaceCard>
-      </section>
-
-      <section className="coa-grid coa-grid-wide">
-        <SurfaceCard title="COA Versions" subtitle="Activation history">
-          <div className="coa-set-list">
-            {workspace.coa_sets.map((coaSet: CoaSetSummary) => (
-              <article className="coa-set-card" key={coaSet.id}>
-                <div>
-                  <p className="eyebrow coa-set-eyebrow">{coaSet.source.replaceAll("_", " ")}</p>
-                  <h3>Version {coaSet.version_no}</h3>
-                  <p className="form-helper">{coaSet.account_count} accounts</p>
-                </div>
-                <div className="coa-set-actions">
-                  <span className="entity-status-chip">
-                    {coaSet.is_active ? "Active" : "Inactive"}
-                  </span>
-                  {!coaSet.is_active ? (
-                    <button
-                      className="secondary-button compact-button"
-                      disabled={isPending}
-                      onClick={() => handleActivateSet(coaSet.id)}
-                      type="button"
-                    >
-                      Activate
-                    </button>
-                  ) : null}
-                </div>
-              </article>
-            ))}
+        {errorMessage ? (
+          <div className="status-banner danger quartz-section" role="alert">
+            {errorMessage}
           </div>
-        </SurfaceCard>
+        ) : null}
 
-        <SurfaceCard title="Active Set Accounts" subtitle="Inline versioned editing">
-          <div className="coa-table-container">
-            <table className="coa-table">
-              <thead>
-                <tr>
-                  <th>Code</th>
-                  <th>Name</th>
-                  <th>Type</th>
-                  <th>Parent</th>
-                  <th>Postable</th>
-                  <th>Active</th>
-                  <th>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {workspace.accounts.map((account) => {
-                  const draft = accountDrafts[account.id];
-                  if (draft === undefined) {
-                    return null;
-                  }
+        <section className="quartz-section">
+          <div className="quartz-kpi-grid">
+            <article className="quartz-kpi-tile">
+              <p className="quartz-kpi-label">Active Source</p>
+              <p className="quartz-kpi-value">{workspace.active_set.source.replaceAll("_", " ")}</p>
+              <p className="quartz-kpi-meta">Current precedence result</p>
+            </article>
+            <article className="quartz-kpi-tile">
+              <p className="quartz-kpi-label">Active Version</p>
+              <p className="quartz-kpi-value">v{workspace.active_set.version_no}</p>
+              <p className="quartz-kpi-meta">
+                Activated {formatDateTime(workspace.active_set.activated_at ?? workspace.active_set.created_at)}
+              </p>
+            </article>
+            <article className="quartz-kpi-tile">
+              <p className="quartz-kpi-label">Accounts</p>
+              <p className="quartz-kpi-value">{workspace.active_set.account_count}</p>
+              <p className="quartz-kpi-meta">Accounts in the active COA set</p>
+            </article>
+            <article className="quartz-kpi-tile highlight">
+              <p className="quartz-kpi-label">Precedence</p>
+              <p className="quartz-kpi-value quartz-kpi-value-small">
+                {workspace.precedence_order.join(" -> ")}
+              </p>
+              <p className="quartz-kpi-meta">Deterministic source ordering</p>
+            </article>
+          </div>
+        </section>
 
-                  return (
-                    <tr key={account.id}>
-                      <td>
-                        <input
-                          className="text-input compact-input"
-                          onChange={(event) =>
-                            handleDraftFieldChange(account.id, "accountCode", event.target.value)
-                          }
-                          type="text"
-                          value={draft.accountCode}
-                        />
-                      </td>
-                      <td>
-                        <input
-                          className="text-input compact-input"
-                          onChange={(event) =>
-                            handleDraftFieldChange(account.id, "accountName", event.target.value)
-                          }
-                          type="text"
-                          value={draft.accountName}
-                        />
-                      </td>
-                      <td>
-                        <input
-                          className="text-input compact-input"
-                          onChange={(event) =>
-                            handleDraftFieldChange(account.id, "accountType", event.target.value)
-                          }
-                          type="text"
-                          value={draft.accountType}
-                        />
-                      </td>
-                      <td>
-                        <select
-                          className="text-input compact-input"
-                          onChange={(event) =>
-                            handleDraftFieldChange(account.id, "parentAccountId", event.target.value)
-                          }
-                          value={draft.parentAccountId}
-                        >
-                          <option value="">No parent</option>
-                          {workspace.accounts
-                            .filter((candidate) => candidate.id !== account.id)
-                            .map((candidate) => (
-                              <option key={candidate.id} value={candidate.id}>
-                                {candidate.account_code} · {candidate.account_name}
-                              </option>
-                            ))}
-                        </select>
-                      </td>
-                      <td>
-                        <input
-                          checked={draft.isPostable}
-                          onChange={(event) =>
-                            handleDraftFieldChange(account.id, "isPostable", event.target.checked)
-                          }
-                          type="checkbox"
-                        />
-                      </td>
-                      <td>
-                        <input
-                          checked={draft.isActive}
-                          onChange={(event) =>
-                            handleDraftFieldChange(account.id, "isActive", event.target.checked)
-                          }
-                          type="checkbox"
-                        />
-                      </td>
-                      <td>
+        <section className="quartz-section">
+          <div className="quartz-split-grid quartz-split-grid-halves">
+            <article className="quartz-card quartz-settings-card">
+              <div className="quartz-section-header quartz-section-header-tight">
+                <div>
+                  <p className="quartz-card-eyebrow">Manual Import</p>
+                  <h2 className="quartz-section-title">Upload COA</h2>
+                </div>
+              </div>
+              <form className="quartz-settings-form" onSubmit={handleUpload}>
+                <label className="quartz-form-label">
+                  <span>COA File</span>
+                  <input
+                    accept=".csv,.xlsx,.xlsm"
+                    className="text-input"
+                    onChange={handleUploadFileChange}
+                    type="file"
+                  />
+                </label>
+
+                {uploadError ? (
+                  <div className="status-banner warning" role="alert">
+                    {uploadError}
+                  </div>
+                ) : null}
+
+                <div className="quartz-button-row">
+                  <button className="primary-button" disabled={isPending} type="submit">
+                    {isPending ? "Uploading COA..." : "Upload COA"}
+                  </button>
+                </div>
+              </form>
+            </article>
+
+            <article className="quartz-card quartz-settings-card">
+              <div className="quartz-section-header quartz-section-header-tight">
+                <div>
+                  <p className="quartz-card-eyebrow">Account Editor</p>
+                  <h2 className="quartz-section-title">Create Account</h2>
+                </div>
+              </div>
+              <form className="quartz-settings-form" onSubmit={handleCreateAccount}>
+                <div className="quartz-form-grid">
+                  <label className="quartz-form-label">
+                    <span>Account Code</span>
+                    <input
+                      className="text-input"
+                      onChange={handleCreateFieldChange("accountCode")}
+                      required
+                      type="text"
+                      value={createForm.accountCode}
+                    />
+                  </label>
+                  <label className="quartz-form-label">
+                    <span>Account Type</span>
+                    <input
+                      className="text-input"
+                      onChange={handleCreateFieldChange("accountType")}
+                      required
+                      type="text"
+                      value={createForm.accountType}
+                    />
+                  </label>
+                </div>
+
+                <label className="quartz-form-label">
+                  <span>Account Name</span>
+                  <input
+                    className="text-input"
+                    onChange={handleCreateFieldChange("accountName")}
+                    required
+                    type="text"
+                    value={createForm.accountName}
+                  />
+                </label>
+
+                <div className="quartz-form-grid">
+                  <label className="quartz-form-label">
+                    <span>Parent Account</span>
+                    <select
+                      className="text-input"
+                      onChange={handleCreateFieldChange("parentAccountId")}
+                      value={createForm.parentAccountId}
+                    >
+                      <option value="">No parent</option>
+                      {parentAccountOptions.map((account) => (
+                        <option key={account.id} value={account.id}>
+                          {account.account_code} · {account.account_name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+
+                  <label className="quartz-form-label">
+                    <span>External Reference</span>
+                    <input
+                      className="text-input"
+                      onChange={handleCreateFieldChange("externalRef")}
+                      type="text"
+                      value={createForm.externalRef}
+                    />
+                  </label>
+                </div>
+
+                <div className="quartz-form-grid">
+                  <label className="quartz-settings-checkbox">
+                    <input
+                      checked={createForm.isPostable}
+                      onChange={handleCreateFieldChange("isPostable")}
+                      type="checkbox"
+                    />
+                    <span>Postable account</span>
+                  </label>
+                  <label className="quartz-settings-checkbox">
+                    <input
+                      checked={createForm.isActive}
+                      onChange={handleCreateFieldChange("isActive")}
+                      type="checkbox"
+                    />
+                    <span>Active account</span>
+                  </label>
+                </div>
+
+                <div className="quartz-button-row">
+                  <button className="secondary-button" disabled={isPending} type="submit">
+                    {isPending ? "Creating account..." : "Create Account"}
+                  </button>
+                </div>
+              </form>
+            </article>
+          </div>
+        </section>
+
+        <section className="quartz-section">
+          <div className="quartz-split-grid quartz-settings-layout">
+            <article className="quartz-card quartz-settings-card">
+              <div className="quartz-section-header quartz-section-header-tight">
+                <div>
+                  <p className="quartz-card-eyebrow">Versioning</p>
+                  <h2 className="quartz-section-title">COA Versions</h2>
+                </div>
+              </div>
+              <div className="quartz-summary-list">
+                {workspace.coa_sets.map((coaSet: CoaSetSummary) => (
+                  <div className="quartz-summary-row" key={coaSet.id}>
+                    <div>
+                      <strong>Version {coaSet.version_no}</strong>
+                      <div className="quartz-table-secondary">
+                        {coaSet.source.replaceAll("_", " ")} • {coaSet.account_count} accounts
+                      </div>
+                    </div>
+                    <div className="quartz-inline-actions">
+                      <span className={`quartz-status-badge ${coaSet.is_active ? "success" : "neutral"}`}>
+                        {coaSet.is_active ? "Active" : "Inactive"}
+                      </span>
+                      {!coaSet.is_active ? (
                         <button
-                          className="secondary-button compact-button"
+                          className="secondary-button quartz-inline-button"
                           disabled={isPending}
-                          onClick={() => handleSaveDraft(account)}
+                          onClick={() => handleActivateSet(coaSet.id)}
                           type="button"
                         >
-                          Save
+                          Activate
                         </button>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+                      ) : null}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </article>
+
+            <article className="quartz-card quartz-settings-card">
+              <div className="quartz-section-header quartz-section-header-tight">
+                <div>
+                  <p className="quartz-card-eyebrow">Guardrails</p>
+                  <h2 className="quartz-section-title">COA Notes</h2>
+                </div>
+              </div>
+              <div className="quartz-settings-info-stack">
+                <div className="quartz-compact-pill">Uploads create immutable COA versions</div>
+                <div className="quartz-compact-pill">Activation is explicit and auditable</div>
+                <div className="quartz-compact-pill">Inline edits stay version-safe</div>
+              </div>
+            </article>
           </div>
-        </SurfaceCard>
+        </section>
+
+        <section className="quartz-section">
+          <article className="quartz-card quartz-card-table-shell">
+            <div className="quartz-section-header">
+              <div>
+                <h2 className="quartz-section-title">Active Set Accounts</h2>
+                <p className="quartz-page-subtitle quartz-page-subtitle-tight">
+                  Inline versioned editing for the active chart of accounts.
+                </p>
+              </div>
+            </div>
+            <div className="coa-table-container quartz-table-shell">
+              <table className="quartz-table coa-table">
+                <thead>
+                  <tr>
+                    <th>Code</th>
+                    <th>Name</th>
+                    <th>Type</th>
+                    <th>Parent</th>
+                    <th>Postable</th>
+                    <th>Active</th>
+                    <th>Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {workspace.accounts.map((account) => {
+                    const draft = accountDrafts[account.id];
+                    if (draft === undefined) {
+                      return null;
+                    }
+
+                    return (
+                      <tr key={account.id}>
+                        <td>
+                          <input
+                            className="text-input compact-input"
+                            onChange={(event) =>
+                              handleDraftFieldChange(account.id, "accountCode", event.target.value)
+                            }
+                            type="text"
+                            value={draft.accountCode}
+                          />
+                        </td>
+                        <td>
+                          <input
+                            className="text-input compact-input"
+                            onChange={(event) =>
+                              handleDraftFieldChange(account.id, "accountName", event.target.value)
+                            }
+                            type="text"
+                            value={draft.accountName}
+                          />
+                        </td>
+                        <td>
+                          <input
+                            className="text-input compact-input"
+                            onChange={(event) =>
+                              handleDraftFieldChange(account.id, "accountType", event.target.value)
+                            }
+                            type="text"
+                            value={draft.accountType}
+                          />
+                        </td>
+                        <td>
+                          <select
+                            className="text-input compact-input"
+                            onChange={(event) =>
+                              handleDraftFieldChange(account.id, "parentAccountId", event.target.value)
+                            }
+                            value={draft.parentAccountId}
+                          >
+                            <option value="">No parent</option>
+                            {workspace.accounts
+                              .filter((candidate) => candidate.id !== account.id)
+                              .map((candidate) => (
+                                <option key={candidate.id} value={candidate.id}>
+                                  {candidate.account_code} · {candidate.account_name}
+                                </option>
+                              ))}
+                          </select>
+                        </td>
+                        <td className="quartz-table-center">
+                          <label className="quartz-settings-checkbox quartz-settings-checkbox-inline">
+                            <input
+                              checked={draft.isPostable}
+                              onChange={(event) =>
+                                handleDraftFieldChange(account.id, "isPostable", event.target.checked)
+                              }
+                              type="checkbox"
+                            />
+                            <span>{draft.isPostable ? "Yes" : "No"}</span>
+                          </label>
+                        </td>
+                        <td className="quartz-table-center">
+                          <label className="quartz-settings-checkbox quartz-settings-checkbox-inline">
+                            <input
+                              checked={draft.isActive}
+                              onChange={(event) =>
+                                handleDraftFieldChange(account.id, "isActive", event.target.checked)
+                              }
+                              type="checkbox"
+                            />
+                            <span>{draft.isActive ? "Yes" : "No"}</span>
+                          </label>
+                        </td>
+                        <td className="quartz-table-center">
+                          <button
+                            className="secondary-button quartz-inline-button"
+                            disabled={isPending}
+                            onClick={() => handleSaveDraft(account)}
+                            type="button"
+                          >
+                            Save
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </article>
+        </section>
       </section>
     </div>
   );

@@ -520,6 +520,8 @@ def _persist_inline_attachment_partial_success(
     content: str | None,
     inline_result: ChatInlineAttachmentResult,
     thread_id: UUID,
+    thread_entity_id: UUID,
+    thread_close_run_id: UUID | None,
     trace_id: str | None,
 ) -> ChatActionResponse:
     """Return a success response when upload succeeded but agent follow-up did not."""
@@ -574,6 +576,8 @@ def _persist_inline_attachment_partial_success(
         content=assistant_content,
         action_plan=None,
         is_read_only=True,
+        thread_entity_id=str(thread_entity_id),
+        thread_close_run_id=str(thread_close_run_id) if thread_close_run_id is not None else None,
         operator_controls=(),
     )
 
@@ -816,7 +820,7 @@ def send_chat_action(
     try:
         workspace = action_executor.get_thread_workspace(
             thread_id=thread_id,
-            entity_id=entity_id,
+            entity_id=UUID(outcome.thread_entity_id),
             actor_user=_to_entity_user(session_result),
         )
         operator_controls = workspace.operator_controls
@@ -828,6 +832,8 @@ def send_chat_action(
         content=outcome.assistant_content,
         action_plan=_to_chat_action_summary(outcome.action_plan),
         is_read_only=outcome.is_read_only,
+        thread_entity_id=outcome.thread_entity_id,
+        thread_close_run_id=outcome.thread_close_run_id,
         operator_controls=operator_controls,
     )
 
@@ -937,6 +943,8 @@ async def send_chat_action_with_attachments(
             content=content,
             inline_result=inline_result,
             thread_id=thread_id,
+            thread_entity_id=thread.entity_id,
+            thread_close_run_id=thread.close_run_id,
             trace_id=trace_id,
         )
     except (CoaServiceError, DocumentUploadServiceError) as error:
@@ -951,7 +959,7 @@ async def send_chat_action_with_attachments(
     try:
         workspace = action_executor.get_thread_workspace(
             thread_id=thread_id,
-            entity_id=entity_id,
+            entity_id=UUID(outcome.thread_entity_id),
             actor_user=_to_entity_user(session_result),
         )
         operator_controls = workspace.operator_controls
@@ -963,6 +971,8 @@ async def send_chat_action_with_attachments(
         content=outcome.assistant_content,
         action_plan=_to_chat_action_summary(outcome.action_plan),
         is_read_only=outcome.is_read_only,
+        thread_entity_id=outcome.thread_entity_id,
+        thread_close_run_id=outcome.thread_close_run_id,
         operator_controls=operator_controls,
     )
 

@@ -488,6 +488,13 @@ export default function EntityWorkspacePage({
           <div className="quartz-page-toolbar">
             <Link
               className="secondary-button quartz-toolbar-button"
+              href={`/entities/${entityId}/settings`}
+            >
+              <QuartzIcon className="quartz-inline-icon" name="settings" />
+              Workspace Settings
+            </Link>
+            <Link
+              className="secondary-button quartz-toolbar-button"
               href={`/entities/${entityId}/assistant`}
             >
               <QuartzIcon className="quartz-inline-icon" name="assistant" />
