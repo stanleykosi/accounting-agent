@@ -1,5 +1,5 @@
 /*
-Purpose: Render the close mission control page for one governed close run.
+Purpose: Render the close run control page for one governed close run.
 Scope: Live close-run workspace loading, lifecycle mutations, and direct routing into the core work surfaces.
 Dependencies: React hooks, close-run/entity API helpers, shared workflow metadata, and the Quartz workspace components.
 */
@@ -89,7 +89,7 @@ export default function CloseRunOverviewPage(): ReactElement {
     return (
       <div className="quartz-page quartz-workspace-layout">
         <section className="quartz-main-panel">
-          <div className="quartz-empty-state">Loading close mission control...</div>
+          <div className="quartz-empty-state">Loading close run control...</div>
         </section>
       </div>
     );
@@ -133,7 +133,7 @@ export default function CloseRunOverviewPage(): ReactElement {
     setIsMutating(true);
     try {
       await transitionCloseRun(entityId, closeRun.id, {
-        reason: "Advanced from close mission control",
+        reason: "Advanced from close run control",
         target_phase: nextPhase,
       });
       setStatusMessage(`Close run advanced into ${getWorkflowPhaseDefinition(nextPhase).label}.`);
@@ -148,7 +148,7 @@ export default function CloseRunOverviewPage(): ReactElement {
   async function handleApproveCloseRun(): Promise<void> {
     setIsMutating(true);
     try {
-      await approveCloseRun(entityId, closeRun.id, "Approved from close mission control");
+      await approveCloseRun(entityId, closeRun.id, "Approved from close run control");
       setStatusMessage("Close run approved.");
       await refreshWorkspace();
     } catch (error: unknown) {
@@ -161,7 +161,7 @@ export default function CloseRunOverviewPage(): ReactElement {
   async function handleArchiveExistingCloseRun(): Promise<void> {
     setIsMutating(true);
     try {
-      await archiveCloseRun(entityId, closeRun.id, "Archived from close mission control");
+      await archiveCloseRun(entityId, closeRun.id, "Archived from close run control");
       setStatusMessage("Close run archived.");
       await refreshWorkspace();
     } catch (error: unknown) {
@@ -195,7 +195,7 @@ export default function CloseRunOverviewPage(): ReactElement {
       <section className="quartz-main-panel">
         <header className="quartz-page-header">
           <div>
-            <h1>Close Mission Control</h1>
+            <h1>Close Run Control</h1>
             <p className="quartz-page-subtitle">
               {workspaceData.entity.name} • {formatCloseRunPeriod(closeRun)}
             </p>

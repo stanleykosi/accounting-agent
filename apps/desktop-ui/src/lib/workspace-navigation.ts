@@ -1,6 +1,6 @@
 /*
 Purpose: Persist the operator's latest close-run navigation context for shell shortcuts.
-Scope: Browser-side close mission control/chat targets used by sidebar navigation outside an active close route.
+Scope: Browser-side close run control/chat targets used by sidebar navigation outside an active close route.
 Dependencies: sessionStorage and same-tab custom events only.
 */
 

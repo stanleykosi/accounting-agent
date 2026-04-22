@@ -398,7 +398,7 @@ function resolveBreadcrumbs(pathname: string): readonly { href: string; label: s
     return [
       { href: "/", label: "Portfolio Overview" },
       { href: "/entities", label: "Entities" },
-      { href: pathname.replace(/\/chat$/u, ""), label: "Close Mission Control" },
+      { href: pathname.replace(/\/chat$/u, ""), label: "Close Run Control" },
       { href: pathname, label: "Close Assistant" },
     ];
   }
@@ -412,7 +412,7 @@ function resolveBreadcrumbs(pathname: string): readonly { href: string; label: s
     return [
       { href: "/", label: "Portfolio Overview" },
       { href: "/entities", label: "Entities" },
-      { href: closeRunRootPath, label: "Close Mission Control" },
+      { href: closeRunRootPath, label: "Close Run Control" },
       { href: pathname, label: closeRunWorkspaceLabel },
     ];
   }
@@ -434,7 +434,7 @@ function resolveBreadcrumbs(pathname: string): readonly { href: string; label: s
     return [
       { href: "/", label: "Portfolio Overview" },
       { href: "/entities", label: "Entities" },
-      { href: pathname, label: "Close Mission Control" },
+      { href: pathname, label: "Close Run Control" },
     ];
   }
 
