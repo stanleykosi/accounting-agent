@@ -69,6 +69,8 @@ export function ChatRail({
   const threadsRef = useRef<readonly ChatThreadSummary[]>([]);
   const workspaceRef = useRef<ChatThreadWorkspace | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const threadLoadRequestIdRef = useRef(0);
+  const pendingTurnVersionRef = useRef(0);
 
   useEffect(() => {
     selectedThreadRef.current = selectedThread;
@@ -125,6 +127,9 @@ export function ChatRail({
         showLoader?: boolean;
       },
     ): Promise<void> => {
+      const requestId = threadLoadRequestIdRef.current + 1;
+      threadLoadRequestIdRef.current = requestId;
+      const pendingTurnVersionAtStart = pendingTurnVersionRef.current;
       const resolvedEntityId = options?.entityIdOverride ?? activeEntityIdRef.current;
       const showLoader = options?.showLoader ?? true;
       setSelectedThread(thread);
@@ -138,18 +143,26 @@ export function ChatRail({
           getChatThread(thread.id, resolvedEntityId),
           getChatThreadWorkspace(thread.id, resolvedEntityId),
         ]);
+        if (requestId !== threadLoadRequestIdRef.current) {
+          return;
+        }
         activeEntityIdRef.current = threadDetail.thread.entity_id;
         setActiveEntityId(threadDetail.thread.entity_id);
         setMessages(threadDetail.messages);
         setWorkspace(threadWorkspace);
-        setPendingTurn(null);
+        if (pendingTurnVersionRef.current === pendingTurnVersionAtStart) {
+          setPendingTurn(null);
+        }
         setSelectedThread(threadDetail.thread);
       } catch (caughtError: unknown) {
+        if (requestId !== threadLoadRequestIdRef.current) {
+          return;
+        }
         if (caughtError instanceof ChatApiError && caughtError.status !== 401) {
           setError("The selected chat could not be loaded.");
         }
       } finally {
-        if (showLoader) {
+        if (showLoader && requestId === threadLoadRequestIdRef.current) {
           setIsLoadingThread(false);
         }
       }
@@ -392,10 +405,20 @@ export function ChatRail({
               void refreshSelectedThread();
             }}
             onMessageSent={(response: ChatActionResponse, draft: ComposerDraft) => {
-              setPendingTurn({
-                assistantContent: response.content,
-                draft,
-              });
+              const threadId = selectedThread?.id;
+              if (threadId) {
+                setMessages((current) =>
+                  mergeMessages(
+                    current,
+                    buildLocalTurnMessages({
+                      draft,
+                      response,
+                      threadId,
+                    }),
+                  ),
+                );
+              }
+              setPendingTurn(null);
               activeEntityIdRef.current = response.thread_entity_id;
               setActiveEntityId(response.thread_entity_id);
               void refreshSelectedThread({
@@ -406,6 +429,7 @@ export function ChatRail({
               setPendingTurn(null);
             }}
             onSubmissionStart={(draft: ComposerDraft) => {
+              pendingTurnVersionRef.current += 1;
               setPendingTurn({
                 assistantContent: null,
                 draft,
@@ -815,6 +839,65 @@ function buildRenderableMessages(messages: readonly ChatMessageRecord[]): Render
       ...message,
       displayTime: formatMessageTime(message.created_at),
     }));
+}
+
+function buildLocalTurnMessages(options: {
+  draft: ComposerDraft;
+  response: ChatActionResponse;
+  threadId: string;
+}): readonly ChatMessageRecord[] {
+  const userCreatedAt = new Date();
+  const assistantCreatedAt = new Date(userCreatedAt.getTime() + 1);
+  const attachmentPayload =
+    options.draft.attachmentNames.length > 0
+      ? {
+          attachments: options.draft.attachmentNames.map((filename) => ({
+            filename,
+            intent: "source_documents",
+          })),
+        }
+      : {};
+
+  return [
+    {
+      content: options.draft.content,
+      created_at: userCreatedAt.toISOString(),
+      grounding_payload: attachmentPayload,
+      id: `optimistic-user:${options.response.message_id}`,
+      linked_action_id: null,
+      message_type: "action",
+      model_metadata: null,
+      role: "user",
+      thread_id: options.threadId,
+    },
+    {
+      content: options.response.content,
+      created_at: assistantCreatedAt.toISOString(),
+      grounding_payload: {},
+      id: options.response.message_id,
+      linked_action_id: options.response.action_plan?.id ?? null,
+      message_type: options.response.is_read_only ? "analysis" : "action",
+      model_metadata: null,
+      role: "assistant",
+      thread_id: options.threadId,
+    },
+  ];
+}
+
+function mergeMessages(
+  existing: readonly ChatMessageRecord[],
+  incoming: readonly ChatMessageRecord[],
+): ChatMessageRecord[] {
+  const merged = [...existing];
+  const seenIds = new Set(existing.map((message) => message.id));
+  for (const message of incoming) {
+    if (seenIds.has(message.id)) {
+      continue;
+    }
+    seenIds.add(message.id);
+    merged.push(message);
+  }
+  return merged;
 }
 
 function extractInlineAttachments(message: ChatMessageRecord): Array<{

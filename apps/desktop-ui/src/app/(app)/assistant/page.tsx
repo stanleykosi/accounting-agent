@@ -3,7 +3,6 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState, type ReactElement } from "react";
 import { ChatRail } from "../../../components/chat/ChatRail";
-import { QuartzIcon } from "../../../components/layout/QuartzIcons";
 import {
   readDashboardBootstrap,
   readDashboardBootstrapSnapshot,
@@ -95,66 +94,14 @@ export default function GlobalAssistantPage(): ReactElement {
       style={{
         display: "grid",
         gap: 16,
-        gridTemplateRows: selectedEntity ? "auto minmax(0, 1fr)" : "auto",
         padding: 0,
       }}
     >
-      <section className="quartz-card" style={{ display: "grid", gap: 14, padding: 18 }}>
-        <div
-          style={{
-            alignItems: "center",
-            display: "flex",
-            flexWrap: "wrap",
-            gap: 12,
-            justifyContent: "space-between",
-          }}
-        >
-          <div style={{ display: "grid", gap: 6 }}>
-            <div
-              style={{
-                alignItems: "center",
-                display: "inline-flex",
-                gap: 8,
-              }}
-            >
-              <p className="quartz-card-eyebrow" style={{ margin: 0 }}>
-                Assistant
-              </p>
-              <span className="quartz-status-badge neutral">Global</span>
-            </div>
-            <h1 style={{ margin: 0 }}>Global Assistant</h1>
-            <p className="quartz-page-subtitle" style={{ margin: 0 }}>
-              Work directly in chat across your accessible workspaces. If you want to change
-              workspace context, just ask in the conversation.
-            </p>
-          </div>
-
-          <div className="quartz-page-toolbar">
-            <Link className="secondary-button quartz-toolbar-button" href="/entities/new">
-              <QuartzIcon className="quartz-inline-icon" name="entities" />
-              New Workspace
-            </Link>
-          </div>
+      {errorMessage ? (
+        <div className="status-banner warning" role="status">
+          {errorMessage}
         </div>
-
-        {errorMessage ? (
-          <div className="status-banner warning" role="status">
-            {errorMessage}
-          </div>
-        ) : null}
-
-        {entities.length > 0 ? (
-          <div style={{ display: "grid", gap: 4 }}>
-            <span className="quartz-queue-meta">
-              {entities.length} workspace{entities.length === 1 ? "" : "s"} available to this
-              operator
-            </span>
-            <span className="quartz-table-secondary">
-              Open Assistant from an entity or close run when you want a hard-pinned scoped chat.
-            </span>
-          </div>
-        ) : null}
-      </section>
+      ) : null}
 
       {isLoading && selectedEntity === null ? (
         <section className="quartz-card" style={{ padding: 24 }}>
