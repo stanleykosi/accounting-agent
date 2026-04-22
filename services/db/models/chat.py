@@ -13,7 +13,7 @@ from typing import Any
 from uuid import UUID, uuid4
 
 from services.db.base import Base, TimestampedModel, UUIDPrimaryKeyMixin
-from sqlalchemy import CheckConstraint, ForeignKey, Index, String, Text
+from sqlalchemy import CheckConstraint, ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -87,7 +87,8 @@ class ChatMessage(Base, UUIDPrimaryKeyMixin, TimestampedModel):
             "message_type IN ('analysis', 'workflow', 'action', 'warning')",
             name="ck_chat_messages_message_type",
         ),
-        Index("ix_chat_messages_thread_order", "thread_id", "created_at"),
+        UniqueConstraint("thread_id", "message_order"),
+        Index("ix_chat_messages_thread_order", "thread_id", "message_order"),
     )
 
     id: Mapped[UUID] = mapped_column(
@@ -101,6 +102,14 @@ class ChatMessage(Base, UUIDPrimaryKeyMixin, TimestampedModel):
         nullable=False,
         index=True,
         comment="Parent chat thread that this message belongs to.",
+    )
+    message_order: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        comment=(
+            "Canonical per-thread message sequence used for deterministic "
+            "conversation ordering."
+        ),
     )
     role: Mapped[str] = mapped_column(
         String(20),

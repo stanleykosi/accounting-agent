@@ -999,6 +999,7 @@ CREATE INDEX ix_chat_threads_entity_close_run ON chat_threads (entity_id, close_
 CREATE TABLE chat_messages (
     id UUID DEFAULT gen_random_uuid() NOT NULL, 
     thread_id UUID NOT NULL, 
+    message_order INTEGER NOT NULL, 
     role VARCHAR(20) NOT NULL, 
     content TEXT NOT NULL, 
     message_type VARCHAR(20) DEFAULT '''analysis''' NOT NULL, 
@@ -1010,6 +1011,7 @@ CREATE TABLE chat_messages (
     CONSTRAINT pk_chat_messages PRIMARY KEY (id), 
     CONSTRAINT ck_chat_messages_ck_chat_messages_role CHECK (role IN ('user', 'assistant', 'system')), 
     CONSTRAINT ck_chat_messages_ck_chat_messages_message_type CHECK (message_type IN ('analysis', 'workflow', 'action', 'warning')), 
+    CONSTRAINT uq_chat_messages_thread_message_order UNIQUE (thread_id, message_order), 
     CONSTRAINT fk_chat_messages_thread_id_chat_threads FOREIGN KEY(thread_id) REFERENCES chat_threads (id) ON DELETE CASCADE, 
     CONSTRAINT fk_chat_messages_linked_action_id_recommendations FOREIGN KEY(linked_action_id) REFERENCES recommendations (id) ON DELETE SET NULL
 );
@@ -1017,6 +1019,8 @@ CREATE TABLE chat_messages (
 CREATE INDEX ix_chat_messages_thread_id ON chat_messages (thread_id);
 
 COMMENT ON COLUMN chat_messages.thread_id IS 'Parent chat thread that this message belongs to.';
+
+COMMENT ON COLUMN chat_messages.message_order IS 'Canonical per-thread message sequence used for deterministic conversation ordering.';
 
 COMMENT ON COLUMN chat_messages.role IS 'Message originator: user, assistant, or system.';
 
@@ -1030,7 +1034,7 @@ COMMENT ON COLUMN chat_messages.grounding_payload IS 'Evidence snapshot used to 
 
 COMMENT ON COLUMN chat_messages.model_metadata IS 'Model name, token usage, latency, and provider metadata.';
 
-CREATE INDEX ix_chat_messages_thread_order ON chat_messages (thread_id, created_at);
+CREATE INDEX ix_chat_messages_thread_order ON chat_messages (thread_id, message_order);
 
 UPDATE alembic_version SET version_num='0011_chat_threads_and_messages' WHERE alembic_version.version_num = '0010_report_templates_and_runs';
 
@@ -1489,5 +1493,8 @@ CREATE INDEX ix_gl_import_lines_batch_group ON general_ledger_import_lines (batc
 
 UPDATE alembic_version SET version_num='0018_imported_gl_transaction_group_keys' WHERE alembic_version.version_num = '0017_ledger_import_baselines';
 
-COMMIT;
+-- Running upgrade 0018_imported_gl_transaction_group_keys -> 0019_chat_message_ordering
 
+UPDATE alembic_version SET version_num='0019_chat_message_ordering' WHERE alembic_version.version_num = '0018_imported_gl_transaction_group_keys';
+
+COMMIT;

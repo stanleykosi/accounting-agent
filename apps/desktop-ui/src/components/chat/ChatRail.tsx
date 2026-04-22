@@ -411,6 +411,7 @@ export function ChatRail({
                   mergeMessages(
                     current,
                     buildLocalTurnMessages({
+                      baseMessageOrder: getHighestMessageOrder(current),
                       draft,
                       response,
                       threadId,
@@ -828,6 +829,11 @@ function buildRenderableMessages(messages: readonly ChatMessageRecord[]): Render
     .map((message, index) => ({ index, message }))
     .filter(({ message }) => message.role !== "system" && !looksLikeInternalContextDump(message.content))
     .sort((left, right) => {
+      const leftOrder = left.message.message_order;
+      const rightOrder = right.message.message_order;
+      if (Number.isFinite(leftOrder) && Number.isFinite(rightOrder) && leftOrder !== rightOrder) {
+        return leftOrder - rightOrder;
+      }
       const leftTime = Date.parse(left.message.created_at);
       const rightTime = Date.parse(right.message.created_at);
       if (!Number.isNaN(leftTime) && !Number.isNaN(rightTime) && leftTime !== rightTime) {
@@ -842,6 +848,7 @@ function buildRenderableMessages(messages: readonly ChatMessageRecord[]): Render
 }
 
 function buildLocalTurnMessages(options: {
+  baseMessageOrder: number;
   draft: ComposerDraft;
   response: ChatActionResponse;
   threadId: string;
@@ -866,6 +873,7 @@ function buildLocalTurnMessages(options: {
       id: `optimistic-user:${options.response.message_id}`,
       linked_action_id: null,
       message_type: "action",
+      message_order: options.baseMessageOrder + 1,
       model_metadata: null,
       role: "user",
       thread_id: options.threadId,
@@ -877,6 +885,7 @@ function buildLocalTurnMessages(options: {
       id: options.response.message_id,
       linked_action_id: options.response.action_plan?.id ?? null,
       message_type: options.response.is_read_only ? "analysis" : "action",
+      message_order: options.baseMessageOrder + 2,
       model_metadata: null,
       role: "assistant",
       thread_id: options.threadId,
@@ -898,6 +907,16 @@ function mergeMessages(
     merged.push(message);
   }
   return merged;
+}
+
+function getHighestMessageOrder(messages: readonly ChatMessageRecord[]): number {
+  let highestOrder = 0;
+  for (const message of messages) {
+    if (Number.isFinite(message.message_order) && message.message_order > highestOrder) {
+      highestOrder = message.message_order;
+    }
+  }
+  return highestOrder;
 }
 
 function extractInlineAttachments(message: ChatMessageRecord): Array<{

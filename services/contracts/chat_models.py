@@ -82,6 +82,10 @@ class ChatMessageRecord(ContractModel):
 
     id: str = Field(description="Stable UUID for the chat message.")
     thread_id: str = Field(description="Parent chat thread that this message belongs to.")
+    message_order: int = Field(
+        ge=1,
+        description="Canonical per-thread message sequence used for deterministic conversation ordering.",
+    )
     role: Literal["user", "assistant", "system"] = Field(
         description="Message originator: user, assistant, or system.",
     )

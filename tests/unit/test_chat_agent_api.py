@@ -149,6 +149,8 @@ _install_service_stub(
 _install_service_stub(
     "services.close_runs.service",
     CloseRunService=_dummy_class("CloseRunService"),
+    CloseRunServiceError=_dummy_error("CloseRunServiceError"),
+    CloseRunServiceErrorCode=SimpleNamespace(NOT_FOUND="not_found"),
 )
 _install_service_stub(
     "services.exports.service",

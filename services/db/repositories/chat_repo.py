@@ -47,6 +47,7 @@ class ChatMessageRecord:
 
     id: UUID
     thread_id: UUID
+    message_order: int
     role: str
     content: str
     message_type: str
@@ -265,8 +266,20 @@ class ChatRepository:
     ) -> ChatMessageRecord:
         """Stage a new chat message and flush it immediately."""
 
+        thread = self._db_session.execute(
+            select(ChatThread)
+            .where(ChatThread.id == thread_id)
+            .with_for_update()
+        ).scalar_one()
+        next_message_order = int(
+            self._db_session.execute(
+                select(func.coalesce(func.max(ChatMessage.message_order), 0) + 1)
+                .where(ChatMessage.thread_id == thread.id)
+            ).scalar_one()
+        )
         message = ChatMessage(
             thread_id=thread_id,
+            message_order=next_message_order,
             role=role,
             content=content,
             message_type=message_type,
@@ -289,7 +302,7 @@ class ChatRepository:
         statement = (
             select(ChatMessage)
             .where(ChatMessage.thread_id == thread_id)
-            .order_by(ChatMessage.created_at, ChatMessage.id)
+            .order_by(ChatMessage.message_order)
         )
 
         if limit is not None:
@@ -348,6 +361,7 @@ def _map_message(model: ChatMessage) -> ChatMessageRecord:
     return ChatMessageRecord(
         id=model.id,
         thread_id=model.thread_id,
+        message_order=model.message_order,
         role=model.role,
         content=model.content,
         message_type=model.message_type,

@@ -39,6 +39,7 @@ export type ChatMessageRecord = {
   id: string;
   linked_action_id: string | null;
   message_type: ChatMessageType;
+  message_order: number;
   model_metadata: Record<string, unknown> | null;
   role: ChatMessageRole;
   thread_id: string;

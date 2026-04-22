@@ -132,6 +132,21 @@ def test_jobs_metadata_exposes_checkpoint_and_dead_letter_integrity() -> None:
     ) in constraint_sql
 
 
+def test_chat_messages_expose_canonical_per_thread_message_order() -> None:
+    """Ensure chat transcripts use a stable per-thread message sequence."""
+
+    table = Base.metadata.tables["chat_messages"]
+    unique_constraints = {
+        tuple(column.name for column in constraint.columns)
+        for constraint in table.constraints
+        if isinstance(constraint, UniqueConstraint)
+    }
+
+    assert "message_order" in table.c
+    assert table.c.message_order.nullable is False
+    assert ("thread_id", "message_order") in unique_constraints
+
+
 def test_general_ledger_import_lines_expose_transaction_group_key() -> None:
     """Ensure imported GL rows carry the canonical persisted transaction grouping key."""
 

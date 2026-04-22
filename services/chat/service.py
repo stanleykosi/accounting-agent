@@ -491,6 +491,7 @@ class ChatService:
         return ChatMessageRecord(
             id=serialize_uuid(record.id),
             thread_id=serialize_uuid(record.thread_id),
+            message_order=record.message_order,
             role=record.role,  # type: ignore[arg-type]
             content=record.content,
             message_type=record.message_type,  # type: ignore[arg-type]

@@ -50,3 +50,5 @@ def test_offline_alembic_sql_includes_ledger_import_schema() -> None:
     assert "create table trial_balance_import_lines" in rendered_sql
     assert "create table close_run_ledger_bindings" in rendered_sql
     assert "transaction_group_key" in rendered_sql
+    assert "message_order" in rendered_sql
+    assert "uq_chat_messages_thread_message_order" in rendered_sql
