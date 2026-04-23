@@ -29,6 +29,7 @@ from services.contracts.chat_models import (
     ChatThreadSummary,
     ChatThreadWithMessages,
     CreateChatThreadRequest,
+    CreateGlobalChatThreadRequest,
     GroundingContext,
 )
 from services.db.models.audit import AuditSourceSurface
@@ -39,6 +40,7 @@ from services.db.repositories.chat_repo import (
     ChatThreadRecord,
     ChatThreadWithCountRecord,
 )
+from services.db.repositories.entity_repo import EntityAccessRecord
 
 
 class ChatServiceErrorCode(StrEnum):
@@ -46,6 +48,7 @@ class ChatServiceErrorCode(StrEnum):
 
     THREAD_NOT_FOUND = "thread_not_found"
     THREAD_ACCESS_DENIED = "thread_access_denied"
+    NO_ACCESSIBLE_WORKSPACE = "no_accessible_workspace"
     INVALID_MESSAGE = "invalid_message"
     GROUNDING_ERROR = "grounding_error"
     MODEL_ERROR = "model_error"
@@ -128,6 +131,14 @@ class ChatRepositoryProtocol(Protocol):
     ) -> tuple[ChatThreadRecord, ...]:
         """Return recent threads across all accessible workspaces for one user."""
 
+    def list_threads_for_user_any_scope(
+        self,
+        *,
+        user_id: UUID,
+        limit: int,
+    ) -> tuple[ChatThreadWithCountRecord, ...]:
+        """Return all accessible user threads with message counts."""
+
     def create_message(
         self,
         *,
@@ -172,6 +183,9 @@ class ChatRepositoryProtocol(Protocol):
 
 class EntityMembershipProtocol(Protocol):
     """Describe the entity membership check required to gate chat access."""
+
+    def list_entities_for_user(self, *, user_id: UUID) -> tuple[EntityAccessRecord, ...]:
+        """Return all entity workspaces visible to the user."""
 
     def get_entity_for_user(
         self,
@@ -264,6 +278,40 @@ class ChatService:
 
         return self._build_thread_summary(thread, message_count=0, last_message_at=None)
 
+    def create_global_thread(
+        self,
+        *,
+        request: CreateGlobalChatThreadRequest,
+        user_id: UUID,
+        source_surface: AuditSourceSurface,
+        trace_id: str | None,
+    ) -> ChatThreadSummary:
+        """Create a global-assistant thread anchored to the user's current workspace set.
+
+        The persisted thread still has one owning workspace for audit and access checks,
+        while the agent context loaded for the thread contains all workspaces and close
+        runs the user can access.
+        """
+
+        access_records = self._entity_repo.list_entities_for_user(user_id=user_id)
+        anchor_access = access_records[0] if access_records else None
+        if anchor_access is None:
+            raise ChatServiceError(
+                status_code=409,
+                code=ChatServiceErrorCode.NO_ACCESSIBLE_WORKSPACE,
+                message="Create a workspace before opening the global assistant.",
+            )
+
+        return self.create_thread(
+            request=CreateChatThreadRequest(
+                entity_id=serialize_uuid(anchor_access.entity.id),
+                title=request.title,
+            ),
+            user_id=user_id,
+            source_surface=source_surface,
+            trace_id=trace_id,
+        )
+
     def list_threads(
         self,
         *,
@@ -282,6 +330,28 @@ class ChatService:
         records = self._repository.list_threads_for_entity(
             entity_id=entity_id,
             close_run_id=close_run_id,
+            limit=limit,
+        )
+        threads = tuple(
+            self._build_thread_summary(
+                record.thread,
+                message_count=record.message_count,
+                last_message_at=record.last_message_at,
+            )
+            for record in records
+        )
+        return ChatThreadListResponse(threads=threads)
+
+    def list_global_threads(
+        self,
+        *,
+        user_id: UUID,
+        limit: int = 50,
+    ) -> ChatThreadListResponse:
+        """Return all chat threads across workspaces the caller can access."""
+
+        records = self._repository.list_threads_for_user_any_scope(
+            user_id=user_id,
             limit=limit,
         )
         threads = tuple(

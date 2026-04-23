@@ -220,6 +220,10 @@ export type CreateChatThreadRequest = {
   title?: string;
 };
 
+export type CreateGlobalChatThreadRequest = {
+  title?: string;
+};
+
 export type SendChatMessageRequest = {
   content: string;
 };
@@ -296,6 +300,15 @@ export async function createChatThread(
   });
 }
 
+export async function createGlobalChatThread(
+  request: CreateGlobalChatThreadRequest = {},
+): Promise<ChatThreadWithMessages> {
+  return fetchJson<ChatThreadWithMessages>(`${API_BASE}/global/threads`, {
+    body: JSON.stringify(request),
+    method: "POST",
+  });
+}
+
 /**
  * Purpose: List chat threads for an entity or close run, ordered newest-first.
  * Inputs: Entity ID, optional close run ID, and pagination limit.
@@ -316,6 +329,20 @@ export async function listChatThreads(
   }
 
   return fetchJson<ChatThreadListResponse>(`${API_BASE}/threads?${params.toString()}`);
+}
+
+export async function listGlobalChatThreads(
+  options?: { limit?: number },
+): Promise<ChatThreadListResponse> {
+  const params = new URLSearchParams();
+  if (options?.limit) {
+    params.set("limit", String(options.limit));
+  }
+
+  const query = params.toString();
+  return fetchJson<ChatThreadListResponse>(
+    `${API_BASE}/global/threads${query ? `?${query}` : ""}`,
+  );
 }
 
 /**

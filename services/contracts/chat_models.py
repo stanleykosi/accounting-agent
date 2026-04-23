@@ -156,6 +156,27 @@ class CreateChatThreadRequest(ContractModel):
         return self
 
 
+class CreateGlobalChatThreadRequest(ContractModel):
+    """Capture optional inputs for a workspace-wide global assistant thread."""
+
+    title: str | None = Field(
+        default=None,
+        max_length=300,
+        description="Optional user-provided or auto-derived thread title.",
+    )
+
+    @field_validator("title")
+    @classmethod
+    def normalize_title(cls, value: str | None) -> str | None:
+        """Trim thread titles and collapse blank values to null."""
+
+        if value is None:
+            return None
+
+        normalized = value.strip()
+        return normalized or None
+
+
 class SendChatMessageRequest(ContractModel):
     """Capture a user message to be sent to an existing chat thread."""
 

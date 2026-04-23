@@ -11,6 +11,9 @@ import {
   fetchBackendWithAvailabilityRetry,
 } from "../../../../lib/backend-proxy";
 
+export const runtime = "nodejs";
+export const maxDuration = 60;
+
 type ChatProxyRouteContext = {
   params: Promise<{
     chatPath: string[];

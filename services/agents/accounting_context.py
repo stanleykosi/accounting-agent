@@ -121,6 +121,19 @@ class AccountingWorkspaceContextBuilder(WorkspaceContextBuilder):
             actor_user=actor_user,
             entity_id=entity_id,
         )
+        close_runs_by_workspace_id = {
+            str(entity_id): entity_close_runs.close_runs,
+        }
+        for access in accessible_workspaces[:20]:
+            workspace_id = str(access.entity.id)
+            if workspace_id in close_runs_by_workspace_id:
+                continue
+            close_runs_by_workspace_id[workspace_id] = (
+                self._close_run_service.list_close_runs_for_entity(
+                    actor_user=actor_user,
+                    entity_id=access.entity.id,
+                ).close_runs
+            )
         snapshot["entity_close_runs"] = [
             {
                 "id": close_run.id,
@@ -138,6 +151,37 @@ class AccountingWorkspaceContextBuilder(WorkspaceContextBuilder):
                 ),
             }
             for close_run in entity_close_runs.close_runs[:20]
+        ]
+        snapshot["accessible_workspace_close_runs"] = [
+            {
+                "workspace": {
+                    "id": str(access.entity.id),
+                    "name": access.entity.name,
+                    "legal_name": access.entity.legal_name,
+                    "base_currency": access.entity.base_currency,
+                },
+                "close_runs": [
+                    {
+                        "id": close_run.id,
+                        "status": close_run.status.value,
+                        "period_label": _format_close_run_period_label(
+                            period_start=close_run.period_start,
+                            period_end=close_run.period_end,
+                        ),
+                        "period_start": close_run.period_start.isoformat(),
+                        "period_end": close_run.period_end.isoformat(),
+                        "reporting_currency": close_run.reporting_currency,
+                        "version_no": close_run.current_version_no,
+                        "active_phase": (
+                            close_run.workflow_state.active_phase.value
+                            if close_run.workflow_state.active_phase is not None
+                            else None
+                        ),
+                    }
+                    for close_run in close_runs_by_workspace_id[str(access.entity.id)][:10]
+                ],
+            }
+            for access in accessible_workspaces[:20]
         ]
         snapshot["coa"] = self._build_coa_snapshot(entity_id=entity_id)
         if close_run_id is None:

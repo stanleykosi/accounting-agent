@@ -14,10 +14,12 @@ import { ActionComposer, type ComposerDraft } from "./ActionComposer";
 import {
   ChatApiError,
   createChatThread,
+  createGlobalChatThread,
   deleteChatThread,
   getChatThread,
   getChatThreadWorkspace,
   listChatThreads,
+  listGlobalChatThreads,
   type ChatActionResponse,
   type ChatMessageRecord,
   type ChatThreadSummary,
@@ -51,6 +53,7 @@ export function ChatRail({
   presentation = "rail",
 }: Readonly<ChatRailProps>): ReactElement {
   const resolvedAssistantMode = assistantMode ?? (closeRunId ? "close_run" : "entity");
+  const isGlobalAssistant = resolvedAssistantMode === "global";
   const [activeEntityId, setActiveEntityId] = useState(entityId);
   const [threads, setThreads] = useState<ChatThreadSummary[]>([]);
   const [selectedThread, setSelectedThread] = useState<ChatThreadSummary | null>(null);
@@ -96,27 +99,29 @@ export function ChatRail({
   const loadThreads = useCallback(
     async (options?: { entityIdOverride?: string }): Promise<ChatThreadSummary[]> => {
       const resolvedEntityId = options?.entityIdOverride ?? activeEntityIdRef.current;
-    const response = await listChatThreads(
-      resolvedEntityId,
-      closeRunId
-        ? {
-            closeRunId,
-            limit: 50,
-          }
-        : {
-            limit: 50,
-          },
-    );
-    setThreads(response.threads);
-    setSelectedThread((current) => {
-      if (current === null) {
-        return current;
-      }
-      return response.threads.find((thread) => thread.id === current.id) ?? current;
-    });
-    return response.threads;
+      const response = isGlobalAssistant
+        ? await listGlobalChatThreads({ limit: 50 })
+        : await listChatThreads(
+            resolvedEntityId,
+            closeRunId
+              ? {
+                  closeRunId,
+                  limit: 50,
+                }
+              : {
+                  limit: 50,
+                },
+          );
+      setThreads(response.threads);
+      setSelectedThread((current) => {
+        if (current === null) {
+          return current;
+        }
+        return response.threads.find((thread) => thread.id === current.id) ?? current;
+      });
+      return response.threads;
     },
-    [closeRunId],
+    [closeRunId, isGlobalAssistant],
   );
 
   const loadThreadWorkspace = useCallback(
@@ -130,7 +135,7 @@ export function ChatRail({
       const requestId = threadLoadRequestIdRef.current + 1;
       threadLoadRequestIdRef.current = requestId;
       const pendingTurnVersionAtStart = pendingTurnVersionRef.current;
-      const resolvedEntityId = options?.entityIdOverride ?? activeEntityIdRef.current;
+      const resolvedEntityId = options?.entityIdOverride ?? thread.entity_id;
       const showLoader = options?.showLoader ?? true;
       setSelectedThread(thread);
       if (showLoader) {
@@ -189,24 +194,28 @@ export function ChatRail({
           threads: threadsRef.current,
           workspace: workspaceRef.current,
         });
-        const response = await createChatThread(
-          closeRunId
-            ? {
-                close_run_id: closeRunId,
-                entity_id: resolvedEntityId,
-                title: nextThreadTitle ?? "Close run chat",
-              }
-            : {
-                entity_id: resolvedEntityId,
-              },
-        );
+        const response = isGlobalAssistant
+          ? await createGlobalChatThread()
+          : await createChatThread(
+              closeRunId
+                ? {
+                    close_run_id: closeRunId,
+                    entity_id: resolvedEntityId,
+                    title: nextThreadTitle ?? "Close run chat",
+                  }
+                : {
+                    entity_id: resolvedEntityId,
+                  },
+            );
         const nextThread = response.thread;
+        activeEntityIdRef.current = nextThread.entity_id;
+        setActiveEntityId(nextThread.entity_id);
         setThreads((current) => dedupeThreads([nextThread, ...current]));
         setMessages([]);
         setWorkspace(null);
         setSelectedThread(nextThread);
         await loadThreadWorkspace(nextThread, {
-          entityIdOverride: resolvedEntityId,
+          entityIdOverride: nextThread.entity_id,
           showLoader: false,
         });
         return nextThread;
@@ -224,7 +233,7 @@ export function ChatRail({
         setIsCreatingThread(false);
       }
     },
-    [closeRunId, loadThreadWorkspace],
+    [closeRunId, isGlobalAssistant, loadThreadWorkspace],
   );
 
   useEffect(() => {
@@ -245,7 +254,10 @@ export function ChatRail({
         }
 
         if (loadedThreads[0] !== undefined) {
-          await loadThreadWorkspace(loadedThreads[0], { showLoader: false });
+          await loadThreadWorkspace(loadedThreads[0], {
+            entityIdOverride: loadedThreads[0].entity_id,
+            showLoader: false,
+          });
           return;
         }
 
@@ -284,7 +296,7 @@ export function ChatRail({
     if (thread === null) {
       return;
     }
-    const resolvedEntityId = options?.entityIdOverride ?? activeEntityIdRef.current;
+    const resolvedEntityId = options?.entityIdOverride ?? thread.entity_id;
 
     await loadThreadWorkspace(thread, {
       entityIdOverride: resolvedEntityId,
@@ -374,7 +386,9 @@ export function ChatRail({
           }}
           onRequestDeleteThread={setPendingDeletionThread}
           onSelectThread={(thread) => {
-            void loadThreadWorkspace(thread);
+            void loadThreadWorkspace(thread, {
+              entityIdOverride: thread.entity_id,
+            });
           }}
         />
 
@@ -426,8 +440,15 @@ export function ChatRail({
                 entityIdOverride: response.thread_entity_id,
               });
             }}
-            onSubmissionError={() => {
-              setPendingTurn(null);
+            onSubmissionError={(message: string) => {
+              setPendingTurn((current) =>
+                current === null
+                  ? null
+                  : {
+                      ...current,
+                      assistantContent: message,
+                    },
+              );
             }}
             onSubmissionStart={(draft: ComposerDraft) => {
               pendingTurnVersionRef.current += 1;

@@ -14,10 +14,14 @@ import pytest
 from services.chat.grounding import GroundingContextRecord
 from services.chat.service import ChatService, ChatServiceError, ChatServiceErrorCode
 from services.common.enums import AutonomyMode
-from services.contracts.chat_models import CreateChatThreadRequest, GroundingContext
+from services.contracts.chat_models import (
+    CreateChatThreadRequest,
+    CreateGlobalChatThreadRequest,
+    GroundingContext,
+)
 from services.db.models.audit import AuditSourceSurface
 from services.db.models.entity import EntityStatus
-from services.db.repositories.chat_repo import ChatThreadRecord
+from services.db.repositories.chat_repo import ChatThreadRecord, ChatThreadWithCountRecord
 from services.db.repositories.entity_repo import (
     EntityAccessRecord,
     EntityMembershipRecord,
@@ -176,6 +180,68 @@ def test_create_thread_carries_preferences_across_workspaces() -> None:
     assert created_payload["agent_recent_tool_namespaces"] == ("reporting_and_release",)
 
 
+def test_create_global_thread_anchors_to_accessible_workspace() -> None:
+    """Global assistant thread creation should not require an entity id from the caller."""
+
+    repository = InMemoryChatRepository()
+    service = build_chat_service(repository=repository)
+
+    response = service.create_global_thread(
+        request=CreateGlobalChatThreadRequest(title="Global assistant"),
+        user_id=repository.member.id,
+        source_surface=AuditSourceSurface.DESKTOP,
+        trace_id="trace-global-thread",
+    )
+
+    assert response.entity_id == str(repository.entity.id)
+    assert response.title == "Global assistant"
+    assert repository.created_threads[-1].entity_id == repository.entity.id
+
+
+def test_list_global_threads_returns_threads_across_accessible_workspaces() -> None:
+    """Global assistant thread lists should span every workspace the user can access."""
+
+    repository = InMemoryChatRepository()
+    other_entity_id = uuid4()
+    other_thread = ChatThreadRecord(
+        id=uuid4(),
+        entity_id=other_entity_id,
+        close_run_id=None,
+        title="Apex Meridian thread",
+        context_payload={
+            "entity_id": str(other_entity_id),
+            "entity_name": "Apex Meridian Distribution Limited",
+            "close_run_id": None,
+            "period_label": None,
+            "autonomy_mode": "human_review",
+            "base_currency": "USD",
+        },
+        created_at=repository.thread.created_at,
+        updated_at=repository.thread.updated_at,
+    )
+    repository.global_threads = [
+        ChatThreadWithCountRecord(
+            thread=other_thread,
+            message_count=2,
+            last_message_at=other_thread.updated_at,
+        ),
+        ChatThreadWithCountRecord(
+            thread=repository.thread,
+            message_count=4,
+            last_message_at=repository.thread.updated_at,
+        ),
+    ]
+    service = build_chat_service(repository=repository)
+
+    response = service.list_global_threads(user_id=repository.member.id, limit=50)
+
+    assert [thread.title for thread in response.threads] == [
+        "Apex Meridian thread",
+        "March review thread",
+    ]
+    assert response.threads[0].grounding.entity_name == "Apex Meridian Distribution Limited"
+
+
 def build_chat_service(
     *,
     repository: InMemoryChatRepository,
@@ -253,6 +319,13 @@ class InMemoryChatRepository:
         self.thread_exists = thread_exists
         self.recent_threads: list[ChatThreadRecord] = []
         self.recent_user_threads: list[ChatThreadRecord] = []
+        self.global_threads: list[ChatThreadWithCountRecord] = [
+            ChatThreadWithCountRecord(
+                thread=self.thread,
+                message_count=4,
+                last_message_at=self.thread.updated_at,
+            )
+        ]
         self.created_threads: list[ChatThreadRecord] = []
         self.deleted_thread_ids: list[UUID] = []
         self.committed = False
@@ -329,6 +402,32 @@ class InMemoryChatRepository:
         ]
         return tuple(threads[:limit])
 
+    def list_threads_for_user_any_scope(
+        self,
+        *,
+        user_id: UUID,
+        limit: int,
+    ) -> tuple[ChatThreadWithCountRecord, ...]:
+        if user_id != self.member.id:
+            return ()
+        return tuple(self.global_threads[:limit])
+
+    def list_threads_for_entity(
+        self,
+        *,
+        entity_id: UUID,
+        close_run_id: UUID | None,
+        limit: int,
+    ) -> tuple[ChatThreadWithCountRecord, ...]:
+        if entity_id != self.entity.id:
+            return ()
+        return tuple(
+            record
+            for record in self.global_threads
+            if record.thread.entity_id == entity_id
+            and record.thread.close_run_id == close_run_id
+        )[:limit]
+
     def delete_thread(self, *, thread_id: UUID, entity_id: UUID) -> bool:
         if (
             not self.thread_exists
@@ -377,6 +476,14 @@ class InMemoryChatEntityRepository:
             user=self.member,
         )
         return EntityAccessRecord(entity=self.entity, membership=membership)
+
+    def list_entities_for_user(self, *, user_id: UUID) -> tuple[EntityAccessRecord, ...]:
+        if not self.member_has_access or self.entity is None or self.member is None:
+            return ()
+        if user_id != self.member.id:
+            return ()
+        access = self.get_entity_for_user(entity_id=self.entity.id, user_id=user_id)
+        return (access,) if access is not None else ()
 
 
 class InMemoryGroundingService:

@@ -35,7 +35,7 @@ export type ActionComposerProps = {
   entityId: string;
   onActionStateChange?: (action: ChatActionSummary) => void;
   onMessageSent: (response: ChatActionResponse, draft: ComposerDraft) => void;
-  onSubmissionError?: () => void;
+  onSubmissionError?: (message: string) => void;
   onSubmissionStart?: (draft: ComposerDraft) => void;
   threadId: string;
   workspace?: ChatThreadWorkspace | null;
@@ -159,12 +159,13 @@ export function ActionComposer({
         onMessageSent(actionResponse, draft);
         await loadPendingActions();
       } catch (caughtError: unknown) {
-        setError(
-          caughtError instanceof ChatApiError
-            ? caughtError.message
-            : "The assistant could not complete this turn. Try again.",
-        );
-        onSubmissionError?.();
+        const failureMessage = buildSubmissionFailureMessage(caughtError);
+        if (onSubmissionError) {
+          setError(null);
+          onSubmissionError(failureMessage);
+        } else {
+          setError(failureMessage);
+        }
       } finally {
         setIsLoading(false);
       }
@@ -200,7 +201,7 @@ export function ActionComposer({
         setError(
           caughtError instanceof ChatApiError
             ? caughtError.message
-            : "The approval could not be completed. Try again.",
+            : "I couldn't approve that action because the request stopped before the assistant received a normal response.",
         );
       } finally {
         setLoadingActions((current) => {
@@ -233,7 +234,7 @@ export function ActionComposer({
         setError(
           caughtError instanceof ChatApiError
             ? caughtError.message
-            : "The rejection could not be completed. Try again.",
+            : "I couldn't reject that action because the request stopped before the assistant received a normal response.",
         );
       } finally {
         setLoadingActions((current) => {
@@ -425,6 +426,26 @@ function formatByteSize(value: number): string {
     return `${(value / 1024).toFixed(1)} KB`;
   }
   return `${(value / (1024 * 1024)).toFixed(2)} MB`;
+}
+
+function buildSubmissionFailureMessage(caughtError: unknown): string {
+  if (caughtError instanceof ChatApiError) {
+    if (caughtError.status === 401) {
+      return "I couldn't continue because your session is no longer authenticated. Sign in again, then send the request once more.";
+    }
+    if (caughtError.status === 403) {
+      return `I couldn't access the workspace or record needed for that turn. ${caughtError.message}`;
+    }
+    if (caughtError.status === 404) {
+      return `I couldn't find the selected chat or workspace context. ${caughtError.message}`;
+    }
+    if (caughtError.status >= 500) {
+      return `I hit a backend system error while handling that turn. I did not apply further changes. ${caughtError.message}`;
+    }
+    return caughtError.message;
+  }
+
+  return "I couldn't finish that turn because the chat request failed before the assistant could receive a normal response. I did not apply further changes.";
 }
 
 function buildStarterPrompts(options: {

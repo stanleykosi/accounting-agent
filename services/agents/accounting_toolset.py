@@ -503,7 +503,7 @@ class AccountingToolset:
             name="create_close_run",
             namespace="close_operator",
             prompt_signature=(
-                "create_close_run(period_start, period_end, reporting_currency?, "
+                "create_close_run(workspace_id?, period_start, period_end, reporting_currency?, "
                 "allow_duplicate_period?, duplicate_period_reason?)"
             ),
             description=(
@@ -515,6 +515,9 @@ class AccountingToolset:
             executor=self._create_close_run,
             input_schema=_schema_object(
                 properties={
+                    "workspace_id": _uuid_or_null_property(
+                        "Optional accessible workspace UUID. Defaults to the current workspace."
+                    ),
                     "period_start": _date_property(
                         "First day of the close-run period in YYYY-MM-DD format."
                     ),
@@ -1457,10 +1460,23 @@ class AccountingToolset:
         context: AgentExecutionContext,
     ) -> dict[str, Any]:
         actor_user = self._require_actor(context)
-        payload = CreateCloseRunRequest.model_validate(arguments)
+        target_entity_id = (
+            UUID(_require_string(arguments, "workspace_id"))
+            if isinstance(arguments.get("workspace_id"), str)
+            else context.entity_id
+        )
+        workspace_access = self._entity_repo.get_entity_for_user(
+            entity_id=target_entity_id,
+            user_id=actor_user.id,
+        )
+        if workspace_access is None:
+            raise ValueError("That workspace is not accessible to the current operator.")
+        payload = CreateCloseRunRequest.model_validate(
+            {key: value for key, value in arguments.items() if key != "workspace_id"}
+        )
         result = self._close_run_service.create_close_run(
             actor_user=actor_user,
-            entity_id=context.entity_id,
+            entity_id=target_entity_id,
             period_start=payload.period_start,
             period_end=payload.period_end,
             reporting_currency=payload.reporting_currency,
@@ -1472,6 +1488,9 @@ class AccountingToolset:
         return {
             "tool": "create_close_run",
             "created_close_run_id": result.id,
+            "created_workspace_id": str(target_entity_id),
+            "workspace_id": str(target_entity_id),
+            "workspace_name": workspace_access.entity.name,
             "close_run_id": result.id,
             "period_start": result.period_start.isoformat(),
             "period_end": result.period_end.isoformat(),

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import re
+from calendar import monthrange
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
@@ -558,10 +559,15 @@ class ChatActionExecutor:
                     )
                 seen_action_signatures.add(action_signature)
 
+                action_entity_id, action_close_run_id = _resolve_action_thread_scope(
+                    action=action,
+                    default_entity_id=active_entity_id,
+                    default_close_run_id=thread.close_run_id,
+                )
                 execution_context = self._build_execution_context(
                     actor_user=actor_user,
-                    entity_id=active_entity_id,
-                    close_run_id=thread.close_run_id,
+                    entity_id=action_entity_id,
+                    close_run_id=action_close_run_id,
                     source_close_run_id=thread.close_run_id,
                     thread_id=thread_id,
                     operator_objective=content,
@@ -575,8 +581,8 @@ class ChatActionExecutor:
                 record = self._action_repo.create_action_plan(
                     thread_id=thread_id,
                     message_id=action_message_id,
-                    entity_id=active_entity_id,
-                    close_run_id=thread.close_run_id,
+                    entity_id=action_entity_id,
+                    close_run_id=action_close_run_id,
                     actor_user_id=actor_user.id,
                     intent=action.tool.intent,
                     target_type=action.target_type,
@@ -888,11 +894,26 @@ class ChatActionExecutor:
             raise
         except Exception as error:
             self._db_session.rollback()
-            raise ChatActionExecutionError(
+            surfaced_error = ChatActionExecutionError(
                 status_code=500,
                 code=ChatActionExecutionErrorCode.EXECUTION_FAILED,
-                message="The chat action could not be completed.",
-            ) from error
+                message=_build_unexpected_operator_failure_message(error=error),
+            )
+            surfaced_outcome = self._surface_operator_error_in_thread(
+                thread_id=thread_id,
+                entity_id=active_entity_id,
+                actor_user=actor_user,
+                content=content,
+                operator_message_for_memory=operator_message_for_memory,
+                message_grounding_payload=message_grounding_payload,
+                persist_user_message=persist_user_message,
+                trace_id=trace_id,
+                error=surfaced_error,
+                tool_name=last_tool_name,
+            )
+            if surfaced_outcome is not None:
+                return surfaced_outcome
+            raise surfaced_error from error
 
     def _surface_operator_error_in_thread(
         self,
@@ -910,18 +931,15 @@ class ChatActionExecutor:
     ) -> ChatExecutionOutcome | None:
         """Persist a natural assistant failure reply instead of leaking a raw action error."""
 
-        if error.code in {
-            ChatActionExecutionErrorCode.THREAD_NOT_FOUND,
-            ChatActionExecutionErrorCode.ACCESS_DENIED,
-        }:
-            return None
-
         try:
-            grounding, thread = self._load_thread_context(
+            loaded_context = self._load_thread_context_for_error_surface(
                 thread_id=thread_id,
                 entity_id=entity_id,
-                user_id=actor_user.id,
+                actor_user=actor_user,
             )
+            if loaded_context is None:
+                return None
+            grounding, thread = loaded_context
             if persist_user_message:
                 self._chat_repo.create_message(
                     thread_id=thread_id,
@@ -934,7 +952,7 @@ class ChatActionExecutor:
                 )
             snapshot = self._snapshot_for_thread(
                 actor_user=actor_user,
-                entity_id=entity_id,
+                entity_id=thread.entity_id,
                 close_run_id=thread.close_run_id,
                 thread_id=thread_id,
             )
@@ -984,6 +1002,49 @@ class ChatActionExecutor:
         except Exception:
             self._db_session.rollback()
             return None
+
+    def _load_thread_context_for_error_surface(
+        self,
+        *,
+        thread_id: UUID,
+        entity_id: UUID,
+        actor_user: EntityUserRecord,
+    ) -> tuple[GroundingContextRecord, Any] | None:
+        """Load a thread for a failure reply, recovering from stale workspace scope."""
+
+        try:
+            return self._load_thread_context(
+                thread_id=thread_id,
+                entity_id=entity_id,
+                user_id=actor_user.id,
+            )
+        except ChatActionExecutionError as error:
+            if error.code not in {
+                ChatActionExecutionErrorCode.ACCESS_DENIED,
+                ChatActionExecutionErrorCode.THREAD_NOT_FOUND,
+            }:
+                raise
+
+        get_thread_by_id = getattr(self._chat_repo, "get_thread_by_id", None)
+        if not callable(get_thread_by_id):
+            return None
+        thread = get_thread_by_id(thread_id=thread_id)
+        if thread is None:
+            return None
+
+        access = self._entity_repo.get_entity_for_user(
+            entity_id=thread.entity_id,
+            user_id=actor_user.id,
+        )
+        if access is None:
+            return None
+
+        grounding = self._grounding.resolve_context(
+            entity_id=thread.entity_id,
+            close_run_id=thread.close_run_id,
+            user_id=actor_user.id,
+        )
+        return grounding, thread
 
     def activate_async_job_group(
         self,
@@ -1569,7 +1630,7 @@ class ChatActionExecutor:
             raise ChatActionExecutionError(
                 status_code=500,
                 code=ChatActionExecutionErrorCode.EXECUTION_FAILED,
-                message="The deterministic tool call could not be completed.",
+                message="The deterministic tool call stopped before it finished.",
             ) from error
 
     def _snapshot_for_thread(
@@ -1878,6 +1939,18 @@ class ChatActionExecutor:
             applied_result=applied_result,
             key="created_close_run_id",
         )
+        created_workspace_id = _optional_uuid_from_result(
+            applied_result=applied_result,
+            key="created_workspace_id",
+        )
+        target_entity_id = (
+            created_workspace_id
+            or _optional_uuid_from_result(
+                applied_result=applied_result,
+                key="target_entity_id",
+            )
+            or entity_id
+        )
         deleted_close_run_id = _optional_uuid_from_result(
             applied_result=applied_result,
             key="deleted_close_run_id",
@@ -1891,7 +1964,7 @@ class ChatActionExecutor:
             return grounding, thread, None
 
         previous_close_run_id = thread.close_run_id
-        if switched_workspace_id is not None:
+        if switched_workspace_id is not None and target_close_run_id is None:
             workspace_grounding = self._grounding.resolve_context(
                 entity_id=switched_workspace_id,
                 close_run_id=None,
@@ -1940,7 +2013,7 @@ class ChatActionExecutor:
             return entity_grounding, updated_thread or thread, handoff_message
 
         reopened_grounding = self._grounding.resolve_context(
-            entity_id=entity_id,
+            entity_id=target_entity_id,
             close_run_id=target_close_run_id,
             user_id=actor_user.id,
         )
@@ -1950,7 +2023,7 @@ class ChatActionExecutor:
         }
         updated_thread = self._chat_repo.update_thread_scope(
             thread_id=thread_id,
-            entity_id=entity_id,
+            entity_id=target_entity_id,
             close_run_id=target_close_run_id,
             context_payload=updated_payload,
         )
@@ -3113,6 +3186,26 @@ class ChatActionExecutor:
                 }
             )
 
+        create_close_run_follow_up = _build_create_close_run_follow_up_arguments(
+            snapshot=snapshot,
+            operator_content=operator_content,
+            operator_memory=operator_memory,
+        )
+        if create_close_run_follow_up is not None and (
+            planning.mode != "tool"
+            or _normalize_planned_tool_name(planning.tool_name) != "create_close_run"
+        ):
+            return planning.model_copy(
+                update={
+                    "mode": "tool",
+                    "assistant_response": (
+                        "I'll open that close run now and move this thread onto it."
+                    ),
+                    "tool_name": "create_close_run",
+                    "tool_arguments": create_close_run_follow_up,
+                }
+            )
+
         repaired_tool_name = self._repair_planned_tool_name(
             tool_name=planning.tool_name,
             tool_arguments=planning.tool_arguments,
@@ -3203,6 +3296,13 @@ class ChatActionExecutor:
             tool_arguments = _hydrate_create_workspace_arguments(
                 tool_arguments=tool_arguments,
                 snapshot=snapshot,
+            )
+        elif repaired_tool_name == "create_close_run":
+            tool_arguments = _hydrate_create_close_run_arguments(
+                tool_arguments=tool_arguments,
+                snapshot=snapshot,
+                operator_content=operator_content,
+                operator_memory=operator_memory,
             )
         elif repaired_tool_name in {"switch_workspace", "update_workspace", "delete_workspace"}:
             tool_arguments = _hydrate_workspace_arguments(
@@ -4378,6 +4478,24 @@ def _build_operator_loop_action_signature(action: AgentPlannedAction) -> str:
     )
 
 
+def _resolve_action_thread_scope(
+    *,
+    action: AgentPlannedAction,
+    default_entity_id: UUID,
+    default_close_run_id: UUID | None,
+) -> tuple[UUID, UUID | None]:
+    """Return the entity/close-run scope the action should be recorded against."""
+
+    if action.tool.name == "create_close_run":
+        workspace_id = _optional_uuid_from_arguments(
+            arguments=action.planning.tool_arguments,
+            key="workspace_id",
+        )
+        if workspace_id is not None:
+            return workspace_id, None
+    return default_entity_id, default_close_run_id
+
+
 def _format_operator_loop_result_summary(applied_results: list[dict[str, Any]]) -> str | None:
     """Return a compact summary of the work already completed in this turn."""
 
@@ -4481,6 +4599,7 @@ def _build_direct_operator_status_response(
         _build_close_run_scope_status_response,
         _build_close_blocker_status_response,
         _build_next_step_status_response,
+        _build_all_workspace_close_run_directory_response,
         _build_close_run_directory_response,
     ):
         response = builder(snapshot=snapshot, operator_content=operator_content)
@@ -4658,6 +4777,106 @@ def _build_next_step_status_response(
     return f"The next best move is to { _lowercase_leading_character(next_action) }"
 
 
+def _build_all_workspace_close_run_directory_response(
+    *,
+    snapshot: dict[str, Any],
+    operator_content: str,
+) -> str | None:
+    """Answer cross-workspace close-run listing questions from the grounded snapshot."""
+
+    normalized_content = _searchable_text(operator_content)
+    if "close run" not in normalized_content and "close runs" not in normalized_content:
+        return None
+    workspace_rows = snapshot.get("accessible_workspace_close_runs")
+    if not isinstance(workspace_rows, list):
+        return None
+
+    named_workspace_rows = [
+        row
+        for row in workspace_rows
+        if isinstance(row, dict)
+        and _workspace_close_run_row_matches_text(row=row, normalized_text=normalized_content)
+    ]
+    asks_across_workspaces = any(
+        phrase in normalized_content
+        for phrase in (
+            "across my workspaces",
+            "across all workspaces",
+            "all workspaces",
+            "my workspaces",
+            "each workspace",
+            "both workspaces",
+        )
+    )
+    if not asks_across_workspaces and len(named_workspace_rows) != 1:
+        return None
+
+    rows_to_render = workspace_rows if asks_across_workspaces else named_workspace_rows
+
+    summaries: list[str] = []
+    empty_workspaces: list[str] = []
+    for row in rows_to_render[:8]:
+        if not isinstance(row, dict):
+            continue
+        workspace = row.get("workspace")
+        if not isinstance(workspace, dict):
+            continue
+        workspace_name = workspace.get("name")
+        if not isinstance(workspace_name, str) or not workspace_name.strip():
+            continue
+        close_runs = row.get("close_runs")
+        records = (
+            [record for record in close_runs if isinstance(record, dict)]
+            if isinstance(close_runs, list)
+            else []
+        )
+        if not records:
+            empty_workspaces.append(workspace_name.strip())
+            continue
+        labels = []
+        for record in records[:3]:
+            label = _describe_close_run_summary(record=record)
+            if label is not None:
+                labels.append(label)
+        if labels:
+            summaries.append(f"{workspace_name.strip()}: {_join_choice_labels(labels)}")
+
+    if not summaries and not empty_workspaces:
+        return None
+    if not summaries:
+        if len(empty_workspaces) == 1:
+            return f"There are no close runs recorded for {empty_workspaces[0]}."
+        return "There are no close runs in your accessible workspaces yet."
+
+    response = (
+        "Across your workspaces I can see " + "; ".join(summaries) + "."
+        if asks_across_workspaces
+        else "I can see " + "; ".join(summaries) + "."
+    )
+    if empty_workspaces:
+        response += f" No close runs are recorded for {_join_choice_labels(empty_workspaces[:3])}."
+    return response
+
+
+def _workspace_close_run_row_matches_text(*, row: dict[str, Any], normalized_text: str) -> bool:
+    """Return whether a cross-workspace close-run row is explicitly named by the operator."""
+
+    workspace = row.get("workspace")
+    if not isinstance(workspace, dict):
+        return False
+    workspace_name = workspace.get("name")
+    if isinstance(workspace_name, str) and _workspace_name_matches_text(
+        workspace_name,
+        normalized_text,
+    ):
+        return True
+    legal_name = workspace.get("legal_name")
+    return isinstance(legal_name, str) and _workspace_name_matches_text(
+        legal_name,
+        normalized_text,
+    )
+
+
 def _build_close_run_directory_response(
     *,
     snapshot: dict[str, Any],
@@ -4695,11 +4914,11 @@ def _build_close_run_directory_response(
         if str(record.get("status") or "") not in {"archived", "deleted"}
     ]
     display_records = active_like or records
-    labels = [
-        _describe_close_run_summary(record=record)
-        for record in display_records[:3]
-        if _describe_close_run_summary(record=record) is not None
-    ]
+    labels = []
+    for record in display_records[:3]:
+        label = _describe_close_run_summary(record=record)
+        if label is not None:
+            labels.append(label)
     if not labels:
         return "I can see close runs in this workspace, but I need one more specific question."
 
@@ -4879,6 +5098,201 @@ def _build_cross_domain_candidate_labels(
     return labels
 
 
+_MONTH_NUMBER_BY_NAME = {
+    "jan": 1,
+    "january": 1,
+    "feb": 2,
+    "february": 2,
+    "mar": 3,
+    "march": 3,
+    "apr": 4,
+    "april": 4,
+    "may": 5,
+    "jun": 6,
+    "june": 6,
+    "jul": 7,
+    "july": 7,
+    "aug": 8,
+    "august": 8,
+    "sep": 9,
+    "sept": 9,
+    "september": 9,
+    "oct": 10,
+    "october": 10,
+    "nov": 11,
+    "november": 11,
+    "dec": 12,
+    "december": 12,
+}
+
+
+def _build_create_close_run_follow_up_arguments(
+    *,
+    snapshot: dict[str, Any],
+    operator_content: str,
+    operator_memory: AgentMemorySummary,
+) -> dict[str, Any] | None:
+    """Return create-close-run arguments when a clarification reply supplies the period."""
+
+    period = _infer_close_run_period_from_text(operator_content)
+    if period is None:
+        return None
+    if not _memory_indicates_pending_close_run_creation(operator_memory=operator_memory):
+        return None
+
+    arguments = {
+        "period_start": period[0],
+        "period_end": period[1],
+    }
+    workspace_id = _resolve_workspace_id_for_create_close_run(
+        snapshot=snapshot,
+        operator_content=operator_content,
+        operator_memory=operator_memory,
+    )
+    if workspace_id is not None:
+        arguments["workspace_id"] = workspace_id
+    return arguments
+
+
+def _hydrate_create_close_run_arguments(
+    *,
+    tool_arguments: dict[str, Any],
+    snapshot: dict[str, Any],
+    operator_content: str,
+    operator_memory: AgentMemorySummary,
+) -> dict[str, Any]:
+    """Fill period and workspace targeting for close-run creation when unambiguous."""
+
+    hydrated = dict(tool_arguments)
+    if not isinstance(hydrated.get("workspace_id"), str):
+        workspace_id = _resolve_workspace_id_for_create_close_run(
+            snapshot=snapshot,
+            operator_content=operator_content,
+            operator_memory=operator_memory,
+        )
+        if workspace_id is not None:
+            hydrated["workspace_id"] = workspace_id
+
+    if not isinstance(hydrated.get("period_start"), str) or not isinstance(
+        hydrated.get("period_end"),
+        str,
+    ):
+        period = _infer_close_run_period_from_text(operator_content)
+        if period is not None:
+            hydrated["period_start"] = period[0]
+            hydrated["period_end"] = period[1]
+
+    return hydrated
+
+
+def _memory_indicates_pending_close_run_creation(
+    *,
+    operator_memory: AgentMemorySummary,
+) -> bool:
+    """Return whether recent turns show an unfinished create-close-run request."""
+
+    candidates = [
+        operator_memory.last_operator_message,
+        operator_memory.last_assistant_response,
+        operator_memory.working_subtask,
+        operator_memory.approved_objective,
+        operator_memory.pending_branch,
+        *operator_memory.recent_objectives,
+    ]
+    for value in candidates:
+        normalized = _searchable_text(value)
+        if not normalized:
+            continue
+        if "close run" not in normalized and "close" not in normalized:
+            continue
+        if any(token in normalized for token in ("create", "start", "open", "new", "fresh")):
+            return True
+        if "which period" in normalized or "for which period" in normalized:
+            return True
+    return False
+
+
+def _resolve_workspace_id_for_create_close_run(
+    *,
+    snapshot: dict[str, Any],
+    operator_content: str,
+    operator_memory: AgentMemorySummary,
+) -> str | None:
+    """Resolve the workspace target for close-run creation from text or compact memory."""
+
+    explicit_workspace_id = _resolve_workspace_id_from_snapshot(
+        snapshot=snapshot,
+        operator_content=operator_content,
+        operator_memory=operator_memory,
+    )
+    if explicit_workspace_id is not None:
+        return explicit_workspace_id
+
+    if operator_memory.last_target_type == "workspace":
+        target_id = operator_memory.last_target_id
+        if isinstance(target_id, str) and _snapshot_contains_target(
+            snapshot=snapshot,
+            target_type="workspace",
+            target_id=target_id,
+        ):
+            return target_id
+
+    for objective in reversed(operator_memory.recent_objectives):
+        workspace_id = _resolve_workspace_id_from_snapshot(
+            snapshot=snapshot,
+            operator_content=objective,
+            operator_memory=operator_memory,
+        )
+        if workspace_id is not None:
+            return workspace_id
+
+    workspace = snapshot.get("workspace")
+    if isinstance(workspace, dict) and isinstance(workspace.get("id"), str):
+        return str(workspace["id"])
+    return None
+
+
+def _infer_close_run_period_from_text(value: str) -> tuple[str, str] | None:
+    """Infer one monthly close-run period from common operator phrasing."""
+
+    normalized = _searchable_text(value)
+    if not normalized:
+        return None
+
+    month_names = "|".join(sorted(_MONTH_NUMBER_BY_NAME, key=len, reverse=True))
+    match = re.search(rf"\b({month_names})\s+(20\d{{2}})\b", normalized)
+    if match is None:
+        match = re.search(rf"\b(20\d{{2}})\s+({month_names})\b", normalized)
+        if match is not None:
+            year = int(match.group(1))
+            month = _MONTH_NUMBER_BY_NAME[match.group(2)]
+            return _month_period_iso(year=year, month=month)
+    else:
+        month = _MONTH_NUMBER_BY_NAME[match.group(1)]
+        year = int(match.group(2))
+        return _month_period_iso(year=year, month=month)
+
+    today = utc_now().date()
+    if any(phrase in normalized for phrase in ("this month", "current month")):
+        return _month_period_iso(year=today.year, month=today.month)
+    if "next month" in normalized:
+        next_year = today.year + (1 if today.month == 12 else 0)
+        next_month = 1 if today.month == 12 else today.month + 1
+        return _month_period_iso(year=next_year, month=next_month)
+    if "last month" in normalized or "previous month" in normalized:
+        previous_year = today.year - (1 if today.month == 1 else 0)
+        previous_month = 12 if today.month == 1 else today.month - 1
+        return _month_period_iso(year=previous_year, month=previous_month)
+    return None
+
+
+def _month_period_iso(*, year: int, month: int) -> tuple[str, str]:
+    """Return ISO start/end strings for one calendar month."""
+
+    last_day = monthrange(year, month)[1]
+    return f"{year:04d}-{month:02d}-01", f"{year:04d}-{month:02d}-{last_day:02d}"
+
+
 def _operator_memory_can_disambiguate_intent(
     *,
     operator_memory: AgentMemorySummary,
@@ -4972,10 +5386,18 @@ def _snapshot_contains_target(
     if not isinstance(records, list):
         if target_type == "workspace":
             workspace = snapshot.get("workspace")
-            return (
+            if (
                 isinstance(workspace, dict)
                 and str(workspace.get("id") or "") == normalized_target_id
-            )
+            ):
+                return True
+            accessible_workspaces = snapshot.get("accessible_workspaces")
+            if isinstance(accessible_workspaces, list):
+                return any(
+                    isinstance(record, dict)
+                    and str(record.get("id") or "") == normalized_target_id
+                    for record in accessible_workspaces
+                )
         return False
     for record in records:
         if isinstance(record, dict) and matcher(record, normalized_target_id):
@@ -5141,6 +5563,7 @@ def _tool_memory_subtask_verb(*, tool_name: str) -> str | None:
         "switch_workspace": "Work in",
         "update_workspace": "Update",
         "delete_workspace": "Delete",
+        "create_close_run": "Create a close run in",
         "delete_close_run": "Delete",
     }
     return mapping.get(tool_name)
@@ -5240,6 +5663,7 @@ def _tool_memory_target_spec(*, tool_name: str | None) -> tuple[str, str] | None
         "switch_workspace": ("workspace", "workspace_id"),
         "update_workspace": ("workspace", "workspace_id"),
         "delete_workspace": ("workspace", "workspace_id"),
+        "create_close_run": ("workspace", "workspace_id"),
         "delete_close_run": ("close_run", "close_run_id"),
     }
     return mapping.get(tool_name or "")
@@ -6550,7 +6974,7 @@ def _workspace_name_matches_text(value: str, normalized_text: str) -> bool:
     ]
     if len(tokens) < 2:
         return False
-    return all(token in normalized_text for token in tokens[:3])
+    return all(token in normalized_text for token in tokens[:2])
 
 
 def _infer_journal_posting_target(operator_content: str) -> str:
@@ -6703,10 +7127,18 @@ def _humanize_applied_result(applied_result: dict[str, Any]) -> str:
         return "I deleted that workspace."
 
     if tool_name == "create_close_run":
+        workspace_name = _optional_result_text(applied_result, "workspace_name")
         period_start = _optional_result_text(applied_result, "period_start")
         period_end = _optional_result_text(applied_result, "period_end")
         if period_start and period_end:
+            if workspace_name is not None:
+                return (
+                    f"I started a new close run in {workspace_name} for "
+                    f"{period_start} to {period_end}."
+                )
             return f"I started a new close run for {period_start} to {period_end}."
+        if workspace_name is not None:
+            return f"I started a new close run in {workspace_name}."
         return "I started a new close run."
 
     if tool_name == "delete_close_run":
@@ -6889,6 +7321,38 @@ def _build_operator_failure_message(
         else "that request"
     )
     normalized_message = _normalize_operator_facing_text(error.message)
+    searchable_message = _searchable_text(normalized_message)
+    if error.code is ChatActionExecutionErrorCode.ACCESS_DENIED or any(
+        phrase in searchable_message
+        for phrase in (
+            "not a member",
+            "not accessible",
+            "access denied",
+            "permission",
+            "not authorized",
+        )
+    ):
+        return (
+            "I couldn't access the workspace or record needed for that request. "
+            "I didn't make any changes. If this should be available to you, ask a workspace "
+            "owner to grant access; otherwise tell me which accessible workspace to use."
+        )
+    if error.code is ChatActionExecutionErrorCode.THREAD_NOT_FOUND:
+        return (
+            "I couldn't find this chat thread in the selected workspace. It may have moved "
+            "to another workspace or been deleted. Open the thread from the global assistant "
+            "or start a new chat and I can continue from the accessible workspace state."
+        )
+    if error.code is ChatActionExecutionErrorCode.EXECUTION_FAILED:
+        if normalized_message:
+            return (
+                f"I hit a system error while running {tool_phrase}. "
+                f"I didn't make further changes. {normalized_message}"
+            )
+        return (
+            f"I hit a system error while running {tool_phrase}. "
+            "I didn't make further changes."
+        )
     if "is not registered" in normalized_message:
         return (
             "I couldn't line up the exact workflow step for that request yet. "
@@ -6897,6 +7361,16 @@ def _build_operator_failure_message(
     if normalized_message:
         return f"I couldn't finish {tool_phrase} yet. {normalized_message}"
     return f"I couldn't finish {tool_phrase} yet."
+
+
+def _build_unexpected_operator_failure_message(*, error: Exception) -> str:
+    """Return a concise diagnostic for an unexpected operator runtime failure."""
+
+    error_name = type(error).__name__
+    detail = _normalize_operator_facing_text(str(error))
+    if detail:
+        return f"Unexpected {error_name}: {detail}"
+    return f"Unexpected {error_name}."
 
 
 def _build_failure_next_step(snapshot: dict[str, Any] | None) -> str | None:
@@ -7023,7 +7497,7 @@ def _coerce_execution_error(error: Exception) -> ChatActionExecutionError:
     status_code = getattr(error, "status_code", 422)
     message = (
         getattr(error, "message", str(error)).strip()
-        or "The requested action could not be completed."
+        or "The requested action stopped before it finished."
     )
     code = (
         ChatActionExecutionErrorCode.INVALID_ACTION_PLAN
@@ -7149,6 +7623,18 @@ def _optional_uuid_from_result(*, applied_result: dict[str, Any], key: str) -> U
         return None
 
 
+def _optional_uuid_from_arguments(*, arguments: dict[str, Any], key: str) -> UUID | None:
+    """Parse one optional UUID value from a planned tool argument payload."""
+
+    raw_value = arguments.get(key)
+    if not isinstance(raw_value, str):
+        return None
+    try:
+        return UUID(raw_value)
+    except ValueError:
+        return None
+
+
 def _optional_uuid_from_payload(*, payload: dict[str, Any], key: str) -> UUID | None:
     """Parse one optional UUID value from a stored action payload."""
 
@@ -7173,6 +7659,7 @@ def _build_scope_handoff_message(*, applied_result: dict[str, Any]) -> str | Non
     active_phase = applied_result.get("active_phase")
     period_start = applied_result.get("period_start")
     period_end = applied_result.get("period_end")
+    workspace_name = _optional_result_text(applied_result, "workspace_name")
 
     notes: list[str] = []
     if isinstance(reopened_close_run_id, str):
@@ -7191,12 +7678,14 @@ def _build_scope_handoff_message(*, applied_result: dict[str, Any]) -> str | Non
         period_suffix = ""
         if isinstance(period_start, str) and isinstance(period_end, str):
             period_suffix = f" for {period_start} to {period_end}"
+        workspace_suffix = f" in {workspace_name}" if workspace_name is not None else ""
         if isinstance(version_no, int):
             notes.append(
-                f"I started a new close run{period_suffix} as working version {version_no}."
+                f"I started a new close run{workspace_suffix}{period_suffix} "
+                f"as working version {version_no}."
             )
         else:
-            notes.append(f"I started a new close run{period_suffix}.")
+            notes.append(f"I started a new close run{workspace_suffix}{period_suffix}.")
     elif isinstance(deleted_close_run_id, str):
         notes.append(
             "I moved this thread back to the workspace scope because that close run is gone."

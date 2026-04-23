@@ -1032,6 +1032,119 @@ def test_hydrate_planning_result_resolves_named_workspace_delete() -> None:
     assert hydrated.tool_arguments["workspace_id"] == str(target_workspace_id)
 
 
+def test_hydrate_planning_result_creates_close_run_from_period_follow_up() -> None:
+    """A period-only reply should complete the remembered cross-workspace create request."""
+
+    current_workspace_id = str(uuid4())
+    target_workspace_id = str(uuid4())
+    executor = ChatActionExecutor.__new__(ChatActionExecutor)
+    executor._tool_registry = _build_fake_tool_registry("create_close_run")
+
+    hydrated = executor._hydrate_planning_result(
+        planning=AgentPlanningResult(
+            mode="read_only",
+            assistant_response="For which period should I open it?",
+            reasoning="The operator is answering a previous clarification.",
+            tool_name=None,
+            tool_arguments={},
+        ),
+        snapshot={
+            "workspace": {
+                "id": current_workspace_id,
+                "name": "Polymarket",
+            },
+            "accessible_workspaces": [
+                {
+                    "id": current_workspace_id,
+                    "name": "Polymarket",
+                },
+                {
+                    "id": target_workspace_id,
+                    "name": "Apex Meridian Distribution Limited",
+                },
+            ],
+        },
+        operator_content="yes for april 2026",
+        operator_memory=executor._memory_from_context_payload(
+            {
+                "agent_memory": {
+                    "last_operator_message": (
+                        "create a new close run for apex meridian"
+                    ),
+                    "last_assistant_response": (
+                        "For which period would you like to create the new close run "
+                        "for Apex Meridian Distribution Limited?"
+                    ),
+                    "working_subtask": "Create the next close run",
+                },
+                "agent_recent_objectives": (
+                    "create a new close run for apex meridian",
+                ),
+            }
+        ),
+    )
+
+    assert hydrated.mode == "tool"
+    assert hydrated.tool_name == "create_close_run"
+    assert hydrated.tool_arguments["workspace_id"] == target_workspace_id
+    assert hydrated.tool_arguments["period_start"] == "2026-04-01"
+    assert hydrated.tool_arguments["period_end"] == "2026-04-30"
+
+
+def test_hydrate_planning_result_answers_close_runs_across_workspaces() -> None:
+    """Cross-workspace close-run status should include approved runs outside the current entity."""
+
+    executor = ChatActionExecutor.__new__(ChatActionExecutor)
+
+    hydrated = executor._hydrate_planning_result(
+        planning=AgentPlanningResult(
+            mode="tool",
+            assistant_response="I'll inspect the close runs.",
+            reasoning="The operator asked for close-run status.",
+            tool_name="create_close_run",
+            tool_arguments={},
+        ),
+        snapshot={
+            "accessible_workspace_close_runs": [
+                {
+                    "workspace": {"id": str(uuid4()), "name": "Polymarket"},
+                    "close_runs": [
+                        {
+                            "id": str(uuid4()),
+                            "status": "draft",
+                            "period_label": "Mar 2026",
+                            "active_phase": "collection",
+                        }
+                    ],
+                },
+                {
+                    "workspace": {
+                        "id": str(uuid4()),
+                        "name": "Apex Meridian Distribution Limited",
+                    },
+                    "close_runs": [
+                        {
+                            "id": str(uuid4()),
+                            "status": "approved",
+                            "period_label": "Mar 2026",
+                            "active_phase": None,
+                        }
+                    ],
+                },
+            ],
+        },
+        operator_content="Summarize the close runs across my workspaces.",
+        operator_memory=executor._memory_from_context_payload({}),
+    )
+
+    assert hydrated.mode == "read_only"
+    assert hydrated.tool_name is None
+    assert "Polymarket: Mar 2026 (draft, Collection)" in hydrated.assistant_response
+    assert "Apex Meridian Distribution Limited: Mar 2026 (approved)" in (
+        hydrated.assistant_response
+    )
+
+
 def test_send_action_message_asks_for_workspace_clarification_before_delete() -> None:
     """Ambiguous governed actions should ask one compact clarification instead of failing."""
 
@@ -1202,6 +1315,54 @@ def test_handoff_thread_scope_moves_to_workspace_after_close_run_delete() -> Non
     assert updated_thread.close_run_id is None
     assert handoff_message is not None
     assert "workspace scope" in handoff_message
+
+
+def test_handoff_thread_scope_moves_to_created_close_run_workspace() -> None:
+    """Creating a close run in another workspace should re-anchor the thread there."""
+
+    created_close_run_id = uuid4()
+    source_entity_id = uuid4()
+    target_entity_id = uuid4()
+    actor_user = EntityUserRecord(id=uuid4(), email="ops@example.com", full_name="Finance Ops")
+    thread_id = uuid4()
+    fake_action_repo = _FakeActionRepository()
+    fake_chat_repo = _FakeChatRepository(reopened_close_run_id=created_close_run_id)
+    fake_grounding = _FakeGroundingService(
+        reopened_close_run_id=created_close_run_id,
+        entity_id=target_entity_id,
+    )
+    executor = ChatActionExecutor.__new__(ChatActionExecutor)
+    executor._action_repo = fake_action_repo
+    executor._chat_repo = fake_chat_repo
+    executor._grounding = fake_grounding
+
+    _, updated_thread, handoff_message = executor._handoff_thread_scope_if_needed(
+        actor_user=actor_user,
+        entity_id=source_entity_id,
+        thread_id=thread_id,
+        thread=SimpleNamespace(
+            entity_id=source_entity_id,
+            close_run_id=None,
+            context_payload={"entity_name": "Polymarket"},
+        ),
+        grounding=SimpleNamespace(context=SimpleNamespace()),
+        applied_result={
+            "tool": "create_close_run",
+            "created_close_run_id": str(created_close_run_id),
+            "created_workspace_id": str(target_entity_id),
+            "workspace_name": "Apex Meridian Distribution Limited",
+            "period_start": "2026-04-01",
+            "period_end": "2026-04-30",
+            "active_phase": "collection",
+            "version_no": 1,
+        },
+    )
+
+    assert updated_thread.entity_id == target_entity_id
+    assert updated_thread.close_run_id == created_close_run_id
+    assert handoff_message is not None
+    assert "Apex Meridian Distribution Limited" in handoff_message
+    assert fake_action_repo.supersede_calls == []
 
 
 def test_send_action_message_executes_multiple_steps_before_replying() -> None:
@@ -1831,6 +1992,151 @@ def test_send_action_message_surfaces_action_failure_in_thread() -> None:
     assert memory_updates[-1]["action_status"] == "failed"
 
 
+def test_send_action_message_surfaces_access_denied_tool_failure_in_thread() -> None:
+    """Access-denied tool failures should become an assistant reply with recovery guidance."""
+
+    entity_id = uuid4()
+    actor_user = EntityUserRecord(id=uuid4(), email="ops@example.com", full_name="Finance Ops")
+    thread = SimpleNamespace(entity_id=entity_id, close_run_id=None, context_payload={})
+    grounding = SimpleNamespace(
+        entity=SimpleNamespace(name="Polymarket"),
+        context=SimpleNamespace(
+            entity_id=str(entity_id),
+            entity_name="Polymarket",
+            close_run_id=None,
+            period_label=None,
+            autonomy_mode="human_review",
+            base_currency="USD",
+        ),
+    )
+    db_session = _FakeLoopDbSession()
+    chat_repo = _FakeLoopChatRepository()
+    action_repo = _FakeLoopActionRepository(close_run_id=uuid4())
+    memory_updates: list[dict[str, object]] = []
+
+    executor = ChatActionExecutor.__new__(ChatActionExecutor)
+    executor._db_session = db_session
+    executor._chat_repo = chat_repo
+    executor._action_repo = action_repo
+    executor._ensure_entity_coa_available = lambda **kwargs: None
+    executor._load_thread_context = lambda **kwargs: (grounding, thread)  # type: ignore[method-assign]
+    executor._snapshot_for_thread = lambda **kwargs: {"readiness": {"next_actions": []}}  # type: ignore[method-assign]
+    executor._plan_action = lambda **kwargs: AgentPlanningResult(  # type: ignore[method-assign]
+        mode="tool",
+        assistant_response="I'll create that close run now.",
+        reasoning="The operator asked for a close run in another workspace.",
+        tool_name="create_close_run",
+        tool_arguments={"workspace_id": str(uuid4())},
+    )
+    executor._hydrate_planning_result = lambda **kwargs: kwargs["planning"]  # type: ignore[method-assign]
+    executor._resolve_action = lambda **kwargs: _resolve_fake_action(  # type: ignore[method-assign]
+        kwargs["planning"]
+    )
+    executor._build_execution_context = lambda **kwargs: SimpleNamespace()  # type: ignore[method-assign]
+    executor._requires_human_approval = lambda **kwargs: False  # type: ignore[method-assign]
+    executor._execute_action = lambda **kwargs: (_ for _ in ()).throw(  # type: ignore[method-assign]
+        ChatActionExecutionError(
+            status_code=403,
+            code=ChatActionExecutionErrorCode.ACCESS_DENIED,
+            message="That workspace is not accessible to the current operator.",
+        )
+    )
+    executor._build_grounding_payload = lambda *args, **kwargs: {}  # type: ignore[method-assign]
+    executor._build_trace_metadata = lambda **kwargs: {}  # type: ignore[method-assign]
+    executor._update_thread_memory = lambda **kwargs: memory_updates.append(kwargs)  # type: ignore[method-assign]
+
+    outcome = executor.send_action_message(
+        thread_id=uuid4(),
+        entity_id=entity_id,
+        actor_user=actor_user,
+        content="Create an April close run for the workspace I mentioned.",
+        source_surface="desktop",
+        trace_id="trace-access-denied",
+    )
+
+    assert outcome.is_read_only is True
+    assert "I couldn't access the workspace or record needed" in outcome.assistant_content
+    assert "I didn't make any changes" in outcome.assistant_content
+    assert "could not be completed" not in outcome.assistant_content.lower()
+    assert db_session.rollback_calls == 1
+    assert db_session.commit_calls == 1
+    assert memory_updates[-1]["action_status"] == "failed"
+
+
+def test_send_action_message_surfaces_unexpected_runtime_failure_in_thread() -> None:
+    """Unexpected operator exceptions should still produce a chat-visible response."""
+
+    entity_id = uuid4()
+    close_run_id = uuid4()
+    actor_user = EntityUserRecord(id=uuid4(), email="ops@example.com", full_name="Finance Ops")
+    thread = SimpleNamespace(entity_id=entity_id, close_run_id=close_run_id, context_payload={})
+    grounding = SimpleNamespace(
+        entity=SimpleNamespace(name="Apex Meridian Nigeria Ltd"),
+        context=SimpleNamespace(
+            entity_id=str(entity_id),
+            entity_name="Apex Meridian Nigeria Ltd",
+            close_run_id=str(close_run_id),
+            period_label="Apr 2026",
+            autonomy_mode="human_review",
+            base_currency="NGN",
+        ),
+    )
+    db_session = _FakeLoopDbSession()
+    chat_repo = _FakeLoopChatRepository()
+    action_repo = _FakeLoopActionRepository(close_run_id=close_run_id)
+    memory_updates: list[dict[str, object]] = []
+
+    executor = ChatActionExecutor.__new__(ChatActionExecutor)
+    executor._db_session = db_session
+    executor._chat_repo = chat_repo
+    executor._action_repo = action_repo
+    executor._ensure_entity_coa_available = lambda **kwargs: None
+    executor._load_thread_context = lambda **kwargs: (grounding, thread)  # type: ignore[method-assign]
+    executor._snapshot_for_thread = lambda **kwargs: {  # type: ignore[method-assign]
+        "readiness": {"next_actions": ["Review the close-run setup before retrying."]},
+    }
+    executor._plan_action = lambda **kwargs: AgentPlanningResult(  # type: ignore[method-assign]
+        mode="tool",
+        assistant_response="I'll advance the close now.",
+        reasoning="The operator asked to advance the workflow.",
+        tool_name="advance_close_run",
+        tool_arguments={},
+    )
+    executor._hydrate_planning_result = lambda **kwargs: kwargs["planning"]  # type: ignore[method-assign]
+    executor._resolve_action = lambda **kwargs: _resolve_fake_action(  # type: ignore[method-assign]
+        kwargs["planning"]
+    )
+    executor._build_execution_context = lambda **kwargs: SimpleNamespace()  # type: ignore[method-assign]
+    executor._requires_human_approval = lambda **kwargs: False  # type: ignore[method-assign]
+    executor._execute_action = lambda **kwargs: (_ for _ in ()).throw(  # type: ignore[method-assign]
+        RuntimeError("database timeout while loading phase state")
+    )
+    executor._build_grounding_payload = lambda *args, **kwargs: {}  # type: ignore[method-assign]
+    executor._build_trace_metadata = lambda **kwargs: {}  # type: ignore[method-assign]
+    executor._update_thread_memory = lambda **kwargs: memory_updates.append(kwargs)  # type: ignore[method-assign]
+
+    outcome = executor.send_action_message(
+        thread_id=uuid4(),
+        entity_id=entity_id,
+        actor_user=actor_user,
+        content="Advance the close run.",
+        source_surface="desktop",
+        trace_id="trace-runtime-failure",
+    )
+
+    assert outcome.is_read_only is True
+    assert "I hit a system error while running the advance close run step" in (
+        outcome.assistant_content
+    )
+    assert "Unexpected RuntimeError: database timeout while loading phase state" in (
+        outcome.assistant_content
+    )
+    assert "Next, I can review the close-run setup before retrying." in outcome.assistant_content
+    assert db_session.rollback_calls == 1
+    assert db_session.commit_calls == 1
+    assert memory_updates[-1]["action_status"] == "failed"
+
+
 def test_update_thread_memory_tracks_preferences_targets_and_recent_objectives() -> None:
     """Thread memory should retain operator preferences and recent workspace targets."""
 
@@ -2334,6 +2640,7 @@ def _build_fake_tool_registry(*tool_names: str):
         "switch_workspace": ["workspace_id"],
         "update_workspace": ["workspace_id"],
         "delete_workspace": ["workspace_id"],
+        "create_close_run": ["period_start", "period_end"],
         "approve_reconciliation": ["reconciliation_id"],
         "disposition_reconciliation_item": ["item_id", "disposition", "reason"],
         "resolve_reconciliation_anomaly": ["anomaly_id", "resolution_note"],

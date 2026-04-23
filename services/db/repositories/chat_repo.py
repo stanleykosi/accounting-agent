@@ -253,6 +253,43 @@ class ChatRepository:
         threads = self._db_session.execute(statement).scalars().all()
         return tuple(_map_thread(thread) for thread in threads)
 
+    def list_threads_for_user_any_scope(
+        self,
+        *,
+        user_id: UUID,
+        limit: int,
+    ) -> tuple[ChatThreadWithCountRecord, ...]:
+        """Return all accessible user threads with counts, newest activity first."""
+
+        subquery = (
+            select(
+                ChatMessage.thread_id,
+                func.count(ChatMessage.id).label("message_count"),
+                func.max(ChatMessage.created_at).label("last_message_at"),
+            )
+            .group_by(ChatMessage.thread_id)
+            .subquery()
+        )
+
+        statement = (
+            select(ChatThread, subquery.c.message_count, subquery.c.last_message_at)
+            .join(EntityMembership, EntityMembership.entity_id == ChatThread.entity_id)
+            .outerjoin(subquery, ChatThread.id == subquery.c.thread_id)
+            .where(EntityMembership.user_id == user_id)
+            .order_by(desc(ChatThread.updated_at), desc(ChatThread.id))
+            .limit(limit)
+        )
+
+        rows = self._db_session.execute(statement).all()
+        return tuple(
+            ChatThreadWithCountRecord(
+                thread=_map_thread(thread),
+                message_count=int(message_count) if message_count is not None else 0,
+                last_message_at=last_message_at,
+            )
+            for thread, message_count, last_message_at in rows
+        )
+
     def create_message(
         self,
         *,

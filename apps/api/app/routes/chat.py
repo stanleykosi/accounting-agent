@@ -82,6 +82,7 @@ from services.contracts.chat_models import (
     ChatThreadWithMessages,
     ChatThreadWorkspaceResponse,
     CreateChatThreadRequest,
+    CreateGlobalChatThreadRequest,
     SendChatMessageRequest,
 )
 from services.db.models.audit import AuditSourceSurface
@@ -652,6 +653,77 @@ def list_chat_threads(
     return chat_service.list_threads(
         entity_id=entity_id,
         close_run_id=close_run_id,
+        user_id=session_result.user.id,
+        limit=limit,
+    )
+
+
+@router.post(
+    "/global/threads",
+    response_model=ChatThreadWithMessages,
+    status_code=status.HTTP_201_CREATED,
+    summary="Create a new global assistant chat thread",
+)
+def create_global_chat_thread(
+    payload: CreateGlobalChatThreadRequest,
+    request: Request,
+    response: Response,
+    settings: SettingsDependency,
+    auth_service: AuthServiceDependency,
+    chat_service: ChatServiceDependency,
+) -> ChatThreadWithMessages:
+    """Create a global assistant thread with access to all caller workspaces."""
+
+    session_result = _require_authenticated_browser_session(
+        request=request,
+        response=response,
+        auth_service=auth_service,
+        settings=settings,
+    )
+    trace_id = getattr(request.state, "request_id", None)
+
+    try:
+        thread_summary = chat_service.create_global_thread(
+            request=payload,
+            user_id=session_result.user.id,
+            source_surface=AuditSourceSurface.DESKTOP,
+            trace_id=trace_id,
+        )
+    except ChatServiceError as error:
+        raise HTTPException(
+            status_code=error.status_code,
+            detail=_error_payload(code=error.code.value, message=error.message),
+        ) from error
+
+    return ChatThreadWithMessages(
+        thread=thread_summary,
+        messages=(),
+    )
+
+
+@router.get(
+    "/global/threads",
+    response_model=ChatThreadListResponse,
+    summary="List chat threads across all accessible workspaces",
+)
+def list_global_chat_threads(
+    limit: ThreadLimitQuery = 50,
+    request: Request = None,  # type: ignore[assignment]
+    response: Response = None,  # type: ignore[assignment]
+    settings: SettingsDependency = None,  # type: ignore[assignment]
+    auth_service: AuthServiceDependency = None,  # type: ignore[assignment]
+    chat_service: ChatServiceDependency = None,  # type: ignore[assignment]
+) -> ChatThreadListResponse:
+    """Return every chat thread the user can access, across workspace scopes."""
+
+    session_result = _require_authenticated_browser_session(
+        request=request,
+        response=response,
+        auth_service=auth_service,
+        settings=settings,
+    )
+
+    return chat_service.list_global_threads(
         user_id=session_result.user.id,
         limit=limit,
     )
