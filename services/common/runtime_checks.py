@@ -13,7 +13,34 @@ import subprocess
 import psycopg
 from minio import Minio
 from redis import Redis
+from redis.exceptions import (
+    AuthenticationError as RedisAuthenticationError,
+)
+from redis.exceptions import (
+    BusyLoadingError as RedisBusyLoadingError,
+)
+from redis.exceptions import (
+    ConnectionError as RedisConnectionError,
+)
+from redis.exceptions import (
+    TimeoutError as RedisTimeoutError,
+)
 from services.common.settings import AppSettings
+from urllib3 import PoolManager, Timeout
+from urllib3.exceptions import HTTPError as UrllibHttpError
+
+_TRANSIENT_NETWORK_ERROR_TOKENS = (
+    "connection refused",
+    "connection reset by peer",
+    "network is unreachable",
+    "temporarily unavailable",
+    "timed out",
+    "timeout",
+)
+
+
+class TransientDependencyCheckError(RuntimeError):
+    """Signal that a dependency probe failed for a retryable warmup reason."""
 
 
 def run_backend_dependency_healthcheck(settings: AppSettings) -> None:
@@ -32,10 +59,25 @@ def verify_database_connectivity(settings: AppSettings) -> None:
     if preferred_hostaddr is not None:
         connect_kwargs["hostaddr"] = preferred_hostaddr
 
-    with psycopg.connect(settings.database.connection_url, **connect_kwargs) as connection:
-        with connection.cursor() as cursor:
-            cursor.execute("SELECT 1;")
-            cursor.fetchone()
+    try:
+        with psycopg.connect(settings.database.connection_url, **connect_kwargs) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT 1;")
+                cursor.fetchone()
+    except psycopg.OperationalError as error:
+        if _is_transient_database_operational_error(error):
+            _raise_transient_dependency_check_error(
+                dependency_name="Database",
+                error=error,
+            )
+        raise
+    except (OSError, TimeoutError) as error:
+        if _looks_like_transient_network_error(error):
+            _raise_transient_dependency_check_error(
+                dependency_name="Database",
+                error=error,
+            )
+        raise
 
 
 def verify_redis_connectivity(settings: AppSettings) -> None:
@@ -48,7 +90,22 @@ def verify_redis_connectivity(settings: AppSettings) -> None:
         socket_timeout=5,
     )
     try:
-        client.ping()
+        try:
+            client.ping()
+        except RedisAuthenticationError:
+            raise
+        except RedisBusyLoadingError as error:
+            _raise_transient_dependency_check_error(
+                dependency_name="Redis",
+                error=error,
+            )
+        except (RedisConnectionError, RedisTimeoutError, OSError) as error:
+            if _looks_like_transient_network_error(error):
+                _raise_transient_dependency_check_error(
+                    dependency_name="Redis",
+                    error=error,
+                )
+            raise
     finally:
         client.close()
 
@@ -56,26 +113,42 @@ def verify_redis_connectivity(settings: AppSettings) -> None:
 def verify_object_storage_connectivity(settings: AppSettings) -> None:
     """Confirm that object storage is reachable and that the required physical buckets exist."""
 
+    http_client = PoolManager(
+        retries=False,
+        timeout=Timeout(connect=5.0, read=5.0),
+    )
     client = Minio(
         endpoint=settings.storage.endpoint,
         access_key=settings.storage.access_key,
         secret_key=settings.storage.secret_key.get_secret_value(),
         secure=settings.storage.secure,
         region=settings.storage.region,
+        http_client=http_client,
     )
-    bucket_names = {bucket.name for bucket in client.list_buckets()}
-    required_bucket_names = {
-        settings.storage.document_bucket,
-        settings.storage.artifact_bucket,
-        settings.storage.derivative_bucket,
-    }
-    missing_bucket_names = sorted(required_bucket_names - bucket_names)
-    if missing_bucket_names:
-        formatted_bucket_names = ", ".join(missing_bucket_names)
-        raise RuntimeError(
-            "Object-storage validation failed. Missing required buckets: "
-            f"{formatted_bucket_names}."
-        )
+    try:
+        try:
+            bucket_names = {bucket.name for bucket in client.list_buckets()}
+        except (UrllibHttpError, OSError, TimeoutError) as error:
+            if _looks_like_transient_network_error(error):
+                _raise_transient_dependency_check_error(
+                    dependency_name="Object storage",
+                    error=error,
+                )
+            raise
+        required_bucket_names = {
+            settings.storage.document_bucket,
+            settings.storage.artifact_bucket,
+            settings.storage.derivative_bucket,
+        }
+        missing_bucket_names = sorted(required_bucket_names - bucket_names)
+        if missing_bucket_names:
+            formatted_bucket_names = ", ".join(missing_bucket_names)
+            raise RuntimeError(
+                "Object-storage validation failed. Missing required buckets: "
+                f"{formatted_bucket_names}."
+            )
+    finally:
+        http_client.clear()
 
 
 def verify_ocr_runtime() -> None:
@@ -120,3 +193,58 @@ def verify_ocr_runtime() -> None:
             "OCR runtime validation failed. Missing required Tesseract language packs: "
             f"{formatted_languages}."
         )
+
+
+def _raise_transient_dependency_check_error(
+    *,
+    dependency_name: str,
+    error: Exception,
+) -> None:
+    """Raise one stable retryable dependency error with the original exception chained."""
+
+    raise TransientDependencyCheckError(
+        f"{dependency_name} dependency is not reachable yet: "
+        f"{_normalize_dependency_error_message(error)}"
+    ) from error
+
+
+def _is_transient_database_operational_error(error: psycopg.OperationalError) -> bool:
+    """Return whether one PostgreSQL startup failure is safe to retry."""
+
+    sqlstate = getattr(error, "sqlstate", None)
+    if isinstance(sqlstate, str) and sqlstate.startswith("08"):
+        return True
+    return _looks_like_transient_network_error(error)
+
+
+def _looks_like_transient_network_error(error: BaseException) -> bool:
+    """Return whether one dependency error looks like a retryable transport failure."""
+
+    for candidate in _iter_exception_chain(error):
+        message = _normalize_dependency_error_message(candidate).lower()
+        if any(token in message for token in _TRANSIENT_NETWORK_ERROR_TOKENS):
+            return True
+    return False
+
+
+def _iter_exception_chain(error: BaseException) -> tuple[BaseException, ...]:
+    """Return the causal chain for one exception without looping forever."""
+
+    chain: list[BaseException] = []
+    seen: set[int] = set()
+    current: BaseException | None = error
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        chain.append(current)
+        next_error = current.__cause__ or current.__context__
+        current = next_error if isinstance(next_error, BaseException) else None
+    return tuple(chain)
+
+
+def _normalize_dependency_error_message(error: BaseException) -> str:
+    """Return one compact dependency error string for readiness payloads and logs."""
+
+    message = str(error).strip()
+    if message:
+        return message
+    return error.__class__.__name__

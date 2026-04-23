@@ -20,6 +20,7 @@ from services.chat.continuation_state import (
     build_pending_async_turn_payload,
     new_chat_operator_continuation,
 )
+from services.chat.operator_memory import seed_context_payload_with_operator_memory
 from services.db.repositories.chat_action_repo import ChatActionPlanRecord
 from services.db.repositories.entity_repo import EntityUserRecord
 
@@ -204,6 +205,7 @@ def test_hydrate_planning_result_resolves_single_document_and_review_flags() -> 
             ]
         },
         operator_content="approve it",
+        operator_memory=executor._memory_from_context_payload({}),
     )
 
     assert hydrated.tool_arguments["document_id"] == str(document_id)
@@ -279,6 +281,7 @@ def test_hydrate_planning_result_resolves_recommendation_rejection_in_chat() -> 
             ]
         },
         operator_content="reject it",
+        operator_memory=executor._memory_from_context_payload({}),
     )
 
     assert hydrated.tool_arguments["recommendation_id"] == str(recommendation_id)
@@ -313,10 +316,145 @@ def test_hydrate_planning_result_resolves_journal_apply_to_internal_ledger() -> 
             ]
         },
         operator_content="apply it",
+        operator_memory=executor._memory_from_context_payload({}),
     )
 
     assert hydrated.tool_arguments["journal_id"] == str(journal_id)
     assert hydrated.tool_arguments["posting_target"] == "internal_ledger"
+
+
+def test_hydrate_planning_result_does_not_resolve_apply_journal_to_unapproved_singleton() -> None:
+    """Applying journals should not auto-target a lone draft or pending-review journal."""
+
+    executor = ChatActionExecutor.__new__(ChatActionExecutor)
+
+    hydrated = executor._hydrate_planning_result(
+        planning=AgentPlanningResult(
+            mode="tool",
+            assistant_response="I'll post it now.",
+            reasoning="The operator asked to apply the current journal.",
+            tool_name="apply_journal",
+            tool_arguments={},
+        ),
+        snapshot={
+            "journals": [
+                {
+                    "id": str(uuid4()),
+                    "status": "pending_review",
+                    "journal_number": "JE-2026-00002",
+                    "description": "Draft transport accrual",
+                }
+            ]
+        },
+        operator_content="apply it",
+        operator_memory=executor._memory_from_context_payload({}),
+    )
+
+    assert "journal_id" not in hydrated.tool_arguments
+    assert hydrated.tool_arguments["posting_target"] == "internal_ledger"
+
+
+def test_hydrate_planning_result_does_not_apply_named_unapproved_journal() -> None:
+    """Even an explicit journal mention should not post before approval."""
+
+    journal_id = uuid4()
+    executor = ChatActionExecutor.__new__(ChatActionExecutor)
+
+    hydrated = executor._hydrate_planning_result(
+        planning=AgentPlanningResult(
+            mode="tool",
+            assistant_response="I'll post it now.",
+            reasoning="The operator named the journal to apply.",
+            tool_name="apply_journal",
+            tool_arguments={},
+        ),
+        snapshot={
+            "journals": [
+                {
+                    "id": str(journal_id),
+                    "status": "pending_review",
+                    "journal_number": "JE-2026-00002",
+                    "description": "Draft transport accrual",
+                }
+            ]
+        },
+        operator_content="apply JE-2026-00002",
+        operator_memory=executor._memory_from_context_payload({}),
+    )
+
+    assert "journal_id" not in hydrated.tool_arguments
+    assert hydrated.tool_arguments["posting_target"] == "internal_ledger"
+
+
+def test_hydrate_planning_result_does_not_apply_remembered_unapproved_journal() -> None:
+    """Remembered journal focus should still respect apply_journal approval policy."""
+
+    journal_id = uuid4()
+    executor = ChatActionExecutor.__new__(ChatActionExecutor)
+
+    hydrated = executor._hydrate_planning_result(
+        planning=AgentPlanningResult(
+            mode="tool",
+            assistant_response="I'll post it now.",
+            reasoning="The operator is following up on the current journal.",
+            tool_name="apply_journal",
+            tool_arguments={},
+        ),
+        snapshot={
+            "journals": [
+                {
+                    "id": str(journal_id),
+                    "status": "pending_review",
+                    "journal_number": "JE-2026-00002",
+                    "description": "Draft transport accrual",
+                }
+            ]
+        },
+        operator_content="apply it",
+        operator_memory=executor._memory_from_context_payload(
+            {
+                "agent_memory": {
+                    "last_target_type": "journal",
+                    "last_target_id": str(journal_id),
+                    "last_target_label": "journal JE-2026-00002",
+                }
+            }
+        ),
+    )
+
+    assert "journal_id" not in hydrated.tool_arguments
+    assert hydrated.tool_arguments["posting_target"] == "internal_ledger"
+
+
+def test_build_runtime_clarification_for_apply_journal_prefers_approval_guidance() -> None:
+    """Applying an unapproved singleton journal should surface approval guidance."""
+
+    executor = ChatActionExecutor.__new__(ChatActionExecutor)
+    executor._tool_registry = _build_fake_tool_registry("apply_journal")
+
+    clarification = executor._build_runtime_clarification(
+        planning=AgentPlanningResult(
+            mode="tool",
+            assistant_response="I'll post it now.",
+            reasoning="The operator asked to apply the current journal.",
+            tool_name="apply_journal",
+            tool_arguments={"posting_target": "internal_ledger"},
+        ),
+        snapshot={
+            "journals": [
+                {
+                    "id": str(uuid4()),
+                    "status": "pending_review",
+                    "journal_number": "JE-2026-00002",
+                    "description": "Draft transport accrual",
+                }
+            ]
+        },
+    )
+
+    assert clarification is not None
+    assert "There isn't an approved journal ready to post yet." in clarification
+    assert "approve je-2026-00002 first" in clarification.lower()
 
 
 def test_hydrate_planning_result_resolves_export_distribution_target() -> None:
@@ -346,6 +484,7 @@ def test_hydrate_planning_result_resolves_export_distribution_target() -> None:
             ]
         },
         operator_content="Send it to Adaobi.",
+        operator_memory=executor._memory_from_context_payload({}),
     )
 
     assert hydrated.tool_arguments["export_id"] == str(export_id)
@@ -379,6 +518,7 @@ def test_hydrate_planning_result_resolves_single_reconciliation_item_disposition
             ]
         },
         operator_content="resolve it",
+        operator_memory=executor._memory_from_context_payload({}),
     )
 
     assert hydrated.tool_arguments["item_id"] == str(item_id)
@@ -423,6 +563,7 @@ def test_hydrate_planning_result_resolves_commentary_section_from_chat() -> None
             ],
         },
         operator_content="approve the cash flow commentary",
+        operator_memory=executor._memory_from_context_payload({}),
     )
 
     assert hydrated.tool_arguments["report_run_id"] == str(report_run_id)
@@ -453,9 +594,377 @@ def test_hydrate_planning_result_defaults_workspace_update_to_current_scope() ->
             }
         },
         operator_content="rename this workspace to Apex Meridian West Africa",
+        operator_memory=executor._memory_from_context_payload({}),
     )
 
     assert hydrated.tool_arguments["workspace_id"] == str(workspace_id)
+
+
+def test_hydrate_planning_result_repairs_workspace_namespace_to_switch_workspace() -> None:
+    """Namespace leakage should repair onto the concrete workspace-switch tool."""
+
+    target_workspace_id = uuid4()
+    executor = ChatActionExecutor.__new__(ChatActionExecutor)
+    executor._tool_registry = _build_fake_tool_registry(
+        "switch_workspace",
+        "create_workspace",
+        "update_workspace",
+        "delete_workspace",
+    )
+
+    hydrated = executor._hydrate_planning_result(
+        planning=AgentPlanningResult(
+            mode="tool",
+            assistant_response="I'll switch the workspace.",
+            reasoning="The operator asked to move this chat onto another workspace.",
+            tool_name="workspace_admin",
+            tool_arguments={},
+        ),
+        snapshot={
+            "workspace": {
+                "id": str(uuid4()),
+                "name": "Apex Meridian Nigeria Ltd",
+            },
+            "accessible_workspaces": [
+                {
+                    "id": str(target_workspace_id),
+                    "name": "Polymarket",
+                }
+            ],
+        },
+        operator_content="switch back to polymarket workspace",
+        operator_memory=executor._memory_from_context_payload({}),
+    )
+
+    assert hydrated.mode == "tool"
+    assert hydrated.tool_name == "switch_workspace"
+    assert hydrated.tool_arguments["workspace_id"] == str(target_workspace_id)
+
+
+def test_hydrate_planning_result_answers_current_workspace_status_read_only() -> None:
+    """Explicit workspace-status questions should stay read-only even if the planner drifts."""
+
+    executor = ChatActionExecutor.__new__(ChatActionExecutor)
+    executor._tool_registry = _build_fake_tool_registry(
+        "switch_workspace",
+        "create_workspace",
+        "update_workspace",
+        "delete_workspace",
+    )
+
+    hydrated = executor._hydrate_planning_result(
+        planning=AgentPlanningResult(
+            mode="tool",
+            assistant_response="I'll check that workspace.",
+            reasoning="The operator asked about the current workspace state.",
+            tool_name="workspace_admin",
+            tool_arguments={},
+        ),
+        snapshot={
+            "workspace": {
+                "id": str(uuid4()),
+                "name": "Polymarket",
+            },
+            "close_run_id": None,
+        },
+        operator_content="which workspace are you currently on?",
+        operator_memory=executor._memory_from_context_payload({}),
+    )
+
+    assert hydrated.mode == "read_only"
+    assert hydrated.tool_name is None
+    assert hydrated.tool_arguments == {}
+    assert hydrated.assistant_response == "This chat is currently anchored to Polymarket."
+
+
+def test_hydrate_planning_result_answers_close_blockers_read_only() -> None:
+    """Common blocker questions should resolve directly from readiness state."""
+
+    executor = ChatActionExecutor.__new__(ChatActionExecutor)
+    executor._tool_registry = _build_fake_tool_registry(
+        "review_document",
+        "approve_recommendation",
+        "approve_journal",
+    )
+
+    hydrated = executor._hydrate_planning_result(
+        planning=AgentPlanningResult(
+            mode="tool",
+            assistant_response="I'll inspect the current blockers.",
+            reasoning="The operator asked for the blocker state.",
+            tool_name="review_document",
+            tool_arguments={},
+        ),
+        snapshot={
+            "close_run_id": str(uuid4()),
+            "readiness": {
+                "blockers": [
+                    "Collection is blocked by no approved source documents yet."
+                ],
+                "warnings": [],
+                "next_actions": [
+                    "Review the remaining source document and approve it if it is complete."
+                ],
+            },
+        },
+        operator_content="what is blocking this close right now?",
+        operator_memory=executor._memory_from_context_payload({}),
+    )
+
+    assert hydrated.mode == "read_only"
+    assert hydrated.tool_name is None
+    assert "blocked by no approved source documents yet" in hydrated.assistant_response
+    assert "next best move" in hydrated.assistant_response.lower()
+
+
+def test_hydrate_planning_result_answers_next_step_read_only() -> None:
+    """Next-step questions should come straight from readiness instead of a tool call."""
+
+    executor = ChatActionExecutor.__new__(ChatActionExecutor)
+
+    hydrated = executor._hydrate_planning_result(
+        planning=AgentPlanningResult(
+            mode="tool",
+            assistant_response="I'll figure out the next step.",
+            reasoning="The operator wants the next best action.",
+            tool_name="generate_recommendations",
+            tool_arguments={},
+        ),
+        snapshot={
+            "readiness": {
+                "blockers": [],
+                "warnings": [],
+                "next_actions": [
+                    "Generate accounting recommendations for the parsed document set."
+                ],
+            }
+        },
+        operator_content="what should we do next?",
+        operator_memory=executor._memory_from_context_payload({}),
+    )
+
+    assert hydrated.mode == "read_only"
+    assert hydrated.tool_name is None
+    assert (
+        hydrated.assistant_response
+        == (
+            "The next best move is to generate accounting recommendations "
+            "for the parsed document set"
+        )
+    )
+
+
+def test_hydrate_planning_result_clarifies_cross_domain_approve_it() -> None:
+    """Generic approve-it requests should clarify when several domains have one clear target."""
+
+    executor = ChatActionExecutor.__new__(ChatActionExecutor)
+    executor._tool_registry = _build_fake_tool_registry(
+        "review_document",
+        "approve_recommendation",
+        "approve_journal",
+    )
+
+    hydrated = executor._hydrate_planning_result(
+        planning=AgentPlanningResult(
+            mode="tool",
+            assistant_response="I'll approve that now.",
+            reasoning="The operator asked to approve the current pending item.",
+            tool_name="review_document",
+            tool_arguments={},
+        ),
+        snapshot={
+            "documents": [
+                {
+                    "id": str(uuid4()),
+                    "filename": "invoice-axis-haulage-2026-03.pdf",
+                    "status": "needs_review",
+                }
+            ],
+            "recommendations": [
+                {
+                    "id": str(uuid4()),
+                    "status": "pending_review",
+                    "document_filename": "payslip-adaobi-nwosu-2026-03.pdf",
+                }
+            ],
+            "journals": [],
+        },
+        operator_content="approve it",
+        operator_memory=executor._memory_from_context_payload({}),
+    )
+
+    assert hydrated.mode == "read_only"
+    assert hydrated.tool_name is None
+    assert "Which one do you want?" in hydrated.assistant_response
+    assert "document" in hydrated.assistant_response
+    assert "recommendation" in hydrated.assistant_response
+
+
+def test_hydrate_planning_result_prefers_last_thread_target_for_referential_follow_up() -> None:
+    """A remembered thread-local target should beat cross-domain ambiguity on follow-up turns."""
+
+    document_id = uuid4()
+    executor = ChatActionExecutor.__new__(ChatActionExecutor)
+    executor._tool_registry = _build_fake_tool_registry(
+        "review_document",
+        "approve_recommendation",
+        "approve_journal",
+    )
+
+    hydrated = executor._hydrate_planning_result(
+        planning=AgentPlanningResult(
+            mode="tool",
+            assistant_response="I'll approve that now.",
+            reasoning="The operator is following up on the item already in focus.",
+            tool_name="review_document",
+            tool_arguments={},
+        ),
+        snapshot={
+            "documents": [
+                {
+                    "id": str(document_id),
+                    "filename": "invoice-axis-haulage-2026-03.pdf",
+                    "status": "needs_review",
+                }
+            ],
+            "recommendations": [
+                {
+                    "id": str(uuid4()),
+                    "status": "pending_review",
+                    "document_filename": "payslip-adaobi-nwosu-2026-03.pdf",
+                }
+            ],
+            "journals": [],
+        },
+        operator_content="approve it",
+        operator_memory=executor._memory_from_context_payload(
+            {
+                "agent_memory": {
+                    "last_target_type": "document",
+                    "last_target_id": str(document_id),
+                    "last_target_label": (
+                        "the document invoice-axis-haulage-2026-03.pdf"
+                    ),
+                }
+            }
+        ),
+    )
+
+    assert hydrated.mode == "tool"
+    assert hydrated.tool_name == "review_document"
+    assert hydrated.tool_arguments["document_id"] == str(document_id)
+    assert hydrated.tool_arguments["decision"] == "approved"
+
+
+def test_hydrate_planning_result_prefers_explicit_document_match_over_remembered_target() -> None:
+    """Explicit document mentions should beat remembered referential targets."""
+
+    remembered_document_id = uuid4()
+    named_document_id = uuid4()
+    executor = ChatActionExecutor.__new__(ChatActionExecutor)
+    executor._tool_registry = _build_fake_tool_registry(
+        "review_document",
+        "approve_recommendation",
+        "approve_journal",
+    )
+
+    hydrated = executor._hydrate_planning_result(
+        planning=AgentPlanningResult(
+            mode="tool",
+            assistant_response="I'll approve that now.",
+            reasoning=(
+                "The operator referenced a specific document while a prior target is still "
+                "in memory."
+            ),
+            tool_name="review_document",
+            tool_arguments={},
+        ),
+        snapshot={
+            "documents": [
+                {
+                    "id": str(remembered_document_id),
+                    "filename": "invoice-axis-haulage-2026-03.pdf",
+                    "status": "needs_review",
+                },
+                {
+                    "id": str(named_document_id),
+                    "filename": "invoice-april-generator-overhaul-2026-04.pdf",
+                    "status": "needs_review",
+                },
+            ],
+            "recommendations": [],
+            "journals": [],
+        },
+        operator_content="approve this invoice-april-generator-overhaul-2026-04.pdf",
+        operator_memory=executor._memory_from_context_payload(
+            {
+                "agent_memory": {
+                    "last_target_type": "document",
+                    "last_target_id": str(remembered_document_id),
+                    "last_target_label": "the document invoice-axis-haulage-2026-03.pdf",
+                }
+            }
+        ),
+    )
+
+    assert hydrated.mode == "tool"
+    assert hydrated.tool_name == "review_document"
+    assert hydrated.tool_arguments["document_id"] == str(named_document_id)
+    assert hydrated.tool_arguments["decision"] == "approved"
+
+
+def test_hydrate_planning_result_skips_stale_remembered_document_targets() -> None:
+    """Referential document follow-ups should ignore remembered stale review targets."""
+
+    remembered_document_id = uuid4()
+    reviewable_document_id = uuid4()
+    executor = ChatActionExecutor.__new__(ChatActionExecutor)
+    executor._tool_registry = _build_fake_tool_registry(
+        "review_document",
+        "approve_recommendation",
+        "approve_journal",
+    )
+
+    hydrated = executor._hydrate_planning_result(
+        planning=AgentPlanningResult(
+            mode="tool",
+            assistant_response="I'll approve that now.",
+            reasoning="The operator is following up on the remaining reviewable document.",
+            tool_name="review_document",
+            tool_arguments={},
+        ),
+        snapshot={
+            "documents": [
+                {
+                    "id": str(remembered_document_id),
+                    "filename": "invoice-axis-haulage-2026-03.pdf",
+                    "status": "approved",
+                },
+                {
+                    "id": str(reviewable_document_id),
+                    "filename": "invoice-april-generator-overhaul-2026-04.pdf",
+                    "status": "needs_review",
+                },
+            ],
+            "recommendations": [],
+            "journals": [],
+        },
+        operator_content="approve it",
+        operator_memory=executor._memory_from_context_payload(
+            {
+                "agent_memory": {
+                    "last_target_type": "document",
+                    "last_target_id": str(remembered_document_id),
+                    "last_target_label": "the document invoice-axis-haulage-2026-03.pdf",
+                }
+            }
+        ),
+    )
+
+    assert hydrated.mode == "tool"
+    assert hydrated.tool_name == "review_document"
+    assert hydrated.tool_arguments["document_id"] == str(reviewable_document_id)
+    assert hydrated.tool_arguments["decision"] == "approved"
 
 
 def test_hydrate_planning_result_fills_create_workspace_defaults_from_current_scope() -> None:
@@ -481,6 +990,7 @@ def test_hydrate_planning_result_fills_create_workspace_defaults_from_current_sc
             }
         },
         operator_content="create a new workspace called Apex Meridian Ghana Ltd",
+        operator_memory=executor._memory_from_context_payload({}),
     )
 
     assert hydrated.tool_arguments["base_currency"] == "NGN"
@@ -516,6 +1026,7 @@ def test_hydrate_planning_result_resolves_named_workspace_delete() -> None:
             ],
         },
         operator_content="delete the Zenith Shared Services workspace",
+        operator_memory=executor._memory_from_context_payload({}),
     )
 
     assert hydrated.tool_arguments["workspace_id"] == str(target_workspace_id)
@@ -1341,9 +1852,14 @@ def test_update_thread_memory_tracks_preferences_targets_and_recent_objectives()
         operator_message="Keep it brief and just do it.",
         assistant_response="Queued reporting run.",
         tool_name="generate_reports",
+        tool_arguments=None,
         action_status="applied",
         trace_id="trace-memory-1",
-        snapshot={"pending_action_count": 1, "progress_summary": "Reporting is queued."},
+        snapshot={
+            "pending_action_count": 1,
+            "progress_summary": "Reporting is queued.",
+            "readiness": {"next_actions": ["Generate the export package."]},
+        },
     )
 
     payload = captured_payloads[-1]
@@ -1354,6 +1870,64 @@ def test_update_thread_memory_tracks_preferences_targets_and_recent_objectives()
     assert memory["recent_entity_names"] == ("Apex Meridian Nigeria Ltd",)
     assert memory["recent_period_labels"] == ("Mar 2026",)
     assert memory["last_tool_namespace"] == "reporting_and_release"
+    assert memory["approved_objective"] == "Keep it brief and just do it."
+    assert memory["working_subtask"] == "Generate reports for the current close run"
+    assert memory["pending_branch"] == "Next branch: generate the export package"
+
+
+def test_update_thread_memory_tracks_last_resolved_target_for_follow_up_continuity() -> None:
+    """Thread memory should retain the last concrete target for clean follow-up resolution."""
+
+    captured_payloads: list[dict[str, object]] = []
+    executor = ChatActionExecutor.__new__(ChatActionExecutor)
+    executor._tool_registry = SimpleNamespace(
+        get_tool=lambda **kwargs: SimpleNamespace(namespace="document_control")
+    )
+    executor._chat_repo = SimpleNamespace(
+        update_thread_context=lambda **kwargs: captured_payloads.append(kwargs["context_payload"])
+    )
+
+    document_id = uuid4()
+    executor._update_thread_memory(
+        thread_id=uuid4(),
+        existing_payload={
+            "entity_name": "Apex Meridian Nigeria Ltd",
+            "period_label": "Mar 2026",
+        },
+        operator_message="approve it",
+        assistant_response="I approved the document.",
+        tool_name="review_document",
+        tool_arguments={"document_id": str(document_id), "decision": "approved"},
+        action_status="applied",
+        trace_id="trace-memory-target-1",
+        snapshot={
+            "pending_action_count": 0,
+            "progress_summary": "Document review is moving forward.",
+            "readiness": {"next_actions": ["Review the next source document."]},
+            "documents": [
+                {
+                    "id": str(document_id),
+                    "filename": "invoice-axis-haulage-2026-03.pdf",
+                    "status": "needs_review",
+                }
+            ],
+        },
+    )
+
+    payload = captured_payloads[-1]
+    memory = payload["agent_memory"]
+    assert memory["last_target_type"] == "document"
+    assert memory["last_target_id"] == str(document_id)
+    assert (
+        memory["last_target_label"]
+        == "the document invoice-axis-haulage-2026-03.pdf"
+    )
+    assert memory["working_subtask"] == "Review the document invoice-axis-haulage-2026-03.pdf"
+    assert memory["approved_objective"] == "approve it"
+    assert memory["pending_branch"] == "Next branch: review the next source document"
+    assert payload["agent_recent_target_labels"] == (
+        "the document invoice-axis-haulage-2026-03.pdf",
+    )
 
 
 def test_memory_from_context_payload_surfaces_active_and_last_async_workflows() -> None:
@@ -1411,10 +1985,14 @@ def test_memory_for_thread_merges_recent_cross_thread_preferences() -> None:
                     "agent_memory": {
                         "preferred_explanation_depth": "brief",
                         "preferred_confirmation_style": "direct_when_clear",
+                        "last_target_type": "document",
+                        "last_target_id": "c44c4dd0-8869-4d91-b4ed-6dc7963a3bf1",
+                        "last_target_label": "the document carry-forward-target.pdf",
                     },
                     "agent_recent_objectives": ("Close March quickly.",),
                     "agent_recent_entity_names": ("Apex Meridian Nigeria Ltd",),
                     "agent_recent_period_labels": ("Mar 2026",),
+                    "agent_recent_target_labels": ("the document carry-forward-target.pdf",),
                 }
             ),
         ),
@@ -1444,8 +2022,42 @@ def test_memory_for_thread_merges_recent_cross_thread_preferences() -> None:
     assert memory.recent_objectives == ("Close March quickly.",)
     assert memory.recent_entity_names == ("Apex Meridian Nigeria Ltd",)
     assert memory.recent_period_labels == ("Mar 2026",)
+    assert memory.recent_target_labels == ("the document carry-forward-target.pdf",)
     assert memory.recent_tool_names == ("generate_reports",)
     assert memory.recent_tool_namespaces == ("reporting_and_release",)
+    assert memory.last_target_type is None
+    assert memory.last_target_id is None
+    assert memory.last_target_label is None
+
+
+def test_seed_context_payload_with_operator_memory_keeps_last_target_thread_local() -> None:
+    """Fresh thread seeding should carry history without copying concrete action targets."""
+
+    seeded_payload = seed_context_payload_with_operator_memory(
+        context_payload={"entity_name": "Apex Meridian Nigeria Ltd"},
+        recent_context_payloads=(
+            {
+                "agent_memory": {
+                    "preferred_explanation_depth": "brief",
+                    "last_target_type": "document",
+                    "last_target_id": "c44c4dd0-8869-4d91-b4ed-6dc7963a3bf1",
+                    "last_target_label": "the document carry-forward-target.pdf",
+                },
+                "agent_recent_objectives": ("Close March quickly.",),
+                "agent_recent_target_labels": ("the document carry-forward-target.pdf",),
+            },
+        ),
+    )
+
+    memory = seeded_payload["agent_memory"]
+    assert memory["preferred_explanation_depth"] == "brief"
+    assert "last_target_type" not in memory
+    assert "last_target_id" not in memory
+    assert "last_target_label" not in memory
+    assert seeded_payload["agent_recent_objectives"] == ("Close March quickly.",)
+    assert seeded_payload["agent_recent_target_labels"] == (
+        "the document carry-forward-target.pdf",
+    )
 
 
 def test_memory_from_context_payload_surfaces_recovery_guidance_for_failed_async() -> None:
@@ -1626,6 +2238,14 @@ class _FakeLoopChatRepository:
         del thread_id
         self.updated_context_payload = context_payload
 
+    def list_recent_threads_for_entity_any_scope(self, **kwargs):
+        del kwargs
+        return ()
+
+    def list_recent_threads_for_user_any_scope(self, **kwargs):
+        del kwargs
+        return ()
+
 
 class _FakeLoopActionRepository:
     def __init__(self, *, close_run_id: UUID) -> None:
@@ -1699,6 +2319,52 @@ def _resolve_fake_action(planning: AgentPlanningResult):
         ),
         target_type=None,
         target_id=None,
+    )
+
+
+def _build_fake_tool_registry(*tool_names: str):
+    required_fields = {
+        "review_document": ["document_id", "decision"],
+        "ignore_document": ["document_id"],
+        "approve_recommendation": ["recommendation_id"],
+        "reject_recommendation": ["recommendation_id", "reason"],
+        "approve_journal": ["journal_id"],
+        "apply_journal": ["journal_id", "posting_target"],
+        "reject_journal": ["journal_id", "reason"],
+        "switch_workspace": ["workspace_id"],
+        "update_workspace": ["workspace_id"],
+        "delete_workspace": ["workspace_id"],
+        "approve_reconciliation": ["reconciliation_id"],
+        "disposition_reconciliation_item": ["item_id", "disposition", "reason"],
+        "resolve_reconciliation_anomaly": ["anomaly_id", "resolution_note"],
+        "update_commentary": ["report_run_id", "section_key", "body"],
+        "approve_commentary": ["report_run_id", "section_key"],
+        "delete_close_run": ["close_run_id"],
+    }
+    tool_definitions = {
+        tool_name: SimpleNamespace(
+            name=tool_name,
+            input_schema={"required": required_fields.get(tool_name, [])},
+        )
+        for tool_name in tool_names
+    }
+    namespaces = (
+        SimpleNamespace(
+            name="workspace_admin",
+            label="Workspace Admin",
+            specialist_name="Workspace Steward",
+        ),
+    )
+
+    def get_tool(**kwargs):
+        tool_name = kwargs["tool_name"]
+        if tool_name not in tool_definitions:
+            raise ValueError(f"Unknown tool: {tool_name}")
+        return tool_definitions[tool_name]
+
+    return SimpleNamespace(
+        get_tool=get_tool,
+        list_namespaces=lambda: namespaces,
     )
 
 

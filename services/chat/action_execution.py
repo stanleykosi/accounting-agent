@@ -346,6 +346,7 @@ class ChatActionExecutor:
         user_message = None
         final_record: ChatActionPlanRecord | None = None
         last_tool_name: str | None = None
+        last_tool_arguments: dict[str, Any] | None = None
         last_action_status = "read_only"
         last_snapshot: dict[str, Any] | None = None
         applied_results: list[dict[str, Any]] = []
@@ -382,6 +383,12 @@ class ChatActionExecutor:
                     max_iterations=_MAX_OPERATOR_LOOP_STEPS,
                     completed_summaries=tuple(completed_summaries[-4:]),
                 )
+                operator_memory = self._memory_for_thread(
+                    thread_id=thread_id,
+                    entity_id=active_entity_id,
+                    actor_user_id=actor_user.id,
+                    context_payload=thread.context_payload,
+                )
                 last_snapshot = self._snapshot_for_thread(
                     actor_user=actor_user,
                     entity_id=active_entity_id,
@@ -394,13 +401,14 @@ class ChatActionExecutor:
                     actor_user=actor_user,
                     content=content,
                     grounding=grounding,
-                    thread_context_payload=thread.context_payload,
+                    operator_memory=operator_memory,
                     loop_context=loop_context,
                 )
                 planning = self._hydrate_planning_result(
                     planning=planning,
                     snapshot=last_snapshot,
                     operator_content=content,
+                    operator_memory=operator_memory,
                 )
                 clarification = self._build_runtime_clarification(
                     planning=planning,
@@ -438,6 +446,7 @@ class ChatActionExecutor:
                         operator_message=operator_message_for_memory,
                         assistant_response=assistant_content,
                         tool_name=planning.tool_name,
+                        tool_arguments=planning.tool_arguments,
                         action_status="read_only" if not applied_results else last_action_status,
                         trace_id=trace_id,
                         snapshot=last_snapshot,
@@ -484,6 +493,7 @@ class ChatActionExecutor:
                         operator_message=operator_message_for_memory,
                         assistant_response=assistant_content,
                         tool_name=last_tool_name,
+                        tool_arguments=last_tool_arguments,
                         action_status="read_only" if not applied_results else last_action_status,
                         trace_id=trace_id,
                         snapshot=last_snapshot,
@@ -595,6 +605,7 @@ class ChatActionExecutor:
                 )
                 final_record = record
                 last_tool_name = action.tool.name
+                last_tool_arguments = dict(action.planning.tool_arguments)
 
                 if requires_human_approval:
                     assistant_content = _compose_assistant_content(
@@ -641,6 +652,7 @@ class ChatActionExecutor:
                         operator_message=operator_message_for_memory,
                         assistant_response=assistant_content,
                         tool_name=action.tool.name,
+                        tool_arguments=action.planning.tool_arguments,
                         action_status="pending",
                         trace_id=trace_id,
                         snapshot=last_snapshot,
@@ -739,6 +751,7 @@ class ChatActionExecutor:
                         operator_message=operator_message_for_memory,
                         assistant_response=assistant_content,
                         tool_name=last_tool_name,
+                        tool_arguments=last_tool_arguments,
                         action_status="waiting_async",
                         trace_id=trace_id,
                         snapshot=last_snapshot,
@@ -788,6 +801,7 @@ class ChatActionExecutor:
                         operator_message=operator_message_for_memory,
                         assistant_response=assistant_content,
                         tool_name=last_tool_name,
+                        tool_arguments=last_tool_arguments,
                         action_status="applied",
                         trace_id=trace_id,
                         snapshot=last_snapshot,
@@ -843,6 +857,7 @@ class ChatActionExecutor:
                     operator_message=operator_message_for_memory,
                     assistant_response=assistant_content,
                     tool_name=last_tool_name,
+                    tool_arguments=last_tool_arguments,
                     action_status="partial",
                     trace_id=trace_id,
                     snapshot=last_snapshot,
@@ -953,6 +968,7 @@ class ChatActionExecutor:
                 operator_message=operator_message_for_memory,
                 assistant_response=assistant_content,
                 tool_name=tool_name,
+                tool_arguments=None,
                 action_status="failed",
                 trace_id=trace_id,
                 snapshot=snapshot,
@@ -1174,6 +1190,7 @@ class ChatActionExecutor:
                     else None
                 ),
                 tool_name=action.tool.name,
+                tool_arguments=planning.tool_arguments,
                 action_status="applied",
                 trace_id=trace_id,
                 snapshot=snapshot,
@@ -1249,7 +1266,16 @@ class ChatActionExecutor:
                 existing_payload=thread.context_payload,
                 operator_message=None,
                 assistant_response=reason,
-                tool_name=None,
+                tool_name=(
+                    str(plan.payload.get("tool_name"))
+                    if isinstance(plan.payload.get("tool_name"), str)
+                    else None
+                ),
+                tool_arguments=(
+                    dict(plan.payload.get("tool_arguments"))
+                    if isinstance(plan.payload.get("tool_arguments"), dict)
+                    else None
+                ),
                 action_status="rejected",
                 trace_id=None,
                 snapshot=snapshot,
@@ -1958,6 +1984,7 @@ class ChatActionExecutor:
         operator_message: str | None,
         assistant_response: str | None,
         tool_name: str | None,
+        tool_arguments: dict[str, Any] | None = None,
         action_status: str,
         trace_id: str | None,
         snapshot: dict[str, Any],
@@ -1974,7 +2001,13 @@ class ChatActionExecutor:
         recent_objectives = list(existing_payload.get("agent_recent_objectives", []))
         recent_entity_names = list(existing_payload.get("agent_recent_entity_names", []))
         recent_period_labels = list(existing_payload.get("agent_recent_period_labels", []))
+        recent_target_labels = list(existing_payload.get("agent_recent_target_labels", []))
         tool_definition = self._resolve_tool_definition(tool_name=tool_name)
+        resolved_target = _resolve_memory_target_snapshot(
+            tool_name=tool_name,
+            tool_arguments=tool_arguments or {},
+            snapshot=snapshot,
+        )
         if tool_name is not None:
             recent_tool_names.append(tool_name)
         if tool_definition is not None:
@@ -1985,6 +2018,8 @@ class ChatActionExecutor:
         current_period_label = existing_payload.get("period_label")
         if isinstance(current_period_label, str) and current_period_label.strip():
             recent_period_labels.append(current_period_label.strip())
+        if resolved_target is not None and resolved_target["label"].strip():
+            recent_target_labels.append(resolved_target["label"].strip())
         if operator_message is not None and operator_message.strip():
             recent_objectives.append(_truncate_text(operator_message.strip(), limit=160))
         compact_recent_tools = tuple(recent_tool_names[-5:])
@@ -1992,11 +2027,33 @@ class ChatActionExecutor:
         compact_recent_objectives = compact_recent_values(recent_objectives, limit=4)
         compact_recent_entities = compact_recent_values(recent_entity_names, limit=4)
         compact_recent_periods = compact_recent_values(recent_period_labels, limit=4)
+        compact_recent_targets = compact_recent_values(recent_target_labels, limit=5)
         active_async_turn = get_active_async_turn(context_payload=existing_payload)
         last_async_turn = (
             dict(existing_payload.get("agent_last_async_turn"))
             if isinstance(existing_payload.get("agent_last_async_turn"), dict)
             else None
+        )
+        approved_objective = _resolve_approved_objective(
+            existing_memory=existing_memory,
+            operator_message=operator_message,
+            action_status=action_status,
+        )
+        working_subtask = _resolve_working_subtask(
+            existing_memory=existing_memory,
+            operator_message=operator_message,
+            tool_name=tool_name,
+            resolved_target=resolved_target,
+            action_status=action_status,
+            snapshot=snapshot,
+            active_async_turn=active_async_turn,
+        )
+        pending_branch = _resolve_pending_branch(
+            existing_memory=existing_memory,
+            tool_name=tool_name,
+            action_status=action_status,
+            snapshot=snapshot,
+            active_async_turn=active_async_turn,
         )
         updated_payload = {
             **existing_payload,
@@ -2024,6 +2081,19 @@ class ChatActionExecutor:
                 "recent_objectives": compact_recent_objectives,
                 "recent_entity_names": compact_recent_entities,
                 "recent_period_labels": compact_recent_periods,
+                "recent_target_labels": compact_recent_targets,
+                "last_target_type": (
+                    resolved_target["target_type"] if resolved_target is not None else None
+                ),
+                "last_target_id": (
+                    resolved_target["target_id"] if resolved_target is not None else None
+                ),
+                "last_target_label": (
+                    resolved_target["label"] if resolved_target is not None else None
+                ),
+                "working_subtask": working_subtask,
+                "approved_objective": approved_objective,
+                "pending_branch": pending_branch,
                 "active_async_status": optional_memory_text(active_async_turn, "status"),
                 "active_async_objective": optional_memory_text(active_async_turn, "objective"),
                 "active_async_originating_tool": optional_memory_text(
@@ -2052,6 +2122,7 @@ class ChatActionExecutor:
             "agent_recent_objectives": compact_recent_objectives,
             "agent_recent_entity_names": compact_recent_entities,
             "agent_recent_period_labels": compact_recent_periods,
+            "agent_recent_target_labels": compact_recent_targets,
             "agent_progress_summary": snapshot.get("progress_summary"),
             "agent_last_trace_id": trace_id,
         }
@@ -2087,6 +2158,10 @@ class ChatActionExecutor:
         payload.setdefault(
             "recent_period_labels",
             tuple(context_payload.get("agent_recent_period_labels", ())),
+        )
+        payload.setdefault(
+            "recent_target_labels",
+            tuple(context_payload.get("agent_recent_target_labels", ())),
         )
 
         active_async_turn = get_active_async_turn(context_payload=context_payload)
@@ -2589,7 +2664,7 @@ class ChatActionExecutor:
         actor_user: EntityUserRecord,
         content: str,
         grounding: GroundingContextRecord,
-        thread_context_payload: dict[str, Any],
+        operator_memory: AgentMemorySummary,
         loop_context: _OperatorLoopContext | None = None,
     ) -> AgentPlanningResult:
         """Use the generic agent kernel to choose between analysis and a tool call."""
@@ -2607,16 +2682,28 @@ class ChatActionExecutor:
         ]
         conversation.append({"role": "user", "content": content})
 
+        direct_status_response = _build_direct_operator_status_response(
+            snapshot=snapshot,
+            operator_content=content,
+        )
+        if direct_status_response is not None:
+            return AgentPlanningResult(
+                mode="read_only",
+                assistant_response=direct_status_response,
+                reasoning=(
+                    "Handled through the deterministic grounded status-response layer "
+                    "before planner invocation."
+                ),
+                tool_name=None,
+                tool_arguments={},
+            )
+
         try:
             return self._kernel.plan(
                 instructions=self._build_planner_instructions(
                     grounding=grounding,
-                    operator_memory=self._memory_for_thread(
-                        thread_id=thread_id,
-                        entity_id=entity_id,
-                        actor_user_id=actor_user.id,
-                        context_payload=thread_context_payload,
-                    ),
+                    snapshot=snapshot,
+                    operator_memory=operator_memory,
                     loop_context=loop_context,
                 ),
                 conversation=conversation,
@@ -2633,6 +2720,7 @@ class ChatActionExecutor:
         self,
         *,
         grounding: GroundingContextRecord,
+        snapshot: dict[str, Any],
         operator_memory: AgentMemorySummary,
         loop_context: _OperatorLoopContext | None = None,
     ) -> str:
@@ -2640,7 +2728,7 @@ class ChatActionExecutor:
 
         specialist_lines = [
             (
-                f"- {namespace.label} ({namespace.name}) via {namespace.specialist_name}: "
+                f"- {namespace.label} via {namespace.specialist_name}: "
                 f"{namespace.specialist_mission}"
             )
             for namespace in self._tool_registry.list_namespaces()
@@ -2659,6 +2747,18 @@ class ChatActionExecutor:
             memory_lines.append(
                 "Recent operator objectives: " + " | ".join(operator_memory.recent_objectives[-3:])
             )
+        if operator_memory.last_target_label is not None:
+            memory_lines.append(
+                f"Current conversational focus target: {operator_memory.last_target_label}."
+            )
+        if operator_memory.working_subtask is not None:
+            memory_lines.append(f"Compressed working subtask: {operator_memory.working_subtask}")
+        if operator_memory.approved_objective is not None:
+            memory_lines.append(
+                f"Last committed operator objective: {operator_memory.approved_objective}"
+            )
+        if operator_memory.pending_branch is not None:
+            memory_lines.append(f"Pending branch: {operator_memory.pending_branch}")
         if operator_memory.active_async_objective is not None:
             memory_lines.append(
                 "Active interrupted workflow: "
@@ -2677,6 +2777,7 @@ class ChatActionExecutor:
             memory_lines.append(
                 "Recovery actions: " + " | ".join(operator_memory.recovery_actions[:2])
             )
+        focus_lines = _build_planner_focus_lines(snapshot=snapshot)
         instructions = [
                 f"You are the accounting operations agent for workspace '{grounding.entity.name}'.",
                 f"Base currency: {grounding.context.base_currency}.",
@@ -2697,6 +2798,14 @@ class ChatActionExecutor:
                 *specialist_lines,
                 "Operator memory:",
                 *memory_lines,
+                "Current likely focus:",
+                *(
+                    focus_lines
+                    or [
+                        "- No unusually strong focus signal is present in the "
+                        "current snapshot."
+                    ]
+                ),
                 (
                     "Never tell the operator to use an internal tool name. Never say things "
                     "like 'use the review_document tool' or 'call create_close_run'. If you "
@@ -2806,7 +2915,9 @@ class ChatActionExecutor:
                 ),
                 (
                     "When you choose mode=tool, use only the registered deterministic "
-                    "actions and include JSON-safe arguments."
+                    "actions and include JSON-safe arguments. The tool_name must be the exact "
+                    "concrete action name such as switch_workspace or create_close_run, never "
+                    "a namespace or specialist label."
                 ),
                 (
                     "If a required identifier is missing and there is no single clear target in "
@@ -2968,90 +3079,208 @@ class ChatActionExecutor:
         planning: AgentPlanningResult,
         snapshot: dict[str, Any],
         operator_content: str,
+        operator_memory: AgentMemorySummary,
     ) -> AgentPlanningResult:
         """Normalize operator-facing text and fill missing low-ambiguity tool arguments."""
 
         normalized_response = _normalize_operator_facing_text(planning.assistant_response)
-        if planning.mode != "tool" or planning.tool_name is None:
-            return planning.model_copy(update={"assistant_response": normalized_response})
+        direct_status_response = _build_direct_operator_status_response(
+            snapshot=snapshot,
+            operator_content=operator_content,
+        )
+        if direct_status_response is not None:
+            return planning.model_copy(
+                update={
+                    "mode": "read_only",
+                    "assistant_response": direct_status_response,
+                    "tool_name": None,
+                    "tool_arguments": {},
+                }
+            )
+
+        cross_domain_clarification = _build_cross_domain_ambiguity_clarification(
+            snapshot=snapshot,
+            operator_content=operator_content,
+            operator_memory=operator_memory,
+        )
+        if cross_domain_clarification is not None:
+            return planning.model_copy(
+                update={
+                    "mode": "read_only",
+                    "assistant_response": cross_domain_clarification,
+                    "tool_name": None,
+                    "tool_arguments": {},
+                }
+            )
+
+        repaired_tool_name = self._repair_planned_tool_name(
+            tool_name=planning.tool_name,
+            tool_arguments=planning.tool_arguments,
+            operator_content=operator_content,
+        )
+        if planning.mode != "tool" or repaired_tool_name is None:
+            return planning.model_copy(
+                update={
+                    "assistant_response": normalized_response,
+                    "tool_name": repaired_tool_name,
+                }
+            )
+
+        if hasattr(self, "_tool_registry") and self._resolve_tool_definition(
+            tool_name=repaired_tool_name
+        ) is None:
+            return planning.model_copy(
+                update={
+                    "mode": "read_only",
+                    "assistant_response": _build_unresolved_tool_selection_message(
+                        operator_content=operator_content,
+                        snapshot=snapshot,
+                    ),
+                    "tool_name": None,
+                    "tool_arguments": {},
+                }
+            )
 
         tool_arguments = dict(planning.tool_arguments)
-        if planning.tool_name == "review_document":
+        if repaired_tool_name == "review_document":
             tool_arguments = _hydrate_review_document_arguments(
                 tool_arguments=tool_arguments,
                 snapshot=snapshot,
                 operator_content=operator_content,
+                operator_memory=operator_memory,
             )
-        elif planning.tool_name == "ignore_document":
+        elif repaired_tool_name == "ignore_document":
             document_id = _resolve_document_id_from_snapshot(
                 snapshot=snapshot,
                 operator_content=operator_content,
                 preferred_statuses=("needs_review", "uploaded", "processing", "parsed"),
+                operator_memory=operator_memory,
             )
             if document_id is not None and not isinstance(tool_arguments.get("document_id"), str):
                 tool_arguments["document_id"] = document_id
-        elif planning.tool_name in {"approve_recommendation", "reject_recommendation"}:
+        elif repaired_tool_name in {"approve_recommendation", "reject_recommendation"}:
             tool_arguments = _hydrate_recommendation_arguments(
-                tool_name=planning.tool_name,
+                tool_name=repaired_tool_name,
                 tool_arguments=tool_arguments,
                 snapshot=snapshot,
                 operator_content=operator_content,
+                operator_memory=operator_memory,
             )
-        elif planning.tool_name in {"approve_journal", "apply_journal", "reject_journal"}:
+        elif repaired_tool_name in {"approve_journal", "apply_journal", "reject_journal"}:
             tool_arguments = _hydrate_journal_arguments(
-                tool_name=planning.tool_name,
+                tool_name=repaired_tool_name,
                 tool_arguments=tool_arguments,
                 snapshot=snapshot,
                 operator_content=operator_content,
+                operator_memory=operator_memory,
             )
-        elif planning.tool_name in {
+        elif repaired_tool_name in {
             "approve_reconciliation",
             "disposition_reconciliation_item",
             "resolve_reconciliation_anomaly",
         }:
             tool_arguments = _hydrate_reconciliation_arguments(
-                tool_name=planning.tool_name,
+                tool_name=repaired_tool_name,
                 tool_arguments=tool_arguments,
                 snapshot=snapshot,
                 operator_content=operator_content,
+                operator_memory=operator_memory,
             )
-        elif planning.tool_name in {"update_commentary", "approve_commentary"}:
+        elif repaired_tool_name in {"update_commentary", "approve_commentary"}:
             tool_arguments = _hydrate_commentary_arguments(
-                tool_name=planning.tool_name,
+                tool_name=repaired_tool_name,
                 tool_arguments=tool_arguments,
                 snapshot=snapshot,
                 operator_content=operator_content,
+                operator_memory=operator_memory,
             )
-        elif planning.tool_name == "distribute_export":
+        elif repaired_tool_name == "distribute_export":
             tool_arguments = _hydrate_export_arguments(
                 tool_arguments=tool_arguments,
                 snapshot=snapshot,
             )
-        elif planning.tool_name == "create_workspace":
+        elif repaired_tool_name == "create_workspace":
             tool_arguments = _hydrate_create_workspace_arguments(
                 tool_arguments=tool_arguments,
                 snapshot=snapshot,
             )
-        elif planning.tool_name in {"switch_workspace", "update_workspace", "delete_workspace"}:
+        elif repaired_tool_name in {"switch_workspace", "update_workspace", "delete_workspace"}:
             tool_arguments = _hydrate_workspace_arguments(
-                tool_name=planning.tool_name,
+                tool_name=repaired_tool_name,
                 tool_arguments=tool_arguments,
                 snapshot=snapshot,
                 operator_content=operator_content,
+                operator_memory=operator_memory,
             )
-        elif planning.tool_name == "delete_close_run":
+        elif repaired_tool_name == "delete_close_run":
             tool_arguments = _hydrate_delete_close_run_arguments(
                 tool_arguments=tool_arguments,
                 snapshot=snapshot,
                 operator_content=operator_content,
+                operator_memory=operator_memory,
             )
 
         return planning.model_copy(
             update={
                 "assistant_response": normalized_response,
+                "tool_name": repaired_tool_name,
                 "tool_arguments": tool_arguments,
             }
         )
+
+    def _repair_planned_tool_name(
+        self,
+        *,
+        tool_name: str | None,
+        tool_arguments: dict[str, Any],
+        operator_content: str,
+    ) -> str | None:
+        """Normalize planner tool selections onto one concrete registered tool name."""
+
+        normalized_tool_name = _normalize_planned_tool_name(tool_name)
+        if normalized_tool_name is None:
+            return None
+        if not hasattr(self, "_tool_registry"):
+            return normalized_tool_name
+        if self._resolve_tool_definition(tool_name=normalized_tool_name) is not None:
+            return normalized_tool_name
+
+        namespace_name = self._resolve_tool_namespace_name(
+            tool_name=normalized_tool_name,
+        )
+        if namespace_name is None:
+            return normalized_tool_name
+
+        repaired_tool_name = _infer_tool_name_from_namespace(
+            namespace_name=namespace_name,
+            operator_content=operator_content,
+            tool_arguments=tool_arguments,
+        )
+        return repaired_tool_name or normalized_tool_name
+
+    def _resolve_tool_namespace_name(
+        self,
+        *,
+        tool_name: str,
+    ) -> str | None:
+        """Resolve a planner-emitted namespace or specialist label back to its namespace name."""
+
+        normalized_tool_name = _searchable_text(tool_name)
+        if not normalized_tool_name:
+            return None
+        if not hasattr(self, "_tool_registry"):
+            return None
+
+        for namespace in self._tool_registry.list_namespaces():
+            candidates = {
+                namespace.name,
+                namespace.name.replace("_", " "),
+                namespace.label,
+                namespace.specialist_name,
+            }
+            if any(_searchable_text(candidate) == normalized_tool_name for candidate in candidates):
+                return namespace.name
+        return None
 
     def _planning_from_payload(
         self,
@@ -3287,6 +3516,26 @@ def _build_target_clarification(
         tool_arguments.get("journal_id"),
         str,
     ):
+        if tool_name == "apply_journal":
+            approved_choices = _journal_choice_labels_with_status(
+                snapshot=snapshot,
+                statuses={"approved"},
+            )
+            if approved_choices:
+                return (
+                    "Which approved journal should I apply? "
+                    f"I can use { _join_choice_labels(approved_choices) }."
+                )
+            pending_choices = _journal_choice_labels_with_status(
+                snapshot=snapshot,
+                statuses={"pending_review", "pending", "draft"},
+            )
+            if pending_choices:
+                return (
+                    "There isn't an approved journal ready to post yet. "
+                    "I can approve "
+                    f"{_join_choice_labels(pending_choices)} first if you want."
+                )
         choices = _journal_choice_labels(snapshot=snapshot)
         if choices:
             return f"Which journal should I use? I can use { _join_choice_labels(choices) }."
@@ -3522,12 +3771,24 @@ def _recommendation_choice_labels(*, snapshot: dict[str, Any]) -> list[str]:
 def _journal_choice_labels(*, snapshot: dict[str, Any]) -> list[str]:
     """Return compact journal labels for clarification prompts."""
 
+    return _journal_choice_labels_with_status(snapshot=snapshot, statuses=None)
+
+
+def _journal_choice_labels_with_status(
+    *,
+    snapshot: dict[str, Any],
+    statuses: set[str] | None,
+) -> list[str]:
+    """Return compact journal labels filtered to the requested statuses when provided."""
+
     journals = snapshot.get("journals")
     if not isinstance(journals, list):
         return []
     labels: list[str] = []
     for record in journals:
         if not isinstance(record, dict):
+            continue
+        if statuses is not None and str(record.get("status") or "") not in statuses:
             continue
         if isinstance(record.get("journal_number"), str):
             labels.append(str(record["journal_number"]))
@@ -3655,6 +3916,412 @@ def _close_run_choice_labels(*, snapshot: dict[str, Any]) -> list[str]:
         if isinstance(record, dict) and isinstance(record.get("period_label"), str)
     ]
     return labels[:3]
+
+
+def _workspace_name_from_snapshot(*, snapshot: dict[str, Any]) -> str | None:
+    """Return the current workspace display name when present."""
+
+    workspace = snapshot.get("workspace")
+    if not isinstance(workspace, dict):
+        return None
+    name = workspace.get("name")
+    if isinstance(name, str) and name.strip():
+        return name.strip()
+    return None
+
+
+def _first_readiness_action(*, snapshot: dict[str, Any]) -> str | None:
+    """Return the first grounded next action from the readiness snapshot."""
+
+    readiness = snapshot.get("readiness")
+    if not isinstance(readiness, dict):
+        return None
+    next_actions = readiness.get("next_actions")
+    if not isinstance(next_actions, list):
+        return None
+    for action in next_actions:
+        if isinstance(action, str) and action.strip():
+            return action.strip().rstrip(".")
+    return None
+
+
+def _readiness_items(*, snapshot: dict[str, Any], key: str) -> list[str]:
+    """Return one normalized readiness list field."""
+
+    readiness = snapshot.get("readiness")
+    if not isinstance(readiness, dict):
+        return []
+    values = readiness.get(key)
+    if not isinstance(values, list):
+        return []
+    return [
+        value.strip()
+        for value in values
+        if isinstance(value, str) and value.strip()
+    ]
+
+
+def _summarize_status_items(
+    *,
+    items: list[str],
+    single_prefix: str,
+    multi_prefix: str,
+) -> str:
+    """Return one short natural-language summary of blocker or warning items."""
+
+    cleaned = [item.strip().rstrip(".") for item in items if item.strip()]
+    if not cleaned:
+        return ""
+    if len(cleaned) == 1:
+        return f"{single_prefix}{cleaned[0]}."
+    return f"{multi_prefix}{cleaned[0]} and {cleaned[1]}."
+
+
+def _describe_close_run_summary(*, record: dict[str, Any]) -> str | None:
+    """Return one short close-run summary label for list-style answers."""
+
+    period_label = record.get("period_label")
+    if not isinstance(period_label, str) or not period_label.strip():
+        return None
+    status = record.get("status")
+    active_phase = record.get("active_phase")
+    if isinstance(active_phase, str) and active_phase.strip():
+        return (
+            f"{period_label.strip()} "
+            f"({str(status or 'active').replace('_', ' ')}, "
+            f"{_format_phase_label(active_phase)})"
+        )
+    if isinstance(status, str) and status.strip():
+        return f"{period_label.strip()} ({status.replace('_', ' ')})"
+    return period_label.strip()
+
+
+def _pending_document_records(*, snapshot: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return document records that are actionable for chat-driven review."""
+
+    documents = snapshot.get("documents")
+    if not isinstance(documents, list):
+        return []
+    return [
+        record
+        for record in documents
+        if isinstance(record, dict)
+        and str(record.get("status") or "") in {"needs_review", "parsed"}
+    ]
+
+
+def _single_pending_document_record(*, snapshot: dict[str, Any]) -> dict[str, Any] | None:
+    """Return the single actionable document when exactly one is pending."""
+
+    records = _pending_document_records(snapshot=snapshot)
+    return records[0] if len(records) == 1 else None
+
+
+def _count_pending_documents(*, snapshot: dict[str, Any]) -> int:
+    """Return the count of actionable document review targets."""
+
+    return len(_pending_document_records(snapshot=snapshot))
+
+
+def _document_specific_label(*, record: dict[str, Any]) -> str | None:
+    """Return one specific document label for clarifications and focus cues."""
+
+    filename = record.get("filename")
+    if isinstance(filename, str) and filename.strip():
+        return f"the document {filename.strip()}"
+    return None
+
+
+def _document_domain_candidate_label(
+    *,
+    snapshot: dict[str, Any],
+    intent: str,
+) -> str | None:
+    """Return a document-domain label for a generic cross-domain clarification."""
+
+    records = _pending_document_records(snapshot=snapshot)
+    if not records:
+        return None
+    if len(records) == 1:
+        return _document_specific_label(record=records[0])
+    if intent == "ignore":
+        return "a source document"
+    return "a document awaiting review"
+
+
+def _pending_recommendation_records(*, snapshot: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return recommendation records that are still waiting on operator action."""
+
+    recommendations = snapshot.get("recommendations")
+    if not isinstance(recommendations, list):
+        return []
+    return [
+        record
+        for record in recommendations
+        if isinstance(record, dict)
+        and str(record.get("status") or "") in {"pending_review", "pending", "draft"}
+    ]
+
+
+def _single_pending_recommendation_record(*, snapshot: dict[str, Any]) -> dict[str, Any] | None:
+    """Return the single pending recommendation when one clear target exists."""
+
+    records = _pending_recommendation_records(snapshot=snapshot)
+    return records[0] if len(records) == 1 else None
+
+
+def _recommendation_specific_label(*, record: dict[str, Any]) -> str | None:
+    """Return one recommendation label grounded in document or type context."""
+
+    document_filename = record.get("document_filename")
+    if isinstance(document_filename, str) and document_filename.strip():
+        return f"the recommendation for {document_filename.strip()}"
+    recommendation_type = record.get("recommendation_type")
+    if isinstance(recommendation_type, str) and recommendation_type.strip():
+        return f"the {recommendation_type.replace('_', ' ')} recommendation"
+    return "the recommendation"
+
+
+def _recommendation_domain_candidate_label(
+    *,
+    snapshot: dict[str, Any],
+    intent: str,
+) -> str | None:
+    """Return a recommendation-domain label for a generic cross-domain clarification."""
+
+    records = _pending_recommendation_records(snapshot=snapshot)
+    if not records:
+        return None
+    if len(records) == 1:
+        return _recommendation_specific_label(record=records[0])
+    if intent == "reject":
+        return "a pending recommendation"
+    return "a recommendation awaiting review"
+
+
+def _pending_journal_records(
+    *,
+    snapshot: dict[str, Any],
+    intent: str,
+) -> list[dict[str, Any]]:
+    """Return journal records relevant to one generic operator verb."""
+
+    journals = snapshot.get("journals")
+    if not isinstance(journals, list):
+        return []
+    if intent == "apply":
+        target_statuses = {"approved"}
+    else:
+        target_statuses = {"pending_review", "pending", "draft"}
+    return [
+        record
+        for record in journals
+        if isinstance(record, dict)
+        and str(record.get("status") or "") in target_statuses
+    ]
+
+
+def _single_pending_journal_record(
+    *,
+    snapshot: dict[str, Any],
+    intent: str,
+) -> dict[str, Any] | None:
+    """Return the single actionable journal when exactly one exists."""
+
+    records = _pending_journal_records(snapshot=snapshot, intent=intent)
+    return records[0] if len(records) == 1 else None
+
+
+def _journal_specific_label(*, record: dict[str, Any]) -> str | None:
+    """Return one specific journal label for clarifications and focus cues."""
+
+    journal_number = record.get("journal_number")
+    if isinstance(journal_number, str) and journal_number.strip():
+        return f"journal {journal_number.strip()}"
+    description = record.get("description")
+    if isinstance(description, str) and description.strip():
+        return f"the journal {description.strip()}"
+    return "the journal"
+
+
+def _journal_domain_candidate_label(
+    *,
+    snapshot: dict[str, Any],
+    intent: str,
+) -> str | None:
+    """Return a journal-domain label for a generic cross-domain clarification."""
+
+    records = _pending_journal_records(snapshot=snapshot, intent=intent)
+    if not records:
+        return None
+    if len(records) == 1:
+        return _journal_specific_label(record=records[0])
+    if intent == "apply":
+        return "an approved journal"
+    return "a journal awaiting review"
+
+
+def _pending_reconciliation_records(*, snapshot: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return reconciliation headers still waiting on approval."""
+
+    reconciliations = snapshot.get("reconciliations")
+    if not isinstance(reconciliations, list):
+        return []
+    return [
+        record
+        for record in reconciliations
+        if isinstance(record, dict)
+        and str(record.get("status") or "") in {"in_review", "blocked", "draft"}
+    ]
+
+
+def _reconciliation_domain_candidate_label(*, snapshot: dict[str, Any]) -> str | None:
+    """Return a reconciliation approval label for a generic clarification."""
+
+    records = _pending_reconciliation_records(snapshot=snapshot)
+    if not records:
+        return None
+    if len(records) == 1:
+        reconciliation_type = records[0].get("type")
+        if isinstance(reconciliation_type, str) and reconciliation_type.strip():
+            return f"the {reconciliation_type.replace('_', ' ')} reconciliation"
+        return "the reconciliation"
+    return "a reconciliation awaiting approval"
+
+
+def _pending_reconciliation_item_records(*, snapshot: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return reconciliation items that still require disposition."""
+
+    items = snapshot.get("reconciliation_items")
+    if not isinstance(items, list):
+        return []
+    return [
+        record
+        for record in items
+        if isinstance(record, dict)
+        and bool(record.get("requires_disposition"))
+        and record.get("disposition") is None
+    ]
+
+
+def _single_pending_reconciliation_item_record(
+    *,
+    snapshot: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Return the single unresolved reconciliation item when exactly one exists."""
+
+    records = _pending_reconciliation_item_records(snapshot=snapshot)
+    return records[0] if len(records) == 1 else None
+
+
+def _reconciliation_item_specific_label(*, record: dict[str, Any]) -> str | None:
+    """Return one specific reconciliation-item label."""
+
+    source_ref = record.get("source_ref")
+    if isinstance(source_ref, str) and source_ref.strip():
+        return f"the reconciliation exception {source_ref.strip()}"
+    explanation = record.get("explanation")
+    if isinstance(explanation, str) and explanation.strip():
+        return f"the reconciliation exception {explanation.strip()}"
+    return "the reconciliation exception"
+
+
+def _reconciliation_item_domain_candidate_label(*, snapshot: dict[str, Any]) -> str | None:
+    """Return a reconciliation-item label for generic resolve requests."""
+
+    records = _pending_reconciliation_item_records(snapshot=snapshot)
+    if not records:
+        return None
+    if len(records) == 1:
+        return _reconciliation_item_specific_label(record=records[0])
+    return "a reconciliation exception"
+
+
+def _pending_reconciliation_anomaly_records(*, snapshot: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return unresolved reconciliation anomalies from the snapshot."""
+
+    anomalies = snapshot.get("reconciliation_anomalies")
+    if not isinstance(anomalies, list):
+        return []
+    return [
+        record
+        for record in anomalies
+        if isinstance(record, dict) and bool(record.get("resolved")) is False
+    ]
+
+
+def _single_pending_reconciliation_anomaly_record(
+    *,
+    snapshot: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Return the single unresolved reconciliation anomaly when exactly one exists."""
+
+    records = _pending_reconciliation_anomaly_records(snapshot=snapshot)
+    return records[0] if len(records) == 1 else None
+
+
+def _reconciliation_anomaly_specific_label(*, record: dict[str, Any]) -> str | None:
+    """Return one specific reconciliation-anomaly label."""
+
+    account_code = record.get("account_code")
+    if isinstance(account_code, str) and account_code.strip():
+        return f"the anomaly on account {account_code.strip()}"
+    description = record.get("description")
+    if isinstance(description, str) and description.strip():
+        return f"the anomaly {description.strip()}"
+    return "the reconciliation anomaly"
+
+
+def _reconciliation_anomaly_domain_candidate_label(*, snapshot: dict[str, Any]) -> str | None:
+    """Return a reconciliation-anomaly label for generic resolve requests."""
+
+    records = _pending_reconciliation_anomaly_records(snapshot=snapshot)
+    if not records:
+        return None
+    if len(records) == 1:
+        return _reconciliation_anomaly_specific_label(record=records[0])
+    return "a reconciliation anomaly"
+
+
+def _pending_commentary_records(*, snapshot: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return commentary sections that are still in draft or review."""
+
+    commentary = snapshot.get("commentary")
+    if not isinstance(commentary, list):
+        return []
+    return [
+        record
+        for record in commentary
+        if isinstance(record, dict)
+        and str(record.get("status") or "") in {"draft", "in_review", "pending_review"}
+    ]
+
+
+def _single_pending_commentary_record(*, snapshot: dict[str, Any]) -> dict[str, Any] | None:
+    """Return the single pending commentary section when exactly one exists."""
+
+    records = _pending_commentary_records(snapshot=snapshot)
+    return records[0] if len(records) == 1 else None
+
+
+def _commentary_specific_label(*, record: dict[str, Any]) -> str | None:
+    """Return one specific commentary-section label."""
+
+    section_key = record.get("section_key")
+    if isinstance(section_key, str) and section_key.strip():
+        return f"the {_format_report_section_label(section_key)} commentary"
+    return "the commentary section"
+
+
+def _commentary_domain_candidate_label(*, snapshot: dict[str, Any]) -> str | None:
+    """Return a commentary label for generic approval requests."""
+
+    records = _pending_commentary_records(snapshot=snapshot)
+    if not records:
+        return None
+    if len(records) == 1:
+        return _commentary_specific_label(record=records[0])
+    return "a commentary section awaiting approval"
 
 
 def _resolve_workspace_label(*, snapshot: dict[str, Any], workspace_id: str | None) -> str | None:
@@ -3802,11 +4469,1172 @@ def _normalize_operator_facing_text(value: object) -> str:
     return "\n".join(cleaned_lines).strip()
 
 
+def _build_direct_operator_status_response(
+    *,
+    snapshot: dict[str, Any],
+    operator_content: str,
+) -> str | None:
+    """Return a deterministic grounded answer for common read-only operator questions."""
+
+    for builder in (
+        _build_workspace_scope_status_response,
+        _build_close_run_scope_status_response,
+        _build_close_blocker_status_response,
+        _build_next_step_status_response,
+        _build_close_run_directory_response,
+    ):
+        response = builder(snapshot=snapshot, operator_content=operator_content)
+        if response is not None:
+            return response
+    return None
+
+
+def _build_close_run_scope_status_response(
+    *,
+    snapshot: dict[str, Any],
+    operator_content: str,
+) -> str | None:
+    """Answer direct current-close-scope questions without invoking the planner."""
+
+    normalized_content = _searchable_text(operator_content)
+    if not any(
+        phrase in normalized_content
+        for phrase in (
+            "which close run are you currently on",
+            "what close run are you currently on",
+            "which close run is this",
+            "what close run is this",
+            "which close run is this chat on",
+            "what close run is this chat on",
+            "which period are you on",
+            "what period are you on",
+            "what period is this close",
+            "what close are we on",
+            "which close are we on",
+        )
+    ):
+        return None
+
+    workspace_name = _workspace_name_from_snapshot(snapshot=snapshot)
+    close_run_id = snapshot.get("close_run_id")
+    if not isinstance(close_run_id, str) or not close_run_id.strip():
+        if workspace_name is not None:
+            return (
+                f"This chat is not pinned to a close run right now. "
+                f"It is currently at {workspace_name} workspace scope."
+            )
+        return "This chat is not pinned to a close run right now."
+
+    close_run_label = _resolve_close_run_label(
+        snapshot=snapshot,
+        close_run_id=close_run_id,
+    ) or "the active close run"
+    if workspace_name is not None:
+        return (
+            f"This chat is currently pinned to {close_run_label} in "
+            f"{workspace_name}."
+        )
+    return f"This chat is currently pinned to {close_run_label}."
+
+
+def _build_close_blocker_status_response(
+    *,
+    snapshot: dict[str, Any],
+    operator_content: str,
+) -> str | None:
+    """Answer common blocker questions directly from the readiness snapshot."""
+
+    normalized_content = _searchable_text(operator_content)
+    if not any(
+        phrase in normalized_content
+        for phrase in (
+            "what is blocking this close",
+            "what s blocking this close",
+            "what is blocking the close",
+            "what s blocking the close",
+            "why is this close blocked",
+            "why is the close blocked",
+            "what is stopping this close",
+            "what is holding up this close",
+        )
+    ):
+        return None
+
+    readiness = snapshot.get("readiness")
+    if not isinstance(readiness, dict):
+        return None
+
+    if snapshot.get("close_run_id") is None:
+        next_action = _first_readiness_action(snapshot=snapshot)
+        if next_action is not None:
+            return (
+                "This chat is not pinned to a close run yet. "
+                f"The next step is to { _lowercase_leading_character(next_action) }"
+            )
+        return "This chat is not pinned to a close run yet."
+
+    blockers = [
+        blocker.strip()
+        for blocker in readiness.get("blockers", [])
+        if isinstance(blocker, str) and blocker.strip()
+    ]
+    warnings = [
+        warning.strip()
+        for warning in readiness.get("warnings", [])
+        if isinstance(warning, str) and warning.strip()
+    ]
+    next_action = _first_readiness_action(snapshot=snapshot)
+    if blockers:
+        blocker_text = _summarize_status_items(
+            items=blockers,
+            single_prefix="Right now this close is blocked by ",
+            multi_prefix="Right now the main blockers are ",
+        )
+        if next_action is not None:
+            return (
+                f"{blocker_text} "
+                f"The next best move is to { _lowercase_leading_character(next_action) }"
+            )
+        return blocker_text
+    if warnings:
+        warning_text = _summarize_status_items(
+            items=warnings,
+            single_prefix=(
+                "Nothing is hard-blocking this close right now. "
+                "The main thing needing attention is "
+            ),
+            multi_prefix=(
+                "Nothing is hard-blocking this close right now. "
+                "The main things needing attention are "
+            ),
+        )
+        if next_action is not None:
+            return (
+                f"{warning_text} "
+                f"The next best move is to { _lowercase_leading_character(next_action) }"
+            )
+        return warning_text
+    if next_action is not None:
+        return (
+            "Nothing is hard-blocking this close right now. "
+            f"The next best move is to { _lowercase_leading_character(next_action) }"
+        )
+    return "Nothing is hard-blocking this close right now."
+
+
+def _build_next_step_status_response(
+    *,
+    snapshot: dict[str, Any],
+    operator_content: str,
+) -> str | None:
+    """Answer direct next-step questions from readiness without a planner turn."""
+
+    normalized_content = _searchable_text(operator_content)
+    if not any(
+        phrase in normalized_content
+        for phrase in (
+            "what should we do next",
+            "what should i do next",
+            "what do we do next",
+            "what do i do next",
+            "what s the next step",
+            "what is the next step",
+            "what next",
+            "what should happen next",
+            "where should we go next",
+        )
+    ):
+        return None
+
+    next_action = _first_readiness_action(snapshot=snapshot)
+    if next_action is None:
+        return None
+    blockers = _readiness_items(snapshot=snapshot, key="blockers")
+    if blockers:
+        return (
+            f"The next best move is to { _lowercase_leading_character(next_action) } "
+            f"First, we still need to clear {blockers[0]}."
+        )
+    return f"The next best move is to { _lowercase_leading_character(next_action) }"
+
+
+def _build_close_run_directory_response(
+    *,
+    snapshot: dict[str, Any],
+    operator_content: str,
+) -> str | None:
+    """Answer direct close-run listing questions from the entity snapshot."""
+
+    normalized_content = _searchable_text(operator_content)
+    if not any(
+        phrase in normalized_content
+        for phrase in (
+            "show me the active close runs",
+            "show active close runs",
+            "what close runs are open",
+            "which close runs are open",
+            "what close runs exist",
+            "which close runs exist",
+            "list the close runs",
+            "show the close runs",
+        )
+    ):
+        return None
+
+    close_runs = snapshot.get("entity_close_runs")
+    if not isinstance(close_runs, list):
+        return None
+
+    records = [record for record in close_runs if isinstance(record, dict)]
+    if not records:
+        return "There are no close runs in this workspace yet."
+
+    active_like = [
+        record
+        for record in records
+        if str(record.get("status") or "") not in {"archived", "deleted"}
+    ]
+    display_records = active_like or records
+    labels = [
+        _describe_close_run_summary(record=record)
+        for record in display_records[:3]
+        if _describe_close_run_summary(record=record) is not None
+    ]
+    if not labels:
+        return "I can see close runs in this workspace, but I need one more specific question."
+
+    return (
+        "In this workspace I can see "
+        f"{_join_choice_labels(labels)}."
+    )
+
+
+def _build_workspace_scope_status_response(
+    *,
+    snapshot: dict[str, Any],
+    operator_content: str,
+) -> str | None:
+    """Answer direct current-workspace questions without routing through a mutation tool."""
+
+    normalized_content = _searchable_text(operator_content)
+    if not any(
+        phrase in normalized_content
+        for phrase in (
+            "which workspace are you currently on",
+            "what workspace are you currently on",
+            "which workspace is this",
+            "what workspace is this",
+            "which workspace am i in",
+            "what workspace am i in",
+            "which workspace is this chat on",
+            "what workspace is this chat on",
+            "tell me the current workspace",
+            "what is the current workspace",
+        )
+    ):
+        return None
+
+    workspace = snapshot.get("workspace")
+    if not isinstance(workspace, dict):
+        return "This chat is currently anchored to the active workspace."
+
+    workspace_name = workspace.get("name")
+    if not isinstance(workspace_name, str) or not workspace_name.strip():
+        return "This chat is currently anchored to the active workspace."
+
+    if snapshot.get("close_run_id") is not None:
+        return (
+            f"This chat is currently anchored to {workspace_name}. "
+            "It is also pinned to a close run in that workspace."
+        )
+    return f"This chat is currently anchored to {workspace_name}."
+
+
+def _build_cross_domain_ambiguity_clarification(
+    *,
+    snapshot: dict[str, Any],
+    operator_content: str,
+    operator_memory: AgentMemorySummary,
+) -> str | None:
+    """Ask one short clarification when a generic request matches multiple tool domains."""
+
+    intent = _classify_cross_domain_operator_intent(operator_content=operator_content)
+    if intent is None:
+        return None
+    if _operator_memory_can_disambiguate_intent(
+        operator_memory=operator_memory,
+        snapshot=snapshot,
+        intent=intent,
+    ):
+        return None
+
+    candidate_labels = _build_cross_domain_candidate_labels(
+        snapshot=snapshot,
+        intent=intent,
+    )
+    if len(candidate_labels) <= 1:
+        return None
+
+    verb = {
+        "approve": "approve",
+        "reject": "reject",
+        "apply": "apply",
+        "resolve": "resolve",
+        "ignore": "ignore",
+    }.get(intent, "handle")
+    return f"I can {verb} {_join_choice_labels(candidate_labels)}. Which one do you want?"
+
+
+def _classify_cross_domain_operator_intent(*, operator_content: str) -> str | None:
+    """Return the ambiguous pronoun-heavy intent that still needs domain selection."""
+
+    normalized_content = _searchable_text(operator_content)
+    explicit_nouns = (
+        "document",
+        "recommendation",
+        "journal",
+        "commentary",
+        "reconciliation",
+        "anomaly",
+        "exception",
+        "workspace",
+        "close run",
+        "close-run",
+        "export",
+        "report",
+    )
+    if any(noun in normalized_content for noun in explicit_nouns):
+        return None
+    if any(
+        phrase in normalized_content
+        for phrase in ("approve it", "approve that", "approve this")
+    ):
+        return "approve"
+    if any(
+        phrase in normalized_content
+        for phrase in ("reject it", "reject that", "reject this")
+    ):
+        return "reject"
+    if any(
+        phrase in normalized_content
+        for phrase in ("apply it", "apply that", "post it", "post that")
+    ):
+        return "apply"
+    if any(
+        phrase in normalized_content
+        for phrase in ("resolve it", "resolve that", "fix it", "clear it")
+    ):
+        return "resolve"
+    if any(
+        phrase in normalized_content
+        for phrase in ("ignore it", "ignore that", "remove it")
+    ):
+        return "ignore"
+    return None
+
+
+def _build_cross_domain_candidate_labels(
+    *,
+    snapshot: dict[str, Any],
+    intent: str,
+) -> list[str]:
+    """Return domain-level candidate labels for an ambiguous operator verb."""
+
+    labels: list[str] = []
+    if intent in {"approve", "reject", "ignore"}:
+        document_label = _document_domain_candidate_label(
+            snapshot=snapshot,
+            intent=intent,
+        )
+        if document_label is not None:
+            labels.append(document_label)
+    if intent in {"approve", "reject"}:
+        recommendation_label = _recommendation_domain_candidate_label(
+            snapshot=snapshot,
+            intent=intent,
+        )
+        if recommendation_label is not None:
+            labels.append(recommendation_label)
+    if intent in {"approve", "reject", "apply"}:
+        journal_label = _journal_domain_candidate_label(
+            snapshot=snapshot,
+            intent=intent,
+        )
+        if journal_label is not None:
+            labels.append(journal_label)
+    if intent == "approve":
+        reconciliation_label = _reconciliation_domain_candidate_label(snapshot=snapshot)
+        if reconciliation_label is not None:
+            labels.append(reconciliation_label)
+        commentary_label = _commentary_domain_candidate_label(snapshot=snapshot)
+        if commentary_label is not None:
+            labels.append(commentary_label)
+    if intent == "resolve":
+        item_label = _reconciliation_item_domain_candidate_label(snapshot=snapshot)
+        if item_label is not None:
+            labels.append(item_label)
+        anomaly_label = _reconciliation_anomaly_domain_candidate_label(snapshot=snapshot)
+        if anomaly_label is not None:
+            labels.append(anomaly_label)
+    return labels
+
+
+def _operator_memory_can_disambiguate_intent(
+    *,
+    operator_memory: AgentMemorySummary,
+    snapshot: dict[str, Any],
+    intent: str,
+) -> bool:
+    """Return whether thread-local target memory can safely break a cross-domain tie."""
+
+    target_type = operator_memory.last_target_type
+    target_id = operator_memory.last_target_id
+    if not isinstance(target_type, str) or not isinstance(target_id, str):
+        return False
+    allowed_target_types = {
+        "approve": {"document", "recommendation", "journal", "reconciliation", "commentary"},
+        "reject": {"document", "recommendation", "journal"},
+        "apply": {"journal"},
+        "resolve": {"reconciliation_item", "reconciliation_anomaly"},
+        "ignore": {"document"},
+    }.get(intent, set())
+    if target_type not in allowed_target_types:
+        return False
+    return _snapshot_contains_target(
+        snapshot=snapshot,
+        target_type=target_type,
+        target_id=target_id,
+    )
+
+
+def _resolve_recent_target_id(
+    *,
+    operator_memory: AgentMemorySummary,
+    snapshot: dict[str, Any],
+    target_type: str,
+    referential_only: bool,
+    operator_content: str,
+) -> str | None:
+    """Return the last thread-local target id when it is safe to reuse."""
+
+    if referential_only and not _is_referential_follow_up(operator_content=operator_content):
+        return None
+    if operator_memory.last_target_type != target_type:
+        return None
+    last_target_id = operator_memory.last_target_id
+    if not isinstance(last_target_id, str) or not last_target_id.strip():
+        return None
+    if not _snapshot_contains_target(
+        snapshot=snapshot,
+        target_type=target_type,
+        target_id=last_target_id,
+    ):
+        return None
+    return last_target_id
+
+
+def _is_referential_follow_up(*, operator_content: str) -> bool:
+    """Return whether the operator is referring back to the last concrete target."""
+
+    normalized_content = _searchable_text(operator_content)
+    referential_phrases = (
+        "it",
+        "that",
+        "this",
+        "continue",
+        "go ahead",
+        "do that",
+        "do it",
+        "use that",
+        "use it",
+        "the same one",
+        "that one",
+        "same one",
+    )
+    return any(phrase in normalized_content for phrase in referential_phrases)
+
+
+def _snapshot_contains_target(
+    *,
+    snapshot: dict[str, Any],
+    target_type: str,
+    target_id: str,
+) -> bool:
+    """Return whether the current snapshot still contains the remembered target."""
+
+    normalized_target_id = target_id.strip()
+    if not normalized_target_id:
+        return False
+    collection, matcher = _snapshot_collection_for_target_type(target_type=target_type)
+    if collection is None:
+        return False
+    records = snapshot.get(collection)
+    if not isinstance(records, list):
+        if target_type == "workspace":
+            workspace = snapshot.get("workspace")
+            return (
+                isinstance(workspace, dict)
+                and str(workspace.get("id") or "") == normalized_target_id
+            )
+        return False
+    for record in records:
+        if isinstance(record, dict) and matcher(record, normalized_target_id):
+            return True
+    return False
+
+
+def _resolve_memory_target_snapshot(
+    *,
+    tool_name: str | None,
+    tool_arguments: dict[str, Any],
+    snapshot: dict[str, Any],
+) -> dict[str, str] | None:
+    """Return one concrete target snapshot to persist into thread memory."""
+
+    if tool_name in {"update_commentary", "approve_commentary"}:
+        commentary = snapshot.get("commentary")
+        if not isinstance(commentary, list):
+            return None
+        report_run_id = tool_arguments.get("report_run_id")
+        section_key = tool_arguments.get("section_key")
+        if not isinstance(report_run_id, str) or not isinstance(section_key, str):
+            return None
+        for record in commentary:
+            if not isinstance(record, dict):
+                continue
+            if str(record.get("report_run_id") or "") != report_run_id:
+                continue
+            if str(record.get("section_key") or "") != section_key:
+                continue
+            target_id = record.get("id")
+            if not isinstance(target_id, str) or not target_id.strip():
+                return None
+            label = _commentary_specific_label(record=record)
+            if label is None:
+                return None
+            return {
+                "target_type": "commentary",
+                "target_id": target_id.strip(),
+                "label": label,
+            }
+        return None
+
+    target_spec = _tool_memory_target_spec(tool_name=tool_name)
+    if target_spec is None:
+        return None
+    target_type, target_argument = target_spec
+    target_id = tool_arguments.get(target_argument)
+    if not isinstance(target_id, str) or not target_id.strip():
+        return None
+    label = _resolve_target_label_from_snapshot(
+        snapshot=snapshot,
+        target_type=target_type,
+        target_id=target_id,
+    )
+    if label is None:
+        return None
+    return {
+        "target_type": target_type,
+        "target_id": target_id.strip(),
+        "label": label,
+    }
+
+
+def _resolve_approved_objective(
+    *,
+    existing_memory: dict[str, Any],
+    operator_message: str | None,
+    action_status: str,
+) -> str | None:
+    """Return the last operator objective that the agent actively committed to carry out."""
+
+    if (
+        operator_message is not None
+        and operator_message.strip()
+        and action_status in {"pending", "applied", "waiting_async", "partial"}
+    ):
+        return _truncate_text(operator_message.strip(), limit=180)
+    existing_value = existing_memory.get("approved_objective")
+    return existing_value if isinstance(existing_value, str) and existing_value.strip() else None
+
+
+def _resolve_working_subtask(
+    *,
+    existing_memory: dict[str, Any],
+    operator_message: str | None,
+    tool_name: str | None,
+    resolved_target: dict[str, str] | None,
+    action_status: str,
+    snapshot: dict[str, Any],
+    active_async_turn: dict[str, Any] | None,
+) -> str | None:
+    """Return one compact current-subtask summary for long-turn continuity."""
+
+    active_async_objective = optional_memory_text(active_async_turn, "objective")
+    if action_status == "waiting_async" and active_async_objective is not None:
+        return f"Waiting for background work to finish so I can continue {active_async_objective}"
+    if resolved_target is not None and tool_name is not None:
+        verb = _tool_memory_subtask_verb(tool_name=tool_name)
+        if verb is not None:
+            return f"{verb} {resolved_target['label']}"
+    if tool_name is not None:
+        generic_subtask = _tool_memory_generic_subtask(tool_name=tool_name)
+        if generic_subtask is not None:
+            return generic_subtask
+    if operator_message is not None and operator_message.strip() and action_status != "read_only":
+        return _truncate_text(operator_message.strip(), limit=180)
+    next_action = _first_readiness_action(snapshot=snapshot)
+    if next_action is not None:
+        return _truncate_text(next_action, limit=180)
+    existing_value = existing_memory.get("working_subtask")
+    return existing_value if isinstance(existing_value, str) and existing_value.strip() else None
+
+
+def _resolve_pending_branch(
+    *,
+    existing_memory: dict[str, Any],
+    tool_name: str | None,
+    action_status: str,
+    snapshot: dict[str, Any],
+    active_async_turn: dict[str, Any] | None,
+) -> str | None:
+    """Return the next pending branch or hold state kept in compact memory."""
+
+    if action_status == "pending":
+        if isinstance(tool_name, str) and tool_name.strip():
+            return f"Awaiting operator confirmation for {tool_name.replace('_', ' ')}"
+        return "Awaiting operator confirmation for the next governed change"
+    if action_status == "waiting_async":
+        active_async_objective = optional_memory_text(active_async_turn, "objective")
+        if active_async_objective is not None:
+            return (
+                "Resume automatically when background work completes for "
+                f"{active_async_objective}"
+            )
+        return "Resume automatically when the current background work completes"
+    next_action = _first_readiness_action(snapshot=snapshot)
+    if next_action is not None:
+        return _truncate_text(
+            f"Next branch: {_lowercase_leading_character(next_action)}",
+            limit=180,
+        )
+    existing_value = existing_memory.get("pending_branch")
+    return existing_value if isinstance(existing_value, str) and existing_value.strip() else None
+
+
+def _tool_memory_subtask_verb(*, tool_name: str) -> str | None:
+    """Return the compact working-set verb phrase for one deterministic tool."""
+
+    mapping = {
+        "review_document": "Review",
+        "ignore_document": "Ignore",
+        "approve_recommendation": "Approve",
+        "reject_recommendation": "Reject",
+        "approve_journal": "Approve",
+        "apply_journal": "Apply",
+        "reject_journal": "Reject",
+        "approve_reconciliation": "Approve",
+        "disposition_reconciliation_item": "Resolve",
+        "resolve_reconciliation_anomaly": "Resolve",
+        "update_commentary": "Update",
+        "approve_commentary": "Approve",
+        "switch_workspace": "Work in",
+        "update_workspace": "Update",
+        "delete_workspace": "Delete",
+        "delete_close_run": "Delete",
+    }
+    return mapping.get(tool_name)
+
+
+def _tool_memory_generic_subtask(*, tool_name: str) -> str | None:
+    """Return a generic current-subtask label when no concrete target is pinned."""
+
+    mapping = {
+        "generate_recommendations": "Generate recommendations for the current close run",
+        "run_reconciliation": "Run reconciliation for the current close run",
+        "generate_reports": "Generate reports for the current close run",
+        "generate_export": "Generate the export package for the current close run",
+        "assemble_evidence_pack": "Assemble the evidence pack for the current close run",
+        "create_workspace": "Create the new workspace",
+        "create_close_run": "Create the next close run",
+        "advance_close_run": "Advance the close run",
+        "rewind_close_run": "Move the close run back to the requested phase",
+        "reopen_close_run": "Reopen the close run as a working version",
+        "approve_close_run": "Approve the close run",
+        "archive_close_run": "Archive the close run",
+    }
+    return mapping.get(tool_name)
+
+
+def _resolve_target_label_from_snapshot(
+    *,
+    snapshot: dict[str, Any],
+    target_type: str,
+    target_id: str,
+) -> str | None:
+    """Return one operator-facing target label from the current workspace snapshot."""
+
+    collection, matcher = _snapshot_collection_for_target_type(target_type=target_type)
+    if collection == "workspace":
+        return _resolve_workspace_label(snapshot=snapshot, workspace_id=target_id)
+    if collection == "entity_close_runs":
+        return _resolve_close_run_label(snapshot=snapshot, close_run_id=target_id)
+    if collection is None:
+        return None
+    records = snapshot.get(collection)
+    if not isinstance(records, list):
+        return None
+    for record in records:
+        if not isinstance(record, dict) or not matcher(record, target_id):
+            continue
+        return _target_label_from_record(target_type=target_type, record=record)
+    return None
+
+
+def _snapshot_collection_for_target_type(
+    *,
+    target_type: str,
+) -> tuple[str | None, Any]:
+    """Map one canonical target type onto its snapshot collection and id matcher."""
+
+    def matcher(record: dict[str, Any], value: str) -> bool:
+        return str(record.get("id") or "") == value
+
+    if target_type == "document":
+        return "documents", matcher
+    if target_type == "recommendation":
+        return "recommendations", matcher
+    if target_type == "journal":
+        return "journals", matcher
+    if target_type == "reconciliation":
+        return "reconciliations", matcher
+    if target_type == "reconciliation_item":
+        return "reconciliation_items", matcher
+    if target_type == "reconciliation_anomaly":
+        return "reconciliation_anomalies", matcher
+    if target_type == "commentary":
+        return "commentary", matcher
+    if target_type == "workspace":
+        return "workspace", matcher
+    if target_type == "close_run":
+        return "entity_close_runs", matcher
+    return None, matcher
+
+
+def _tool_memory_target_spec(*, tool_name: str | None) -> tuple[str, str] | None:
+    """Return the target type and argument key remembered for one tool."""
+
+    mapping = {
+        "review_document": ("document", "document_id"),
+        "ignore_document": ("document", "document_id"),
+        "approve_recommendation": ("recommendation", "recommendation_id"),
+        "reject_recommendation": ("recommendation", "recommendation_id"),
+        "approve_journal": ("journal", "journal_id"),
+        "apply_journal": ("journal", "journal_id"),
+        "reject_journal": ("journal", "journal_id"),
+        "approve_reconciliation": ("reconciliation", "reconciliation_id"),
+        "disposition_reconciliation_item": ("reconciliation_item", "item_id"),
+        "resolve_reconciliation_anomaly": ("reconciliation_anomaly", "anomaly_id"),
+        "update_commentary": ("commentary", "commentary_id"),
+        "approve_commentary": ("commentary", "commentary_id"),
+        "switch_workspace": ("workspace", "workspace_id"),
+        "update_workspace": ("workspace", "workspace_id"),
+        "delete_workspace": ("workspace", "workspace_id"),
+        "delete_close_run": ("close_run", "close_run_id"),
+    }
+    return mapping.get(tool_name or "")
+
+
+def _target_label_from_record(*, target_type: str, record: dict[str, Any]) -> str | None:
+    """Return one concise label for a remembered target record."""
+
+    if target_type == "document":
+        return _document_specific_label(record=record)
+    if target_type == "recommendation":
+        return _recommendation_specific_label(record=record)
+    if target_type == "journal":
+        return _journal_specific_label(record=record)
+    if target_type == "reconciliation":
+        reconciliation_type = record.get("type")
+        if isinstance(reconciliation_type, str) and reconciliation_type.strip():
+            return f"the {reconciliation_type.replace('_', ' ')} reconciliation"
+        return "the reconciliation"
+    if target_type == "reconciliation_item":
+        return _reconciliation_item_specific_label(record=record)
+    if target_type == "reconciliation_anomaly":
+        return _reconciliation_anomaly_specific_label(record=record)
+    if target_type == "commentary":
+        return _commentary_specific_label(record=record)
+    return None
+
+
+def _build_planner_focus_lines(*, snapshot: dict[str, Any]) -> list[str]:
+    """Return compact focus cues that help the planner choose the next action naturally."""
+
+    lines: list[str] = []
+    workspace_name = _workspace_name_from_snapshot(snapshot=snapshot)
+    if workspace_name is not None:
+        lines.append(f"- Active workspace: {workspace_name}.")
+
+    close_run_id = snapshot.get("close_run_id")
+    if isinstance(close_run_id, str) and close_run_id.strip():
+        close_run_label = _resolve_close_run_label(
+            snapshot=snapshot,
+            close_run_id=close_run_id,
+        )
+        if close_run_label is not None:
+            lines.append(f"- Active close run: {close_run_label}.")
+    else:
+        lines.append("- Thread scope: workspace-level with no close run pinned.")
+
+    blockers = _readiness_items(snapshot=snapshot, key="blockers")
+    if blockers:
+        lines.append(f"- Top blocker: {blockers[0]}.")
+    next_action = _first_readiness_action(snapshot=snapshot)
+    if next_action is not None:
+        lines.append(f"- Suggested next action: {next_action}.")
+
+    pending_document = _single_pending_document_record(snapshot=snapshot)
+    if pending_document is not None:
+        filename = pending_document.get("filename")
+        if isinstance(filename, str) and filename.strip():
+            lines.append(f"- Clear document review target: {filename.strip()}.")
+    else:
+        pending_document_count = _count_pending_documents(snapshot=snapshot)
+        if pending_document_count > 1:
+            lines.append(f"- Documents awaiting review: {pending_document_count}.")
+
+    pending_recommendation = _single_pending_recommendation_record(snapshot=snapshot)
+    if pending_recommendation is not None:
+        recommendation_label = _recommendation_specific_label(record=pending_recommendation)
+        if recommendation_label is not None:
+            lines.append(f"- Clear recommendation target: {recommendation_label}.")
+
+    pending_journal = _single_pending_journal_record(snapshot=snapshot, intent="approve")
+    if pending_journal is not None:
+        journal_label = _journal_specific_label(record=pending_journal)
+        if journal_label is not None:
+            lines.append(f"- Clear journal target: {journal_label}.")
+
+    pending_item = _single_pending_reconciliation_item_record(snapshot=snapshot)
+    if pending_item is not None:
+        item_label = _reconciliation_item_specific_label(record=pending_item)
+        if item_label is not None:
+            lines.append(f"- Clear reconciliation item: {item_label}.")
+
+    pending_anomaly = _single_pending_reconciliation_anomaly_record(snapshot=snapshot)
+    if pending_anomaly is not None:
+        anomaly_label = _reconciliation_anomaly_specific_label(record=pending_anomaly)
+        if anomaly_label is not None:
+            lines.append(f"- Clear anomaly target: {anomaly_label}.")
+
+    pending_commentary = _single_pending_commentary_record(snapshot=snapshot)
+    if pending_commentary is not None:
+        commentary_label = _commentary_specific_label(record=pending_commentary)
+        if commentary_label is not None:
+            lines.append(f"- Clear commentary target: {commentary_label}.")
+
+    return lines[:8]
+
+
+def _build_unresolved_tool_selection_message(
+    *,
+    operator_content: str,
+    snapshot: dict[str, Any],
+) -> str:
+    """Return a natural read-only recovery message when the planner picked no valid action."""
+
+    normalized_content = _searchable_text(operator_content)
+    if "workspace" in normalized_content or "entity" in normalized_content:
+        choices = _workspace_choice_labels(snapshot=snapshot)
+        if choices:
+            return (
+                "Tell me which workspace you want me to use and I'll handle it here. "
+                f"I can use { _join_choice_labels(choices) }."
+            )
+        return "Tell me which workspace you want me to use and I'll handle it here."
+
+    return (
+        "I need one slightly clearer instruction before I act. Tell me the exact step you "
+        "want and I'll handle it here."
+    )
+
+
+def _normalize_planned_tool_name(tool_name: object) -> str | None:
+    """Return one normalized planner-selected tool name when present."""
+
+    if not isinstance(tool_name, str):
+        return None
+    normalized = tool_name.strip()
+    if not normalized:
+        return None
+    return normalized.replace("-", "_").replace(" ", "_").lower()
+
+
+def _infer_tool_name_from_namespace(
+    *,
+    namespace_name: str,
+    operator_content: str,
+    tool_arguments: dict[str, Any],
+) -> str | None:
+    """Return the most likely concrete tool when the planner emitted a namespace label."""
+
+    normalized_content = _searchable_text(operator_content)
+    if namespace_name == "workspace_admin":
+        return _infer_workspace_admin_tool_name(
+            normalized_content=normalized_content,
+            tool_arguments=tool_arguments,
+        )
+    if namespace_name == "close_operator":
+        return _infer_close_operator_tool_name(
+            normalized_content=normalized_content,
+            tool_arguments=tool_arguments,
+        )
+    if namespace_name == "document_control":
+        return _infer_document_control_tool_name(
+            normalized_content=normalized_content,
+            tool_arguments=tool_arguments,
+        )
+    if namespace_name == "treatment_and_journals":
+        return _infer_treatment_tool_name(
+            normalized_content=normalized_content,
+            tool_arguments=tool_arguments,
+        )
+    if namespace_name == "reconciliation_control":
+        return _infer_reconciliation_tool_name(
+            normalized_content=normalized_content,
+            tool_arguments=tool_arguments,
+        )
+    if namespace_name == "reporting_and_release":
+        return _infer_reporting_tool_name(
+            normalized_content=normalized_content,
+            tool_arguments=tool_arguments,
+        )
+    return None
+
+
+def _infer_workspace_admin_tool_name(
+    *,
+    normalized_content: str,
+    tool_arguments: dict[str, Any],
+) -> str | None:
+    """Resolve the concrete workspace-admin tool from one operator request."""
+
+    update_fields = {
+        "name",
+        "legal_name",
+        "base_currency",
+        "country_code",
+        "timezone",
+        "accounting_standard",
+        "autonomy_mode",
+    }
+    if any(token in normalized_content for token in ("delete", "remove")):
+        return "delete_workspace"
+    if any(token in normalized_content for token in ("create", "new", "another", "add")):
+        return "create_workspace"
+    if any(field in tool_arguments for field in update_fields) or any(
+        token in normalized_content
+        for token in (
+            "rename",
+            "update",
+            "change the workspace",
+            "change this workspace",
+            "edit the workspace",
+            "set the workspace",
+            "workspace settings",
+            "base currency",
+            "timezone",
+            "accounting standard",
+            "review routing",
+            "autonomy mode",
+            "human review",
+            "reduced interruption",
+        )
+    ):
+        return "update_workspace"
+    if (
+        "workspace_id" in tool_arguments
+        or any(
+            token in normalized_content
+            for token in (
+                "switch",
+                "move this chat",
+                "move the chat",
+                "change workspace",
+                "use the ",
+                "work on ",
+                "go to ",
+                "back to ",
+            )
+        )
+    ):
+        return "switch_workspace"
+    return None
+
+
+def _infer_close_operator_tool_name(
+    *,
+    normalized_content: str,
+    tool_arguments: dict[str, Any],
+) -> str | None:
+    """Resolve the concrete close-run lifecycle tool from one operator request."""
+
+    if any(token in normalized_content for token in ("delete", "remove")):
+        return "delete_close_run"
+    if any(token in normalized_content for token in ("archive",)):
+        return "archive_close_run"
+    if any(token in normalized_content for token in ("reopen", "open it again")):
+        return "reopen_close_run"
+    if any(token in normalized_content for token in ("approve", "sign off", "signoff")):
+        return "approve_close_run"
+    if "target_phase" in tool_arguments or any(
+        token in normalized_content
+        for token in (
+            "take it back",
+            "move it back",
+            "back to ",
+            "rewind",
+            "return it to ",
+        )
+    ):
+        return "rewind_close_run"
+    if any(token in normalized_content for token in ("start", "new run", "fresh run", "new close")):
+        return "create_close_run"
+    if any(
+        token in normalized_content
+        for token in ("advance", "move forward", "continue to ", "move to ")
+    ):
+        return "advance_close_run"
+    return None
+
+
+def _infer_document_control_tool_name(
+    *,
+    normalized_content: str,
+    tool_arguments: dict[str, Any],
+) -> str | None:
+    """Resolve the concrete document-control tool from one operator request."""
+
+    if "field_id" in tool_arguments or any(
+        token in normalized_content
+        for token in ("correct", "fix the value", "change the value", "edit the field")
+    ):
+        return "correct_extracted_field"
+    if any(
+        token in normalized_content
+        for token in ("ignore", "uploaded by mistake", "wrong document", "mistaken upload")
+    ):
+        return "ignore_document"
+    if any(
+        token in normalized_content
+        for token in ("approve", "reject", "needs info", "review", "document")
+    ):
+        return "review_document"
+    return None
+
+
+def _infer_treatment_tool_name(
+    *,
+    normalized_content: str,
+    tool_arguments: dict[str, Any],
+) -> str | None:
+    """Resolve the concrete treatment or journal tool from one operator request."""
+
+    if "posting_target" in tool_arguments or any(
+        token in normalized_content for token in ("apply journal", "post journal", "apply it")
+    ):
+        return "apply_journal"
+    if any(token in normalized_content for token in ("approve journal", "approve the journal")):
+        return "approve_journal"
+    if any(token in normalized_content for token in ("reject journal", "reject the journal")):
+        return "reject_journal"
+    if any(
+        token in normalized_content
+        for token in ("approve recommendation", "approve the recommendation")
+    ):
+        return "approve_recommendation"
+    if any(
+        token in normalized_content
+        for token in ("reject recommendation", "reject the recommendation")
+    ):
+        return "reject_recommendation"
+    if any(token in normalized_content for token in ("generate", "recommendation", "treatment")):
+        return "generate_recommendations"
+    return None
+
+
+def _infer_reconciliation_tool_name(
+    *,
+    normalized_content: str,
+    tool_arguments: dict[str, Any],
+) -> str | None:
+    """Resolve the concrete reconciliation tool from one operator request."""
+
+    if "resolution_note" in tool_arguments or "anomaly" in normalized_content:
+        return "resolve_reconciliation_anomaly"
+    if "disposition" in tool_arguments or any(
+        token in normalized_content for token in ("exception", "item", "disposition", "resolve it")
+    ):
+        return "disposition_reconciliation_item"
+    if any(token in normalized_content for token in ("approve", "approved")):
+        return "approve_reconciliation"
+    if any(token in normalized_content for token in ("run", "reconcile", "reconciliation")):
+        return "run_reconciliation"
+    return None
+
+
+def _infer_reporting_tool_name(
+    *,
+    normalized_content: str,
+    tool_arguments: dict[str, Any],
+) -> str | None:
+    """Resolve the concrete reporting or release tool from one operator request."""
+
+    if "recipient_name" in tool_arguments or any(
+        token in normalized_content
+        for token in ("distribute", "send the export", "record distribution")
+    ):
+        return "distribute_export"
+    if any(
+        token in normalized_content
+        for token in (
+            "approve commentary",
+            "approve the commentary",
+            "approve that commentary",
+        )
+    ):
+        return "approve_commentary"
+    if "section_key" in tool_arguments and "body" not in tool_arguments:
+        return "approve_commentary"
+    if "body" in tool_arguments or any(
+        token in normalized_content for token in ("commentary", "narrative", "management note")
+    ):
+        return "update_commentary"
+    if "row_payload" in tool_arguments:
+        return "upsert_supporting_schedule_row"
+    if "row_id" in tool_arguments and "schedule_type" in tool_arguments:
+        return "delete_supporting_schedule_row"
+    if "status" in tool_arguments and "schedule_type" in tool_arguments:
+        return "set_supporting_schedule_status"
+    if any(token in normalized_content for token in ("evidence pack",)):
+        return "assemble_evidence_pack"
+    if any(
+        token in normalized_content
+        for token in ("export", "release package", "package the export")
+    ):
+        return "generate_export"
+    if any(token in normalized_content for token in ("report", "commentary", "report pack")):
+        return "generate_reports"
+    return None
+
+
 def _hydrate_review_document_arguments(
     *,
     tool_arguments: dict[str, Any],
     snapshot: dict[str, Any],
     operator_content: str,
+    operator_memory: AgentMemorySummary,
 ) -> dict[str, Any]:
     """Fill the common document-review arguments when the target is unambiguous."""
 
@@ -3823,6 +5651,7 @@ def _hydrate_review_document_arguments(
             snapshot=snapshot,
             operator_content=operator_content,
             preferred_statuses=("needs_review", "parsed", "uploaded", "processing"),
+            operator_memory=operator_memory,
         )
         if document_id is not None:
             hydrated["document_id"] = document_id
@@ -3856,6 +5685,7 @@ def _resolve_document_id_from_snapshot(
     snapshot: dict[str, Any],
     operator_content: str,
     preferred_statuses: tuple[str, ...],
+    operator_memory: AgentMemorySummary,
 ) -> str | None:
     """Resolve one document identifier from the snapshot when the target is clear."""
 
@@ -3877,6 +5707,20 @@ def _resolve_document_id_from_snapshot(
     if len(filename_matches) == 1 and isinstance(filename_matches[0].get("id"), str):
         return str(filename_matches[0]["id"])
 
+    recent_target_id = _resolve_recent_target_id(
+        operator_memory=operator_memory,
+        snapshot=snapshot,
+        target_type="document",
+        referential_only=True,
+        operator_content=operator_content,
+    )
+    if recent_target_id is not None and _document_matches_preferred_status(
+        records=records,
+        document_id=recent_target_id,
+        preferred_statuses=preferred_statuses,
+    ):
+        return recent_target_id
+
     preferred = [
         record
         for record in records
@@ -3887,12 +5731,28 @@ def _resolve_document_id_from_snapshot(
     return None
 
 
+def _document_matches_preferred_status(
+    *,
+    records: list[dict[str, Any]],
+    document_id: str,
+    preferred_statuses: tuple[str, ...],
+) -> bool:
+    """Return whether one remembered document still matches the allowed workflow states."""
+
+    for record in records:
+        if str(record.get("id") or "") != document_id:
+            continue
+        return str(record.get("status") or "") in preferred_statuses
+    return False
+
+
 def _hydrate_recommendation_arguments(
     *,
     tool_name: str,
     tool_arguments: dict[str, Any],
     snapshot: dict[str, Any],
     operator_content: str,
+    operator_memory: AgentMemorySummary,
 ) -> dict[str, Any]:
     """Resolve clear recommendation targets and rejection reasons from the snapshot."""
 
@@ -3902,6 +5762,7 @@ def _hydrate_recommendation_arguments(
             snapshot=snapshot,
             operator_content=operator_content,
             preferred_statuses=("pending_review", "draft"),
+            operator_memory=operator_memory,
         )
         if recommendation_id is not None:
             hydrated["recommendation_id"] = recommendation_id
@@ -3919,6 +5780,7 @@ def _resolve_recommendation_id_from_snapshot(
     snapshot: dict[str, Any],
     operator_content: str,
     preferred_statuses: tuple[str, ...],
+    operator_memory: AgentMemorySummary,
 ) -> str | None:
     """Resolve one recommendation identifier from the snapshot when the target is clear."""
 
@@ -3949,6 +5811,16 @@ def _resolve_recommendation_id_from_snapshot(
     if len(reasoning_matches) == 1 and isinstance(reasoning_matches[0].get("id"), str):
         return str(reasoning_matches[0]["id"])
 
+    recent_target_id = _resolve_recent_target_id(
+        operator_memory=operator_memory,
+        snapshot=snapshot,
+        target_type="recommendation",
+        referential_only=True,
+        operator_content=operator_content,
+    )
+    if recent_target_id is not None:
+        return recent_target_id
+
     preferred = [
         record
         for record in records
@@ -3956,6 +5828,8 @@ def _resolve_recommendation_id_from_snapshot(
     ]
     if len(preferred) == 1 and isinstance(preferred[0].get("id"), str):
         return str(preferred[0]["id"])
+    if preferred_statuses == ("approved",):
+        return None
     if len(records) == 1 and isinstance(records[0].get("id"), str):
         return str(records[0]["id"])
     return None
@@ -3967,6 +5841,7 @@ def _hydrate_journal_arguments(
     tool_arguments: dict[str, Any],
     snapshot: dict[str, Any],
     operator_content: str,
+    operator_memory: AgentMemorySummary,
 ) -> dict[str, Any]:
     """Resolve clear journal targets, posting defaults, and rejection reasons."""
 
@@ -3981,6 +5856,7 @@ def _hydrate_journal_arguments(
             snapshot=snapshot,
             operator_content=operator_content,
             preferred_statuses=preferred_statuses,
+            operator_memory=operator_memory,
         )
         if journal_id is not None:
             hydrated["journal_id"] = journal_id
@@ -4001,6 +5877,7 @@ def _resolve_journal_id_from_snapshot(
     snapshot: dict[str, Any],
     operator_content: str,
     preferred_statuses: tuple[str, ...],
+    operator_memory: AgentMemorySummary,
 ) -> str | None:
     """Resolve one journal identifier from the snapshot when the target is clear."""
 
@@ -4026,7 +5903,29 @@ def _resolve_journal_id_from_snapshot(
         )
     ]
     if len(explicit_matches) == 1 and isinstance(explicit_matches[0].get("id"), str):
+        if preferred_statuses == ("approved",) and str(
+            explicit_matches[0].get("status") or ""
+        ) not in preferred_statuses:
+            return None
         return str(explicit_matches[0]["id"])
+
+    recent_target_id = _resolve_recent_target_id(
+        operator_memory=operator_memory,
+        snapshot=snapshot,
+        target_type="journal",
+        referential_only=True,
+        operator_content=operator_content,
+    )
+    if recent_target_id is not None:
+        if preferred_statuses == ("approved",):
+            for record in records:
+                if (
+                    str(record.get("id") or "") == recent_target_id
+                    and str(record.get("status") or "") in preferred_statuses
+                ):
+                    return recent_target_id
+            return None
+        return recent_target_id
 
     preferred = [
         record
@@ -4035,6 +5934,8 @@ def _resolve_journal_id_from_snapshot(
     ]
     if len(preferred) == 1 and isinstance(preferred[0].get("id"), str):
         return str(preferred[0]["id"])
+    if preferred_statuses == ("approved",):
+        return None
     if len(records) == 1 and isinstance(records[0].get("id"), str):
         return str(records[0]["id"])
     return None
@@ -4046,6 +5947,7 @@ def _hydrate_reconciliation_arguments(
     tool_arguments: dict[str, Any],
     snapshot: dict[str, Any],
     operator_content: str,
+    operator_memory: AgentMemorySummary,
 ) -> dict[str, Any]:
     """Resolve clear reconciliation targets, dispositions, and reviewer reasons."""
 
@@ -4056,6 +5958,7 @@ def _hydrate_reconciliation_arguments(
                 snapshot=snapshot,
                 operator_content=operator_content,
                 preferred_statuses=("in_review", "blocked", "draft"),
+                operator_memory=operator_memory,
             )
             if reconciliation_id is not None:
                 hydrated["reconciliation_id"] = reconciliation_id
@@ -4066,6 +5969,7 @@ def _hydrate_reconciliation_arguments(
             item_id = _resolve_reconciliation_item_id_from_snapshot(
                 snapshot=snapshot,
                 operator_content=operator_content,
+                operator_memory=operator_memory,
             )
             if item_id is not None:
                 hydrated["item_id"] = item_id
@@ -4090,6 +5994,7 @@ def _hydrate_reconciliation_arguments(
         anomaly_id = _resolve_reconciliation_anomaly_id_from_snapshot(
             snapshot=snapshot,
             operator_content=operator_content,
+            operator_memory=operator_memory,
         )
         if anomaly_id is not None:
             hydrated["anomaly_id"] = anomaly_id
@@ -4106,6 +6011,7 @@ def _resolve_reconciliation_id_from_snapshot(
     snapshot: dict[str, Any],
     operator_content: str,
     preferred_statuses: tuple[str, ...],
+    operator_memory: AgentMemorySummary,
 ) -> str | None:
     """Resolve one reconciliation identifier from the snapshot when the target is clear."""
 
@@ -4130,6 +6036,16 @@ def _resolve_reconciliation_id_from_snapshot(
     if len(type_matches) == 1 and isinstance(type_matches[0].get("id"), str):
         return str(type_matches[0]["id"])
 
+    recent_target_id = _resolve_recent_target_id(
+        operator_memory=operator_memory,
+        snapshot=snapshot,
+        target_type="reconciliation",
+        referential_only=True,
+        operator_content=operator_content,
+    )
+    if recent_target_id is not None:
+        return recent_target_id
+
     preferred = [
         record
         for record in records
@@ -4146,6 +6062,7 @@ def _resolve_reconciliation_item_id_from_snapshot(
     *,
     snapshot: dict[str, Any],
     operator_content: str,
+    operator_memory: AgentMemorySummary,
 ) -> str | None:
     """Resolve one reconciliation item identifier from the snapshot when the target is clear."""
 
@@ -4173,6 +6090,16 @@ def _resolve_reconciliation_item_id_from_snapshot(
     if len(explicit_matches) == 1 and isinstance(explicit_matches[0].get("id"), str):
         return str(explicit_matches[0]["id"])
 
+    recent_target_id = _resolve_recent_target_id(
+        operator_memory=operator_memory,
+        snapshot=snapshot,
+        target_type="reconciliation_item",
+        referential_only=True,
+        operator_content=operator_content,
+    )
+    if recent_target_id is not None:
+        return recent_target_id
+
     pending = [
         record
         for record in records
@@ -4189,6 +6116,7 @@ def _resolve_reconciliation_anomaly_id_from_snapshot(
     *,
     snapshot: dict[str, Any],
     operator_content: str,
+    operator_memory: AgentMemorySummary,
 ) -> str | None:
     """Resolve one reconciliation anomaly identifier from the snapshot when the target is clear."""
 
@@ -4215,6 +6143,16 @@ def _resolve_reconciliation_anomaly_id_from_snapshot(
     ]
     if len(explicit_matches) == 1 and isinstance(explicit_matches[0].get("id"), str):
         return str(explicit_matches[0]["id"])
+
+    recent_target_id = _resolve_recent_target_id(
+        operator_memory=operator_memory,
+        snapshot=snapshot,
+        target_type="reconciliation_anomaly",
+        referential_only=True,
+        operator_content=operator_content,
+    )
+    if recent_target_id is not None:
+        return recent_target_id
     if len(records) == 1 and isinstance(records[0].get("id"), str):
         return str(records[0]["id"])
     return None
@@ -4226,6 +6164,7 @@ def _hydrate_commentary_arguments(
     tool_arguments: dict[str, Any],
     snapshot: dict[str, Any],
     operator_content: str,
+    operator_memory: AgentMemorySummary,
 ) -> dict[str, Any]:
     """Resolve clear commentary targets from the snapshot for update and approval steps."""
 
@@ -4242,6 +6181,7 @@ def _hydrate_commentary_arguments(
             operator_content=operator_content,
             report_run_id=report_run_id if isinstance(report_run_id, str) else None,
             prefer_unapproved=tool_name == "approve_commentary",
+            operator_memory=operator_memory,
         )
         if section_key is not None:
             hydrated["section_key"] = section_key
@@ -4309,6 +6249,7 @@ def _resolve_commentary_section_from_snapshot(
     operator_content: str,
     report_run_id: str | None,
     prefer_unapproved: bool,
+    operator_memory: AgentMemorySummary,
 ) -> str | None:
     """Resolve one commentary section key from the snapshot when the target is clear."""
 
@@ -4340,6 +6281,20 @@ def _resolve_commentary_section_from_snapshot(
     ]
     if len(explicit_matches) == 1 and isinstance(explicit_matches[0].get("section_key"), str):
         return str(explicit_matches[0]["section_key"])
+
+    recent_target_id = _resolve_recent_target_id(
+        operator_memory=operator_memory,
+        snapshot=snapshot,
+        target_type="commentary",
+        referential_only=True,
+        operator_content=operator_content,
+    )
+    if recent_target_id is not None:
+        for record in records:
+            if str(record.get("id") or "") == recent_target_id and isinstance(
+                record.get("section_key"), str
+            ):
+                return str(record["section_key"])
 
     if prefer_unapproved:
         pending = [
@@ -4397,6 +6352,7 @@ def _hydrate_workspace_arguments(
     tool_arguments: dict[str, Any],
     snapshot: dict[str, Any],
     operator_content: str,
+    operator_memory: AgentMemorySummary,
 ) -> dict[str, Any]:
     """Resolve workspace targets and defaults from the current snapshot."""
 
@@ -4406,6 +6362,7 @@ def _hydrate_workspace_arguments(
         resolved_workspace_id = _resolve_workspace_id_from_snapshot(
             snapshot=snapshot,
             operator_content=operator_content,
+            operator_memory=operator_memory,
         )
         if resolved_workspace_id is not None:
             hydrated["workspace_id"] = resolved_workspace_id
@@ -4420,6 +6377,7 @@ def _resolve_workspace_id_from_snapshot(
     *,
     snapshot: dict[str, Any],
     operator_content: str,
+    operator_memory: AgentMemorySummary,
 ) -> str | None:
     """Resolve one workspace identifier from the snapshot when the target is clear."""
 
@@ -4461,6 +6419,16 @@ def _resolve_workspace_id_from_snapshot(
     if len(explicit_matches) == 1 and isinstance(explicit_matches[0].get("id"), str):
         return str(explicit_matches[0]["id"])
 
+    recent_target_id = _resolve_recent_target_id(
+        operator_memory=operator_memory,
+        snapshot=snapshot,
+        target_type="workspace",
+        referential_only=True,
+        operator_content=operator_content,
+    )
+    if recent_target_id is not None:
+        return recent_target_id
+
     if any(
         phrase in normalized_content
         for phrase in ("this workspace", "current workspace", "this entity", "current entity")
@@ -4477,6 +6445,7 @@ def _hydrate_delete_close_run_arguments(
     tool_arguments: dict[str, Any],
     snapshot: dict[str, Any],
     operator_content: str,
+    operator_memory: AgentMemorySummary,
 ) -> dict[str, Any]:
     """Resolve one close run identifier from the current snapshot when the target is clear."""
 
@@ -4487,6 +6456,7 @@ def _hydrate_delete_close_run_arguments(
     resolved_close_run_id = _resolve_close_run_id_from_snapshot(
         snapshot=snapshot,
         operator_content=operator_content,
+        operator_memory=operator_memory,
     )
     if resolved_close_run_id is not None:
         hydrated["close_run_id"] = resolved_close_run_id
@@ -4497,6 +6467,7 @@ def _resolve_close_run_id_from_snapshot(
     *,
     snapshot: dict[str, Any],
     operator_content: str,
+    operator_memory: AgentMemorySummary,
 ) -> str | None:
     """Resolve one close run identifier from the workspace snapshot when the target is clear."""
 
@@ -4526,6 +6497,16 @@ def _resolve_close_run_id_from_snapshot(
     ]
     if len(explicit_matches) == 1 and isinstance(explicit_matches[0].get("id"), str):
         return str(explicit_matches[0]["id"])
+
+    recent_target_id = _resolve_recent_target_id(
+        operator_memory=operator_memory,
+        snapshot=snapshot,
+        target_type="close_run",
+        referential_only=True,
+        operator_content=operator_content,
+    )
+    if recent_target_id is not None:
+        return recent_target_id
 
     current_close_run_id = snapshot.get("close_run_id")
     if any(
@@ -4908,6 +6889,11 @@ def _build_operator_failure_message(
         else "that request"
     )
     normalized_message = _normalize_operator_facing_text(error.message)
+    if "is not registered" in normalized_message:
+        return (
+            "I couldn't line up the exact workflow step for that request yet. "
+            "Tell me the workspace or action you want me to take and I'll handle it here."
+        )
     if normalized_message:
         return f"I couldn't finish {tool_phrase} yet. {normalized_message}"
     return f"I couldn't finish {tool_phrase} yet."

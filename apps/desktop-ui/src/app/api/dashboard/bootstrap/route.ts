@@ -9,6 +9,10 @@ import {
   type CloseRunSummary,
 } from "../../../../lib/close-runs";
 import {
+  buildBackendUnavailableResponse,
+  fetchBackendWithAvailabilityRetry,
+} from "../../../../lib/backend-proxy";
+import {
   buildBackendEntitiesUrl,
   type EntityListResponse,
   type EntitySummary,
@@ -20,14 +24,21 @@ type DashboardBootstrapEntry = Readonly<{
   entity: EntitySummary;
 }>;
 
+class BackendWarmupError extends Error {}
+
 export async function GET(request: Request): Promise<Response> {
   const proxyHeaders = buildEntityProxyHeaders(request);
-  const entityResponse = await fetch(buildBackendEntitiesUrl("/"), {
-    cache: "no-store",
-    headers: proxyHeaders,
-    method: "GET",
-    redirect: "manual",
-  });
+  let entityResponse: Response;
+  try {
+    entityResponse = await fetchBackendWithAvailabilityRetry(buildBackendEntitiesUrl("/"), {
+      cache: "no-store",
+      headers: proxyHeaders,
+      method: "GET",
+      redirect: "manual",
+    });
+  } catch {
+    return buildBackendUnavailableResponse();
+  }
 
   if (!entityResponse.ok) {
     return forwardBackendFailure(entityResponse);
@@ -54,6 +65,10 @@ export async function GET(request: Request): Promise<Response> {
       },
     );
   } catch (error: unknown) {
+    if (error instanceof BackendWarmupError) {
+      return buildBackendUnavailableResponse();
+    }
+
     return Response.json(
       {
         detail: {
@@ -78,19 +93,27 @@ async function readCloseRunsForEntity(
   entity: EntitySummary,
   proxyHeaders: Headers,
 ): Promise<readonly CloseRunSummary[]> {
-  const response = await fetch(
-    buildBackendEntitiesUrl(`/${encodeURIComponent(entity.id)}/close-runs`),
-    {
-      cache: "no-store",
-      headers: proxyHeaders,
-      method: "GET",
-      redirect: "manual",
-    },
-  );
+  let response: Response;
+  try {
+    response = await fetchBackendWithAvailabilityRetry(
+      buildBackendEntitiesUrl(`/${encodeURIComponent(entity.id)}/close-runs`),
+      {
+        cache: "no-store",
+        headers: proxyHeaders,
+        method: "GET",
+        redirect: "manual",
+      },
+    );
+  } catch {
+    throw new BackendWarmupError("The backend service is still starting. Retry shortly.");
+  }
 
   if (!response.ok) {
     const failureResponse = await forwardBackendFailure(response);
     const errorPayload = await safeJson(failureResponse);
+    if (response.status === 503) {
+      throw new BackendWarmupError(resolveFailureMessage(errorPayload, response.status));
+    }
     throw new Error(resolveFailureMessage(errorPayload, response.status));
   }
 

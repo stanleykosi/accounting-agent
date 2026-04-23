@@ -6,6 +6,10 @@ Dependencies: Next.js route handlers and the canonical backend chat URL helpers.
 */
 
 import { buildBackendChatUrl } from "../../../../lib/chat";
+import {
+  buildBackendUnavailableResponse,
+  fetchBackendWithAvailabilityRetry,
+} from "../../../../lib/backend-proxy";
 
 type ChatProxyRouteContext = {
   params: Promise<{
@@ -59,16 +63,21 @@ async function proxyChatRequest(
   const { chatPath } = await context.params;
   const requestUrl = new URL(request.url);
   const requestBody = request.method === "GET" ? null : await request.text();
-  const backendResponse = await fetch(
-    buildBackendChatUrl(`/${chatPath.join("/")}${requestUrl.search}`),
-    {
-      cache: "no-store",
-      headers: buildProxyHeaders(request),
-      method: request.method,
-      redirect: "manual",
-      ...(requestBody === null ? {} : { body: requestBody }),
-    },
-  );
+  let backendResponse: Response;
+  try {
+    backendResponse = await fetchBackendWithAvailabilityRetry(
+      buildBackendChatUrl(`/${chatPath.join("/")}${requestUrl.search}`),
+      {
+        cache: "no-store",
+        headers: buildProxyHeaders(request),
+        method: request.method,
+        redirect: "manual",
+        ...(requestBody === null ? {} : { body: requestBody }),
+      },
+    );
+  } catch {
+    return buildBackendUnavailableResponse();
+  }
 
   const responseHeaders = new Headers();
   const contentType = backendResponse.headers.get("content-type");

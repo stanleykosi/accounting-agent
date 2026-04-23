@@ -8,8 +8,9 @@ and the seed API contract models.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator, Iterable
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from typing import Any
 
 from apps.api.app.middleware.telemetry import install_request_telemetry_middleware
@@ -32,14 +33,23 @@ from apps.api.app.routes.report_templates import router as report_templates_rout
 from apps.api.app.routes.reports import router as reports_router
 from apps.api.app.routes.supporting_schedules import router as supporting_schedules_router
 from fastapi import APIRouter, FastAPI, Request
+from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
 from services.common.logging import configure_logging, get_logger
-from services.common.runtime_checks import run_backend_dependency_healthcheck
+from services.common.readiness import (
+    BackendDependencyReadiness,
+    BackendDependencyReadinessSnapshot,
+)
+from services.common.runtime_checks import (
+    TransientDependencyCheckError,
+    run_backend_dependency_healthcheck,
+)
 from services.common.settings import AppSettings, get_settings
 from services.common.types import utc_now
 from services.contracts.api_models import (
     ApiContractMetadata,
     ApiHealthStatus,
+    ApiReadinessStatus,
     ApiRouteDescriptor,
 )
 from services.observability.otel import configure_observability
@@ -72,10 +82,34 @@ def create_app(*, settings: AppSettings | None = None) -> FastAPI:
             docs_url=_join_api_path(api_base_path, "/docs"),
             openapi_url=_join_api_path(api_base_path, "/openapi.json"),
         )
-        run_backend_dependency_healthcheck(resolved_settings)
-        logger.info("API backend dependency healthcheck passed.")
-        yield
-        logger.info("API service stopping.")
+        readiness = BackendDependencyReadiness()
+        application.state.backend_dependency_readiness = readiness
+        shutdown_event = asyncio.Event()
+        readiness_task: asyncio.Task[None] | None = None
+        should_continue_retrying = await _run_initial_dependency_readiness_probe(
+            logger=logger,
+            readiness=readiness,
+            settings=resolved_settings,
+        )
+        if should_continue_retrying:
+            readiness_task = asyncio.create_task(
+                _run_dependency_readiness_probe(
+                    logger=logger,
+                    readiness=readiness,
+                    settings=resolved_settings,
+                    shutdown_event=shutdown_event,
+                    initial_attempt_count=readiness.snapshot().attempt_count,
+                )
+            )
+        try:
+            yield
+        finally:
+            shutdown_event.set()
+            if readiness_task is not None:
+                readiness_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await readiness_task
+            logger.info("API service stopping.")
 
     app = FastAPI(
         title="Accounting AI Agent API",
@@ -94,6 +128,17 @@ def create_app(*, settings: AppSettings | None = None) -> FastAPI:
     )
     install_request_telemetry_middleware(app)
 
+    @app.middleware("http")
+    async def gate_dependency_backed_routes(request: Request, call_next):
+        if _is_readiness_exempt_path(request.url.path, api_base_path):
+            return await call_next(request)
+
+        readiness_snapshot = _read_dependency_readiness(request.app)
+        if readiness_snapshot.ready:
+            return await call_next(request)
+
+        return _build_backend_not_ready_response(readiness_snapshot)
+
     @api_router.get(
         "/health",
         response_model=ApiHealthStatus,
@@ -110,6 +155,31 @@ def create_app(*, settings: AppSettings | None = None) -> FastAPI:
             version=API_VERSION,
             api_base_path=api_base_path,
             generated_at=utc_now(),
+        )
+
+    @api_router.get(
+        "/ready",
+        response_model=ApiReadinessStatus,
+        summary="Read API dependency readiness",
+        tags=["platform"],
+    )
+    async def read_readiness_status(request: Request) -> JSONResponse:
+        """Return readiness for dependency-backed API routes without dropping the process socket."""
+
+        readiness_payload = _build_api_readiness_status(
+            api_base_path=api_base_path,
+            environment=resolved_settings.runtime.environment,
+            readiness_snapshot=_read_dependency_readiness(request.app),
+            service_name="api",
+            version=API_VERSION,
+        )
+        response_headers = {"cache-control": "no-store"}
+        if not readiness_payload.ready:
+            response_headers["retry-after"] = "1"
+        return JSONResponse(
+            content=readiness_payload.model_dump(mode="json"),
+            headers=response_headers,
+            status_code=200 if readiness_payload.ready else 503,
         )
 
     @api_router.get(
@@ -204,6 +274,189 @@ def _collect_route_descriptors(routes: Iterable[Any]) -> tuple[ApiRouteDescripto
         )
 
     return tuple(sorted(descriptors, key=lambda descriptor: (descriptor.path, descriptor.name)))
+
+
+async def _run_initial_dependency_readiness_probe(
+    *,
+    logger,
+    readiness: BackendDependencyReadiness,
+    settings: AppSettings,
+) -> bool:
+    """Run the startup dependency probe once and decide whether background retries are safe."""
+
+    attempt_count = 1
+    try:
+        await asyncio.to_thread(run_backend_dependency_healthcheck, settings)
+    except TransientDependencyCheckError as error:
+        error_message = _format_dependency_probe_error(error)
+        readiness.mark_retrying(attempt_count=attempt_count, error_message=error_message)
+        retry_delay_seconds = _compute_dependency_retry_delay_seconds(
+            attempt_count=attempt_count
+        )
+        logger.warning(
+            "API backend dependency readiness probe hit a retryable warmup error.",
+            attempt_count=attempt_count,
+            retry_delay_seconds=retry_delay_seconds,
+            error=error_message,
+        )
+        return True
+    except Exception as error:
+        error_message = _format_dependency_probe_error(error)
+        readiness.mark_failed(attempt_count=attempt_count, error_message=error_message)
+        logger.error(
+            "API backend dependency readiness probe failed permanently during startup.",
+            attempt_count=attempt_count,
+            error=error_message,
+        )
+        raise
+    else:
+        readiness.mark_ready(attempt_count=attempt_count)
+        logger.info(
+            "API backend dependency healthcheck passed.",
+            attempt_count=attempt_count,
+        )
+        return False
+
+
+async def _run_dependency_readiness_probe(
+    *,
+    logger,
+    readiness: BackendDependencyReadiness,
+    settings: AppSettings,
+    shutdown_event: asyncio.Event,
+    initial_attempt_count: int,
+) -> None:
+    """Continuously probe backend dependencies until the API is ready or shutting down."""
+
+    attempt_count = initial_attempt_count
+    while not shutdown_event.is_set():
+        attempt_count += 1
+        try:
+            await asyncio.to_thread(run_backend_dependency_healthcheck, settings)
+        except TransientDependencyCheckError as error:
+            error_message = _format_dependency_probe_error(error)
+            readiness.mark_retrying(attempt_count=attempt_count, error_message=error_message)
+            retry_delay_seconds = _compute_dependency_retry_delay_seconds(
+                attempt_count=attempt_count
+            )
+            logger.warning(
+                "API backend dependency readiness probe failed.",
+                attempt_count=attempt_count,
+                retry_delay_seconds=retry_delay_seconds,
+                error=error_message,
+            )
+            try:
+                await asyncio.wait_for(shutdown_event.wait(), timeout=retry_delay_seconds)
+            except TimeoutError:
+                continue
+            return
+        except Exception as error:
+            error_message = _format_dependency_probe_error(error)
+            readiness.mark_failed(attempt_count=attempt_count, error_message=error_message)
+            logger.error(
+                "API backend dependency readiness probe encountered a non-retryable error.",
+                attempt_count=attempt_count,
+                error=error_message,
+            )
+            return
+        else:
+            readiness.mark_ready(attempt_count=attempt_count)
+            logger.info(
+                "API backend dependency healthcheck passed.",
+                attempt_count=attempt_count,
+            )
+            return
+
+
+def _compute_dependency_retry_delay_seconds(*, attempt_count: int) -> int:
+    """Return a short bounded retry delay for hosted dependency warmup probes."""
+
+    return min(2 * max(attempt_count, 1), 10)
+
+
+def _format_dependency_probe_error(error: Exception) -> str:
+    """Normalize dependency probe failures into one stable operator-facing summary."""
+
+    message = str(error).strip()
+    if message:
+        return message
+    return error.__class__.__name__
+
+
+def _read_dependency_readiness(application: FastAPI) -> BackendDependencyReadinessSnapshot:
+    """Return the current backend readiness snapshot from application state."""
+
+    readiness = getattr(application.state, "backend_dependency_readiness", None)
+    if isinstance(readiness, BackendDependencyReadiness):
+        return readiness.snapshot()
+
+    return BackendDependencyReadiness().snapshot()
+
+
+def _build_api_readiness_status(
+    *,
+    api_base_path: str,
+    environment,
+    readiness_snapshot: BackendDependencyReadinessSnapshot,
+    service_name: str,
+    version: str,
+) -> ApiReadinessStatus:
+    """Serialize the live readiness snapshot into the public API readiness contract."""
+
+    return ApiReadinessStatus(
+        status=readiness_snapshot.status,
+        ready=readiness_snapshot.ready,
+        service_name=service_name,
+        environment=environment,
+        version=version,
+        api_base_path=api_base_path,
+        attempt_count=readiness_snapshot.attempt_count,
+        last_checked_at=readiness_snapshot.last_checked_at,
+        last_error=readiness_snapshot.last_error,
+        generated_at=utc_now(),
+    )
+
+
+def _build_backend_not_ready_response(
+    readiness_snapshot: BackendDependencyReadinessSnapshot,
+) -> JSONResponse:
+    """Return the canonical 503 response while dependency-backed routes are still warming."""
+
+    return JSONResponse(
+        content={
+            "detail": {
+                "attempt_count": readiness_snapshot.attempt_count,
+                "code": "backend_not_ready",
+                "last_error": readiness_snapshot.last_error,
+                "message": (
+                    "The API is still validating its backend dependencies. Retry shortly."
+                ),
+                "status": readiness_snapshot.status,
+            }
+        },
+        headers={
+            "cache-control": "no-store",
+            "retry-after": "1",
+        },
+        status_code=503,
+    )
+
+
+def _is_readiness_exempt_path(path: str, api_base_path: str) -> bool:
+    """Return whether a request path should bypass dependency-readiness gating."""
+
+    exempt_suffixes = {
+        "/docs",
+        "/health",
+        "/metadata",
+        "/openapi.json",
+        "/ready",
+        "/redoc",
+    }
+    if api_base_path == "/":
+        return path in exempt_suffixes
+
+    return path in {f"{api_base_path}{suffix}" for suffix in exempt_suffixes}
 
 
 app = create_app()

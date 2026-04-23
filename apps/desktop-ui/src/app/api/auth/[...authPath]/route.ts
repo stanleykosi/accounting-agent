@@ -5,6 +5,10 @@ Dependencies: Next.js route handlers and the canonical backend auth URL helpers.
 */
 
 import { buildBackendAuthUrl } from "../../../../lib/auth/session";
+import {
+  buildBackendUnavailableResponse,
+  fetchBackendWithAvailabilityRetry,
+} from "../../../../lib/backend-proxy";
 
 type AuthProxyRouteContext = {
   params: Promise<{
@@ -44,13 +48,21 @@ async function proxyAuthRequest(
 ): Promise<Response> {
   const { authPath } = await context.params;
   const requestBody = request.method === "GET" ? null : await request.text();
-  const backendResponse = await fetch(buildBackendAuthUrl(`/${authPath.join("/")}`), {
-    cache: "no-store",
-    headers: buildProxyHeaders(request),
-    method: request.method,
-    redirect: "manual",
-    ...(requestBody === null ? {} : { body: requestBody }),
-  });
+  let backendResponse: Response;
+  try {
+    backendResponse = await fetchBackendWithAvailabilityRetry(
+      buildBackendAuthUrl(`/${authPath.join("/")}`),
+      {
+        cache: "no-store",
+        headers: buildProxyHeaders(request),
+        method: request.method,
+        redirect: "manual",
+        ...(requestBody === null ? {} : { body: requestBody }),
+      },
+    );
+  } catch {
+    return buildBackendUnavailableResponse();
+  }
 
   const responseHeaders = new Headers();
   const contentType = backendResponse.headers.get("content-type");

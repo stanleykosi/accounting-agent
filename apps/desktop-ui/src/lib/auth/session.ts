@@ -10,6 +10,7 @@ import {
   parseAuthSessionResponse,
   type AuthSessionResponse,
 } from "./client";
+import { fetchBackendWithAvailabilityRetry } from "../backend-proxy";
 import { resolveBackendApiBaseUrl } from "../runtime";
 
 export const AUTH_COOKIE_NAME =
@@ -83,7 +84,7 @@ export async function validateSessionCookie(
     return inFlightValidation;
   }
 
-  const nextValidation = fetch(buildBackendAuthUrl("/session"), {
+  const nextValidation = fetchBackendWithAvailabilityRetry(buildBackendAuthUrl("/session"), {
     cache: "no-store",
     headers: {
       Accept: "application/json",
@@ -96,6 +97,9 @@ export async function validateSessionCookie(
       const payload = await parseJsonPayload(response);
       const setCookieHeader = response.headers.get("set-cookie");
       if (!response.ok) {
+        if (response.status >= 500) {
+          throw new Error("Auth backend is temporarily unavailable.");
+        }
         return {
           error: buildAuthApiError(response.status, payload),
           ok: false,

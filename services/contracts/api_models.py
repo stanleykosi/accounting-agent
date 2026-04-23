@@ -46,6 +46,47 @@ class ApiHealthStatus(ContractModel):
     )
 
 
+class ApiReadinessStatus(ContractModel):
+    """Describe the current backend dependency readiness for this API process."""
+
+    status: Literal["starting", "retrying", "ready", "failed"] = Field(
+        description="Dependency-readiness state for the current API process."
+    )
+    ready: bool = Field(
+        description="Whether dependency-backed routes are currently ready to accept traffic."
+    )
+    service_name: str = Field(
+        min_length=1,
+        description="Logical service name for this API process.",
+    )
+    environment: DeploymentEnvironment = Field(
+        description="Active runtime environment for the current backend process."
+    )
+    version: str = Field(
+        min_length=1,
+        description="Semantic application version exposed by the API.",
+    )
+    api_base_path: str = Field(
+        min_length=1,
+        description="Base path prefix that all API routes are mounted beneath.",
+    )
+    attempt_count: int = Field(
+        ge=0,
+        description="Number of dependency probe attempts completed since process start.",
+    )
+    last_checked_at: datetime | None = Field(
+        default=None,
+        description="UTC timestamp of the most recent completed dependency probe attempt.",
+    )
+    last_error: str | None = Field(
+        default=None,
+        description="Latest dependency probe failure summary when the API is still retrying.",
+    )
+    generated_at: datetime = Field(
+        description="UTC timestamp indicating when the response payload was generated."
+    )
+
+
 class ApiRouteDescriptor(ContractModel):
     """Describe one public API route exposed by the current FastAPI application."""
 

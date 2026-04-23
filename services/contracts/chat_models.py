@@ -84,7 +84,10 @@ class ChatMessageRecord(ContractModel):
     thread_id: str = Field(description="Parent chat thread that this message belongs to.")
     message_order: int = Field(
         ge=1,
-        description="Canonical per-thread message sequence used for deterministic conversation ordering.",
+        description=(
+            "Canonical per-thread message sequence used for deterministic "
+            "conversation ordering."
+        ),
     )
     role: Literal["user", "assistant", "system"] = Field(
         description="Message originator: user, assistant, or system.",
@@ -283,6 +286,37 @@ class AgentMemorySummary(ContractModel):
     recent_period_labels: tuple[str, ...] = Field(
         default=(),
         description="Recent period labels retained for conversational targeting.",
+    )
+    recent_target_labels: tuple[str, ...] = Field(
+        default=(),
+        description="Recent concrete target labels retained for follow-up continuity.",
+    )
+    last_target_type: str | None = Field(
+        default=None,
+        description="Most recent concrete target type retained for follow-up resolution.",
+    )
+    last_target_id: str | None = Field(
+        default=None,
+        description="Most recent concrete target identifier retained for follow-up resolution.",
+    )
+    last_target_label: str | None = Field(
+        default=None,
+        description="Most recent concrete target label retained for follow-up resolution.",
+    )
+    working_subtask: str | None = Field(
+        default=None,
+        description="Compact current subtask summary retained for conversational continuity.",
+    )
+    approved_objective: str | None = Field(
+        default=None,
+        description=(
+            "Most recent operator objective that the agent actively committed "
+            "to carry out."
+        ),
+    )
+    pending_branch: str | None = Field(
+        default=None,
+        description="Compact next branch or hold state retained for long-turn continuity.",
     )
     active_async_status: str | None = Field(
         default=None,

@@ -5,6 +5,10 @@ Dependencies: Standard Fetch APIs and the backend entity URL builder in the enti
 */
 
 import { buildBackendEntitiesUrl } from "./api";
+import {
+  buildBackendUnavailableResponse,
+  fetchBackendWithAvailabilityRetry,
+} from "../backend-proxy";
 
 /**
  * Purpose: Proxy an incoming browser request to the canonical FastAPI entity route.
@@ -21,16 +25,21 @@ export async function proxyEntityRequest(
     request.method === "GET" || request.method === "HEAD"
       ? undefined
       : await request.arrayBuffer();
-  const backendResponse = await fetch(
-    buildBackendEntitiesUrl(`/${pathSegments.join("/")}`, requestUrl.search),
-    {
-      cache: "no-store",
-      headers: buildEntityProxyHeaders(request),
-      method: request.method,
-      redirect: "manual",
-      ...(requestBody === undefined ? {} : { body: requestBody }),
-    },
-  );
+  let backendResponse: Response;
+  try {
+    backendResponse = await fetchBackendWithAvailabilityRetry(
+      buildBackendEntitiesUrl(`/${pathSegments.join("/")}`, requestUrl.search),
+      {
+        cache: "no-store",
+        headers: buildEntityProxyHeaders(request),
+        method: request.method,
+        redirect: "manual",
+        ...(requestBody === undefined ? {} : { body: requestBody }),
+      },
+    );
+  } catch {
+    return buildBackendUnavailableResponse();
+  }
 
   const responseHeaders = new Headers();
   for (const headerName of [

@@ -63,6 +63,10 @@ def build_cross_thread_memory_seed(
     recent_objectives: list[object] = []
     recent_entity_names: list[object] = []
     recent_period_labels: list[object] = []
+    recent_target_labels: list[object] = []
+    working_subtask: str | None = None
+    approved_objective: str | None = None
+    pending_branch: str | None = None
     last_async_status: str | None = None
     last_async_objective: str | None = None
     last_async_note: str | None = None
@@ -90,6 +94,13 @@ def build_cross_thread_memory_seed(
         recent_objectives.extend(snapshot["recent_objectives"])
         recent_entity_names.extend(snapshot["recent_entity_names"])
         recent_period_labels.extend(snapshot["recent_period_labels"])
+        recent_target_labels.extend(snapshot["recent_target_labels"])
+        if working_subtask is None and isinstance(snapshot["working_subtask"], str):
+            working_subtask = snapshot["working_subtask"]
+        if approved_objective is None and isinstance(snapshot["approved_objective"], str):
+            approved_objective = snapshot["approved_objective"]
+        if pending_branch is None and isinstance(snapshot["pending_branch"], str):
+            pending_branch = snapshot["pending_branch"]
 
         if last_async_status is None:
             snapshot_last_async_status = snapshot["last_async_status"]
@@ -106,6 +117,10 @@ def build_cross_thread_memory_seed(
         "recent_objectives": compact_recent_values(recent_objectives, limit=4),
         "recent_entity_names": compact_recent_values(recent_entity_names, limit=4),
         "recent_period_labels": compact_recent_values(recent_period_labels, limit=4),
+        "recent_target_labels": compact_recent_values(recent_target_labels, limit=5),
+        "working_subtask": working_subtask,
+        "approved_objective": approved_objective,
+        "pending_branch": pending_branch,
         "last_async_status": last_async_status,
         "last_async_objective": last_async_objective,
         "last_async_note": last_async_note,
@@ -230,6 +245,42 @@ def extract_operator_memory_snapshot(
             memory,
             "agent_recent_period_labels",
             "recent_period_labels",
+        ),
+        "recent_target_labels": _memory_tuple(
+            context_payload,
+            memory,
+            "agent_recent_target_labels",
+            "recent_target_labels",
+        ),
+        "last_target_type": (
+            memory.get("last_target_type")
+            if isinstance(memory.get("last_target_type"), str)
+            else None
+        ),
+        "last_target_id": (
+            memory.get("last_target_id")
+            if isinstance(memory.get("last_target_id"), str)
+            else None
+        ),
+        "last_target_label": (
+            memory.get("last_target_label")
+            if isinstance(memory.get("last_target_label"), str)
+            else None
+        ),
+        "working_subtask": (
+            memory.get("working_subtask")
+            if isinstance(memory.get("working_subtask"), str)
+            else None
+        ),
+        "approved_objective": (
+            memory.get("approved_objective")
+            if isinstance(memory.get("approved_objective"), str)
+            else None
+        ),
+        "pending_branch": (
+            memory.get("pending_branch")
+            if isinstance(memory.get("pending_branch"), str)
+            else None
         ),
         "last_async_status": optional_memory_text(last_async_turn, "status"),
         "last_async_objective": optional_memory_text(last_async_turn, "objective"),
@@ -379,6 +430,7 @@ def seed_context_payload_with_operator_memory(
     updated_payload["agent_recent_objectives"] = seed["recent_objectives"]
     updated_payload["agent_recent_entity_names"] = seed["recent_entity_names"]
     updated_payload["agent_recent_period_labels"] = seed["recent_period_labels"]
+    updated_payload["agent_recent_target_labels"] = seed["recent_target_labels"]
     return updated_payload
 
 
@@ -452,6 +504,28 @@ def merge_context_payload_with_cross_thread_memory(
             [*carry_forward["recent_period_labels"], *current_snapshot["recent_period_labels"]],
             limit=4,
         ),
+        "recent_target_labels": compact_recent_values(
+            [*carry_forward["recent_target_labels"], *current_snapshot["recent_target_labels"]],
+            limit=5,
+        ),
+        "last_target_type": current_snapshot["last_target_type"],
+        "last_target_id": current_snapshot["last_target_id"],
+        "last_target_label": current_snapshot["last_target_label"],
+        "working_subtask": (
+            current_snapshot["working_subtask"]
+            if current_snapshot["working_subtask"]
+            else carry_forward["working_subtask"]
+        ),
+        "approved_objective": (
+            current_snapshot["approved_objective"]
+            if current_snapshot["approved_objective"]
+            else carry_forward["approved_objective"]
+        ),
+        "pending_branch": (
+            current_snapshot["pending_branch"]
+            if current_snapshot["pending_branch"]
+            else carry_forward["pending_branch"]
+        ),
         "last_async_status": (
             current_snapshot["last_async_status"] or carry_forward["last_async_status"]
         ),
@@ -475,6 +549,9 @@ def merge_context_payload_with_cross_thread_memory(
     ]
     updated_payload["agent_recent_period_labels"] = updated_payload["agent_memory"][
         "recent_period_labels"
+    ]
+    updated_payload["agent_recent_target_labels"] = updated_payload["agent_memory"][
+        "recent_target_labels"
     ]
     return updated_payload
 

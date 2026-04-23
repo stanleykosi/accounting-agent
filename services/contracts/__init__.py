@@ -9,6 +9,7 @@ and future contract modules added in later steps.
 from services.contracts.api_models import (
     ApiContractMetadata,
     ApiHealthStatus,
+    ApiReadinessStatus,
     ApiRouteDescriptor,
 )
 from services.contracts.close_run_models import (
@@ -99,6 +100,7 @@ __all__ = [
     "EXPORT_DELIVERY_CHANNELS",
     "ApiContractMetadata",
     "ApiHealthStatus",
+    "ApiReadinessStatus",
     "ApiRouteDescriptor",
     "ApproveReconciliationRequest",
     "ApproveReconciliationResult",

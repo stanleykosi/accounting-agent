@@ -5,6 +5,10 @@ Dependencies: Backend ownership URL builder and Next.js route handlers.
 */
 
 import { buildBackendOwnershipUrl } from "../../../../lib/ownership";
+import {
+  buildBackendUnavailableResponse,
+  fetchBackendWithAvailabilityRetry,
+} from "../../../../lib/backend-proxy";
 
 type OwnershipProxyRouteContext = {
   params: Promise<{
@@ -76,16 +80,21 @@ async function proxyOwnershipRequest(
   }
   const backendPathSegments = pathSegments.slice(1);
   const requestUrl = new URL(request.url);
-  const backendResponse = await fetch(
-    buildBackendOwnershipUrl(entityId, `/${backendPathSegments.join("/")}`, requestUrl.search),
-    {
-      cache: "no-store",
-      headers: buildProxyHeaders(request),
-      method: request.method,
-      redirect: "manual",
-      ...(request.method === "GET" ? {} : { body: await request.text() }),
-    },
-  );
+  let backendResponse: Response;
+  try {
+    backendResponse = await fetchBackendWithAvailabilityRetry(
+      buildBackendOwnershipUrl(entityId, `/${backendPathSegments.join("/")}`, requestUrl.search),
+      {
+        cache: "no-store",
+        headers: buildProxyHeaders(request),
+        method: request.method,
+        redirect: "manual",
+        ...(request.method === "GET" ? {} : { body: await request.text() }),
+      },
+    );
+  } catch {
+    return buildBackendUnavailableResponse();
+  }
 
   const responseHeaders = new Headers();
   const contentType = backendResponse.headers.get("content-type");

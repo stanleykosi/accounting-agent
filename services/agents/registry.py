@@ -71,8 +71,8 @@ class ToolRegistry:
         definitions = tuple(self._definitions.values())
         for namespace in self.list_namespaces():
             lines.append(
-                "["
-                f"{namespace.name} / {namespace.label}"
+                "[Domain: "
+                f"{namespace.label}"
                 "] "
                 f"{namespace.specialist_name}: {namespace.specialist_mission}"
             )

@@ -190,9 +190,9 @@ def test_registry_groups_tools_by_operator_namespace_for_prompting() -> None:
     prompt_lines = registry.describe_tools_for_prompt()
     tools = registry.list_tools()
 
-    assert any("[workspace_admin / Workspace Admin]" in line for line in prompt_lines)
-    assert any("[close_operator / Close Operations]" in line for line in prompt_lines)
-    assert any("[reporting_and_release / Reporting and Release]" in line for line in prompt_lines)
+    assert any("[Domain: Workspace Admin]" in line for line in prompt_lines)
+    assert any("[Domain: Close Operations]" in line for line in prompt_lines)
+    assert any("[Domain: Reporting and Release]" in line for line in prompt_lines)
     assert any(
         tool.name == "create_workspace" and tool.namespace == "workspace_admin"
         for tool in tools
