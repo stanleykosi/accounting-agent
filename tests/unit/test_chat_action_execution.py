@@ -754,6 +754,78 @@ def test_hydrate_planning_result_answers_next_step_read_only() -> None:
     )
 
 
+def test_hydrate_planning_result_answers_approved_close_run_reports_read_only() -> None:
+    """Report-detail questions about a known approved run should not generate reports."""
+
+    close_run_id = uuid4()
+    report_run_id = uuid4()
+    executor = ChatActionExecutor.__new__(ChatActionExecutor)
+
+    hydrated = executor._hydrate_planning_result(
+        planning=AgentPlanningResult(
+            mode="tool",
+            assistant_response="I'll generate the report pack now.",
+            reasoning="The operator mentioned reports.",
+            tool_name="generate_reports",
+            tool_arguments={},
+        ),
+        snapshot={
+            "accessible_workspace_close_runs": [
+                {
+                    "workspace": {
+                        "id": str(uuid4()),
+                        "name": "Apex Meridian Distribution Limited",
+                    },
+                    "close_runs": [
+                        {
+                            "id": str(close_run_id),
+                            "status": "approved",
+                            "period_label": "Mar 2026",
+                            "period_start": "2026-03-01",
+                            "period_end": "2026-03-31",
+                            "reporting_currency": "NGN",
+                            "version_no": 1,
+                            "active_phase": None,
+                            "report_runs": [
+                                {
+                                    "id": str(report_run_id),
+                                    "status": "completed",
+                                    "version_no": 1,
+                                    "artifact_count": 3,
+                                    "completed_at": None,
+                                }
+                            ],
+                            "commentary": [
+                                {
+                                    "section_key": "profit_and_loss",
+                                    "status": "approved",
+                                }
+                            ],
+                            "exports": [
+                                {
+                                    "version_no": 1,
+                                    "status": "completed",
+                                }
+                            ],
+                        }
+                    ],
+                }
+            ]
+        },
+        operator_content="get me more details of the approved closed run and tell me the reports",
+        operator_memory=executor._memory_from_context_payload({}),
+    )
+
+    assert hydrated.mode == "read_only"
+    assert hydrated.tool_name is None
+    assert hydrated.tool_arguments == {}
+    assert "Apex Meridian Distribution Limited: Mar 2026 is approved" in (
+        hydrated.assistant_response
+    )
+    assert "Reports: v1 (completed, 3 artifacts)." in hydrated.assistant_response
+    assert "Profit and Loss" in hydrated.assistant_response
+
+
 def test_hydrate_planning_result_clarifies_cross_domain_approve_it() -> None:
     """Generic approve-it requests should clarify when several domains have one clear target."""
 

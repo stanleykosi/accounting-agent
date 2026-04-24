@@ -4628,6 +4628,7 @@ def _build_direct_operator_status_response(
         _build_close_run_scope_status_response,
         _build_close_blocker_status_response,
         _build_next_step_status_response,
+        _build_close_run_detail_status_response,
         _build_all_workspace_close_run_directory_response,
         _build_close_run_directory_response,
     ):
@@ -4804,6 +4805,235 @@ def _build_next_step_status_response(
             f"First, we still need to clear {blockers[0]}."
         )
     return f"The next best move is to { _lowercase_leading_character(next_action) }"
+
+
+def _safe_text(value: object) -> str | None:
+    """Return a stripped string when the value is meaningful text."""
+
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip()
+    return normalized or None
+
+
+def _build_close_run_detail_status_response(
+    *,
+    snapshot: dict[str, Any],
+    operator_content: str,
+) -> str | None:
+    """Answer close-run detail and report questions from the grounded snapshot."""
+
+    normalized_content = _searchable_text(operator_content)
+    if not _is_close_run_detail_request(normalized_content):
+        return None
+
+    target = _resolve_close_run_detail_target(
+        snapshot=snapshot,
+        normalized_content=normalized_content,
+    )
+    if target is None:
+        return None
+
+    workspace_name, record = target
+    period_label = _safe_text(record.get("period_label")) or "the selected period"
+    status = (_safe_text(record.get("status")) or "unknown").replace("_", " ")
+    active_phase = _safe_text(record.get("active_phase"))
+    phase_text = (
+        f" Its active phase is {_format_phase_label(active_phase)}."
+        if active_phase is not None
+        else " It has no active phase, which usually means the run is complete."
+    )
+    details = (
+        f"{workspace_name}: {period_label} is {status}. "
+        f"Close Run ID: {record.get('id')}. "
+        f"Period: {_safe_text(record.get('period_start')) or 'unknown'} to "
+        f"{_safe_text(record.get('period_end')) or 'unknown'}. "
+        f"Reporting currency: {_safe_text(record.get('reporting_currency')) or 'unknown'}. "
+        f"Version: {record.get('version_no') or 'unknown'}."
+        f"{phase_text}"
+    )
+    if "report" not in normalized_content and "reports" not in normalized_content:
+        return details
+    return f"{details} {_describe_close_run_report_state(record=record)}"
+
+
+def _is_close_run_detail_request(normalized_content: str) -> bool:
+    """Return whether the operator is asking to inspect a close run, not mutate it."""
+
+    if not any(
+        token in normalized_content
+        for token in ("close run", "closed run", "close", "run", "report", "reports")
+    ):
+        return False
+    return any(
+        phrase in normalized_content
+        for phrase in (
+            "tell me more",
+            "more detail",
+            "more details",
+            "get me more",
+            "details of",
+            "detail of",
+            "tell me the report",
+            "tell me the reports",
+            "what report",
+            "what reports",
+            "which report",
+            "which reports",
+        )
+    )
+
+
+def _resolve_close_run_detail_target(
+    *,
+    snapshot: dict[str, Any],
+    normalized_content: str,
+) -> tuple[str, dict[str, Any]] | None:
+    """Resolve one close-run detail target from current and accessible workspace rows."""
+
+    candidates = _close_run_detail_candidates(snapshot=snapshot)
+    if not candidates:
+        return None
+
+    matched_candidates = [
+        candidate
+        for candidate in candidates
+        if _close_run_detail_candidate_matches(
+            candidate=candidate,
+            normalized_content=normalized_content,
+        )
+    ]
+    if len(matched_candidates) == 1:
+        return matched_candidates[0]
+
+    if "approved" in normalized_content:
+        approved_candidates = [
+            candidate
+            for candidate in candidates
+            if str(candidate[1].get("status") or "") == "approved"
+        ]
+        if len(approved_candidates) == 1:
+            return approved_candidates[0]
+
+    return candidates[0] if len(candidates) == 1 else None
+
+
+def _close_run_detail_candidates(
+    *,
+    snapshot: dict[str, Any],
+) -> list[tuple[str, dict[str, Any]]]:
+    """Return close-run records paired with their workspace name."""
+
+    candidates: list[tuple[str, dict[str, Any]]] = []
+    workspace_rows = snapshot.get("accessible_workspace_close_runs")
+    if isinstance(workspace_rows, list):
+        for row in workspace_rows:
+            if not isinstance(row, dict):
+                continue
+            workspace = row.get("workspace")
+            if not isinstance(workspace, dict):
+                continue
+            workspace_name = _safe_text(workspace.get("name")) or "Workspace"
+            close_runs = row.get("close_runs")
+            if not isinstance(close_runs, list):
+                continue
+            for record in close_runs:
+                if isinstance(record, dict):
+                    candidates.append((workspace_name, record))
+
+    if candidates:
+        return candidates
+
+    workspace = snapshot.get("workspace")
+    workspace_name = (
+        _safe_text(workspace.get("name"))
+        if isinstance(workspace, dict)
+        else None
+    ) or "This workspace"
+    close_runs = snapshot.get("entity_close_runs")
+    if isinstance(close_runs, list):
+        for record in close_runs:
+            if isinstance(record, dict):
+                candidates.append((workspace_name, record))
+    return candidates
+
+
+def _close_run_detail_candidate_matches(
+    *,
+    candidate: tuple[str, dict[str, Any]],
+    normalized_content: str,
+) -> bool:
+    """Return whether one close-run candidate is explicitly referenced."""
+
+    workspace_name, record = candidate
+    record_id = record.get("id")
+    if record_id is not None and str(record_id).lower() in normalized_content:
+        return True
+    period_label = _safe_text(record.get("period_label"))
+    if period_label is not None and _text_value_matches_text(period_label, normalized_content):
+        return True
+    status = _safe_text(record.get("status"))
+    if status is not None and status in normalized_content:
+        return True
+    if _workspace_name_matches_text(workspace_name, normalized_content):
+        return True
+    return _workspace_name_keyword_matches_text(workspace_name, normalized_content)
+
+
+def _describe_close_run_report_state(*, record: dict[str, Any]) -> str:
+    """Return a compact description of report, commentary, and export state."""
+
+    report_runs = [item for item in record.get("report_runs", []) if isinstance(item, dict)]
+    commentary = [item for item in record.get("commentary", []) if isinstance(item, dict)]
+    exports = [item for item in record.get("exports", []) if isinstance(item, dict)]
+
+    if not report_runs:
+        return "I do not see a generated report run for this close run yet."
+
+    report_labels = []
+    for run in report_runs[:3]:
+        version_no = run.get("version_no")
+        status = str(run.get("status") or "unknown").replace("_", " ")
+        artifact_count = run.get("artifact_count")
+        artifact_text = (
+            f", {artifact_count} artifact{'s' if artifact_count != 1 else ''}"
+            if isinstance(artifact_count, int)
+            else ""
+        )
+        report_labels.append(f"v{version_no or '?'} ({status}{artifact_text})")
+
+    response = f"Reports: {_join_choice_labels(report_labels)}."
+    if commentary:
+        commentary_statuses = _count_record_values(commentary, key="status")
+        section_labels = [
+            _format_report_section_label(str(item.get("section_key")))
+            for item in commentary[:5]
+            if item.get("section_key") is not None
+        ]
+        response += (
+            f" Commentary: {json.dumps(commentary_statuses, sort_keys=True)}"
+            f" across {_join_choice_labels(section_labels)}."
+        )
+    if exports:
+        export_labels = [
+            f"v{item.get('version_no') or '?'} ({item.get('status') or 'unknown'})"
+            for item in exports[:3]
+        ]
+        response += f" Exports: {_join_choice_labels(export_labels)}."
+    return response
+
+
+def _count_record_values(records: list[dict[str, Any]], *, key: str) -> dict[str, int]:
+    """Count one record key into a deterministic summary map."""
+
+    counts: dict[str, int] = {}
+    for record in records:
+        value = record.get(key)
+        if value is None:
+            continue
+        text = str(value)
+        counts[text] = counts.get(text, 0) + 1
+    return {text: counts[text] for text in sorted(counts)}
 
 
 def _build_all_workspace_close_run_directory_response(

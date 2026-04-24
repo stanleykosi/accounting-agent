@@ -447,3 +447,171 @@ def test_workspace_snapshot_derives_entity_close_run_period_labels() -> None:
             "active_phase": "collection",
         }
     ]
+
+
+def test_workspace_snapshot_includes_accessible_close_run_report_state() -> None:
+    """Global assistant snapshots should include bounded report state for accessible runs."""
+
+    actor_user = EntityUserRecord(
+        id=uuid4(),
+        email="ops@example.com",
+        full_name="Finance Ops",
+    )
+    current_entity_id = uuid4()
+    apex_entity_id = uuid4()
+    close_run_id = uuid4()
+    report_run_id = uuid4()
+
+    def list_close_runs_for_entity(**kwargs):
+        if kwargs["entity_id"] != apex_entity_id:
+            return SimpleNamespace(close_runs=())
+        return SimpleNamespace(
+            close_runs=(
+                SimpleNamespace(
+                    id=close_run_id,
+                    status=CloseRunStatus.APPROVED,
+                    period_start=date(2026, 3, 1),
+                    period_end=date(2026, 3, 31),
+                    reporting_currency="NGN",
+                    current_version_no=1,
+                    workflow_state=SimpleNamespace(active_phase=None),
+                ),
+            )
+        )
+
+    builder = AccountingWorkspaceContextBuilder(
+        action_repository=SimpleNamespace(
+            list_pending_actions_for_thread=lambda **kwargs: [],
+        ),
+        close_run_service=SimpleNamespace(
+            list_close_runs_for_entity=list_close_runs_for_entity,
+        ),
+        coa_repository=SimpleNamespace(
+            get_active_set=lambda **kwargs: None,
+            list_accounts_for_set=lambda **kwargs: [],
+        ),
+        document_repository=SimpleNamespace(
+            _db_session=object(),
+            list_documents_for_close_run_with_latest_extraction=lambda **kwargs: [],
+        ),
+        entity_repository=SimpleNamespace(
+            get_entity_for_user=lambda **kwargs: SimpleNamespace(
+                entity=SimpleNamespace(
+                    id=current_entity_id,
+                    name="Polymarket",
+                    legal_name="Polymarket",
+                    base_currency="USD",
+                    country_code="US",
+                    timezone="America/New_York",
+                    accounting_standard="IFRS",
+                    autonomy_mode=SimpleNamespace(value="human_review"),
+                    status=SimpleNamespace(value="active"),
+                )
+            ),
+            list_entities_for_user=lambda **kwargs: [
+                SimpleNamespace(
+                    entity=SimpleNamespace(
+                        id=current_entity_id,
+                        name="Polymarket",
+                        legal_name="Polymarket",
+                        base_currency="USD",
+                        country_code="US",
+                        timezone="America/New_York",
+                        accounting_standard="IFRS",
+                        autonomy_mode=SimpleNamespace(value="human_review"),
+                        status=SimpleNamespace(value="active"),
+                    )
+                ),
+                SimpleNamespace(
+                    entity=SimpleNamespace(
+                        id=apex_entity_id,
+                        name="Apex Meridian Distribution Limited",
+                        legal_name="Apex Meridian Distribution Limited",
+                        base_currency="NGN",
+                        country_code="NG",
+                        timezone="Africa/Lagos",
+                        accounting_standard="IFRS",
+                        autonomy_mode=SimpleNamespace(value="human_review"),
+                        status=SimpleNamespace(value="active"),
+                    )
+                ),
+            ],
+        ),
+        export_service=SimpleNamespace(
+            list_export_summaries=lambda **kwargs: (
+                (
+                    SimpleNamespace(
+                        id="export-1",
+                        version_no=1,
+                        status="completed",
+                        artifact_count=3,
+                        distribution_count=0,
+                        created_at=None,
+                        completed_at=None,
+                        latest_distribution_at=None,
+                    ),
+                )
+                if kwargs["close_run_id"] == close_run_id
+                else ()
+            ),
+            get_latest_evidence_pack=lambda **kwargs: None,
+        ),
+        job_service=SimpleNamespace(
+            list_jobs_for_user=lambda **kwargs: [],
+        ),
+        reconciliation_repository=SimpleNamespace(
+            list_reconciliations=lambda *args, **kwargs: [],
+            list_items=lambda **kwargs: [],
+            list_anomalies=lambda **kwargs: [],
+        ),
+        recommendation_repository=SimpleNamespace(
+            list_recommendations_for_close_run=lambda **kwargs: [],
+            list_journals_for_close_run=lambda **kwargs: [],
+            list_postings_for_journal_ids=lambda **kwargs: {},
+        ),
+        report_repository=SimpleNamespace(
+            list_report_runs_for_close_run=lambda **kwargs: (
+                (
+                    SimpleNamespace(
+                        id=report_run_id,
+                        status=SimpleNamespace(value="completed"),
+                        version_no=1,
+                        artifact_refs=[{"kind": "pdf"}],
+                        completed_at=None,
+                    ),
+                )
+                if kwargs["close_run_id"] == close_run_id
+                else ()
+            ),
+            list_commentary_for_report_run=lambda **kwargs: (
+                SimpleNamespace(
+                    id=uuid4(),
+                    report_run_id=report_run_id,
+                    section_key="profit_and_loss",
+                    status=SimpleNamespace(value="approved"),
+                    body="Approved management commentary for March.",
+                ),
+            ),
+        ),
+        supporting_schedule_service=SimpleNamespace(
+            list_workspace=lambda **kwargs: [],
+        ),
+    )
+
+    snapshot = builder.build_snapshot(
+        actor=actor_user,
+        entity_id=current_entity_id,
+        close_run_id=None,
+        thread_id=None,
+    )
+
+    apex_row = next(
+        row
+        for row in snapshot["accessible_workspace_close_runs"]
+        if row["workspace"]["id"] == str(apex_entity_id)
+    )
+    close_run = apex_row["close_runs"][0]
+    assert close_run["report_runs"][0]["id"] == str(report_run_id)
+    assert close_run["report_runs"][0]["status"] == "completed"
+    assert close_run["commentary"][0]["section_key"] == "profit_and_loss"
+    assert close_run["exports"][0]["id"] == "export-1"

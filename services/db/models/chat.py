@@ -129,9 +129,14 @@ class ChatMessage(Base, UUIDPrimaryKeyMixin, TimestampedModel):
     )
     linked_action_id: Mapped[UUID | None] = mapped_column(
         PG_UUID(as_uuid=True),
-        ForeignKey("recommendations.id", ondelete="SET NULL"),
+        ForeignKey(
+            "chat_action_plans.id",
+            ondelete="SET NULL",
+            name="fk_chat_messages_linked_action_id_chat_action_plans",
+            use_alter=True,
+        ),
         nullable=True,
-        comment="Optional reference to a recommendation created or discussed in this message.",
+        comment="Optional reference to the chat action plan created or discussed in this message.",
     )
     grounding_payload: Mapped[dict[str, Any]] = mapped_column(
         JSONB,

@@ -52,3 +52,5 @@ def test_offline_alembic_sql_includes_ledger_import_schema() -> None:
     assert "transaction_group_key" in rendered_sql
     assert "message_order" in rendered_sql
     assert "uq_chat_messages_thread_message_order" in rendered_sql
+    assert "drop constraint fk_chat_messages_linked_action_id_recommendations" in rendered_sql
+    assert "fk_chat_messages_linked_action_id_chat_action_plans" in rendered_sql

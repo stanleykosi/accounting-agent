@@ -145,6 +145,9 @@ def test_chat_messages_expose_canonical_per_thread_message_order() -> None:
     assert "message_order" in table.c
     assert table.c.message_order.nullable is False
     assert ("thread_id", "message_order") in unique_constraints
+    linked_action_fk = next(iter(table.c.linked_action_id.foreign_keys))
+    assert linked_action_fk.column.table.name == "chat_action_plans"
+    assert linked_action_fk.column.name == "id"
 
 
 def test_general_ledger_import_lines_expose_transaction_group_key() -> None:

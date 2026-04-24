@@ -102,7 +102,7 @@ class ChatMessageRecord(ContractModel):
     )
     linked_action_id: str | None = Field(
         default=None,
-        description="Optional reference to a recommendation discussed in this message.",
+        description="Optional reference to the chat action plan discussed in this message.",
     )
     grounding_payload: dict[str, object] = Field(
         default_factory=dict,

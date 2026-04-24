@@ -161,23 +161,11 @@ class AccountingWorkspaceContextBuilder(WorkspaceContextBuilder):
                     "base_currency": access.entity.base_currency,
                 },
                 "close_runs": [
-                    {
-                        "id": close_run.id,
-                        "status": close_run.status.value,
-                        "period_label": _format_close_run_period_label(
-                            period_start=close_run.period_start,
-                            period_end=close_run.period_end,
-                        ),
-                        "period_start": close_run.period_start.isoformat(),
-                        "period_end": close_run.period_end.isoformat(),
-                        "reporting_currency": close_run.reporting_currency,
-                        "version_no": close_run.current_version_no,
-                        "active_phase": (
-                            close_run.workflow_state.active_phase.value
-                            if close_run.workflow_state.active_phase is not None
-                            else None
-                        ),
-                    }
+                    self._build_accessible_close_run_snapshot(
+                        actor_user=actor_user,
+                        entity_id=access.entity.id,
+                        close_run=close_run,
+                    )
                     for close_run in close_runs_by_workspace_id[str(access.entity.id)][:10]
                 ],
             }
@@ -641,6 +629,85 @@ class AccountingWorkspaceContextBuilder(WorkspaceContextBuilder):
         )
         return snapshot
 
+    def _build_accessible_close_run_snapshot(
+        self,
+        *,
+        actor_user: EntityUserRecord,
+        entity_id: UUID,
+        close_run: Any,
+    ) -> dict[str, Any]:
+        """Return a cross-workspace close-run row with bounded reporting state."""
+
+        report_runs = self._report_repo.list_report_runs_for_close_run(
+            close_run_id=close_run.id,
+        )
+        latest_report_run = report_runs[0] if report_runs else None
+        commentary = (
+            self._report_repo.list_commentary_for_report_run(
+                report_run_id=latest_report_run.id,
+            )
+            if latest_report_run is not None
+            else ()
+        )
+        exports = self._export_service.list_export_summaries(
+            actor_user=actor_user,
+            entity_id=entity_id,
+            close_run_id=close_run.id,
+        )
+        return {
+            "id": close_run.id,
+            "status": close_run.status.value,
+            "period_label": _format_close_run_period_label(
+                period_start=close_run.period_start,
+                period_end=close_run.period_end,
+            ),
+            "period_start": close_run.period_start.isoformat(),
+            "period_end": close_run.period_end.isoformat(),
+            "reporting_currency": close_run.reporting_currency,
+            "version_no": close_run.current_version_no,
+            "active_phase": (
+                close_run.workflow_state.active_phase.value
+                if close_run.workflow_state.active_phase is not None
+                else None
+            ),
+            "report_runs": [
+                {
+                    "id": str(run.id),
+                    "status": run.status.value,
+                    "version_no": run.version_no,
+                    "artifact_count": len(run.artifact_refs),
+                    "completed_at": run.completed_at,
+                }
+                for run in report_runs[:5]
+            ],
+            "report_summary": _count_by_key(run.status.value for run in report_runs),
+            "commentary": [
+                {
+                    "id": str(record.id),
+                    "report_run_id": str(record.report_run_id),
+                    "report_version_no": latest_report_run.version_no,
+                    "section_key": record.section_key,
+                    "status": record.status.value,
+                    "body_preview": _truncate_snapshot_text(record.body, limit=500),
+                }
+                for record in commentary[:10]
+            ],
+            "exports": [
+                {
+                    "id": export.id,
+                    "version_no": export.version_no,
+                    "status": export.status,
+                    "artifact_count": export.artifact_count,
+                    "distribution_count": export.distribution_count,
+                    "created_at": export.created_at,
+                    "completed_at": export.completed_at,
+                    "latest_distribution_at": export.latest_distribution_at,
+                }
+                for export in exports[:5]
+            ],
+            "export_summary": _count_by_key(export.status for export in exports),
+        }
+
     def _build_coa_snapshot(self, *, entity_id: UUID) -> dict[str, Any]:
         """Return the active COA state exposed to the planner and workbench."""
 
@@ -723,6 +790,15 @@ def _count_by_key(values: Any) -> dict[str, int]:
         key = str(value)
         counts[key] = counts.get(key, 0) + 1
     return {key: counts[key] for key in sorted(counts)}
+
+
+def _truncate_snapshot_text(value: str, *, limit: int) -> str:
+    """Return bounded text suitable for cross-workspace planner snapshots."""
+
+    normalized = " ".join(value.split())
+    if len(normalized) <= limit:
+        return normalized
+    return normalized[: limit - 1].rstrip() + "..."
 
 
 def _build_latest_posting_snapshot(postings: Any) -> dict[str, Any] | None:

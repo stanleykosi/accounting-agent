@@ -869,9 +869,9 @@ CREATE TABLE report_template_sections (
     CONSTRAINT fk_report_template_sections_template_id_report_templates FOREIGN KEY(template_id) REFERENCES report_templates (id)
 );
 
-CREATE INDEX ix_report_template_sections_template_id ON report_template_sections (template_id);
-
 CREATE INDEX ix_report_template_sections_section_key ON report_template_sections (section_key);
+
+CREATE INDEX ix_report_template_sections_template_id ON report_template_sections (template_id);
 
 COMMENT ON COLUMN report_template_sections.template_id IS 'Parent report template this section belongs to.';
 
@@ -906,13 +906,13 @@ CREATE TABLE report_runs (
     CONSTRAINT fk_report_runs_generated_by_user_id_users FOREIGN KEY(generated_by_user_id) REFERENCES users (id)
 );
 
-CREATE INDEX ix_report_runs_close_run_id ON report_runs (close_run_id);
+CREATE INDEX ix_report_runs_template_id ON report_runs (template_id);
 
 CREATE INDEX ix_report_runs_status ON report_runs (status);
 
 CREATE INDEX ix_report_runs_close_run_version ON report_runs (close_run_id, version_no);
 
-CREATE INDEX ix_report_runs_template_id ON report_runs (template_id);
+CREATE INDEX ix_report_runs_close_run_id ON report_runs (close_run_id);
 
 COMMENT ON COLUMN report_runs.close_run_id IS 'Close run this report pack was generated for.';
 
@@ -949,11 +949,11 @@ CREATE TABLE report_commentary (
     CONSTRAINT fk_report_commentary_superseded_by_id_report_commentary FOREIGN KEY(superseded_by_id) REFERENCES report_commentary (id)
 );
 
-CREATE INDEX ix_report_commentary_run_section_active ON report_commentary (report_run_id, section_key) WHERE status IN ('draft', 'under_review', 'approved');
+CREATE INDEX ix_report_commentary_report_run_id ON report_commentary (report_run_id);
 
 CREATE INDEX ix_report_commentary_section_key ON report_commentary (section_key);
 
-CREATE INDEX ix_report_commentary_report_run_id ON report_commentary (report_run_id);
+CREATE INDEX ix_report_commentary_run_section_active ON report_commentary (report_run_id, section_key) WHERE status IN ('draft', 'under_review', 'approved');
 
 COMMENT ON COLUMN report_commentary.report_run_id IS 'Parent report run this commentary belongs to.';
 
@@ -999,7 +999,6 @@ CREATE INDEX ix_chat_threads_entity_close_run ON chat_threads (entity_id, close_
 CREATE TABLE chat_messages (
     id UUID DEFAULT gen_random_uuid() NOT NULL, 
     thread_id UUID NOT NULL, 
-    message_order INTEGER NOT NULL, 
     role VARCHAR(20) NOT NULL, 
     content TEXT NOT NULL, 
     message_type VARCHAR(20) DEFAULT '''analysis''' NOT NULL, 
@@ -1011,7 +1010,6 @@ CREATE TABLE chat_messages (
     CONSTRAINT pk_chat_messages PRIMARY KEY (id), 
     CONSTRAINT ck_chat_messages_ck_chat_messages_role CHECK (role IN ('user', 'assistant', 'system')), 
     CONSTRAINT ck_chat_messages_ck_chat_messages_message_type CHECK (message_type IN ('analysis', 'workflow', 'action', 'warning')), 
-    CONSTRAINT uq_chat_messages_thread_message_order UNIQUE (thread_id, message_order), 
     CONSTRAINT fk_chat_messages_thread_id_chat_threads FOREIGN KEY(thread_id) REFERENCES chat_threads (id) ON DELETE CASCADE, 
     CONSTRAINT fk_chat_messages_linked_action_id_recommendations FOREIGN KEY(linked_action_id) REFERENCES recommendations (id) ON DELETE SET NULL
 );
@@ -1019,8 +1017,6 @@ CREATE TABLE chat_messages (
 CREATE INDEX ix_chat_messages_thread_id ON chat_messages (thread_id);
 
 COMMENT ON COLUMN chat_messages.thread_id IS 'Parent chat thread that this message belongs to.';
-
-COMMENT ON COLUMN chat_messages.message_order IS 'Canonical per-thread message sequence used for deterministic conversation ordering.';
 
 COMMENT ON COLUMN chat_messages.role IS 'Message originator: user, assistant, or system.';
 
@@ -1034,7 +1030,7 @@ COMMENT ON COLUMN chat_messages.grounding_payload IS 'Evidence snapshot used to 
 
 COMMENT ON COLUMN chat_messages.model_metadata IS 'Model name, token usage, latency, and provider metadata.';
 
-CREATE INDEX ix_chat_messages_thread_order ON chat_messages (thread_id, message_order);
+CREATE INDEX ix_chat_messages_thread_order ON chat_messages (thread_id, created_at);
 
 UPDATE alembic_version SET version_num='0011_chat_threads_and_messages' WHERE alembic_version.version_num = '0010_report_templates_and_runs';
 
@@ -1071,9 +1067,9 @@ CREATE TABLE chat_action_plans (
     CONSTRAINT fk_chat_action_plans_superseded_by_id_chat_action_plans FOREIGN KEY(superseded_by_id) REFERENCES chat_action_plans (id) ON DELETE SET NULL
 );
 
-CREATE INDEX ix_chat_action_plans_thread_id ON chat_action_plans (thread_id);
-
 CREATE INDEX ix_chat_action_plans_entity_id ON chat_action_plans (entity_id);
+
+CREATE INDEX ix_chat_action_plans_thread_id ON chat_action_plans (thread_id);
 
 COMMENT ON COLUMN chat_action_plans.thread_id IS 'Chat thread where this action originated.';
 
@@ -1495,6 +1491,51 @@ UPDATE alembic_version SET version_num='0018_imported_gl_transaction_group_keys'
 
 -- Running upgrade 0018_imported_gl_transaction_group_keys -> 0019_chat_message_ordering
 
+ALTER TABLE chat_messages ADD COLUMN message_order INTEGER;
+
+COMMENT ON COLUMN chat_messages.message_order IS 'Canonical per-thread message sequence used for deterministic conversation ordering.';
+
+WITH ordered_messages AS (
+            SELECT
+                id,
+                ROW_NUMBER() OVER (
+                    PARTITION BY thread_id
+                    ORDER BY created_at ASC, id ASC
+                ) AS message_order
+            FROM chat_messages
+        )
+        UPDATE chat_messages
+        SET message_order = ordered_messages.message_order
+        FROM ordered_messages
+        WHERE chat_messages.id = ordered_messages.id;
+
+ALTER TABLE chat_messages ALTER COLUMN message_order SET NOT NULL;
+
+ALTER TABLE chat_messages ADD CONSTRAINT uq_chat_messages_thread_message_order UNIQUE (thread_id, message_order);
+
+DROP INDEX ix_chat_messages_thread_order;
+
+CREATE INDEX ix_chat_messages_thread_order ON chat_messages (thread_id, message_order);
+
 UPDATE alembic_version SET version_num='0019_chat_message_ordering' WHERE alembic_version.version_num = '0018_imported_gl_transaction_group_keys';
+
+-- Running upgrade 0019_chat_message_ordering -> 0020_chat_message_action_plan_links
+
+ALTER TABLE chat_messages DROP CONSTRAINT fk_chat_messages_linked_action_id_recommendations;
+
+UPDATE chat_messages AS cm
+        SET linked_action_id = NULL
+        WHERE cm.linked_action_id IS NOT NULL
+          AND NOT EXISTS (
+              SELECT 1
+              FROM chat_action_plans AS cap
+              WHERE cap.id = cm.linked_action_id
+          );
+
+ALTER TABLE chat_messages ADD CONSTRAINT fk_chat_messages_linked_action_id_chat_action_plans FOREIGN KEY(linked_action_id) REFERENCES chat_action_plans (id) ON DELETE SET NULL;
+
+COMMENT ON COLUMN chat_messages.linked_action_id IS 'Optional reference to the chat action plan created or discussed in this message.';
+
+UPDATE alembic_version SET version_num='0020_chat_message_action_plan_links' WHERE alembic_version.version_num = '0019_chat_message_ordering';
 
 COMMIT;
