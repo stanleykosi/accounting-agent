@@ -9,6 +9,7 @@ model under services/db/models/chat_action_plans.py.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -80,7 +81,7 @@ class ChatActionRepository:
             intent=intent,
             target_type=target_type,
             target_id=target_id,
-            payload=payload,
+            payload=_json_safe_payload(payload),
             confidence=confidence,
             autonomy_mode=autonomy_mode,
             requires_human_approval=requires_human_approval,
@@ -205,7 +206,7 @@ class ChatActionRepository:
 
         plan.status = status
         if applied_result is not None:
-            plan.applied_result = applied_result
+            plan.applied_result = _json_safe_payload(applied_result)
         if rejected_reason is not None:
             plan.rejected_reason = rejected_reason
         if superseded_by_id is not None:
@@ -242,7 +243,7 @@ class ChatActionRepository:
             payload = dict(plan.payload)
             payload.setdefault("source_close_run_id", str(from_close_run_id))
             plan.close_run_id = to_close_run_id
-            plan.payload = payload
+            plan.payload = _json_safe_payload(payload)
             count += 1
         if count > 0:
             self._db_session.flush()
@@ -334,6 +335,12 @@ def _map_action_plan(model: ChatActionPlan) -> ChatActionPlanRecord:
         created_at=model.created_at,
         updated_at=model.updated_at,
     )
+
+
+def _json_safe_payload(value: dict[str, Any]) -> dict[str, Any]:
+    """Return a JSON-serializable copy for JSONB chat action fields."""
+
+    return json.loads(json.dumps(value, default=str))
 
 
 __all__ = [

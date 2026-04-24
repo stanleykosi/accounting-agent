@@ -578,6 +578,7 @@ class ChatActionExecutor:
                     action=action,
                     execution_context=execution_context,
                 )
+                safe_tool_arguments = _json_safe_payload(action.planning.tool_arguments)
                 record = self._action_repo.create_action_plan(
                     thread_id=thread_id,
                     message_id=action_message_id,
@@ -589,7 +590,7 @@ class ChatActionExecutor:
                     target_id=action.target_id,
                     payload={
                         "tool_name": action.tool.name,
-                        "tool_arguments": action.planning.tool_arguments,
+                        "tool_arguments": safe_tool_arguments,
                         "assistant_response": action.planning.assistant_response,
                         "reasoning": action.planning.reasoning,
                         "requires_human_approval": requires_human_approval,
@@ -611,13 +612,13 @@ class ChatActionExecutor:
                 )
                 final_record = record
                 last_tool_name = action.tool.name
-                last_tool_arguments = dict(action.planning.tool_arguments)
+                last_tool_arguments = dict(safe_tool_arguments)
 
                 if requires_human_approval:
                     assistant_content = _compose_assistant_content(
                         assistant_response=_build_pending_confirmation_message(
                             tool_name=action.tool.name,
-                            tool_arguments=action.planning.tool_arguments,
+                            tool_arguments=safe_tool_arguments,
                             snapshot=last_snapshot,
                         ),
                         handoff_message=None,
@@ -658,7 +659,7 @@ class ChatActionExecutor:
                         operator_message=operator_message_for_memory,
                         assistant_response=assistant_content,
                         tool_name=action.tool.name,
-                        tool_arguments=action.planning.tool_arguments,
+                        tool_arguments=safe_tool_arguments,
                         action_status="pending",
                         trace_id=trace_id,
                         snapshot=last_snapshot,
@@ -672,9 +673,11 @@ class ChatActionExecutor:
                         thread=thread,
                     )
 
-                applied_result = self._execute_action(
-                    action=action,
-                    execution_context=execution_context,
+                applied_result = _json_safe_payload(
+                    self._execute_action(
+                        action=action,
+                        execution_context=execution_context,
+                    )
                 )
                 grounding, thread, _ = self._handoff_thread_scope_if_needed(
                     actor_user=actor_user,
@@ -1152,21 +1155,23 @@ class ChatActionExecutor:
             plan=plan,
             payload=payload,
         )
-        applied_result = self._execute_action(
-            action=action,
-            execution_context=self._build_execution_context(
-                actor_user=actor_user,
-                entity_id=entity_id,
-                close_run_id=execution_close_run_id,
-                source_close_run_id=source_close_run_id,
-                thread_id=thread_id,
-                operator_objective=(
-                    str(payload.get("turn_objective"))
-                    if payload.get("turn_objective") is not None
-                    else None
+        applied_result = _json_safe_payload(
+            self._execute_action(
+                action=action,
+                execution_context=self._build_execution_context(
+                    actor_user=actor_user,
+                    entity_id=entity_id,
+                    close_run_id=execution_close_run_id,
+                    source_close_run_id=source_close_run_id,
+                    thread_id=thread_id,
+                    operator_objective=(
+                        str(payload.get("turn_objective"))
+                        if payload.get("turn_objective") is not None
+                        else None
+                    ),
+                    trace_id=trace_id,
+                    source_surface=source_surface,
                 ),
-                trace_id=trace_id,
-                source_surface=source_surface,
             ),
         )
         grounding = None
@@ -1493,7 +1498,7 @@ class ChatActionExecutor:
                 content=f"MCP tool call: {tool_name}",
                 message_type="action",
                 linked_action_id=None,
-                grounding_payload={"tool_arguments": tool_arguments},
+                grounding_payload={"tool_arguments": _json_safe_payload(tool_arguments)},
                 model_metadata=self._build_trace_metadata(
                     trace_id=trace_id,
                     mode="mcp_request",
@@ -1527,7 +1532,7 @@ class ChatActionExecutor:
                 target_id=action.target_id,
                 payload={
                     "tool_name": action.tool.name,
-                    "tool_arguments": action.planning.tool_arguments,
+                    "tool_arguments": _json_safe_payload(action.planning.tool_arguments),
                     "assistant_response": planning.assistant_response,
                     "reasoning": planning.reasoning,
                     "requires_human_approval": requires_human_approval,
@@ -1556,9 +1561,11 @@ class ChatActionExecutor:
                 else f"Tool '{tool_name}' executed successfully."
             )
             if not requires_human_approval:
-                applied_result = self._execute_action(
-                    action=action,
-                    execution_context=execution_context,
+                applied_result = _json_safe_payload(
+                    self._execute_action(
+                        action=action,
+                        execution_context=execution_context,
+                    )
                 )
                 grounding, thread, handoff_message = self._handoff_thread_scope_if_needed(
                     actor_user=actor_user,
@@ -6950,6 +6957,23 @@ def _resolve_workspace_id_from_snapshot(
     if len(explicit_matches) == 1 and isinstance(explicit_matches[0].get("id"), str):
         return str(explicit_matches[0]["id"])
 
+    keyword_matches = [
+        record
+        for record in records
+        if (
+            isinstance(record.get("name"), str)
+            and _workspace_name_keyword_matches_text(str(record["name"]), normalized_content)
+        )
+        or (
+            isinstance(record.get("legal_name"), str)
+            and _workspace_name_keyword_matches_text(
+                str(record["legal_name"]), normalized_content
+            )
+        )
+    ]
+    if len(keyword_matches) == 1 and isinstance(keyword_matches[0].get("id"), str):
+        return str(keyword_matches[0]["id"])
+
     recent_target_id = _resolve_recent_target_id(
         operator_memory=operator_memory,
         snapshot=snapshot,
@@ -7082,6 +7106,23 @@ def _workspace_name_matches_text(value: str, normalized_text: str) -> bool:
     if len(tokens) < 2:
         return False
     return all(token in normalized_text for token in tokens[:2])
+
+
+def _workspace_name_keyword_matches_text(value: str, normalized_text: str) -> bool:
+    """Return whether a distinctive first workspace token is named by the operator."""
+
+    normalized_value = _searchable_text(value)
+    if not normalized_value:
+        return False
+    tokens = [
+        token
+        for token in normalized_value.split()
+        if len(token) > 2 and token not in {"ltd", "limited", "plc", "inc", "llc"}
+    ]
+    if not tokens:
+        return False
+    first_token = tokens[0]
+    return len(first_token) >= 4 and first_token in normalized_text
 
 
 def _infer_journal_posting_target(operator_content: str) -> str:
@@ -7616,6 +7657,12 @@ def _coerce_execution_error(error: Exception) -> ChatActionExecutionError:
         code=code,
         message=message,
     )
+
+
+def _json_safe_payload(value: Any) -> Any:
+    """Return a JSON-serializable copy of tool payloads and execution results."""
+
+    return json.loads(json.dumps(value, default=str))
 
 
 def _resolve_preferred_explanation_depth(

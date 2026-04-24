@@ -1627,6 +1627,155 @@ def test_send_action_message_executes_multiple_steps_before_replying() -> None:
     assert memory_updates[-1]["action_status"] == "applied"
 
 
+def test_send_action_message_switches_workspace_with_json_safe_uuid_result() -> None:
+    """Workspace switch results containing UUID objects should not break JSON persistence."""
+
+    current_entity_id = uuid4()
+    target_entity_id = uuid4()
+    actor_user = EntityUserRecord(id=uuid4(), email="ops@example.com", full_name="Finance Ops")
+    thread_id = uuid4()
+    thread_by_entity: dict[UUID, SimpleNamespace] = {
+        current_entity_id: SimpleNamespace(
+            entity_id=current_entity_id,
+            close_run_id=None,
+            context_payload={
+                "entity_id": str(current_entity_id),
+                "entity_name": "Polymarket",
+                "close_run_id": None,
+                "period_label": None,
+                "autonomy_mode": "human_review",
+                "base_currency": "USD",
+            },
+        )
+    }
+    grounding_by_entity = {
+        current_entity_id: SimpleNamespace(
+            entity=SimpleNamespace(name="Polymarket"),
+            close_run=None,
+            context=SimpleNamespace(
+                entity_id=str(current_entity_id),
+                entity_name="Polymarket",
+                close_run_id=None,
+                period_label=None,
+                autonomy_mode="human_review",
+                base_currency="USD",
+            ),
+        ),
+        target_entity_id: SimpleNamespace(
+            entity=SimpleNamespace(name="Apex Meridian Distribution Limited"),
+            close_run=None,
+            context=SimpleNamespace(
+                entity_id=str(target_entity_id),
+                entity_name="Apex Meridian Distribution Limited",
+                close_run_id=None,
+                period_label=None,
+                autonomy_mode="human_review",
+                base_currency="NGN",
+            ),
+        ),
+    }
+    snapshot = {
+        "workspace": {
+            "id": str(current_entity_id),
+            "name": "Polymarket",
+        },
+        "accessible_workspaces": [
+            {
+                "id": str(current_entity_id),
+                "name": "Polymarket",
+            },
+            {
+                "id": str(target_entity_id),
+                "name": "Apex Meridian Distribution Limited",
+            },
+        ],
+        "readiness": {"next_actions": []},
+    }
+    plans = iter(
+        (
+            AgentPlanningResult(
+                mode="tool",
+                assistant_response="I'll switch this chat to Apex.",
+                reasoning="The operator asked to switch workspaces.",
+                tool_name="workspace_admin",
+                tool_arguments={},
+            ),
+            AgentPlanningResult(
+                mode="read_only",
+                assistant_response="You're now in Apex Meridian Distribution Limited.",
+                reasoning="The switch is complete.",
+                tool_name=None,
+                tool_arguments={},
+            ),
+        )
+    )
+    db_session = _FakeLoopDbSession()
+    chat_repo = _FakeLoopChatRepository()
+    action_repo = _FakeLoopActionRepository(close_run_id=uuid4())
+    grounding_service = _FakeGroundingService(
+        reopened_close_run_id=uuid4(),
+        entity_id=target_entity_id,
+    )
+
+    def update_thread_scope(**kwargs):
+        updated_thread = SimpleNamespace(
+            entity_id=kwargs["entity_id"],
+            close_run_id=kwargs["close_run_id"],
+            context_payload=kwargs["context_payload"],
+        )
+        thread_by_entity[kwargs["entity_id"]] = updated_thread
+        return updated_thread
+
+    chat_repo.update_thread_scope = update_thread_scope  # type: ignore[method-assign]
+    executor = ChatActionExecutor.__new__(ChatActionExecutor)
+    executor._db_session = db_session
+    executor._chat_repo = chat_repo
+    executor._action_repo = action_repo
+    executor._grounding = grounding_service
+    executor._tool_registry = _build_fake_tool_registry(
+        "switch_workspace",
+        "create_workspace",
+        "update_workspace",
+        "delete_workspace",
+    )
+    executor._ensure_entity_coa_available = lambda **kwargs: None
+    executor._handle_pending_plan_reply = lambda **kwargs: None  # type: ignore[method-assign]
+    executor._load_thread_context = lambda **kwargs: (  # type: ignore[method-assign]
+        grounding_by_entity[kwargs["entity_id"]],
+        thread_by_entity[kwargs["entity_id"]],
+    )
+    executor._snapshot_for_thread = lambda **kwargs: snapshot  # type: ignore[method-assign]
+    executor._plan_action = lambda **kwargs: next(plans)  # type: ignore[method-assign]
+    executor._resolve_action = lambda **kwargs: _resolve_fake_action(  # type: ignore[method-assign]
+        kwargs["planning"]
+    )
+    executor._build_execution_context = lambda **kwargs: SimpleNamespace()  # type: ignore[method-assign]
+    executor._requires_human_approval = lambda **kwargs: False  # type: ignore[method-assign]
+    executor._execute_action = lambda **kwargs: {  # type: ignore[method-assign]
+        "tool": "switch_workspace",
+        "switched_workspace_id": target_entity_id,
+        "workspace_id": target_entity_id,
+        "workspace_name": "Apex Meridian Distribution Limited",
+    }
+
+    outcome = executor.send_action_message(
+        thread_id=thread_id,
+        entity_id=current_entity_id,
+        actor_user=actor_user,
+        content="switch to apex workspace",
+        source_surface="desktop",
+        trace_id="trace-switch-apex",
+    )
+
+    applied_result = action_repo.status_updates[-1]["applied_result"]
+    assert isinstance(applied_result, dict)
+    assert applied_result["switched_workspace_id"] == str(target_entity_id)
+    assert applied_result["workspace_id"] == str(target_entity_id)
+    assert outcome.thread_entity_id == str(target_entity_id)
+    assert "You're now in Apex Meridian Distribution Limited." in outcome.assistant_content
+    assert "UUID is not JSON serializable" not in outcome.assistant_content
+
+
 def test_send_action_message_returns_partial_progress_when_later_step_blocks() -> None:
     """A later failure should keep earlier loop progress and respond naturally."""
 
@@ -2695,6 +2844,7 @@ class _FakeLoopActionRepository:
     def __init__(self, *, close_run_id: UUID) -> None:
         self.close_run_id = close_run_id
         self.created_records: list[ChatActionPlanRecord] = []
+        self.status_updates: list[dict[str, object]] = []
 
     def create_action_plan(self, **kwargs) -> ChatActionPlanRecord:
         record = _build_plan(
@@ -2716,6 +2866,13 @@ class _FakeLoopActionRepository:
         superseded_by_id: UUID | None = None,
     ) -> ChatActionPlanRecord | None:
         del rejected_reason, superseded_by_id
+        self.status_updates.append(
+            {
+                "action_plan_id": action_plan_id,
+                "status": status,
+                "applied_result": applied_result,
+            }
+        )
         for record in self.created_records:
             if record.id != action_plan_id:
                 continue
@@ -2789,6 +2946,14 @@ def _build_fake_tool_registry(*tool_names: str):
     tool_definitions = {
         tool_name: SimpleNamespace(
             name=tool_name,
+            namespace="workspace_admin" if "workspace" in tool_name else "close_operator",
+            namespace_label="Workspace Admin" if "workspace" in tool_name else "Close Operations",
+            specialist_name=(
+                "Workspace Steward" if "workspace" in tool_name else "Close Run Operator"
+            ),
+            specialist_mission="Owns the requested workflow domain.",
+            intent="workflow_action",
+            requires_human_approval=False,
             input_schema={"required": required_fields.get(tool_name, [])},
         )
         for tool_name in tool_names
