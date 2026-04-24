@@ -826,6 +826,102 @@ def test_hydrate_planning_result_answers_approved_close_run_reports_read_only() 
     assert "Profit and Loss" in hydrated.assistant_response
 
 
+def test_hydrate_planning_result_answers_financial_report_recommendations_read_only() -> None:
+    """Business recommendations from a report should not run accounting recommendations."""
+
+    close_run_id = uuid4()
+    executor = ChatActionExecutor.__new__(ChatActionExecutor)
+
+    hydrated = executor._hydrate_planning_result(
+        planning=AgentPlanningResult(
+            mode="tool",
+            assistant_response="I'll start recommendation generation now.",
+            reasoning="The operator used the word recommendations.",
+            tool_name="generate_recommendations",
+            tool_arguments={},
+        ),
+        snapshot={
+            "accessible_workspace_close_runs": [
+                {
+                    "workspace": {
+                        "id": str(uuid4()),
+                        "name": "Apex Meridian Distribution Limited",
+                    },
+                    "close_runs": [
+                        {
+                            "id": str(close_run_id),
+                            "status": "approved",
+                            "period_label": "Mar 2026",
+                            "period_start": "2026-03-01",
+                            "period_end": "2026-03-31",
+                            "reporting_currency": "NGN",
+                            "version_no": 1,
+                            "active_phase": None,
+                            "report_runs": [
+                                {
+                                    "id": str(uuid4()),
+                                    "status": "completed",
+                                    "version_no": 2,
+                                    "artifact_count": 2,
+                                }
+                            ],
+                            "commentary": [
+                                {
+                                    "section_key": "profit_and_loss",
+                                    "status": "approved",
+                                    "body_preview": (
+                                        "Total revenue NGN 134,740,000; net profit NGN "
+                                        "56,295,000; net margin 41.8%."
+                                    ),
+                                },
+                                {
+                                    "section_key": "balance_sheet",
+                                    "status": "approved",
+                                    "body_preview": (
+                                        "The notes flag an unexplained difference of "
+                                        "NGN -15,480,000 between assets and "
+                                        "liabilities plus equity."
+                                    ),
+                                },
+                                {
+                                    "section_key": "cash_flow",
+                                    "status": "approved",
+                                    "body_preview": (
+                                        "Operating activities generated NGN 53,875,000 positive "
+                                        "cash flow; investing activities used NGN 28,400,000."
+                                    ),
+                                },
+                                {
+                                    "section_key": "kpi_dashboard",
+                                    "status": "approved",
+                                    "body_preview": (
+                                        "Key performance indicators are stable with no significant "
+                                        "period-over-period changes noted."
+                                    ),
+                                },
+                            ],
+                        }
+                    ],
+                }
+            ]
+        },
+        operator_content=(
+            "what are the recomendations you have for the company after seeing "
+            "the finanical report, are they growing or not"
+        ),
+        operator_memory=executor._memory_from_context_payload({}),
+    )
+
+    assert hydrated.mode == "read_only"
+    assert hydrated.tool_name is None
+    assert hydrated.tool_arguments == {}
+    assert "not call it clearly growing" in hydrated.assistant_response
+    assert "investigate and clear the balance-sheet difference" in (
+        hydrated.assistant_response
+    )
+    assert "generate_recommendations" not in hydrated.assistant_response
+
+
 def test_hydrate_planning_result_clarifies_cross_domain_approve_it() -> None:
     """Generic approve-it requests should clarify when several domains have one clear target."""
 

@@ -2998,6 +2998,12 @@ class ChatActionExecutor:
                     "missing identifiers, or ambiguous requests."
                 ),
                 (
+                    "When the operator asks for business recommendations, management advice, "
+                    "growth assessment, or what the financial report implies, choose "
+                    "mode=read_only. Do not route that to generate_recommendations unless the "
+                    "operator explicitly asks to generate accounting recommendations."
+                ),
+                (
                     "Greetings, status checks, and help requests should still return a "
                     "useful read_only response grounded in the current workspace."
                 ),
@@ -4628,6 +4634,7 @@ def _build_direct_operator_status_response(
         _build_close_run_scope_status_response,
         _build_close_blocker_status_response,
         _build_next_step_status_response,
+        _build_financial_report_analysis_response,
         _build_close_run_detail_status_response,
         _build_all_workspace_close_run_directory_response,
         _build_close_run_directory_response,
@@ -4814,6 +4821,187 @@ def _safe_text(value: object) -> str | None:
         return None
     normalized = value.strip()
     return normalized or None
+
+
+def _build_financial_report_analysis_response(
+    *,
+    snapshot: dict[str, Any],
+    operator_content: str,
+) -> str | None:
+    """Answer management-analysis questions from the latest grounded report state."""
+
+    normalized_content = _searchable_text(operator_content)
+    if not _is_financial_report_analysis_request(normalized_content):
+        return None
+
+    target = _resolve_close_run_detail_target(
+        snapshot=snapshot,
+        normalized_content=normalized_content,
+    )
+    if target is None:
+        return None
+
+    workspace_name, record = target
+    commentary = [item for item in record.get("commentary", []) if isinstance(item, dict)]
+    report_runs = [item for item in record.get("report_runs", []) if isinstance(item, dict)]
+    period_label = _safe_text(record.get("period_label")) or "the selected period"
+    if not commentary and not report_runs:
+        return (
+            f"I do not see generated report commentary for {workspace_name} {period_label} yet, "
+            "so I cannot give a grounded view on growth or management recommendations "
+            "from the report."
+        )
+
+    growth_assessment = _build_growth_assessment(commentary=commentary)
+    report_signals = _build_report_signal_summary(commentary=commentary)
+    recommendations = _build_management_recommendations(commentary=commentary)
+    response = (
+        f"For {workspace_name} {period_label}, I would read the report this way: "
+        f"{growth_assessment}"
+    )
+    if report_signals is not None:
+        response += f" The main report signals are {report_signals}."
+    if recommendations:
+        response += f" My recommendations: {'; '.join(recommendations)}."
+    return response
+
+
+def _is_financial_report_analysis_request(normalized_content: str) -> bool:
+    """Return whether the operator wants business interpretation, not workflow generation."""
+
+    if any(
+        phrase in normalized_content
+        for phrase in (
+            "generate recommendations",
+            "generate accounting recommendations",
+            "queue recommendations",
+            "queue recommendation",
+            "start recommendations",
+            "start recommendation",
+            "approve recommendation",
+            "reject recommendation",
+        )
+    ):
+        return False
+
+    asks_for_business_recommendations = any(
+        token in normalized_content
+        for token in ("recommendation", "recommendations", "recomendation", "recomendations")
+    ) and any(
+        token in normalized_content
+        for token in (
+            "company",
+            "business",
+            "financial report",
+            "finanical report",
+            "after seeing",
+            "after reading",
+            "growth",
+            "growing",
+        )
+    )
+    asks_for_growth = any(
+        token in normalized_content
+        for token in ("are they growing", "is it growing", "growth", "growing", "grow or not")
+    ) and any(
+        token in normalized_content
+        for token in ("company", "business", "report", "financial", "finanical")
+    )
+    return asks_for_business_recommendations or asks_for_growth
+
+
+def _build_growth_assessment(*, commentary: list[dict[str, Any]]) -> str:
+    """Return a grounded growth assessment from available report commentary."""
+
+    combined = _searchable_text(" ".join(_commentary_body_previews(commentary)))
+    if any(
+        phrase in combined
+        for phrase in (
+            "no significant period over period",
+            "no significant period period",
+            "stable",
+            "no significant changes",
+        )
+    ):
+        return (
+            "the company looks profitable and operationally stable, but I would not call it "
+            "clearly growing from this report alone because the available commentary does not "
+            "show a strong period-over-period increase."
+        )
+    if any(
+        token in combined
+        for token in ("growth", "increased", "increase", "higher", "expanded")
+    ):
+        return (
+            "there are growth signals in the commentary, but I would still validate them against "
+            "prior-period revenue, margin, and cash-flow trends before calling the growth durable."
+        )
+    return (
+        "the report supports a profitability/cash-generation view, but it does not by itself "
+        "prove the company is growing because I do not see enough prior-period comparison data."
+    )
+
+
+def _build_report_signal_summary(*, commentary: list[dict[str, Any]]) -> str | None:
+    """Return short section-grounded signals from report commentary previews."""
+
+    signals = []
+    for record in commentary[:4]:
+        section_key = record.get("section_key")
+        body_preview = _safe_text(record.get("body_preview"))
+        if section_key is None or body_preview is None:
+            continue
+        signals.append(
+            f"{_format_report_section_label(str(section_key))}: "
+            f"{_truncate_operator_text(body_preview, limit=220)}"
+        )
+    return " | ".join(signals) if signals else None
+
+
+def _build_management_recommendations(*, commentary: list[dict[str, Any]]) -> list[str]:
+    """Return practical management recommendations from report commentary."""
+
+    combined = _searchable_text(" ".join(_commentary_body_previews(commentary)))
+    recommendations = []
+    if any(token in combined for token in ("unexplained difference", "difference")):
+        recommendations.append(
+            "investigate and clear the balance-sheet difference before relying on the "
+            "pack for board decisions"
+        )
+    if any(token in combined for token in ("net profit", "net margin", "gross margin")):
+        recommendations.append(
+            "validate revenue quality and margin drivers so the strong profit result is repeatable"
+        )
+    if any(token in combined for token in ("cash flow", "operating activities", "cash")):
+        recommendations.append(
+            "protect operating cash flow and review large investing outflows against "
+            "the growth plan"
+        )
+    recommendations.append(
+        "add prior-month comparatives and revenue-by-stream trend analysis to confirm "
+        "whether the company is actually growing"
+    )
+    return recommendations
+
+
+def _commentary_body_previews(commentary: list[dict[str, Any]]) -> list[str]:
+    """Return commentary preview text from report snapshot records."""
+
+    previews = []
+    for record in commentary:
+        body_preview = _safe_text(record.get("body_preview"))
+        if body_preview is not None:
+            previews.append(body_preview)
+    return previews
+
+
+def _truncate_operator_text(value: str, *, limit: int) -> str:
+    """Return compact text for one conversational report signal."""
+
+    normalized = " ".join(value.split())
+    if len(normalized) <= limit:
+        return normalized
+    return normalized[: limit - 1].rstrip() + "..."
 
 
 def _build_close_run_detail_status_response(
@@ -6327,7 +6515,24 @@ def _infer_treatment_tool_name(
         for token in ("reject recommendation", "reject the recommendation")
     ):
         return "reject_recommendation"
-    if any(token in normalized_content for token in ("generate", "recommendation", "treatment")):
+    if any(
+        phrase in normalized_content
+        for phrase in (
+            "generate recommendations",
+            "generate recommendation",
+            "generate accounting recommendations",
+            "run recommendations",
+            "run recommendation",
+            "queue recommendations",
+            "queue recommendation",
+            "start recommendations",
+            "start recommendation",
+            "recommendation pass",
+            "generate treatment",
+            "generate treatments",
+            "run treatment",
+        )
+    ):
         return "generate_recommendations"
     return None
 
