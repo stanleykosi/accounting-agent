@@ -2771,6 +2771,14 @@ class ChatActionExecutor:
                 tool_arguments={},
             )
 
+        create_close_run_planning = _build_create_close_run_intent_planning(
+            snapshot=snapshot,
+            operator_content=content,
+            operator_memory=operator_memory,
+        )
+        if create_close_run_planning is not None:
+            return create_close_run_planning
+
         try:
             return self._kernel.plan(
                 instructions=self._build_planner_instructions(
@@ -3170,6 +3178,17 @@ class ChatActionExecutor:
                     "tool_arguments": {},
                 }
             )
+
+        create_close_run_planning = _build_create_close_run_intent_planning(
+            snapshot=snapshot,
+            operator_content=operator_content,
+            operator_memory=operator_memory,
+        )
+        if create_close_run_planning is not None and (
+            planning.mode != "tool"
+            or _normalize_planned_tool_name(planning.tool_name) != "create_close_run"
+        ):
+            return create_close_run_planning
 
         cross_domain_clarification = _build_cross_domain_ambiguity_clarification(
             snapshot=snapshot,
@@ -4594,6 +4613,9 @@ def _build_direct_operator_status_response(
 ) -> str | None:
     """Return a deterministic grounded answer for common read-only operator questions."""
 
+    if _is_close_run_creation_request(operator_content):
+        return None
+
     for builder in (
         _build_workspace_scope_status_response,
         _build_close_run_scope_status_response,
@@ -5096,6 +5118,91 @@ def _build_cross_domain_candidate_labels(
         if anomaly_label is not None:
             labels.append(anomaly_label)
     return labels
+
+
+def _build_create_close_run_intent_planning(
+    *,
+    snapshot: dict[str, Any],
+    operator_content: str,
+    operator_memory: AgentMemorySummary,
+) -> AgentPlanningResult | None:
+    """Plan close-run creation deterministically when the operator intent is explicit."""
+
+    if not _is_close_run_creation_request(operator_content):
+        return None
+
+    workspace_id = _resolve_workspace_id_for_create_close_run(
+        snapshot=snapshot,
+        operator_content=operator_content,
+        operator_memory=operator_memory,
+    )
+    workspace_label = _resolve_workspace_label(snapshot=snapshot, workspace_id=workspace_id)
+    period = _infer_close_run_period_from_text(operator_content)
+    if period is None:
+        assistant_response = (
+            f"Which period should I open for {workspace_label}? "
+            "Give me the month or the exact start and end date."
+            if workspace_label is not None
+            else (
+                "Which period should I open? Give me the month or the exact start "
+                "and end date."
+            )
+        )
+        return AgentPlanningResult(
+            mode="read_only",
+            assistant_response=assistant_response,
+            reasoning=(
+                "The operator clearly asked to create a close run, but the required "
+                "period is not present."
+            ),
+            tool_name=None,
+            tool_arguments={},
+        )
+
+    tool_arguments: dict[str, Any] = {
+        "period_start": period[0],
+        "period_end": period[1],
+    }
+    if workspace_id is not None:
+        tool_arguments["workspace_id"] = workspace_id
+    return AgentPlanningResult(
+        mode="tool",
+        assistant_response=(
+            f"I'll open that close run for {workspace_label} now."
+            if workspace_label is not None
+            else "I'll open that close run now."
+        ),
+        reasoning=(
+            "The operator explicitly asked to create a close run and provided a "
+            "resolvable period."
+        ),
+        tool_name="create_close_run",
+        tool_arguments=tool_arguments,
+    )
+
+
+def _is_close_run_creation_request(value: str) -> bool:
+    """Return whether the operator is asking to create, not list, a close run."""
+
+    normalized = _searchable_text(value)
+    if "close run" not in normalized and "close runs" not in normalized:
+        return False
+    creation_phrases = (
+        "create a close run",
+        "create close run",
+        "create new close run",
+        "create a new close run",
+        "start a close run",
+        "start close run",
+        "start new close run",
+        "start a new close run",
+        "open a new close run",
+        "open new close run",
+        "fresh close run",
+        "new close run",
+        "another close run",
+    )
+    return any(phrase in normalized for phrase in creation_phrases)
 
 
 _MONTH_NUMBER_BY_NAME = {

@@ -439,6 +439,9 @@ function buildSubmissionFailureMessage(caughtError: unknown): string {
     if (caughtError.status === 404) {
       return `I couldn't find the selected chat or workspace context. ${caughtError.message}`;
     }
+    if (caughtError.status === 504) {
+      return "The chat backend timed out before it could return the tool state. I do not have a confirmed result for that turn, so I will not assume changes were made. Refresh the thread before retrying so I can read the latest workspace state.";
+    }
     if (caughtError.status >= 500) {
       return `I hit a backend system error while handling that turn. I did not apply further changes. ${caughtError.message}`;
     }

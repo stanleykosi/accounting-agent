@@ -1091,6 +1091,144 @@ def test_hydrate_planning_result_creates_close_run_from_period_follow_up() -> No
     assert hydrated.tool_arguments["period_end"] == "2026-04-30"
 
 
+def test_hydrate_planning_result_asks_period_for_create_close_run_request() -> None:
+    """Creation requests should not be swallowed by close-run status shortcuts."""
+
+    workspace_id = str(uuid4())
+    executor = ChatActionExecutor.__new__(ChatActionExecutor)
+
+    hydrated = executor._hydrate_planning_result(
+        planning=AgentPlanningResult(
+            mode="read_only",
+            assistant_response="I can see Polymarket: Mar 2026 (draft, Collection).",
+            reasoning="The planner treated the request as a status check.",
+            tool_name=None,
+            tool_arguments={},
+        ),
+        snapshot={
+            "workspace": {
+                "id": workspace_id,
+                "name": "Polymarket",
+            },
+            "accessible_workspaces": [
+                {
+                    "id": workspace_id,
+                    "name": "Polymarket",
+                }
+            ],
+            "accessible_workspace_close_runs": [
+                {
+                    "workspace": {"id": workspace_id, "name": "Polymarket"},
+                    "close_runs": [
+                        {
+                            "id": str(uuid4()),
+                            "status": "draft",
+                            "period_label": "Mar 2026",
+                            "active_phase": "collection",
+                        }
+                    ],
+                }
+            ],
+        },
+        operator_content="create a close run on the polymarket workspace",
+        operator_memory=executor._memory_from_context_payload({}),
+    )
+
+    assert hydrated.mode == "read_only"
+    assert hydrated.tool_name is None
+    assert "Which period should I open for Polymarket?" in hydrated.assistant_response
+    assert "I can see Polymarket" not in hydrated.assistant_response
+
+
+def test_hydrate_planning_result_remembers_workspace_for_repeated_create_request() -> None:
+    """A repeated create-close-run request should keep the prior workspace target."""
+
+    current_workspace_id = str(uuid4())
+    target_workspace_id = str(uuid4())
+    executor = ChatActionExecutor.__new__(ChatActionExecutor)
+
+    hydrated = executor._hydrate_planning_result(
+        planning=AgentPlanningResult(
+            mode="read_only",
+            assistant_response="I can create a close run.",
+            reasoning="The planner asked for more detail.",
+            tool_name=None,
+            tool_arguments={},
+        ),
+        snapshot={
+            "workspace": {
+                "id": current_workspace_id,
+                "name": "Apex Meridian Distribution Limited",
+            },
+            "accessible_workspaces": [
+                {
+                    "id": current_workspace_id,
+                    "name": "Apex Meridian Distribution Limited",
+                },
+                {
+                    "id": target_workspace_id,
+                    "name": "Polymarket",
+                },
+            ],
+        },
+        operator_content="create a close run",
+        operator_memory=executor._memory_from_context_payload(
+            {
+                "agent_recent_objectives": (
+                    "create a close run on the polymarket workspace",
+                ),
+            }
+        ),
+    )
+
+    assert hydrated.mode == "read_only"
+    assert hydrated.tool_name is None
+    assert "Which period should I open for Polymarket?" in hydrated.assistant_response
+
+
+def test_hydrate_planning_result_creates_close_run_when_period_is_present() -> None:
+    """Explicit create-close-run requests with a period should become tool calls."""
+
+    workspace_id = str(uuid4())
+    executor = ChatActionExecutor.__new__(ChatActionExecutor)
+
+    hydrated = executor._hydrate_planning_result(
+        planning=AgentPlanningResult(
+            mode="read_only",
+            assistant_response="I can see Polymarket: Mar 2026 (draft, Collection).",
+            reasoning="The planner treated the request as a status check.",
+            tool_name=None,
+            tool_arguments={},
+        ),
+        snapshot={
+            "workspace": {
+                "id": str(uuid4()),
+                "name": "Apex Meridian Distribution Limited",
+            },
+            "accessible_workspaces": [
+                {
+                    "id": workspace_id,
+                    "name": "Polymarket",
+                }
+            ],
+            "accessible_workspace_close_runs": [
+                {
+                    "workspace": {"id": workspace_id, "name": "Polymarket"},
+                    "close_runs": [],
+                }
+            ],
+        },
+        operator_content="create a close run on the polymarket workspace for april 2026",
+        operator_memory=executor._memory_from_context_payload({}),
+    )
+
+    assert hydrated.mode == "tool"
+    assert hydrated.tool_name == "create_close_run"
+    assert hydrated.tool_arguments["workspace_id"] == workspace_id
+    assert hydrated.tool_arguments["period_start"] == "2026-04-01"
+    assert hydrated.tool_arguments["period_end"] == "2026-04-30"
+
+
 def test_hydrate_planning_result_answers_close_runs_across_workspaces() -> None:
     """Cross-workspace close-run status should include approved runs outside the current entity."""
 
