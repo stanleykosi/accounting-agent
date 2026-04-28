@@ -2,7 +2,14 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useMemo, useState, useTransition, type ReactElement, type ReactNode } from "react";
+import {
+  useEffect,
+  useMemo,
+  useState,
+  useTransition,
+  type ReactElement,
+  type ReactNode,
+} from "react";
 import {
   isSessionAuthError,
   logoutUser,
@@ -32,13 +39,13 @@ type NavItem = Readonly<{
   label: string;
 }>;
 
-export function QuartzWorkspaceShell({
-  children,
-}: QuartzWorkspaceShellProps): ReactElement {
+export function QuartzWorkspaceShell({ children }: QuartzWorkspaceShellProps): ReactElement {
   const pathname = usePathname();
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
-  const [session, setSession] = useState<AuthSessionResponse | null>(() => readCurrentSessionSnapshot());
+  const [session, setSession] = useState<AuthSessionResponse | null>(() =>
+    readCurrentSessionSnapshot(),
+  );
   const [rememberedCloseContext, setRememberedCloseContext] =
     useState<RememberedCloseContext | null>(null);
 
@@ -85,7 +92,10 @@ export function QuartzWorkspaceShell({
       {
         href: "/assistant",
         icon: "assistant",
-        isActive: pathname === "/assistant" || pathname.endsWith("/assistant") || pathname.endsWith("/chat"),
+        isActive:
+          pathname === "/assistant" ||
+          pathname.endsWith("/assistant") ||
+          pathname.endsWith("/chat"),
         label: "Assistant",
       },
     ],
@@ -102,7 +112,10 @@ export function QuartzWorkspaceShell({
 
   useEffect(() => {
     if (closeContext !== null) {
-      const nextContext = buildRememberedCloseContext(closeContext.entityId, closeContext.closeRunId);
+      const nextContext = buildRememberedCloseContext(
+        closeContext.entityId,
+        closeContext.closeRunId,
+      );
       setRememberedCloseContext(nextContext);
       writeRememberedCloseContext(nextContext);
       return;
@@ -197,7 +210,11 @@ export function QuartzWorkspaceShell({
         </div>
       </aside>
 
-      <div className={isChatWorkspace ? "quartz-shell-main quartz-shell-main-chat" : "quartz-shell-main"}>
+      <div
+        className={
+          isChatWorkspace ? "quartz-shell-main quartz-shell-main-chat" : "quartz-shell-main"
+        }
+      >
         <header className="quartz-topbar">
           <div className="quartz-topbar-left">
             <span className="quartz-topbar-brand">Accounting AI Agent</span>

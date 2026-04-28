@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any, Literal, cast
+from typing import Literal, cast
 
 from apps.cli.src.domain import get_cli_badge
 from rich.table import Table
@@ -24,7 +24,9 @@ from services.common.enums import (
 )
 
 type OverflowMethod = Literal["fold", "crop", "ellipsis", "ignore"]
-BadgeEnum = WorkflowPhase | CloseRunStatus | JobStatus | ReviewStatus | AutonomyMode | ArtifactType
+type BadgeEnum = (
+    WorkflowPhase | CloseRunStatus | JobStatus | ReviewStatus | AutonomyMode | ArtifactType
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,7 +45,7 @@ def build_status_table(
     *,
     title: str,
     columns: Sequence[StatusColumn],
-    rows: Iterable[Mapping[str, Any]],
+    rows: Iterable[Mapping[str, object]],
     caption: str | None = None,
 ) -> Table:
     """Build a dense Rich table for CLI dashboards and command responses."""
@@ -70,7 +72,7 @@ def build_status_table(
     return table
 
 
-def _render_cell(value: Any, *, badge: bool) -> Text:
+def _render_cell(value: object, *, badge: bool) -> Text:
     """Render one table cell, applying canonical domain badge styling when possible."""
 
     if badge:
@@ -97,7 +99,7 @@ def _empty_cell(index: int) -> Text:
     return Text("")
 
 
-def _coerce_badge_value(value: Any) -> BadgeEnum | None:
+def _coerce_badge_value(value: object) -> BadgeEnum | None:
     """Convert common API enum strings into canonical enum objects for badge rendering."""
 
     if isinstance(value, (WorkflowPhase, CloseRunStatus, JobStatus, ReviewStatus, AutonomyMode)):

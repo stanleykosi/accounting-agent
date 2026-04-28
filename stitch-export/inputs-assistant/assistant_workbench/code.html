@@ -1,291 +1,459 @@
-<!DOCTYPE html>
+<!doctype html>
 
-<html class="light" lang="en"><head>
-<meta charset="utf-8"/>
-<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
-<title>Assistant Workbench - Quartz Terminal</title>
-<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
-<link href="https://fonts.googleapis.com" rel="preconnect"/>
-<link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&amp;family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,600&amp;display=swap" rel="stylesheet"/>
-<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
-<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
-<script id="tailwind-config">
+<html class="light" lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta content="width=device-width, initial-scale=1.0" name="viewport" />
+    <title>Assistant Workbench - Quartz Terminal</title>
+    <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+    <link href="https://fonts.googleapis.com" rel="preconnect" />
+    <link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect" />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&amp;family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,600&amp;display=swap"
+      rel="stylesheet"
+    />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap"
+      rel="stylesheet"
+    />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap"
+      rel="stylesheet"
+    />
+    <script id="tailwind-config">
       tailwind.config = {
         darkMode: "class",
         theme: {
           extend: {
-            "colors": {
-                    "on-tertiary-container": "#848484",
-                    "on-secondary": "#ffffff",
-                    "primary-fixed": "#e2e2e2",
-                    "on-secondary-fixed": "#001d32",
-                    "surface-container": "#f1edec",
-                    "on-surface": "#1b1b1b",
-                    "on-background": "#1b1b1b",
-                    "tertiary": "#000000",
-                    "tertiary-container": "#1b1b1b",
-                    "on-error": "#ffffff",
-                    "status-success": "#1B4332",
-                    "surface": "#f9f9f9",
-                    "primary-fixed-dim": "#c6c6c6",
-                    "tertiary-fixed-dim": "#c6c6c6",
-                    "outline-variant": "#cfc4c5",
-                    "surface-container-low": "#f7f3f2",
-                    "secondary": "#45617b",
-                    "error-container": "#ffdad6",
-                    "surface-container-lowest": "#ffffff",
-                    "paper-surface": "#FCFCFA",
-                    "on-secondary-fixed-variant": "#2d4962",
-                    "on-primary-fixed-variant": "#474747",
-                    "surface-container-high": "#ebe7e7",
-                    "surface-bright": "#f9f9f9",
-                    "outline": "#76777b",
-                    "on-surface-variant": "#4c4546",
-                    "on-tertiary": "#ffffff",
-                    "secondary-fixed": "#cde5ff",
-                    "on-primary": "#ffffff",
-                    "ai-highlight": "#FFFBEB",
-                    "secondary-container": "#c2e0ff",
-                    "on-error-container": "#93000a",
-                    "on-primary-container": "#848484",
-                    "surface-variant": "#e2e2e2",
-                    "primary-container": "#1b1b1b",
-                    "secondary-fixed-dim": "#adcae8",
-                    "inverse-primary": "#c6c6c6",
-                    "surface-tint": "#5e5e5e",
-                    "status-error": "#7B2D26",
-                    "gilded-accent": "#8E734B",
-                    "primary": "#000000",
-                    "on-primary-fixed": "#1b1b1b",
-                    "error": "#ba1a1a",
-                    "surface-container-highest": "#e5e2e1",
-                    "inverse-on-surface": "#f1f1f1",
-                    "on-secondary-container": "#48647e",
-                    "inverse-surface": "#303030",
-                    "surface-dim": "#dadada",
-                    "on-tertiary-fixed": "#1b1b1b",
-                    "tertiary-fixed": "#e2e2e2",
-                    "on-tertiary-fixed-variant": "#474747",
-                    "status-neutral": "#6B6B6B",
-                    "background": "#fdf8f8"
+            colors: {
+              "on-tertiary-container": "#848484",
+              "on-secondary": "#ffffff",
+              "primary-fixed": "#e2e2e2",
+              "on-secondary-fixed": "#001d32",
+              "surface-container": "#f1edec",
+              "on-surface": "#1b1b1b",
+              "on-background": "#1b1b1b",
+              tertiary: "#000000",
+              "tertiary-container": "#1b1b1b",
+              "on-error": "#ffffff",
+              "status-success": "#1B4332",
+              surface: "#f9f9f9",
+              "primary-fixed-dim": "#c6c6c6",
+              "tertiary-fixed-dim": "#c6c6c6",
+              "outline-variant": "#cfc4c5",
+              "surface-container-low": "#f7f3f2",
+              secondary: "#45617b",
+              "error-container": "#ffdad6",
+              "surface-container-lowest": "#ffffff",
+              "paper-surface": "#FCFCFA",
+              "on-secondary-fixed-variant": "#2d4962",
+              "on-primary-fixed-variant": "#474747",
+              "surface-container-high": "#ebe7e7",
+              "surface-bright": "#f9f9f9",
+              outline: "#76777b",
+              "on-surface-variant": "#4c4546",
+              "on-tertiary": "#ffffff",
+              "secondary-fixed": "#cde5ff",
+              "on-primary": "#ffffff",
+              "ai-highlight": "#FFFBEB",
+              "secondary-container": "#c2e0ff",
+              "on-error-container": "#93000a",
+              "on-primary-container": "#848484",
+              "surface-variant": "#e2e2e2",
+              "primary-container": "#1b1b1b",
+              "secondary-fixed-dim": "#adcae8",
+              "inverse-primary": "#c6c6c6",
+              "surface-tint": "#5e5e5e",
+              "status-error": "#7B2D26",
+              "gilded-accent": "#8E734B",
+              primary: "#000000",
+              "on-primary-fixed": "#1b1b1b",
+              error: "#ba1a1a",
+              "surface-container-highest": "#e5e2e1",
+              "inverse-on-surface": "#f1f1f1",
+              "on-secondary-container": "#48647e",
+              "inverse-surface": "#303030",
+              "surface-dim": "#dadada",
+              "on-tertiary-fixed": "#1b1b1b",
+              "tertiary-fixed": "#e2e2e2",
+              "on-tertiary-fixed-variant": "#474747",
+              "status-neutral": "#6B6B6B",
+              background: "#fdf8f8",
             },
-            "borderRadius": {
-                    "DEFAULT": "0.25rem",
-                    "lg": "0.5rem",
-                    "xl": "0.75rem",
-                    "full": "9999px"
+            borderRadius: {
+              DEFAULT: "0.25rem",
+              lg: "0.5rem",
+              xl: "0.75rem",
+              full: "9999px",
             },
-            "spacing": {
-                    "sm": "8px",
-                    "xs": "4px",
-                    "unit": "4px",
-                    "md": "16px",
-                    "lg": "24px",
-                    "gutter": "16px",
-                    "margin": "24px",
-                    "xl": "40px"
+            spacing: {
+              sm: "8px",
+              xs: "4px",
+              unit: "4px",
+              md: "16px",
+              lg: "24px",
+              gutter: "16px",
+              margin: "24px",
+              xl: "40px",
             },
-            "fontFamily": {
-                    "body-sm": ["Inter", "sans-serif"],
-                    "headline-lg": ["Newsreader", "serif"],
-                    "headline-xl": ["Newsreader", "serif"],
-                    "body-lg": ["Inter", "sans-serif"],
-                    "headline-md": ["Newsreader", "serif"],
-                    "label-caps": ["Inter", "sans-serif"],
-                    "body-md": ["Inter", "sans-serif"],
-                    "data-mono": ["Inter", "monospace"]
+            fontFamily: {
+              "body-sm": ["Inter", "sans-serif"],
+              "headline-lg": ["Newsreader", "serif"],
+              "headline-xl": ["Newsreader", "serif"],
+              "body-lg": ["Inter", "sans-serif"],
+              "headline-md": ["Newsreader", "serif"],
+              "label-caps": ["Inter", "sans-serif"],
+              "body-md": ["Inter", "sans-serif"],
+              "data-mono": ["Inter", "monospace"],
             },
-            "fontSize": {
-                    "body-sm": ["0.75rem", {"lineHeight": "1.5", "fontWeight": "400"}],
-                    "headline-lg": ["1.75rem", {"lineHeight": "1.2", "fontWeight": "500"}],
-                    "headline-xl": ["2.5rem", {"lineHeight": "1.2", "fontWeight": "600"}],
-                    "body-lg": ["1rem", {"lineHeight": "1.5", "fontWeight": "400"}],
-                    "headline-md": ["1.25rem", {"lineHeight": "1.2", "fontWeight": "500"}],
-                    "label-caps": ["0.6875rem", {"lineHeight": "1.2", "letterSpacing": "0.05em", "fontWeight": "600"}],
-                    "body-md": ["0.875rem", {"lineHeight": "1.5", "fontWeight": "400"}],
-                    "data-mono": ["0.875rem", {"lineHeight": "1.2", "fontWeight": "500"}]
-            }
-          }
-        }
-      }
+            fontSize: {
+              "body-sm": ["0.75rem", { lineHeight: "1.5", fontWeight: "400" }],
+              "headline-lg": ["1.75rem", { lineHeight: "1.2", fontWeight: "500" }],
+              "headline-xl": ["2.5rem", { lineHeight: "1.2", fontWeight: "600" }],
+              "body-lg": ["1rem", { lineHeight: "1.5", fontWeight: "400" }],
+              "headline-md": ["1.25rem", { lineHeight: "1.2", fontWeight: "500" }],
+              "label-caps": [
+                "0.6875rem",
+                { lineHeight: "1.2", letterSpacing: "0.05em", fontWeight: "600" },
+              ],
+              "body-md": ["0.875rem", { lineHeight: "1.5", fontWeight: "400" }],
+              "data-mono": ["0.875rem", { lineHeight: "1.2", fontWeight: "500" }],
+            },
+          },
+        },
+      };
     </script>
-<style>
-        .material-symbols-outlined {
-            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
-        }
+    <style>
+      .material-symbols-outlined {
+        font-variation-settings:
+          "FILL" 0,
+          "wght" 400,
+          "GRAD" 0,
+          "opsz" 24;
+      }
     </style>
-</head>
-<body class="bg-background text-on-background font-body-lg text-body-lg h-screen overflow-hidden flex">
-<!-- SideNavBar (JSON Configured) -->
-<aside class="fixed left-0 top-0 h-full flex flex-col items-center py-4 z-40 w-16 bg-stone-50 dark:bg-stone-950 border-r border-stone-200 dark:border-stone-800">
-<!-- Top Tab: Ledger -->
-<a class="w-full flex justify-center py-3 mb-2 text-stone-400 dark:text-stone-600 hover:text-black dark:hover:text-white hover:bg-stone-100 dark:hover:bg-stone-900 transition-colors" href="#" title="Ledger">
-<span class="material-symbols-outlined" data-icon="account_balance_wallet">account_balance_wallet</span>
-</a>
-<!-- Top Tab: Close (ACTIVE) -->
-<a class="w-full flex justify-center py-3 mb-2 bg-stone-200 dark:bg-stone-800 border-l-2 border-black dark:border-white text-black dark:text-white Active: scale-95 duration-100" href="#" title="Close">
-<span class="material-symbols-outlined" data-icon="event_available">event_available</span>
-</a>
-<!-- Top Tab: Reconciliation -->
-<a class="w-full flex justify-center py-3 mb-2 text-stone-400 dark:text-stone-600 hover:text-black dark:hover:text-white hover:bg-stone-100 dark:hover:bg-stone-900 transition-colors" href="#" title="Reconciliation">
-<span class="material-symbols-outlined" data-icon="rule">rule</span>
-</a>
-<!-- Top Tab: Consolidation -->
-<a class="w-full flex justify-center py-3 mb-2 text-stone-400 dark:text-stone-600 hover:text-black dark:hover:text-white hover:bg-stone-100 dark:hover:bg-stone-900 transition-colors" href="#" title="Consolidation">
-<span class="material-symbols-outlined" data-icon="layers">layers</span>
-</a>
-<!-- Top Tab: Reports -->
-<a class="w-full flex justify-center py-3 mb-auto text-stone-400 dark:text-stone-600 hover:text-black dark:hover:text-white hover:bg-stone-100 dark:hover:bg-stone-900 transition-colors" href="#" title="Reports">
-<span class="material-symbols-outlined" data-icon="assessment">assessment</span>
-</a>
-<!-- Footer Tab: Archive -->
-<a class="w-full flex justify-center py-3 mt-auto text-stone-400 dark:text-stone-600 hover:text-black dark:hover:text-white hover:bg-stone-100 dark:hover:bg-stone-900 transition-colors" href="#" title="Archive">
-<span class="material-symbols-outlined" data-icon="inventory_2">inventory_2</span>
-</a>
-<!-- Footer Tab: Support -->
-<a class="w-full flex justify-center py-3 text-stone-400 dark:text-stone-600 hover:text-black dark:hover:text-white hover:bg-stone-100 dark:hover:bg-stone-900 transition-colors" href="#" title="Support">
-<span class="material-symbols-outlined" data-icon="contact_support">contact_support</span>
-</a>
-</aside>
-<!-- Main Content Wrapper -->
-<div class="flex-1 flex flex-col ml-16 h-full">
-<!-- TopNavBar (JSON Configured) -->
-<header class="flex justify-between items-center w-full px-6 h-14 bg-[#fcfcfc] dark:bg-[#0a0a0a] border-b border-stone-200 dark:border-stone-800 text-black dark:text-white">
-<div class="flex items-center gap-6">
-<!-- Brand -->
-<div class="font-['Newsreader'] italic font-semibold text-black dark:text-white text-lg">Quartz Terminal</div>
-<!-- Search Bar (on_left) -->
-<div class="flex items-center bg-stone-100 dark:bg-stone-900 px-3 py-1.5 rounded-sm border border-stone-200 dark:border-stone-800">
-<span class="material-symbols-outlined text-[18px] text-stone-500 mr-2" data-icon="search">search</span>
-<input class="bg-transparent border-none p-0 text-sm focus:ring-0 w-48 text-black dark:text-white placeholder-stone-500" placeholder="Search commands..." type="text"/>
-</div>
-</div>
-<!-- Navigation Links -->
-<nav class="flex h-full font-['Newsreader'] serif tracking-tight text-lg">
-<a class="px-4 flex items-center h-full text-black dark:text-white border-b-2 border-black dark:border-white font-medium hover:bg-stone-100 dark:hover:bg-stone-900 transition-colors Active: opacity-80 duration-150" href="#">Entity</a>
-<a class="px-4 flex items-center h-full text-stone-500 dark:text-stone-400 font-normal hover:bg-stone-100 dark:hover:bg-stone-900 transition-colors" href="#">Period</a>
-<a class="px-4 flex items-center h-full text-stone-500 dark:text-stone-400 font-normal hover:bg-stone-100 dark:hover:bg-stone-900 transition-colors" href="#">Reporting Currency</a>
-</nav>
-<!-- Trailing Actions -->
-<div class="flex items-center gap-4">
-<button class="text-stone-500 hover:text-black dark:hover:text-white transition-colors"><span class="material-symbols-outlined" data-icon="notifications">notifications</span></button>
-<button class="text-stone-500 hover:text-black dark:hover:text-white transition-colors"><span class="material-symbols-outlined" data-icon="settings">settings</span></button>
-<button class="text-stone-500 hover:text-black dark:hover:text-white transition-colors"><span class="material-symbols-outlined" data-icon="help_outline">help_outline</span></button>
-<div class="w-8 h-8 bg-stone-300 dark:bg-stone-700 rounded-sm border border-stone-400 overflow-hidden flex items-center justify-center">
-<span class="material-symbols-outlined text-stone-500 text-sm" data-icon="person">person</span>
-</div>
-</div>
-</header>
-<!-- Canvas Area (Workbench) -->
-<main class="flex-1 overflow-y-auto bg-surface-container-low p-margin">
-<!-- Header & Context -->
-<div class="mb-lg max-w-5xl mx-auto">
-<h1 class="font-headline-xl text-headline-xl text-on-surface mb-md">Omni-Assistant Workbench</h1>
-<div class="flex flex-wrap gap-xs">
-<div class="px-sm py-unit border border-outline-variant bg-surface text-on-surface font-label-caps text-label-caps flex items-center gap-1">
-<span class="material-symbols-outlined text-[14px]" data-icon="domain">domain</span>
-                        Apex Meridian Nigeria Ltd
+  </head>
+  <body
+    class="bg-background text-on-background font-body-lg text-body-lg h-screen overflow-hidden flex"
+  >
+    <!-- SideNavBar (JSON Configured) -->
+    <aside
+      class="fixed left-0 top-0 h-full flex flex-col items-center py-4 z-40 w-16 bg-stone-50 dark:bg-stone-950 border-r border-stone-200 dark:border-stone-800"
+    >
+      <!-- Top Tab: Ledger -->
+      <a
+        class="w-full flex justify-center py-3 mb-2 text-stone-400 dark:text-stone-600 hover:text-black dark:hover:text-white hover:bg-stone-100 dark:hover:bg-stone-900 transition-colors"
+        href="#"
+        title="Ledger"
+      >
+        <span class="material-symbols-outlined" data-icon="account_balance_wallet"
+          >account_balance_wallet</span
+        >
+      </a>
+      <!-- Top Tab: Close (ACTIVE) -->
+      <a
+        class="w-full flex justify-center py-3 mb-2 bg-stone-200 dark:bg-stone-800 border-l-2 border-black dark:border-white text-black dark:text-white Active: scale-95 duration-100"
+        href="#"
+        title="Close"
+      >
+        <span class="material-symbols-outlined" data-icon="event_available">event_available</span>
+      </a>
+      <!-- Top Tab: Reconciliation -->
+      <a
+        class="w-full flex justify-center py-3 mb-2 text-stone-400 dark:text-stone-600 hover:text-black dark:hover:text-white hover:bg-stone-100 dark:hover:bg-stone-900 transition-colors"
+        href="#"
+        title="Reconciliation"
+      >
+        <span class="material-symbols-outlined" data-icon="rule">rule</span>
+      </a>
+      <!-- Top Tab: Consolidation -->
+      <a
+        class="w-full flex justify-center py-3 mb-2 text-stone-400 dark:text-stone-600 hover:text-black dark:hover:text-white hover:bg-stone-100 dark:hover:bg-stone-900 transition-colors"
+        href="#"
+        title="Consolidation"
+      >
+        <span class="material-symbols-outlined" data-icon="layers">layers</span>
+      </a>
+      <!-- Top Tab: Reports -->
+      <a
+        class="w-full flex justify-center py-3 mb-auto text-stone-400 dark:text-stone-600 hover:text-black dark:hover:text-white hover:bg-stone-100 dark:hover:bg-stone-900 transition-colors"
+        href="#"
+        title="Reports"
+      >
+        <span class="material-symbols-outlined" data-icon="assessment">assessment</span>
+      </a>
+      <!-- Footer Tab: Archive -->
+      <a
+        class="w-full flex justify-center py-3 mt-auto text-stone-400 dark:text-stone-600 hover:text-black dark:hover:text-white hover:bg-stone-100 dark:hover:bg-stone-900 transition-colors"
+        href="#"
+        title="Archive"
+      >
+        <span class="material-symbols-outlined" data-icon="inventory_2">inventory_2</span>
+      </a>
+      <!-- Footer Tab: Support -->
+      <a
+        class="w-full flex justify-center py-3 text-stone-400 dark:text-stone-600 hover:text-black dark:hover:text-white hover:bg-stone-100 dark:hover:bg-stone-900 transition-colors"
+        href="#"
+        title="Support"
+      >
+        <span class="material-symbols-outlined" data-icon="contact_support">contact_support</span>
+      </a>
+    </aside>
+    <!-- Main Content Wrapper -->
+    <div class="flex-1 flex flex-col ml-16 h-full">
+      <!-- TopNavBar (JSON Configured) -->
+      <header
+        class="flex justify-between items-center w-full px-6 h-14 bg-[#fcfcfc] dark:bg-[#0a0a0a] border-b border-stone-200 dark:border-stone-800 text-black dark:text-white"
+      >
+        <div class="flex items-center gap-6">
+          <!-- Brand -->
+          <div class="font-['Newsreader'] italic font-semibold text-black dark:text-white text-lg">
+            Quartz Terminal
+          </div>
+          <!-- Search Bar (on_left) -->
+          <div
+            class="flex items-center bg-stone-100 dark:bg-stone-900 px-3 py-1.5 rounded-sm border border-stone-200 dark:border-stone-800"
+          >
+            <span
+              class="material-symbols-outlined text-[18px] text-stone-500 mr-2"
+              data-icon="search"
+              >search</span
+            >
+            <input
+              class="bg-transparent border-none p-0 text-sm focus:ring-0 w-48 text-black dark:text-white placeholder-stone-500"
+              placeholder="Search commands..."
+              type="text"
+            />
+          </div>
+        </div>
+        <!-- Navigation Links -->
+        <nav class="flex h-full font-['Newsreader'] serif tracking-tight text-lg">
+          <a
+            class="px-4 flex items-center h-full text-black dark:text-white border-b-2 border-black dark:border-white font-medium hover:bg-stone-100 dark:hover:bg-stone-900 transition-colors Active: opacity-80 duration-150"
+            href="#"
+            >Entity</a
+          >
+          <a
+            class="px-4 flex items-center h-full text-stone-500 dark:text-stone-400 font-normal hover:bg-stone-100 dark:hover:bg-stone-900 transition-colors"
+            href="#"
+            >Period</a
+          >
+          <a
+            class="px-4 flex items-center h-full text-stone-500 dark:text-stone-400 font-normal hover:bg-stone-100 dark:hover:bg-stone-900 transition-colors"
+            href="#"
+            >Reporting Currency</a
+          >
+        </nav>
+        <!-- Trailing Actions -->
+        <div class="flex items-center gap-4">
+          <button class="text-stone-500 hover:text-black dark:hover:text-white transition-colors">
+            <span class="material-symbols-outlined" data-icon="notifications">notifications</span>
+          </button>
+          <button class="text-stone-500 hover:text-black dark:hover:text-white transition-colors">
+            <span class="material-symbols-outlined" data-icon="settings">settings</span>
+          </button>
+          <button class="text-stone-500 hover:text-black dark:hover:text-white transition-colors">
+            <span class="material-symbols-outlined" data-icon="help_outline">help_outline</span>
+          </button>
+          <div
+            class="w-8 h-8 bg-stone-300 dark:bg-stone-700 rounded-sm border border-stone-400 overflow-hidden flex items-center justify-center"
+          >
+            <span class="material-symbols-outlined text-stone-500 text-sm" data-icon="person"
+              >person</span
+            >
+          </div>
+        </div>
+      </header>
+      <!-- Canvas Area (Workbench) -->
+      <main class="flex-1 overflow-y-auto bg-surface-container-low p-margin">
+        <!-- Header & Context -->
+        <div class="mb-lg max-w-5xl mx-auto">
+          <h1 class="font-headline-xl text-headline-xl text-on-surface mb-md">
+            Omni-Assistant Workbench
+          </h1>
+          <div class="flex flex-wrap gap-xs">
+            <div
+              class="px-sm py-unit border border-outline-variant bg-surface text-on-surface font-label-caps text-label-caps flex items-center gap-1"
+            >
+              <span class="material-symbols-outlined text-[14px]" data-icon="domain">domain</span>
+              Apex Meridian Nigeria Ltd
+            </div>
+            <div
+              class="px-sm py-unit border border-outline-variant bg-surface text-on-surface font-label-caps text-label-caps flex items-center gap-1"
+            >
+              <span class="material-symbols-outlined text-[14px]" data-icon="calendar_month"
+                >calendar_month</span
+              >
+              March 2026
+            </div>
+            <div
+              class="px-sm py-unit border border-outline-variant bg-secondary-container text-on-secondary-container font-label-caps text-label-caps flex items-center gap-1"
+            >
+              <span class="material-symbols-outlined text-[14px]" data-icon="sync">sync</span>
+              Bank Recon Active
+            </div>
+          </div>
+        </div>
+        <!-- Assistant Interaction Canvas -->
+        <div
+          class="max-w-5xl mx-auto border border-outline-variant bg-paper-surface flex flex-col min-h-[600px] shadow-sm"
+        >
+          <!-- Conversation / Structured Output Area -->
+          <div class="flex-1 p-lg overflow-y-auto flex flex-col gap-lg">
+            <!-- Intro Text -->
+            <div class="font-body-md text-body-md text-on-surface-variant max-w-3xl">
+              I have analyzed the March 2026 ledger activity for Apex Meridian Nigeria Ltd. The
+              primary bottleneck is the active Bank Reconciliation process. Below are the structural
+              anomalies and proposed journal drafts requiring your authorization.
+            </div>
+            <!-- AI Highlighted Card: Anomalies Summary -->
+            <div class="bg-ai-highlight border border-outline-variant p-md">
+              <div class="flex items-center gap-2 mb-md border-b border-outline-variant pb-xs">
+                <span class="material-symbols-outlined text-secondary" data-icon="warning"
+                  >warning</span
+                >
+                <h2 class="font-headline-md text-headline-md text-on-surface">Anomalies Summary</h2>
+              </div>
+              <div class="flex flex-col gap-sm">
+                <!-- Anomaly Item -->
+                <div
+                  class="flex items-start justify-between py-2 border-b border-outline-variant border-dashed last:border-0"
+                >
+                  <div>
+                    <div class="font-data-mono text-data-mono text-status-error mb-1">
+                      Unmatched Outflow: NGN 4,500,000
                     </div>
-<div class="px-sm py-unit border border-outline-variant bg-surface text-on-surface font-label-caps text-label-caps flex items-center gap-1">
-<span class="material-symbols-outlined text-[14px]" data-icon="calendar_month">calendar_month</span>
-                        March 2026
+                    <div class="font-body-sm text-body-sm text-on-surface-variant">
+                      Vendor: Zenith Logistics (Ref: ZL-2026-03-A). Missing corresponding invoice in
+                      AP subledger.
                     </div>
-<div class="px-sm py-unit border border-outline-variant bg-secondary-container text-on-secondary-container font-label-caps text-label-caps flex items-center gap-1">
-<span class="material-symbols-outlined text-[14px]" data-icon="sync">sync</span>
-                        Bank Recon Active
+                  </div>
+                  <button
+                    class="bg-primary text-on-primary font-label-caps text-label-caps px-4 py-2 hover:bg-surface-tint transition-colors"
+                  >
+                    INVESTIGATE
+                  </button>
+                </div>
+                <!-- Anomaly Item -->
+                <div
+                  class="flex items-start justify-between py-2 border-b border-outline-variant border-dashed last:border-0"
+                >
+                  <div>
+                    <div class="font-data-mono text-data-mono text-status-neutral mb-1">
+                      Duplicate Entry Flag: NGN 120,000
                     </div>
-</div>
-</div>
-<!-- Assistant Interaction Canvas -->
-<div class="max-w-5xl mx-auto border border-outline-variant bg-paper-surface flex flex-col min-h-[600px] shadow-sm">
-<!-- Conversation / Structured Output Area -->
-<div class="flex-1 p-lg overflow-y-auto flex flex-col gap-lg">
-<!-- Intro Text -->
-<div class="font-body-md text-body-md text-on-surface-variant max-w-3xl">
-                        I have analyzed the March 2026 ledger activity for Apex Meridian Nigeria Ltd. The primary bottleneck is the active Bank Reconciliation process. Below are the structural anomalies and proposed journal drafts requiring your authorization.
+                    <div class="font-body-sm text-body-sm text-on-surface-variant">
+                      Office Supplies expense logged twice on Mar 14.
                     </div>
-<!-- AI Highlighted Card: Anomalies Summary -->
-<div class="bg-ai-highlight border border-outline-variant p-md">
-<div class="flex items-center gap-2 mb-md border-b border-outline-variant pb-xs">
-<span class="material-symbols-outlined text-secondary" data-icon="warning">warning</span>
-<h2 class="font-headline-md text-headline-md text-on-surface">Anomalies Summary</h2>
-</div>
-<div class="flex flex-col gap-sm">
-<!-- Anomaly Item -->
-<div class="flex items-start justify-between py-2 border-b border-outline-variant border-dashed last:border-0">
-<div>
-<div class="font-data-mono text-data-mono text-status-error mb-1">Unmatched Outflow: NGN 4,500,000</div>
-<div class="font-body-sm text-body-sm text-on-surface-variant">Vendor: Zenith Logistics (Ref: ZL-2026-03-A). Missing corresponding invoice in AP subledger.</div>
-</div>
-<button class="bg-primary text-on-primary font-label-caps text-label-caps px-4 py-2 hover:bg-surface-tint transition-colors">INVESTIGATE</button>
-</div>
-<!-- Anomaly Item -->
-<div class="flex items-start justify-between py-2 border-b border-outline-variant border-dashed last:border-0">
-<div>
-<div class="font-data-mono text-data-mono text-status-neutral mb-1">Duplicate Entry Flag: NGN 120,000</div>
-<div class="font-body-sm text-body-sm text-on-surface-variant">Office Supplies expense logged twice on Mar 14.</div>
-</div>
-<button class="bg-surface text-on-surface border border-outline-variant font-label-caps text-label-caps px-4 py-2 hover:bg-surface-container transition-colors">REVIEW</button>
-</div>
-</div>
-</div>
-<!-- AI Highlighted Card: Journal Drafts -->
-<div class="bg-ai-highlight border border-outline-variant p-md">
-<div class="flex items-center gap-2 mb-md border-b border-outline-variant pb-xs">
-<span class="material-symbols-outlined text-secondary" data-icon="post_add">post_add</span>
-<h2 class="font-headline-md text-headline-md text-on-surface">Journal Drafts</h2>
-<span class="ml-auto font-label-caps text-label-caps text-on-surface-variant">1 PENDING APPROVAL</span>
-</div>
-<div class="bg-surface border border-outline-variant p-4">
-<div class="flex justify-between items-center mb-4">
-<div class="font-body-md text-body-md font-semibold text-on-surface">Rent Accrual - Q1 Top-up</div>
-<a class="font-body-sm text-body-sm text-secondary hover:underline flex items-center gap-1" href="#">
-<span class="material-symbols-outlined text-[16px]" data-icon="description">description</span>
-                                    Source: Lease Agreement PDF
-                                </a>
-</div>
-<!-- Ledger Grid -->
-<div class="w-full font-data-mono text-data-mono text-sm border-t border-outline-variant">
-<div class="flex border-b border-outline-variant bg-surface-container-low text-on-surface-variant font-semibold">
-<div class="w-1/2 p-2">Account</div>
-<div class="w-1/4 p-2 text-right">Debit (NGN)</div>
-<div class="w-1/4 p-2 text-right">Credit (NGN)</div>
-</div>
-<div class="flex border-b border-outline-variant bg-surface text-on-surface">
-<div class="w-1/2 p-2 border-r border-outline-variant">6100 - Rent Expense</div>
-<div class="w-1/4 p-2 text-right border-r border-outline-variant">2,000,000.00</div>
-<div class="w-1/4 p-2 text-right"></div>
-</div>
-<div class="flex border-b border-outline-variant bg-surface text-on-surface">
-<div class="w-1/2 p-2 border-r border-outline-variant">2150 - Accrued Liabilities</div>
-<div class="w-1/4 p-2 text-right border-r border-outline-variant"></div>
-<div class="w-1/4 p-2 text-right">2,000,000.00</div>
-</div>
-</div>
-<div class="mt-4 flex justify-end gap-2">
-<button class="bg-surface text-on-surface border border-outline-variant font-label-caps text-label-caps px-4 py-2 hover:bg-surface-container transition-colors">DISCARD</button>
-<button class="bg-primary text-on-primary font-label-caps text-label-caps px-4 py-2 hover:bg-surface-tint transition-colors">APPROVE ENTRY</button>
-</div>
-</div>
-</div>
-</div>
-<!-- Disciplined Command Input Field -->
-<div class="p-4 border-t border-outline-variant bg-surface-container-low">
-<div class="relative flex items-center">
-<span class="material-symbols-outlined absolute left-4 text-secondary" data-icon="terminal">terminal</span>
-<input class="w-full bg-surface border border-outline-variant text-on-surface font-body-md text-body-md py-3 pl-12 pr-4 focus:outline-none focus:border-secondary focus:ring-1 focus:ring-secondary placeholder-on-tertiary-container transition-all" placeholder="Enter command (e.g., 'Summarize blockers', 'Draft accrual for rent')..." type="text"/>
-<button class="absolute right-2 p-2 text-primary hover:text-secondary transition-colors">
-<span class="material-symbols-outlined" data-icon="send">send</span>
-</button>
-</div>
-<div class="mt-2 flex gap-4 text-xs font-data-mono text-data-mono text-on-surface-variant pl-2">
-<span>Suggested:</span>
-<button class="hover:text-secondary hover:underline cursor-pointer">/summarize_blockers</button>
-<button class="hover:text-secondary hover:underline cursor-pointer">/fetch_zenith_invoices</button>
-</div>
-</div>
-</div>
-</main>
-</div>
-</body></html>
+                  </div>
+                  <button
+                    class="bg-surface text-on-surface border border-outline-variant font-label-caps text-label-caps px-4 py-2 hover:bg-surface-container transition-colors"
+                  >
+                    REVIEW
+                  </button>
+                </div>
+              </div>
+            </div>
+            <!-- AI Highlighted Card: Journal Drafts -->
+            <div class="bg-ai-highlight border border-outline-variant p-md">
+              <div class="flex items-center gap-2 mb-md border-b border-outline-variant pb-xs">
+                <span class="material-symbols-outlined text-secondary" data-icon="post_add"
+                  >post_add</span
+                >
+                <h2 class="font-headline-md text-headline-md text-on-surface">Journal Drafts</h2>
+                <span class="ml-auto font-label-caps text-label-caps text-on-surface-variant"
+                  >1 PENDING APPROVAL</span
+                >
+              </div>
+              <div class="bg-surface border border-outline-variant p-4">
+                <div class="flex justify-between items-center mb-4">
+                  <div class="font-body-md text-body-md font-semibold text-on-surface">
+                    Rent Accrual - Q1 Top-up
+                  </div>
+                  <a
+                    class="font-body-sm text-body-sm text-secondary hover:underline flex items-center gap-1"
+                    href="#"
+                  >
+                    <span class="material-symbols-outlined text-[16px]" data-icon="description"
+                      >description</span
+                    >
+                    Source: Lease Agreement PDF
+                  </a>
+                </div>
+                <!-- Ledger Grid -->
+                <div
+                  class="w-full font-data-mono text-data-mono text-sm border-t border-outline-variant"
+                >
+                  <div
+                    class="flex border-b border-outline-variant bg-surface-container-low text-on-surface-variant font-semibold"
+                  >
+                    <div class="w-1/2 p-2">Account</div>
+                    <div class="w-1/4 p-2 text-right">Debit (NGN)</div>
+                    <div class="w-1/4 p-2 text-right">Credit (NGN)</div>
+                  </div>
+                  <div class="flex border-b border-outline-variant bg-surface text-on-surface">
+                    <div class="w-1/2 p-2 border-r border-outline-variant">6100 - Rent Expense</div>
+                    <div class="w-1/4 p-2 text-right border-r border-outline-variant">
+                      2,000,000.00
+                    </div>
+                    <div class="w-1/4 p-2 text-right"></div>
+                  </div>
+                  <div class="flex border-b border-outline-variant bg-surface text-on-surface">
+                    <div class="w-1/2 p-2 border-r border-outline-variant">
+                      2150 - Accrued Liabilities
+                    </div>
+                    <div class="w-1/4 p-2 text-right border-r border-outline-variant"></div>
+                    <div class="w-1/4 p-2 text-right">2,000,000.00</div>
+                  </div>
+                </div>
+                <div class="mt-4 flex justify-end gap-2">
+                  <button
+                    class="bg-surface text-on-surface border border-outline-variant font-label-caps text-label-caps px-4 py-2 hover:bg-surface-container transition-colors"
+                  >
+                    DISCARD
+                  </button>
+                  <button
+                    class="bg-primary text-on-primary font-label-caps text-label-caps px-4 py-2 hover:bg-surface-tint transition-colors"
+                  >
+                    APPROVE ENTRY
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+          <!-- Disciplined Command Input Field -->
+          <div class="p-4 border-t border-outline-variant bg-surface-container-low">
+            <div class="relative flex items-center">
+              <span
+                class="material-symbols-outlined absolute left-4 text-secondary"
+                data-icon="terminal"
+                >terminal</span
+              >
+              <input
+                class="w-full bg-surface border border-outline-variant text-on-surface font-body-md text-body-md py-3 pl-12 pr-4 focus:outline-none focus:border-secondary focus:ring-1 focus:ring-secondary placeholder-on-tertiary-container transition-all"
+                placeholder="Enter command (e.g., 'Summarize blockers', 'Draft accrual for rent')..."
+                type="text"
+              />
+              <button
+                class="absolute right-2 p-2 text-primary hover:text-secondary transition-colors"
+              >
+                <span class="material-symbols-outlined" data-icon="send">send</span>
+              </button>
+            </div>
+            <div
+              class="mt-2 flex gap-4 text-xs font-data-mono text-data-mono text-on-surface-variant pl-2"
+            >
+              <span>Suggested:</span>
+              <button class="hover:text-secondary hover:underline cursor-pointer">
+                /summarize_blockers
+              </button>
+              <button class="hover:text-secondary hover:underline cursor-pointer">
+                /fetch_zenith_invoices
+              </button>
+            </div>
+          </div>
+        </div>
+      </main>
+    </div>
+  </body>
+</html>

@@ -11,6 +11,7 @@ import {
   loadClientCachedValue,
   readClientCacheSnapshot,
 } from "../client-cache";
+import { buildEntityProxyPath, ENTITY_PROXY_BASE_PATH } from "../entity-proxy";
 import { resolveBackendApiBaseUrl } from "../runtime";
 
 export type CreateEntityRequest = components["schemas"]["CreateEntityRequest"];
@@ -63,7 +64,6 @@ export class EntityApiError extends Error {
   }
 }
 
-const ENTITY_PROXY_BASE_PATH = "/api/entities";
 const ENTITY_READ_CACHE_TTL_MS = 30_000;
 
 /**
@@ -118,18 +118,13 @@ export async function createEntity(
  * Behavior: Encodes the path segment so malformed IDs cannot break route composition.
  */
 export async function readEntityWorkspace(entityId: string): Promise<EntityWorkspace> {
-  return entityRequest<EntityWorkspace>(
-    `${ENTITY_PROXY_BASE_PATH}/${encodeURIComponent(entityId)}`,
-    {
-      method: "GET",
-    },
-  );
+  return entityRequest<EntityWorkspace>(buildEntityProxyPath(entityId, []), {
+    method: "GET",
+  });
 }
 
 export function readEntityWorkspaceSnapshot(entityId: string): EntityWorkspace | null {
-  return readClientCacheSnapshot<EntityWorkspace>(
-    `${ENTITY_PROXY_BASE_PATH}/${encodeURIComponent(entityId)}`,
-  );
+  return readClientCacheSnapshot<EntityWorkspace>(buildEntityProxyPath(entityId, []));
 }
 
 /**
@@ -142,13 +137,10 @@ export async function updateEntity(
   entityId: string,
   payload: Readonly<UpdateEntityRequest>,
 ): Promise<EntityWorkspace> {
-  return entityRequest<EntityWorkspace>(
-    `${ENTITY_PROXY_BASE_PATH}/${encodeURIComponent(entityId)}`,
-    {
-      body: JSON.stringify(payload),
-      method: "PATCH",
-    },
-  );
+  return entityRequest<EntityWorkspace>(buildEntityProxyPath(entityId, []), {
+    body: JSON.stringify(payload),
+    method: "PATCH",
+  });
 }
 
 /**
@@ -157,15 +149,10 @@ export async function updateEntity(
  * Outputs: Structured delete outcome including deleted close-run and document counts.
  * Behavior: Uses DELETE so the backend can run the canonical owner-only destructive workflow.
  */
-export async function deleteEntityWorkspace(
-  entityId: string,
-): Promise<EntityDeleteResponse> {
-  return entityRequest<EntityDeleteResponse>(
-    `${ENTITY_PROXY_BASE_PATH}/${encodeURIComponent(entityId)}`,
-    {
-      method: "DELETE",
-    },
-  );
+export async function deleteEntityWorkspace(entityId: string): Promise<EntityDeleteResponse> {
+  return entityRequest<EntityDeleteResponse>(buildEntityProxyPath(entityId, []), {
+    method: "DELETE",
+  });
 }
 
 /**
@@ -178,13 +165,10 @@ export async function createEntityMembership(
   entityId: string,
   payload: Readonly<CreateEntityMembershipRequest>,
 ): Promise<EntityWorkspace> {
-  return entityRequest<EntityWorkspace>(
-    `${ENTITY_PROXY_BASE_PATH}/${encodeURIComponent(entityId)}/memberships`,
-    {
-      body: JSON.stringify(payload),
-      method: "POST",
-    },
-  );
+  return entityRequest<EntityWorkspace>(buildEntityProxyPath(entityId, ["memberships"]), {
+    body: JSON.stringify(payload),
+    method: "POST",
+  });
 }
 
 /**
@@ -199,7 +183,7 @@ export async function updateEntityMembership(
   payload: Readonly<UpdateEntityMembershipRequest>,
 ): Promise<EntityWorkspace> {
   return entityRequest<EntityWorkspace>(
-    `${ENTITY_PROXY_BASE_PATH}/${encodeURIComponent(entityId)}/memberships/${encodeURIComponent(membershipId)}`,
+    buildEntityProxyPath(entityId, ["memberships", membershipId]),
     {
       body: JSON.stringify(payload),
       method: "PATCH",

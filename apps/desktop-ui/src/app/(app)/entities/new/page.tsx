@@ -1,9 +1,6 @@
 "use client";
 
-import {
-  autonomyModeDefinitions,
-  type AutonomyMode,
-} from "@accounting-ai-agent/ui";
+import { autonomyModeDefinitions, type AutonomyMode } from "@accounting-ai-agent/ui";
 import { useRouter } from "next/navigation";
 import {
   useState,
@@ -55,10 +52,7 @@ export default function WorkspaceCreationPage(): ReactElement {
       const nextValue = event.target.value;
       setFormState((currentState) => ({
         ...currentState,
-        [fieldName]:
-          fieldName === "countryCode"
-            ? nextValue
-            : nextValue,
+        [fieldName]: fieldName === "countryCode" ? nextValue : nextValue,
         ...(fieldName === "countryCode"
           ? {
               timezone:

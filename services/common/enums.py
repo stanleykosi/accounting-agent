@@ -2,7 +2,7 @@
 Purpose: Define the canonical domain enums that anchor workflow, lifecycle,
 review, autonomy, and artifact language across the backend.
 Scope: String enums shared by API routes, persistence models, worker logic,
-contract models, and the future desktop and CLI surfaces.
+contract models, and desktop and CLI surfaces.
 Dependencies: Python's enum module only, so these values stay importable from
 low-level modules without creating circular dependencies.
 """

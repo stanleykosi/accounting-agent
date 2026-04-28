@@ -49,9 +49,7 @@ export function resolveBackendApiBaseUrl(): string {
   }
 
   if (resolveFrontendRuntimeMode() === "hosted") {
-    throw new Error(
-      "ACCOUNTING_AGENT_API_URL must be set for hosted frontend deployments.",
-    );
+    throw new Error("ACCOUNTING_AGENT_API_URL must be set for hosted frontend deployments.");
   }
 
   return "http://127.0.0.1:8000/api";

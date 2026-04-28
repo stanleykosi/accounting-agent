@@ -1,7 +1,7 @@
 """
 Purpose: Mark the FastAPI application package boundary for the canonical backend service.
-Scope: Shared import root for API routes, dependencies, and the future
-main application entrypoint.
+Scope: Shared import root for API routes, dependencies, and the main application
+entrypoint.
 Dependencies: Root Python workspace configuration in pyproject.toml and
 shared service modules under services/.
 """

@@ -212,14 +212,16 @@ def test_load_bank_statement_data_uses_latest_extraction_only() -> None:
                     schema_name="bank_statement",
                     schema_version="1.0.0",
                     extracted_payload={
-                        "statement_lines": [
-                            {
-                                "line_no": 1,
-                                "date": "2026-03-01",
-                                "credit": "1000.00",
-                                "description": "superseded extraction",
-                            }
-                        ]
+                        "parser_output": {
+                            "statement_lines": [
+                                {
+                                    "line_no": 1,
+                                    "date": "2026-03-01",
+                                    "credit": "1000.00",
+                                    "description": "superseded extraction",
+                                }
+                            ]
+                        }
                     },
                     confidence_summary={},
                     needs_review=False,
@@ -232,14 +234,16 @@ def test_load_bank_statement_data_uses_latest_extraction_only() -> None:
                     schema_name="bank_statement",
                     schema_version="1.0.0",
                     extracted_payload={
-                        "statement_lines": [
-                            {
-                                "line_no": 1,
-                                "date": "2026-03-01",
-                                "credit": "2500.00",
-                                "description": "latest extraction",
-                            }
-                        ]
+                        "parser_output": {
+                            "statement_lines": [
+                                {
+                                    "line_no": 1,
+                                    "date": "2026-03-01",
+                                    "credit": "2500.00",
+                                    "description": "latest extraction",
+                                }
+                            ]
+                        }
                     },
                     confidence_summary={},
                     needs_review=False,

@@ -3,8 +3,7 @@ Purpose: Orchestrate chat threads, messages, and read-only finance copilot
 analysis responses grounded in workflow state.
 Scope: Thread creation, listing, message history, and the send-message flow
 that answers questions using workflow state, extracted values, and evidence
-without allowing state changes. This is the read-only analysis foundation
-that Step 35 extends with action routing.
+without allowing state changes. Action routing is handled by a separate workflow.
 Dependencies: Chat repository, grounding service, model gateway, audit
 service, and the canonical chat contracts.
 """
@@ -201,8 +200,8 @@ class ChatService:
 
     This service implements read-only analysis flows that answer questions
     using workflow state, extracted values, rules, and evidence. It does not
-    allow state changes -- that capability is added in Step 35 with action
-    routing and proposed edits.
+    allow state changes; action routing and proposed edits are handled by
+    dedicated services.
     """
 
     def __init__(
@@ -661,8 +660,7 @@ class ChatService:
         """Classify the user message intent for downstream UI rendering.
 
         This is a simple heuristic classifier for read-only analysis messages.
-        Step 35 adds the full action router that creates proposed edits and
-        approval requests.
+        State-changing intents are handled by the action router.
         """
 
         content_lower = content.lower()

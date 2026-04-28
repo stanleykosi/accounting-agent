@@ -1,7 +1,7 @@
 """
 Purpose: Export the canonical storage client, repositories, and helper functions.
 Scope: Stable storage package surface for document intake, derivative generation,
-report publishing, and future API/worker integrations.
+report publishing, and API/worker integrations.
 Dependencies: services/storage/*.py modules plus shared storage contracts.
 """
 

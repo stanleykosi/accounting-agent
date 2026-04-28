@@ -20,14 +20,13 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import MagicMock
 from uuid import UUID, uuid4
 
 import pytest
 from services.chat.action_models import (
-    ChatActionExecutionPlan,
     ChatActionIntent,
     ChatApprovalRequest,
     ChatDocumentRequest,
@@ -45,7 +44,6 @@ from services.chat.proposed_changes import (
     ProposedChangesService,
 )
 from services.common.enums import AutonomyMode, DocumentType, WorkflowPhase
-
 
 # ---------------------------------------------------------------------------
 # Test doubles
@@ -108,7 +106,7 @@ class FakeActionRepository:
         requires_human_approval: bool,
         reasoning: str,
     ) -> FakeActionPlanRecord:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         plan = FakeActionPlanRecord(
             id=uuid4(),
             thread_id=thread_id,
@@ -204,7 +202,7 @@ class FakeActionRepository:
             plan_dict["rejected_reason"] = rejected_reason
         if superseded_by_id is not None:
             plan_dict["superseded_by_id"] = superseded_by_id
-        plan_dict["updated_at"] = datetime.now(timezone.utc)
+        plan_dict["updated_at"] = datetime.now(UTC)
         updated = FakeActionPlanRecord(**plan_dict)
         self._plans[action_plan_id] = updated
         return updated
@@ -226,7 +224,7 @@ class FakeActionRepository:
                 p_dict: dict[str, Any] = dict(p.__dict__)
                 p_dict["status"] = "superseded"
                 p_dict["superseded_by_id"] = superseded_by_id
-                p_dict["updated_at"] = datetime.now(timezone.utc)
+                p_dict["updated_at"] = datetime.now(UTC)
                 self._plans[p.id] = FakeActionPlanRecord(**p_dict)
                 count += 1
         return count
@@ -273,7 +271,9 @@ class FakeChatRepository:
 
 class FakeModelGateway:
     def __init__(self, response: str | None = None) -> None:
-        self.response = response or '{"intent": "explanation", "confidence": 0.8, "reasoning": "Test"}'
+        self.response = response or (
+            '{"intent": "explanation", "confidence": 0.8, "reasoning": "Test"}'
+        )
         self.calls: list[dict[str, Any]] = []
 
     def complete(self, *, messages: list[dict[str, str]]) -> str:
@@ -927,7 +927,10 @@ class TestIntentClassification:
             action_repository=FakeActionRepository(),
             chat_repository=chat_repo,
             model_gateway=FakeModelGateway(
-                response='{"intent": "explanation", "confidence": 0.92, "reasoning": "Question only"}'
+                response=(
+                    '{"intent": "explanation", "confidence": 0.92, '
+                    '"reasoning": "Question only"}'
+                )
             ),
             grounding_service=MagicMock(),
             entity_repo=FakeEntityRepo(allow_access=True),
@@ -1063,7 +1066,7 @@ class TestIntentClassification:
                 "title": "Close Run Thread",
             }
         }
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         current_plan = FakeActionPlanRecord(
             id=uuid4(),
             thread_id=thread_id,

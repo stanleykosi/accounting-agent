@@ -26,10 +26,7 @@ type ChatProxyRouteContext = {
  * Outputs: The backend chat response with cookies and JSON forwarded to the browser.
  * Behavior: Preserves status codes and cookies so the browser stays in sync.
  */
-export async function GET(
-  request: Request,
-  context: ChatProxyRouteContext,
-): Promise<Response> {
+export async function GET(request: Request, context: ChatProxyRouteContext): Promise<Response> {
   return proxyChatRequest(request, context);
 }
 
@@ -39,10 +36,7 @@ export async function GET(
  * Outputs: The backend chat response with cookies and JSON forwarded to the browser.
  * Behavior: Keeps browser chat traffic same-origin while still using the canonical FastAPI chat routes.
  */
-export async function POST(
-  request: Request,
-  context: ChatProxyRouteContext,
-): Promise<Response> {
+export async function POST(request: Request, context: ChatProxyRouteContext): Promise<Response> {
   return proxyChatRequest(request, context);
 }
 
@@ -52,10 +46,7 @@ export async function POST(
  * Outputs: The backend chat response with cookies and JSON forwarded to the browser.
  * Behavior: Keeps destructive chat actions same-origin while using the canonical backend routes.
  */
-export async function DELETE(
-  request: Request,
-  context: ChatProxyRouteContext,
-): Promise<Response> {
+export async function DELETE(request: Request, context: ChatProxyRouteContext): Promise<Response> {
   return proxyChatRequest(request, context);
 }
 

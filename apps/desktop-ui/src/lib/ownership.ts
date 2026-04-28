@@ -2,51 +2,20 @@
 Purpose: Centralize same-origin ownership API helpers for the desktop UI.
 Scope: Browser-safe lock acquire/release/touch helpers, backend URL composition,
 and structured error handling for ownership collisions.
-Dependencies: Standard Fetch APIs and the Next.js same-origin ownership proxy route.
+Dependencies: Generated API contract types, standard Fetch APIs, and the Next.js same-origin ownership proxy route.
 */
+
+import type { components } from "@accounting-ai-agent/ts-sdk";
 
 import { resolveBackendApiBaseUrl } from "./runtime";
 
-export type OwnershipTargetType =
-  | "entity"
-  | "close_run"
-  | "document"
-  | "recommendation"
-  | "review_target";
-
-export type OwnershipOperatorSummary = {
-  email: string;
-  full_name: string;
-  id: string;
-};
-
-export type OwnershipTargetReference = {
-  close_run_id?: string | null;
-  target_id: string;
-  target_type: OwnershipTargetType;
-};
-
-export type AcquireOwnershipLockRequest = OwnershipTargetReference & {
-  note?: string | null;
-  owner_user_id?: string | null;
-};
-
-export type ReleaseOwnershipLockRequest = OwnershipTargetReference;
-
-export type TouchOwnershipTargetRequest = OwnershipTargetReference;
-
-export type OwnershipState = {
-  close_run_id: string | null;
-  entity_id: string;
-  last_touched_at: string | null;
-  last_touched_by: OwnershipOperatorSummary | null;
-  lock_note: string | null;
-  locked_at: string | null;
-  locked_by: OwnershipOperatorSummary | null;
-  owner: OwnershipOperatorSummary | null;
-  target_id: string;
-  target_type: OwnershipTargetType;
-};
+export type OwnershipTargetType = components["schemas"]["OwnershipTargetType"];
+export type OwnershipOperatorSummary = components["schemas"]["EntityOperatorSummary"];
+export type OwnershipTargetReference = components["schemas"]["ReleaseOwnershipLockRequest"];
+export type AcquireOwnershipLockRequest = components["schemas"]["AcquireOwnershipLockRequest"];
+export type ReleaseOwnershipLockRequest = components["schemas"]["ReleaseOwnershipLockRequest"];
+export type TouchOwnershipTargetRequest = components["schemas"]["TouchOwnershipTargetRequest"];
+export type OwnershipState = components["schemas"]["OwnershipState"];
 
 export type OwnershipApiErrorCode =
   | "close_run_not_found"

@@ -1,7 +1,7 @@
 """
 Purpose: Execute long-running export and evidence-pack release workflows in the worker.
 Scope: Canonical async export-package generation and evidence-pack assembly used by
-chat-owned operator turns and future release automation.
+chat-owned operator turns and release automation.
 Dependencies: Celery worker app, export service, close-run phase guard, DB session
 factory, and tracked-job lifecycle wrappers.
 """
@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from apps.worker.app.celery_app import celery_app
+from apps.worker.app.celery_runtime import celery_app
 from apps.worker.app.tasks.base import JobRuntimeContext, TrackedJobTask
 from apps.worker.app.tasks.close_run_phase_guard import ensure_close_run_active_phase
 from services.common.enums import WorkflowPhase

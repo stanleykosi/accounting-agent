@@ -437,14 +437,13 @@ class RecommendationJournalRepository:
         max_journal = self._db_session.execute(statement).scalar_one_or_none()
         if max_journal is None:
             return 1
-        # Extract sequence from format JE-YYYY-NNNNN
         parts = str(max_journal).split("-")
-        if len(parts) >= 3:
-            try:
-                return int(parts[-1]) + 1
-            except ValueError:
-                pass
-        return 1
+        if len(parts) != 3 or parts[0] != "JE" or parts[1] != str(posting_date.year):
+            raise ValueError(
+                f"Journal number {max_journal!r} does not match canonical format "
+                f"JE-{posting_date.year}-NNNNN."
+            )
+        return int(parts[2]) + 1
 
     # ------------------------------------------------------------------
     # Transaction management

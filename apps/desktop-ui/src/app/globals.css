@@ -3992,11 +3992,7 @@ a {
   min-height: 168px;
   padding: 20px;
   border: 1px solid var(--quartz-border);
-  background: linear-gradient(
-    180deg,
-    rgba(255, 255, 255, 0.92) 0%,
-    rgba(241, 237, 236, 0.86) 100%
-  );
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.92) 0%, rgba(241, 237, 236, 0.86) 100%);
   color: var(--text-strong);
   cursor: pointer;
   text-align: left;
@@ -4008,11 +4004,7 @@ a {
 
 .quartz-upload-choice:hover {
   border-color: rgba(69, 97, 123, 0.24);
-  background: linear-gradient(
-    180deg,
-    rgba(255, 255, 255, 0.96) 0%,
-    rgba(194, 224, 255, 0.26) 100%
-  );
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.96) 0%, rgba(194, 224, 255, 0.26) 100%);
 }
 
 .quartz-upload-choice:disabled {

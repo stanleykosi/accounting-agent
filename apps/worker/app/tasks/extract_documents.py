@@ -2,15 +2,15 @@
 Purpose: Celery task for extracting structured fields from parsed documents.
 Scope: Async task that runs field extraction, confidence computation,
 and persistence for document extractions.
-Dependencies: Parser task (Step 20), extraction schemas, field extractors,
-and extraction database models.
+Dependencies: Parser task outputs, extraction schemas, field extractors, and
+extraction database models.
 """
 
 from __future__ import annotations
 
 from uuid import UUID
 
-from apps.worker.app.celery_app import ObservedTask, celery_app
+from apps.worker.app.celery_runtime import ObservedTask, celery_app
 from celery import Task
 from services.common.enums import DocumentStatus, DocumentType
 from services.common.logging import get_logger

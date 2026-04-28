@@ -74,7 +74,6 @@ export function SessionHeartbeat(): ReactElement | null {
 }
 
 function buildCurrentPath(pathname: string, queryString: string): string {
-  const normalizedQuery =
-    queryString.startsWith("?") ? queryString.slice(1) : queryString;
+  const normalizedQuery = queryString.startsWith("?") ? queryString.slice(1) : queryString;
   return normalizedQuery.length > 0 ? `${pathname}?${normalizedQuery}` : pathname;
 }

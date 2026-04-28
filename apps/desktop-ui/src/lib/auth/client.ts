@@ -1,8 +1,10 @@
 /*
-Purpose: Define browser-safe auth contracts and helpers for the desktop UI auth proxy routes.
+Purpose: Define browser-safe auth helpers for the desktop UI auth proxy routes.
 Scope: Login, registration, logout, session reads, and deterministic auth error handling.
-Dependencies: Fetch, the same-origin Next.js auth proxy, and strict TypeScript runtime guards.
+Dependencies: Generated API contract types, Fetch, the same-origin Next.js auth proxy, and strict runtime guards.
 */
+
+import type { components } from "@accounting-ai-agent/ts-sdk";
 
 export type AuthErrorCode =
   | "duplicate_email"
@@ -13,38 +15,12 @@ export type AuthErrorCode =
   | "validation_error"
   | "unknown_error";
 
-export type AuthenticatedUser = {
-  email: string;
-  full_name: string;
-  id: string;
-  last_login_at: string | null;
-  status: string;
-};
-
-export type SessionDetails = {
-  expires_at: string;
-  id: string;
-  last_seen_at: string;
-  rotated: boolean;
-};
-
-export type AuthSessionResponse = {
-  session: SessionDetails;
-  user: AuthenticatedUser;
-};
-
-export type LogoutResponse = {
-  status: string;
-};
-
-export type LoginInput = {
-  email: string;
-  password: string;
-};
-
-export type RegistrationInput = LoginInput & {
-  full_name: string;
-};
+export type AuthenticatedUser = components["schemas"]["AuthenticatedUser"];
+export type SessionDetails = components["schemas"]["SessionDetails"];
+export type AuthSessionResponse = components["schemas"]["AuthSessionResponse"];
+export type LogoutResponse = components["schemas"]["LogoutResponse"];
+export type LoginInput = components["schemas"]["LoginRequest"];
+export type RegistrationInput = components["schemas"]["RegistrationRequest"];
 
 export class AuthApiError extends Error {
   readonly code: AuthErrorCode;
@@ -267,7 +243,8 @@ export function buildAuthApiError(statusCode: number, payload: unknown): AuthApi
     const detail = payload.detail;
     if (isRecord(detail)) {
       const code = asAuthErrorCode(detail.code);
-      const message = typeof detail.message === "string" ? detail.message : "Authentication failed.";
+      const message =
+        typeof detail.message === "string" ? detail.message : "Authentication failed.";
       return new AuthApiError({
         code,
         message,

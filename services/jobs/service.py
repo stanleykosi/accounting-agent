@@ -11,7 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
-from typing import Any, Protocol
+from typing import Protocol
 from uuid import UUID, uuid4
 
 from services.auth.service import serialize_uuid
@@ -94,8 +94,8 @@ class TaskDispatcherProtocol(Protocol):
         self,
         *,
         task_name: TaskName | str,
-        args: tuple[Any, ...] | None = None,
-        kwargs: dict[str, Any] | None = None,
+        args: tuple[object, ...] | None = None,
+        kwargs: dict[str, object] | None = None,
         countdown: int | None = None,
         task_id: str | None = None,
     ) -> object:

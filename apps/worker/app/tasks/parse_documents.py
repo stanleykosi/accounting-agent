@@ -17,7 +17,7 @@ from decimal import Decimal, InvalidOperation
 from typing import Any, Protocol
 from uuid import UUID
 
-from apps.worker.app.celery_app import celery_app
+from apps.worker.app.celery_runtime import celery_app
 from apps.worker.app.tasks.base import JobRuntimeContext, TrackedJobTask
 from apps.worker.app.tasks.document_quality_checks import run_document_quality_checks
 from services.common.enums import AutonomyMode, DocumentStatus, DocumentType

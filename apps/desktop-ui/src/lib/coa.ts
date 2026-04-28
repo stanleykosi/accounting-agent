@@ -4,6 +4,8 @@ Scope: COA workspace reads, manual upload calls, set activation, and account edi
 Dependencies: Browser Fetch APIs and the existing `/api/entities/**` proxy surface.
 */
 
+import { buildEntityProxyPath } from "./entity-proxy";
+
 export type CoaSetSource = "manual_upload" | "quickbooks_sync" | "fallback_nigerian_sme";
 
 export type CoaSetSummary = {
@@ -102,8 +104,6 @@ export class CoaApiError extends Error {
   }
 }
 
-const ENTITY_PROXY_BASE_PATH = "/api/entities";
-
 /**
  * Purpose: Read one entity COA workspace through the same-origin proxy.
  * Inputs: Entity UUID from route context.
@@ -122,10 +122,7 @@ export async function readCoaWorkspace(entityId: string): Promise<CoaWorkspaceRe
  * Outputs: Refreshed COA workspace payload after import and activation.
  * Behavior: Uses FormData so the backend can validate raw upload bytes and file names.
  */
-export async function uploadManualCoa(
-  entityId: string,
-  file: File,
-): Promise<CoaWorkspaceResponse> {
+export async function uploadManualCoa(entityId: string, file: File): Promise<CoaWorkspaceResponse> {
   const formData = new FormData();
   formData.append("file", file);
 
@@ -213,11 +210,6 @@ async function coaRequest<TResponse>(
   }
 
   return payload as TResponse;
-}
-
-function buildEntityProxyPath(entityId: string, pathSegments: readonly string[]): string {
-  const encodedSegments = [entityId, ...pathSegments].map((segment) => encodeURIComponent(segment));
-  return `${ENTITY_PROXY_BASE_PATH}/${encodedSegments.join("/")}`;
 }
 
 function buildCoaApiError(statusCode: number, payload: unknown): CoaApiError {

@@ -26,8 +26,15 @@ export type {
   OwnershipBadgeOperator,
   OwnershipBadgeProps,
 } from "./components/ownership/OwnershipBadge";
-export { ConfidenceBadge, deriveConfidenceTone, formatConfidenceBadgeLabel } from "./components/review/ConfidenceBadge";
-export type { ConfidenceBadgeProps, ConfidenceBadgeSize } from "./components/review/ConfidenceBadge";
+export {
+  ConfidenceBadge,
+  deriveConfidenceTone,
+  formatConfidenceBadgeLabel,
+} from "./components/review/ConfidenceBadge";
+export type {
+  ConfidenceBadgeProps,
+  ConfidenceBadgeSize,
+} from "./components/review/ConfidenceBadge";
 export { DiffViewer } from "./components/review/DiffViewer";
 export type { DiffViewerProps } from "./components/review/DiffViewer";
 export { ReviewLayout } from "./components/review/ReviewLayout";

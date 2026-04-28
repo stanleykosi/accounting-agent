@@ -144,7 +144,7 @@ class DatabaseSettings(BaseModel):
         return self.host
 
     def resolve_preferred_hostaddr(self) -> str | None:
-        """Return an IPv4 hostaddr override when DNS would otherwise prefer an unreachable IPv6 path."""
+        """Return an IPv4 hostaddr override when DNS would prefer unreachable IPv6."""
 
         return _resolve_ipv4_hostaddr(self.resolve_connection_host())
 
@@ -257,7 +257,7 @@ class ModelGatewaySettings(BaseModel):
 
 
 class QuickBooksSettings(BaseModel):
-    """Define QuickBooks OAuth and company targeting values for future integrations."""
+    """Define QuickBooks OAuth and company targeting values."""
 
     client_id: str | None = Field(default=None)
     client_secret: SecretStr | None = Field(default=None, repr=False)
@@ -371,7 +371,9 @@ class ObservabilitySettings(BaseModel):
                 header_name = raw_key.strip().lower()
                 header_value = unquote(raw_header_value.strip())
                 if not header_name or not header_value:
-                    raise ValueError("Observability OTLP headers cannot contain blank names or values.")
+                    raise ValueError(
+                        "Observability OTLP headers cannot contain blank names or values."
+                    )
 
                 normalized_headers[header_name] = header_value
             return normalized_headers

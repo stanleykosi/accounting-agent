@@ -1,5 +1,5 @@
 """
-Purpose: Mirror the canonical workflow and lifecycle language for the future CLI.
+Purpose: Mirror the canonical workflow and lifecycle language for the CLI.
 Scope: Rich/Textual-friendly label and style helpers that consume backend enums
 without inventing a second vocabulary.
 Dependencies: Shared domain enums from services/common/enums.py only.

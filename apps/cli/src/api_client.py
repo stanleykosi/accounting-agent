@@ -8,12 +8,12 @@ Dependencies: httpx, the CLI auth config helpers, and the API's structured error
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Protocol, cast
+from typing import Protocol, cast
 
 import httpx
 from apps.cli.src.config import CliAuthConfig, load_cli_auth_config
+from services.common.types import JsonObject
 
-type JsonObject = dict[str, Any]
 type QueryParams = dict[str, str | int | bool]
 
 
@@ -78,7 +78,7 @@ class CliApiClient:
     def api_base_url(self) -> str:
         """Return the slash-safe API base URL configured during CLI login."""
 
-        return self._config.api_base_url.rstrip("/")
+        return str(self._config.api_base_url).rstrip("/")
 
     def get(self, path: str, *, params: QueryParams | None = None) -> JsonObject:
         """Send an authenticated GET request and return a JSON object."""

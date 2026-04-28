@@ -264,8 +264,8 @@ export default function CloseRunDocumentsPage(): ReactElement {
         action: "delete",
         confirmLabel: "Delete document",
         description:
-          `Delete ${document.originalFilename} from this close run? This removes the uploaded `
-          + "file and linked extraction data.",
+          `Delete ${document.originalFilename} from this close run? This removes the uploaded ` +
+          "file and linked extraction data.",
         documentId,
         title: "Delete document",
       });
@@ -286,8 +286,8 @@ export default function CloseRunDocumentsPage(): ReactElement {
         action: "reparse",
         confirmLabel: "Reparse document",
         description:
-          `Reparse ${document.originalFilename}? This clears the current extraction and queues `
-          + "a fresh parse.",
+          `Reparse ${document.originalFilename}? This clears the current extraction and queues ` +
+          "a fresh parse.",
         documentId,
         title: "Reparse document",
       });
@@ -580,7 +580,9 @@ export default function CloseRunDocumentsPage(): ReactElement {
                           <td className="quartz-table-center">
                             <div className="quartz-table-icon-actions">
                               <button
-                                aria-label={isExpanded ? "Hide document details" : "Show document details"}
+                                aria-label={
+                                  isExpanded ? "Hide document details" : "Show document details"
+                                }
                                 className={`quartz-table-icon-action ${isExpanded ? "active" : ""}`}
                                 disabled={isBusy}
                                 onClick={() => handleToggleDocumentDetails(item.id)}
@@ -870,9 +872,7 @@ function buildUploadOperationMessage(
   unsupportedCount: number,
 ): string {
   const uploadLabel =
-    uploadedCount === 1
-      ? "1 document uploaded"
-      : `${uploadedCount} documents uploaded`;
+    uploadedCount === 1 ? "1 document uploaded" : `${uploadedCount} documents uploaded`;
   const parseLabel =
     queuedCount === 1
       ? "1 document queued for parsing"

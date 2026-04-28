@@ -22,9 +22,7 @@ export default function GlobalSettingsPage(): ReactElement {
     () => entityListSnapshot?.entities ?? [],
   );
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [isLoading, setIsLoading] = useState(
-    () => entityListSnapshot === null,
-  );
+  const [isLoading, setIsLoading] = useState(() => entityListSnapshot === null);
 
   useEffect(() => {
     void loadSettingsData({

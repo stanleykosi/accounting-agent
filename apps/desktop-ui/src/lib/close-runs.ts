@@ -24,6 +24,7 @@ import {
   readEntityWorkspaceSnapshot,
   type EntityWorkspace,
 } from "./entities/api";
+import { buildEntityProxyPath } from "./entity-proxy";
 
 export type CloseRunPhaseStateSummary = {
   blockingReason: string | null;
@@ -150,7 +151,6 @@ export class CloseRunApiError extends Error {
   }
 }
 
-const ENTITIES_PROXY_BASE_PATH = "/api/entities";
 const CLOSE_RUN_READ_CACHE_TTL_MS = 30_000;
 const WORKFLOW_PHASE_ORDER: readonly WorkflowPhase[] = [
   "collection",
@@ -658,11 +658,6 @@ function buildCloseRunApiError(statusCode: number, payload: unknown): CloseRunAp
     message: "The close-run request failed. Reload the workspace and try again.",
     statusCode,
   });
-}
-
-function buildEntityProxyPath(entityId: string, pathSegments: readonly string[]): string {
-  const encodedSegments = [entityId, ...pathSegments].map((segment) => encodeURIComponent(segment));
-  return `${ENTITIES_PROXY_BASE_PATH}/${encodedSegments.join("/")}`;
 }
 
 async function parseJsonPayload(response: Response): Promise<unknown> {

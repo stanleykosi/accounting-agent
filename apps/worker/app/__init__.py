@@ -1,7 +1,7 @@
 """
 Purpose: Mark the Celery worker application package boundary for the canonical async service.
-Scope: Shared import root for worker bootstrap, task modules, and future
-worker-side audit hooks.
+Scope: Shared import root for worker bootstrap, task modules, and worker-side
+audit hooks.
 Dependencies: Root Python workspace configuration in pyproject.toml and
 shared service modules under services/.
 """

@@ -7,7 +7,13 @@ Dependencies: Next.js client navigation and desktop auth helpers.
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState, useTransition, type ChangeEvent, type FormEvent, type ReactElement } from "react";
+import {
+  useState,
+  useTransition,
+  type ChangeEvent,
+  type FormEvent,
+  type ReactElement,
+} from "react";
 import { QuartzIcon } from "../layout/QuartzIcons";
 import { isAuthApiError, loginUser, registerUser } from "../../lib/auth/client";
 import { resolvePostLoginPath } from "../../lib/auth/session";
@@ -140,7 +146,9 @@ export function LoginScreen({
                 {mode === "login" ? (
                   <button
                     className="quartz-form-link"
-                    onClick={() => setFeedbackMessage("Password reset is handled by the local administrator.")}
+                    onClick={() =>
+                      setFeedbackMessage("Password reset is handled by the local administrator.")
+                    }
                     type="button"
                   >
                     Reset Access

@@ -11,7 +11,7 @@ from __future__ import annotations
 from typing import Any
 from uuid import UUID
 
-from apps.worker.app.celery_app import ObservedTask, celery_app
+from apps.worker.app.celery_runtime import ObservedTask, celery_app
 from services.chat.job_continuation import ChatJobContinuationResult, ChatJobContinuationService
 from services.db.session import get_session_factory
 from services.jobs.dispatcher import TaskDispatcher

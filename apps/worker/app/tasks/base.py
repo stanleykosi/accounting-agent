@@ -13,10 +13,10 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
-from typing import Any, TypeVar
+from typing import TypeVar
 from uuid import UUID
 
-from apps.worker.app.celery_app import ObservedTask
+from apps.worker.app.celery_runtime import ObservedTask
 from services.chat.continuation_state import parse_checkpoint_continuation
 from services.common.enums import JobStatus
 from services.common.logging import get_logger
@@ -123,8 +123,8 @@ class TrackedJobTask(ObservedTask):
     def run_tracked_job(
         self,
         *,
-        runner: Callable[[JobRuntimeContext], dict[str, Any]],
-    ) -> dict[str, Any]:
+        runner: Callable[[JobRuntimeContext], dict[str, object]],
+    ) -> dict[str, object]:
         """Execute one worker job with persisted checkpoints, retries, and cancellation checks."""
 
         job_id = UUID(str(self.request.id))
@@ -384,7 +384,7 @@ class TrackedJobTask(ObservedTask):
             )
 
 
-def _coerce_json_object(value: dict[str, Any]) -> JsonObject:
+def _coerce_json_object(value: dict[str, object]) -> JsonObject:
     """Convert a task result into a strict JSON-safe object for persistence."""
 
     return {
@@ -393,7 +393,7 @@ def _coerce_json_object(value: dict[str, Any]) -> JsonObject:
     }
 
 
-def _coerce_json_value(value: Any) -> JsonValue:
+def _coerce_json_value(value: object) -> JsonValue:
     """Convert supported task result values into JSON-safe primitives recursively."""
 
     if value is None or isinstance(value, (str, int, float, bool)):

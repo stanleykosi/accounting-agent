@@ -13,9 +13,7 @@ interface EntityAssistantPageProps {
   }>;
 }
 
-export default async function EntityAssistantPage({
-  params,
-}: Readonly<EntityAssistantPageProps>) {
+export default async function EntityAssistantPage({ params }: Readonly<EntityAssistantPageProps>) {
   const { entityId } = await params;
 
   if (!entityId) {

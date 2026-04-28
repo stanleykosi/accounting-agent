@@ -20,14 +20,12 @@ from enum import StrEnum
 from typing import Any, Protocol
 from uuid import UUID
 
-from services.auth.service import serialize_uuid
 from services.chat.action_models import (
     ProposedEditPayload,
     ProposedJournalEdit,
 )
 from services.db.repositories.chat_action_repo import (
     ChatActionPlanRecord,
-    ChatActionRepository,
 )
 
 
@@ -186,7 +184,10 @@ class ProposedChangesService:
             raise ProposedChangesError(
                 status_code=409,
                 code=ProposedChangesErrorCode.INVALID_TRANSITION,
-                message=f"Cannot approve action plan in '{plan.status}' status. Only 'pending' actions can be approved.",
+                message=(
+                    f"Cannot approve action plan in '{plan.status}' status. "
+                    "Only 'pending' actions can be approved."
+                ),
             )
 
         if plan.intent != "proposed_edit":
@@ -222,11 +223,6 @@ class ProposedChangesService:
                     message="Action plan not found after update.",
                 )
 
-            # TODO: Trigger downstream materialization based on the edit type.
-            # For now, we record the approval and the materialization layer
-            # will pick this up in the next step (Step 36+).
-            # record.applied_result["materialization_status"] = "pending"
-
             self._action_repo.commit()
         except ProposedChangesError:
             raise
@@ -258,7 +254,10 @@ class ProposedChangesService:
             raise ProposedChangesError(
                 status_code=409,
                 code=ProposedChangesErrorCode.INVALID_TRANSITION,
-                message=f"Cannot reject action plan in '{plan.status}' status. Only 'pending' actions can be rejected.",
+                message=(
+                    f"Cannot reject action plan in '{plan.status}' status. "
+                    "Only 'pending' actions can be rejected."
+                ),
             )
 
         try:

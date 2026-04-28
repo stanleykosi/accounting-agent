@@ -9,8 +9,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Any
 
+import structlog
 from opentelemetry import trace
 from services.observability.context import current_trace_metadata
 from services.observability.otel import get_meter
@@ -85,7 +85,7 @@ def emit_operational_event(
     *,
     event_name: OperationalEventName | str,
     outcome: OperationalEventOutcome | str,
-    attributes: dict[str, Any] | None = None,
+    attributes: dict[str, object] | None = None,
     duration_ms: float | None = None,
     error: BaseException | None = None,
 ) -> OperationalEventReceipt:
@@ -131,7 +131,7 @@ def emit_operational_event(
     )
 
 
-def _normalize_attributes(attributes: dict[str, Any]) -> dict[str, str | int | float | bool]:
+def _normalize_attributes(attributes: dict[str, object]) -> dict[str, str | int | float | bool]:
     """Convert caller-provided event attributes into OpenTelemetry-safe primitive values."""
 
     redacted_attributes = redact_log_payload(attributes)
@@ -145,7 +145,7 @@ def _normalize_attributes(attributes: dict[str, Any]) -> dict[str, str | int | f
     return normalized
 
 
-def _normalize_attribute_value(value: Any) -> str | int | float | bool | None:
+def _normalize_attribute_value(value: object) -> str | int | float | bool | None:
     """Normalize a metric/log attribute value or drop it if it cannot be represented safely."""
 
     if value is None:
@@ -175,7 +175,7 @@ def _build_metric_attributes(
     }
 
 
-def _get_logger() -> Any:
+def _get_logger() -> structlog.stdlib.BoundLogger:
     """Resolve the structured logger lazily so events stay safe during logging bootstrap."""
 
     from services.common.logging import get_logger

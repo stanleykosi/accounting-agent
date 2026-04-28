@@ -44,6 +44,7 @@ import {
   invalidateClientCacheByPrefix,
   loadClientCachedValue,
 } from "./client-cache";
+import { buildEntityProxyPath } from "./entity-proxy";
 
 export type ExportArtifactEntry = {
   artifact_type: string;
@@ -105,11 +106,6 @@ export class ExportApiError extends Error {
     super(message);
     this.name = "ExportApiError";
   }
-}
-
-function buildEntityProxyPath(entityId: string, pathSegments: readonly string[]): string {
-  const encodedSegments = [entityId, ...pathSegments].map((segment) => encodeURIComponent(segment));
-  return `/api/entities/${encodedSegments.join("/")}`;
 }
 
 async function requestJson<T>(url: string, init: RequestInit = {}): Promise<T> {
@@ -228,7 +224,13 @@ export async function readLatestEvidencePack(
 }
 
 export function buildEvidencePackDownloadPath(entityId: string, closeRunId: string): string {
-  return buildEntityProxyPath(entityId, ["close-runs", closeRunId, "exports", "evidence-pack", "download"]);
+  return buildEntityProxyPath(entityId, [
+    "close-runs",
+    closeRunId,
+    "exports",
+    "evidence-pack",
+    "download",
+  ]);
 }
 
 async function parseJsonResponse(response: Response): Promise<unknown> {

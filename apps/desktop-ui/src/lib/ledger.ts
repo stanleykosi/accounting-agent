@@ -9,6 +9,7 @@ import {
   invalidateClientCacheByPrefix,
   loadClientCachedValue,
 } from "./client-cache";
+import { buildEntityProxyPath } from "./entity-proxy";
 
 export type CloseRunLedgerBindingSummary = {
   bound_by_user_id: string | null;
@@ -90,15 +91,15 @@ export class LedgerApiError extends Error {
   readonly code: LedgerApiErrorCode;
   readonly statusCode: number;
 
-  constructor(options: Readonly<{ code: LedgerApiErrorCode; message: string; statusCode: number }>) {
+  constructor(
+    options: Readonly<{ code: LedgerApiErrorCode; message: string; statusCode: number }>,
+  ) {
     super(options.message);
     this.name = "LedgerApiError";
     this.code = options.code;
     this.statusCode = options.statusCode;
   }
 }
-
-const ENTITY_PROXY_BASE_PATH = "/api/entities";
 
 export async function readLedgerWorkspace(entityId: string): Promise<LedgerWorkspaceResponse> {
   return ledgerRequest<LedgerWorkspaceResponse>(buildEntityProxyPath(entityId, ["ledger"]), {
@@ -147,12 +148,7 @@ export async function generateGeneralLedgerExport(
   closeRunId: string,
 ): Promise<GeneralLedgerExportSummary> {
   return ledgerRequest<GeneralLedgerExportSummary>(
-    buildEntityProxyPath(entityId, [
-      "close-runs",
-      closeRunId,
-      "ledger",
-      "general-ledger-export",
-    ]),
+    buildEntityProxyPath(entityId, ["close-runs", closeRunId, "ledger", "general-ledger-export"]),
     {
       body: JSON.stringify({}),
       method: "POST",
@@ -166,12 +162,7 @@ export async function readLatestGeneralLedgerExport(
 ): Promise<GeneralLedgerExportSummary | null> {
   try {
     return await ledgerRequest<GeneralLedgerExportSummary>(
-      buildEntityProxyPath(entityId, [
-        "close-runs",
-        closeRunId,
-        "ledger",
-        "general-ledger-export",
-      ]),
+      buildEntityProxyPath(entityId, ["close-runs", closeRunId, "ledger", "general-ledger-export"]),
       {
         method: "GET",
       },
@@ -232,11 +223,6 @@ async function ledgerRequest<TResponse>(
   const payload = await performRequest();
   invalidateClientCacheByPrefix(buildEntityCacheInvalidationPrefixes(path));
   return payload;
-}
-
-function buildEntityProxyPath(entityId: string, pathSegments: readonly string[]): string {
-  const encodedSegments = [entityId, ...pathSegments].map((segment) => encodeURIComponent(segment));
-  return `${ENTITY_PROXY_BASE_PATH}/${encodedSegments.join("/")}`;
 }
 
 function buildLedgerApiError(statusCode: number, payload: unknown): LedgerApiError {

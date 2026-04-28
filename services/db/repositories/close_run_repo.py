@@ -1481,9 +1481,6 @@ class CloseRunRepository:
         unauthorized_document_ids = {
             row.document_id for row in open_issue_rows if row.issue_type == "unauthorized_document"
         }
-        unmatched_transaction_document_ids = {
-            row.document_id for row in open_issue_rows if row.issue_type == "transaction_mismatch"
-        }
         wrong_period_document_ids = {
             row.document_id for row in open_issue_rows if row.issue_type == "wrong_period_document"
         }
@@ -1765,7 +1762,6 @@ class CloseRunRepository:
             approved_document_count=approved_document_count,
             unauthorized_document_count=len(unauthorized_document_ids),
             pending_document_review_count=pending_document_review_count,
-            unmatched_transaction_count=len(unmatched_transaction_document_ids),
             wrong_period_document_count=len(wrong_period_document_ids),
             unresolved_processing_item_count=unresolved_processing_item_count,
             unresolved_reconciliation_exception_count=unresolved_reconciliation_exception_count,

@@ -472,23 +472,17 @@ def _read_statement_lines(
     *,
     extracted_payload: Mapping[str, Any] | None,
 ) -> tuple[dict[str, Any], ...]:
-    """Read bank-statement lines from the known extraction payload shapes."""
+    """Read bank-statement lines from the canonical extraction parser output."""
 
     if not isinstance(extracted_payload, Mapping):
         return ()
-    for candidate in (
-        extracted_payload.get("lines"),
-        extracted_payload.get("statement_lines"),
-        (extracted_payload.get("parser_output") or {}).get("lines")
-        if isinstance(extracted_payload.get("parser_output"), Mapping)
-        else None,
-        (extracted_payload.get("parser_output") or {}).get("statement_lines")
-        if isinstance(extracted_payload.get("parser_output"), Mapping)
-        else None,
-    ):
-        if isinstance(candidate, list):
-            return tuple(item for item in candidate if isinstance(item, dict))
-    return ()
+    parser_output = extracted_payload.get("parser_output")
+    if not isinstance(parser_output, Mapping):
+        return ()
+    candidate = parser_output.get("statement_lines")
+    if not isinstance(candidate, list):
+        return ()
+    return tuple(item for item in candidate if isinstance(item, dict))
 
 
 def _read_statement_account_number(

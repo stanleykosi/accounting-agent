@@ -1,7 +1,7 @@
 """
 Purpose: Define strict Pydantic models for canonical object-storage scopes and metadata.
 Scope: Close-run storage scoping, logical bucket vocabulary, derivative metadata,
-and released artifact metadata shared by repositories, workers, and future APIs.
+and released artifact metadata shared by repositories, workers, and APIs.
 Dependencies: Pydantic contract defaults, canonical artifact enums, and shared
 primitive types from the common service layer.
 """

@@ -191,13 +191,6 @@ def run_document_parse_assist(
             error=str(error),
         )
         return None
-    except Exception:
-        logger.exception(
-            "document_parse_ai_assist_failed_unexpectedly",
-            filename=filename,
-            deterministic_document_type=deterministic_document_type.value,
-        )
-        return None
 
 
 def _collect_document_text(*, raw_parse_payload: JsonObject) -> str:

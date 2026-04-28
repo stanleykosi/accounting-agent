@@ -21,11 +21,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from typing import Any
 from uuid import UUID
 
-from apps.worker.app.celery_app import celery_app
+from apps.worker.app.celery_runtime import celery_app
 from apps.worker.app.tasks.base import JobRuntimeContext, TrackedJobTask
 from apps.worker.app.tasks.close_run_phase_guard import ensure_close_run_active_phase
 from services.common.enums import ReconciliationType, WorkflowPhase
@@ -177,27 +177,23 @@ def _parse_decimal_value(value: Any) -> Decimal | None:
         return None
     try:
         return Decimal(str(value))
-    except Exception:
+    except (InvalidOperation, ValueError):
         return None
 
 
 def _read_statement_lines_from_payload(*, payload: Any) -> tuple[dict[str, Any], ...]:
-    """Read bank-statement lines from either the legacy or normalized extraction payload."""
+    """Read bank-statement lines from the canonical extraction parser output."""
 
     if not isinstance(payload, dict):
         return ()
 
     parser_output = payload.get("parser_output")
-    for candidate in (
-        payload.get("statement_lines"),
-        payload.get("lines"),
-        (parser_output or {}).get("statement_lines") if isinstance(parser_output, dict) else None,
-        (parser_output or {}).get("lines") if isinstance(parser_output, dict) else None,
-    ):
-        if isinstance(candidate, list):
-            return tuple(item for item in candidate if isinstance(item, dict))
-
-    return ()
+    if not isinstance(parser_output, dict):
+        return ()
+    candidate = parser_output.get("statement_lines")
+    if not isinstance(candidate, list):
+        return ()
+    return tuple(item for item in candidate if isinstance(item, dict))
 
 
 def _compute_account_balances(session, close_run_id: UUID) -> list[dict[str, Any]]:

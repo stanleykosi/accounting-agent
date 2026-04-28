@@ -88,12 +88,12 @@ export default function WorkspaceSettingsPage(): ReactElement {
   const router = useRouter();
   const entitySnapshot = readEntityWorkspaceSnapshot(entityId);
   const [entity, setEntity] = useState<EntityWorkspace | null>(entitySnapshot);
-  const [generalFormState, setGeneralFormState] = useState<WorkspaceGeneralFormState>(
-    () => buildGeneralFormState(entitySnapshot),
+  const [generalFormState, setGeneralFormState] = useState<WorkspaceGeneralFormState>(() =>
+    buildGeneralFormState(entitySnapshot),
   );
-  const [membershipDrafts, setMembershipDrafts] = useState<Readonly<Record<string, MembershipDraft>>>(
-    () => buildMembershipDrafts(entitySnapshot),
-  );
+  const [membershipDrafts, setMembershipDrafts] = useState<
+    Readonly<Record<string, MembershipDraft>>
+  >(() => buildMembershipDrafts(entitySnapshot));
   const [addMemberFormState, setAddMemberFormState] =
     useState<AddMemberFormState>(defaultAddMemberFormState);
   const [deleteConfirmationValue, setDeleteConfirmationValue] = useState("");
@@ -602,7 +602,9 @@ export default function WorkspaceSettingsPage(): ReactElement {
               </div>
               <div className="quartz-settings-info-stack">
                 <div className="quartz-compact-pill">Exactly one default actor is preserved</div>
-                <div className="quartz-compact-pill">Only existing local operators can be added</div>
+                <div className="quartz-compact-pill">
+                  Only existing local operators can be added
+                </div>
                 <div className="quartz-compact-pill">Workspace deletion remains owner-only</div>
               </div>
             </article>
@@ -631,8 +633,7 @@ export default function WorkspaceSettingsPage(): ReactElement {
                     role: membership.role,
                   };
                   const roleChanged = draft.role !== membership.role;
-                  const defaultActorChanged =
-                    draft.isDefaultActor !== membership.is_default_actor;
+                  const defaultActorChanged = draft.isDefaultActor !== membership.is_default_actor;
                   const hasChanges = roleChanged || defaultActorChanged;
 
                   return (
@@ -640,7 +641,9 @@ export default function WorkspaceSettingsPage(): ReactElement {
                       <td>
                         <div className="quartz-table-primary">
                           {membership.user.full_name}
-                          {membership.user.id === entity.current_user_membership.user.id ? " (You)" : ""}
+                          {membership.user.id === entity.current_user_membership.user.id
+                            ? " (You)"
+                            : ""}
                         </div>
                         <div className="quartz-table-secondary">{membership.user.email}</div>
                       </td>
@@ -648,11 +651,7 @@ export default function WorkspaceSettingsPage(): ReactElement {
                         <select
                           className="text-input quartz-inline-select"
                           onChange={(event) =>
-                            handleMembershipDraftChange(
-                              membership.id,
-                              "role",
-                              event.target.value,
-                            )
+                            handleMembershipDraftChange(membership.id, "role", event.target.value)
                           }
                           value={draft.role}
                         >

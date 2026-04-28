@@ -108,10 +108,7 @@ export function writeRememberedCloseContext(context: Readonly<RememberedCloseCon
   }
 
   try {
-    window.sessionStorage.setItem(
-      LAST_CLOSE_CONTEXT_STORAGE_KEY,
-      JSON.stringify(context),
-    );
+    window.sessionStorage.setItem(LAST_CLOSE_CONTEXT_STORAGE_KEY, JSON.stringify(context));
   } catch {
     // Ignore storage failures; the in-memory event still updates active listeners.
   }

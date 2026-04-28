@@ -73,7 +73,9 @@ export default function CloseRunOverviewPage(): ReactElement {
   const [isLoading, setIsLoading] = useState(() => workspaceSnapshot === null);
   const [isMutating, setIsMutating] = useState(false);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
-  const [workspaceData, setWorkspaceData] = useState<CloseRunWorkspaceData | null>(workspaceSnapshot);
+  const [workspaceData, setWorkspaceData] = useState<CloseRunWorkspaceData | null>(
+    workspaceSnapshot,
+  );
 
   useEffect(() => {
     void loadCloseRunWorkspace({

@@ -14,6 +14,12 @@ from typing import Any, Protocol, cast
 
 from apps.cli.src import auth as auth_commands
 from apps.cli.src.api_client import CliApiClient, CliApiClientError, CliApiClientProtocol
+from apps.cli.src.command_helpers import (
+    add_close_run_scope_arguments,
+    build_close_run_path,
+    extract_rows,
+    print_api_error,
+)
 from apps.cli.src.commands.recommendations import configure_recommendation_subcommands
 from apps.cli.src.commands.reports import configure_report_subcommands
 from apps.cli.src.screens.close_run import CloseRunScreen
@@ -161,7 +167,7 @@ def list_entities_command(
     try:
         payload = client.get("/entities")
     except CliApiClientError as error:
-        return _print_api_error(console=console, error=error)
+        return print_api_error(console=console, error=error)
 
     console.print(
         build_status_table(
@@ -174,7 +180,7 @@ def list_entities_command(
                 StatusColumn("Autonomy", "autonomy_mode", badge=True),
                 StatusColumn("Status", "status"),
             ),
-            rows=_extract_rows(payload, "entities"),
+            rows=extract_rows(payload, "entities"),
         )
     )
     return 0
@@ -190,7 +196,7 @@ def list_close_runs_command(
     try:
         payload = client.get(f"/entities/{args.entity_id}/close-runs")
     except CliApiClientError as error:
-        return _print_api_error(console=console, error=error)
+        return print_api_error(console=console, error=error)
 
     console.print(
         build_status_table(
@@ -203,7 +209,7 @@ def list_close_runs_command(
                 StatusColumn("Version", "current_version_no"),
                 StatusColumn("Currency", "reporting_currency"),
             ),
-            rows=_extract_rows(payload, "close_runs"),
+            rows=extract_rows(payload, "close_runs"),
         )
     )
     return 0
@@ -217,9 +223,9 @@ def show_close_run_command(
     """Show one close run and its workflow phase states."""
 
     try:
-        close_run = client.get(_close_run_path(args, ""))
+        close_run = client.get(build_close_run_path(args, ""))
     except CliApiClientError as error:
-        return _print_api_error(console=console, error=error)
+        return print_api_error(console=console, error=error)
 
     console.print(
         f"[bold]{close_run.get('period_start', '—')} to {close_run.get('period_end', '—')}[/] "
@@ -248,9 +254,9 @@ def list_document_queue_command(
     """List documents that make up the current close-run review queue."""
 
     try:
-        payload = client.get(_close_run_path(args, "/documents"))
+        payload = client.get(build_close_run_path(args, "/documents"))
     except CliApiClientError as error:
-        return _print_api_error(console=console, error=error)
+        return print_api_error(console=console, error=error)
 
     console.print(
         build_status_table(
@@ -263,7 +269,7 @@ def list_document_queue_command(
                 StatusColumn("Confidence", "classification_confidence"),
                 StatusColumn("Last touched", "last_touched_by_user_id", max_width=12),
             ),
-            rows=_extract_rows(payload, "documents"),
+            rows=extract_rows(payload, "documents"),
         )
     )
     return 0
@@ -277,11 +283,11 @@ def reconciliation_status_command(
     """Render reconciliation status, anomalies, and trial-balance health."""
 
     try:
-        reconciliations = client.get(_close_run_path(args, "/reconciliations"))
-        anomalies = client.get(_close_run_path(args, "/anomalies"))
-        trial_balance = client.get(_close_run_path(args, "/trial-balance"))
+        reconciliations = client.get(build_close_run_path(args, "/reconciliations"))
+        anomalies = client.get(build_close_run_path(args, "/anomalies"))
+        trial_balance = client.get(build_close_run_path(args, "/trial-balance"))
     except CliApiClientError as error:
-        return _print_api_error(console=console, error=error)
+        return print_api_error(console=console, error=error)
 
     console.print(
         build_status_table(
@@ -295,7 +301,7 @@ def reconciliation_status_command(
                 StatusColumn("Exceptions", "exception_count"),
                 StatusColumn("Blocker", "blocking_reason", max_width=52),
             ),
-            rows=_extract_rows(reconciliations, "reconciliations"),
+            rows=extract_rows(reconciliations, "reconciliations"),
         )
     )
     console.print(
@@ -308,7 +314,7 @@ def reconciliation_status_command(
                 StatusColumn("Resolved", "resolved"),
                 StatusColumn("Description", "description", max_width=72),
             ),
-            rows=_extract_rows(anomalies, "anomalies"),
+            rows=extract_rows(anomalies, "anomalies"),
         )
     )
     snapshot = trial_balance.get("snapshot")
@@ -325,7 +331,7 @@ def reconciliation_status_command(
 def _configure_auth_commands(
     subparsers: argparse._SubParsersAction[argparse.ArgumentParser],
 ) -> None:
-    """Register auth commands while reusing the existing Step 13 auth handlers."""
+    """Register auth commands backed by the canonical local auth handlers."""
 
     login = subparsers.add_parser("login", help="Create and store a CLI personal access token.")
     login.add_argument("--email", help="Email address for the local account.")
@@ -393,7 +399,7 @@ def _configure_close_run_commands(
     list_parser.set_defaults(handler=list_close_runs_command)
 
     show_parser = close_run_subparsers.add_parser("show", help="Show one close run.")
-    _add_close_run_scope_arguments(show_parser)
+    add_close_run_scope_arguments(show_parser)
     show_parser.set_defaults(handler=show_close_run_command)
 
 
@@ -405,7 +411,7 @@ def _configure_queue_commands(
     queue = subparsers.add_parser("queue", help="Inspect review queues.")
     queue_subparsers = queue.add_subparsers(dest="queue_command", required=True)
     documents = queue_subparsers.add_parser("documents", help="List document queue items.")
-    _add_close_run_scope_arguments(documents)
+    add_close_run_scope_arguments(documents)
     documents.set_defaults(handler=list_document_queue_command)
 
 
@@ -420,31 +426,8 @@ def _configure_reconciliation_commands(
         required=True,
     )
     status = reconciliation_subparsers.add_parser("status", help="Show reconciliation status.")
-    _add_close_run_scope_arguments(status)
+    add_close_run_scope_arguments(status)
     status.set_defaults(handler=reconciliation_status_command)
-
-
-def _add_close_run_scope_arguments(parser: argparse.ArgumentParser) -> None:
-    """Add entity and close-run UUID arguments shared by commands."""
-
-    parser.add_argument("entity_id", help="Entity workspace UUID.")
-    parser.add_argument("close_run_id", help="Close-run UUID.")
-
-
-def _close_run_path(args: argparse.Namespace, suffix: str) -> str:
-    """Build a close-run-scoped API path from parsed command arguments."""
-
-    return f"/entities/{args.entity_id}/close-runs/{args.close_run_id}{suffix}"
-
-
-def _extract_rows(payload: dict[str, Any], key: str) -> tuple[dict[str, Any], ...]:
-    """Extract list-valued API rows and ignore malformed row entries."""
-
-    value = payload.get(key)
-    if not isinstance(value, list):
-        return ()
-
-    return tuple(cast(dict[str, Any], item) for item in value if isinstance(item, dict))
 
 
 def _workflow_phase_rows(payload: dict[str, Any]) -> tuple[dict[str, Any], ...]:
@@ -460,13 +443,6 @@ def _workflow_phase_rows(payload: dict[str, Any]) -> tuple[dict[str, Any], ...]:
             return tuple(cast(dict[str, Any], item) for item in value if isinstance(item, dict))
 
     return ()
-
-
-def _print_api_error(*, console: Console, error: CliApiClientError) -> int:
-    """Render a structured API error and return a shell failure code."""
-
-    console.print(f"[bold red]{error.message}[/] [dim]({error.code})[/]")
-    return 1
 
 
 if __name__ == "__main__":

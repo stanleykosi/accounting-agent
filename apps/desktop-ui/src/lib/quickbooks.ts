@@ -4,6 +4,8 @@ Scope: Connection status, OAuth redirect creation, disconnect, and chart-of-acco
 Dependencies: Browser Fetch APIs and the existing `/api/entities/**` proxy surface.
 */
 
+import { buildEntityProxyPath } from "./entity-proxy";
+
 export type QuickBooksConnectionStatus =
   | "connected"
   | "disconnected"
@@ -66,8 +68,6 @@ export class QuickBooksApiError extends Error {
     this.statusCode = options.statusCode;
   }
 }
-
-const ENTITY_PROXY_BASE_PATH = "/api/entities";
 
 /**
  * Purpose: Read sanitized QuickBooks connection status for one entity workspace.
@@ -148,11 +148,6 @@ async function quickBooksRequest<TResponse>(
     throw buildQuickBooksApiError(response.status, payload);
   }
   return payload as TResponse;
-}
-
-function buildEntityProxyPath(entityId: string, pathSegments: readonly string[]): string {
-  const encodedSegments = [entityId, ...pathSegments].map((segment) => encodeURIComponent(segment));
-  return `${ENTITY_PROXY_BASE_PATH}/${encodedSegments.join("/")}`;
 }
 
 function buildQuickBooksApiError(statusCode: number, payload: unknown): QuickBooksApiError {

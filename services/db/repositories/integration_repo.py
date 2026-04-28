@@ -1,7 +1,7 @@
 """
 Purpose: Persist encrypted integration connections and their sync metadata through SQLAlchemy.
 Scope: Entity-scoped upserts, status changes, credential replacement, and thin
-record mapping for future integration services.
+record mapping for integration services.
 Dependencies: SQLAlchemy ORM sessions plus the canonical integration model definitions.
 """
 

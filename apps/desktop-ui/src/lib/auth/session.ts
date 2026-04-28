@@ -201,10 +201,7 @@ function readCachedSessionValidation(sessionToken: string): SessionValidationRes
   return cachedEntry.result;
 }
 
-function writeCachedSessionValidation(
-  sessionToken: string,
-  result: SessionValidationResult,
-): void {
+function writeCachedSessionValidation(sessionToken: string, result: SessionValidationResult): void {
   clearExpiredSessionValidationCache();
   sessionValidationCache.set(sessionToken, {
     expiresAt: Date.now() + SESSION_VALIDATION_CACHE_TTL_MS,

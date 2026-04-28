@@ -60,7 +60,9 @@ export function ChatRail({
   const [messages, setMessages] = useState<ChatMessageRecord[]>([]);
   const [workspace, setWorkspace] = useState<ChatThreadWorkspace | null>(null);
   const [pendingTurn, setPendingTurn] = useState<PendingTurn | null>(null);
-  const [pendingDeletionThread, setPendingDeletionThread] = useState<ChatThreadSummary | null>(null);
+  const [pendingDeletionThread, setPendingDeletionThread] = useState<ChatThreadSummary | null>(
+    null,
+  );
   const [deletingThreadId, setDeletingThreadId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isBootstrapping, setIsBootstrapping] = useState(true);
@@ -291,23 +293,26 @@ export function ChatRail({
     });
   }, [pendingTurn, renderableMessages.length]);
 
-  const refreshSelectedThread = useCallback(async (options?: { entityIdOverride?: string }): Promise<void> => {
-    const thread = selectedThreadRef.current;
-    if (thread === null) {
-      return;
-    }
-    const resolvedEntityId = options?.entityIdOverride ?? thread.entity_id;
+  const refreshSelectedThread = useCallback(
+    async (options?: { entityIdOverride?: string }): Promise<void> => {
+      const thread = selectedThreadRef.current;
+      if (thread === null) {
+        return;
+      }
+      const resolvedEntityId = options?.entityIdOverride ?? thread.entity_id;
 
-    await loadThreadWorkspace(thread, {
-      entityIdOverride: resolvedEntityId,
-      showLoader: false,
-    });
-    try {
-      await loadThreads({ entityIdOverride: resolvedEntityId });
-    } catch {
-      // Keep the current thread visible even if the thread index refresh fails.
-    }
-  }, [loadThreadWorkspace, loadThreads]);
+      await loadThreadWorkspace(thread, {
+        entityIdOverride: resolvedEntityId,
+        showLoader: false,
+      });
+      try {
+        await loadThreads({ entityIdOverride: resolvedEntityId });
+      } catch {
+        // Keep the current thread visible even if the thread index refresh fails.
+      }
+    },
+    [loadThreadWorkspace, loadThreads],
+  );
 
   const confirmThreadDeletion = useCallback(async (): Promise<void> => {
     if (pendingDeletionThread === null) {
@@ -601,12 +606,12 @@ function ConversationHeader({
     assistantMode === "global"
       ? "All workspaces"
       : assistantMode === "close_run"
-        ? thread?.grounding.period_label ?? "Close scope"
-        : thread?.grounding.entity_name ?? "Entity scope";
+        ? (thread?.grounding.period_label ?? "Close scope")
+        : (thread?.grounding.entity_name ?? "Entity scope");
   const activeWorkspaceLabel =
-    assistantMode === "global" ? workspace?.grounding.entity_name ?? null : null;
+    assistantMode === "global" ? (workspace?.grounding.entity_name ?? null) : null;
   const activePeriodLabel =
-    assistantMode === "global" ? workspace?.grounding.period_label ?? null : null;
+    assistantMode === "global" ? (workspace?.grounding.period_label ?? null) : null;
   const recoveryActions = workspace?.memory.recovery_actions ?? [];
   const recoveryState = workspace?.memory.recovery_state ?? null;
   const recoverySummary = workspace?.memory.recovery_summary ?? null;
@@ -650,9 +655,7 @@ function ConversationHeader({
           </div>
           <p style={conversationRecoverySummaryStyle}>{recoverySummary}</p>
           {recoveryActions.length > 0 ? (
-            <p style={conversationRecoveryActionsStyle}>
-              {recoveryActions.slice(0, 2).join(" ")}
-            </p>
+            <p style={conversationRecoveryActionsStyle}>{recoveryActions.slice(0, 2).join(" ")}</p>
           ) : null}
         </div>
       ) : null}
@@ -702,9 +705,7 @@ function MessageList({
             }
           >
             <div
-              style={
-                message.role === "user" ? userMessageBubbleStyle : assistantMessageBubbleStyle
-              }
+              style={message.role === "user" ? userMessageBubbleStyle : assistantMessageBubbleStyle}
             >
               <div style={messageHeaderStyle}>
                 <span style={messageRoleStyle(message.role)}>
@@ -798,12 +799,7 @@ function DeleteThreadModal({
   thread,
 }: Readonly<DeleteThreadModalProps>): ReactElement {
   return (
-    <div
-      aria-modal="true"
-      className="quartz-modal-backdrop"
-      onClick={onClose}
-      role="dialog"
-    >
+    <div aria-modal="true" className="quartz-modal-backdrop" onClick={onClose} role="dialog">
       <div
         className="quartz-modal-card"
         onClick={(event) => event.stopPropagation()}
@@ -816,12 +812,7 @@ function DeleteThreadModal({
               Remove <strong>{formatThreadTitle(thread)}</strong> and its full conversation history.
             </p>
           </div>
-          <button
-            aria-label="Close"
-            className="quartz-icon-button"
-            onClick={onClose}
-            type="button"
-          >
+          <button aria-label="Close" className="quartz-icon-button" onClick={onClose} type="button">
             <QuartzIcon name="dismiss" />
           </button>
         </div>
@@ -848,7 +839,9 @@ function DeleteThreadModal({
 function buildRenderableMessages(messages: readonly ChatMessageRecord[]): RenderableMessage[] {
   return messages
     .map((message, index) => ({ index, message }))
-    .filter(({ message }) => message.role !== "system" && !looksLikeInternalContextDump(message.content))
+    .filter(
+      ({ message }) => message.role !== "system" && !looksLikeInternalContextDump(message.content),
+    )
     .sort((left, right) => {
       const leftOrder = left.message.message_order;
       const rightOrder = right.message.message_order;
@@ -1001,7 +994,8 @@ function formatThreadSubtitle(thread: ChatThreadSummary): string {
   if (thread.message_count <= 1) {
     return scope;
   }
-  const messageCountLabel = thread.message_count === 1 ? "1 message" : `${thread.message_count} messages`;
+  const messageCountLabel =
+    thread.message_count === 1 ? "1 message" : `${thread.message_count} messages`;
   return `${scope} / ${messageCountLabel}`;
 }
 
@@ -1081,7 +1075,8 @@ const workbenchShellStyle = {
 } satisfies CSSProperties;
 
 const threadSidebarStyle = {
-  background: "linear-gradient(180deg, rgba(247, 243, 242, 0.94) 0%, rgba(241, 237, 236, 0.98) 100%)",
+  background:
+    "linear-gradient(180deg, rgba(247, 243, 242, 0.94) 0%, rgba(241, 237, 236, 0.98) 100%)",
   borderRight: "1px solid var(--quartz-border)",
   display: "grid",
   gap: 18,

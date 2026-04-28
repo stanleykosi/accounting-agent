@@ -46,7 +46,6 @@ class PhaseGateSignals:
     approved_document_count: int = 0
     unauthorized_document_count: int = 0
     pending_document_review_count: int = 0
-    unmatched_transaction_count: int = 0
     wrong_period_document_count: int = 0
     unresolved_processing_item_count: int = 0
     unresolved_reconciliation_exception_count: int = 0

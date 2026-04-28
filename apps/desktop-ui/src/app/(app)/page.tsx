@@ -79,20 +79,17 @@ export default function DashboardPage(): ReactElement {
     [dashboardData],
   );
 
-  const focusedEntityEntry = useMemo<FocusedEntityRow | null>(
-    () => {
-      const entry = [...dashboardData].sort(compareEntityLedgerEntries)[0] ?? null;
-      if (entry === null) {
-        return null;
-      }
+  const focusedEntityEntry = useMemo<FocusedEntityRow | null>(() => {
+    const entry = [...dashboardData].sort(compareEntityLedgerEntries)[0] ?? null;
+    if (entry === null) {
+      return null;
+    }
 
-      return {
-        currentCloseRun: entry.closeRuns[0] ?? null,
-        entity: entry.entity,
-      };
-    },
-    [dashboardData],
-  );
+    return {
+      currentCloseRun: entry.closeRuns[0] ?? null,
+      entity: entry.entity,
+    };
+  }, [dashboardData]);
 
   useEffect(() => {
     const preferredCloseContext = deriveRememberedCloseContextFromDashboardEntries(dashboardData);
@@ -233,8 +230,8 @@ export default function DashboardPage(): ReactElement {
                               <span
                                 className={`quartz-status-badge ${resolveEntityBadgeTone(focusedEntityEntry)}`}
                               >
-                                {resolveEntityAttention(focusedEntityEntry.currentCloseRun)?.label ??
-                                  focusedEntityEntry.entity.status}
+                                {resolveEntityAttention(focusedEntityEntry.currentCloseRun)
+                                  ?.label ?? focusedEntityEntry.entity.status}
                               </span>
                             </td>
                             <td>

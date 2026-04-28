@@ -10,9 +10,13 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
-from typing import Any, cast
 
 from apps.cli.src.api_client import CliApiClientError, CliApiClientProtocol
+from apps.cli.src.command_helpers import (
+    add_close_run_scope_arguments,
+    extract_rows,
+    print_api_error,
+)
 from apps.cli.src.widgets.status_table import StatusColumn, build_status_table
 from rich.console import Console
 
@@ -26,7 +30,7 @@ def configure_report_subcommands(
     report_subparsers = reports.add_subparsers(dest="report_command", required=True)
 
     generate = report_subparsers.add_parser("generate", help="Trigger report generation.")
-    _add_close_run_scope_arguments(generate)
+    add_close_run_scope_arguments(generate)
     generate.add_argument("--template-id", help="Optional report template UUID.")
     generate.add_argument(
         "--no-commentary",
@@ -41,18 +45,18 @@ def configure_report_subcommands(
     generate.set_defaults(handler=generate_report_command)
 
     list_runs = report_subparsers.add_parser("list", help="List report runs.")
-    _add_close_run_scope_arguments(list_runs)
+    add_close_run_scope_arguments(list_runs)
     list_runs.set_defaults(handler=list_reports_command)
 
     exports = subparsers.add_parser("exports", help="Package and inspect close-run exports.")
     export_subparsers = exports.add_subparsers(dest="export_command", required=True)
 
     export_list = export_subparsers.add_parser("list", help="List export records.")
-    _add_close_run_scope_arguments(export_list)
+    add_close_run_scope_arguments(export_list)
     export_list.set_defaults(handler=list_exports_command)
 
     create = export_subparsers.add_parser("create", help="Trigger a close-run export.")
-    _add_close_run_scope_arguments(create)
+    add_close_run_scope_arguments(create)
     create.add_argument("--action-qualifier", default="full_export", help="Idempotency scope.")
     create.add_argument(
         "--no-evidence-pack",
@@ -70,14 +74,14 @@ def configure_report_subcommands(
         "evidence-pack",
         help="Assemble and release an evidence pack.",
     )
-    _add_close_run_scope_arguments(evidence_pack)
+    add_close_run_scope_arguments(evidence_pack)
     evidence_pack.set_defaults(handler=assemble_evidence_pack_command)
 
     key = export_subparsers.add_parser(
         "idempotency-key",
         help="Preview the evidence-pack idempotency key.",
     )
-    _add_close_run_scope_arguments(key)
+    add_close_run_scope_arguments(key)
     key.add_argument("--version", type=int, default=1, help="Close-run version number.")
     key.set_defaults(handler=preview_idempotency_key_command)
 
@@ -85,7 +89,7 @@ def configure_report_subcommands(
         "download",
         help="Write an export manifest JSON file for accountant review.",
     )
-    _add_close_run_scope_arguments(download)
+    add_close_run_scope_arguments(download)
     download.add_argument("export_id", help="Export UUID to fetch.")
     download.add_argument("--output", required=True, help="Destination manifest JSON file.")
     download.set_defaults(handler=download_export_manifest_command)
@@ -112,7 +116,7 @@ def generate_report_command(
             params=params,
         )
     except CliApiClientError as error:
-        return _print_api_error(console=console, error=error)
+        return print_api_error(console=console, error=error)
 
     console.print(
         f"[green]Report generation queued.[/] Run [bold]{payload.get('id', 'unknown')}[/] "
@@ -134,7 +138,7 @@ def list_reports_command(
             f"/entities/{args.entity_id}/reports/close-runs/{args.close_run_id}/runs"
         )
     except CliApiClientError as error:
-        return _print_api_error(console=console, error=error)
+        return print_api_error(console=console, error=error)
 
     console.print(
         build_status_table(
@@ -146,7 +150,7 @@ def list_reports_command(
                 StatusColumn("Failure", "failure_reason", max_width=52),
                 StatusColumn("Created", "created_at", max_width=28),
             ),
-            rows=_extract_rows(payload, "report_runs"),
+            rows=extract_rows(payload, "report_runs"),
         )
     )
     return 0
@@ -163,7 +167,7 @@ def list_exports_command(
     try:
         payload = client.get(_export_path(args, ""))
     except CliApiClientError as error:
-        return _print_api_error(console=console, error=error)
+        return print_api_error(console=console, error=error)
 
     console.print(
         build_status_table(
@@ -175,7 +179,7 @@ def list_exports_command(
                 StatusColumn("Artifacts", "artifact_count"),
                 StatusColumn("Idempotency", "idempotency_key", max_width=42),
             ),
-            rows=_extract_rows(payload, "exports"),
+            rows=extract_rows(payload, "exports"),
         )
     )
     return 0
@@ -199,7 +203,7 @@ def create_export_command(
             },
         )
     except CliApiClientError as error:
-        return _print_api_error(console=console, error=error)
+        return print_api_error(console=console, error=error)
 
     console.print(
         f"[green]Export created.[/] "
@@ -220,7 +224,7 @@ def assemble_evidence_pack_command(
     try:
         payload = client.post(_export_path(args, "/evidence-pack"))
     except CliApiClientError as error:
-        return _print_api_error(console=console, error=error)
+        return print_api_error(console=console, error=error)
 
     console.print(
         "[green]Evidence pack ready.[/] "
@@ -244,7 +248,7 @@ def preview_idempotency_key_command(
             params={"version": args.version},
         )
     except CliApiClientError as error:
-        return _print_api_error(console=console, error=error)
+        return print_api_error(console=console, error=error)
 
     console.print(
         f"[green]{payload.get('artifact_type', 'artifact')} idempotency key:[/] "
@@ -264,7 +268,7 @@ def download_export_manifest_command(
     try:
         payload = client.get(_export_path(args, f"/{args.export_id}"))
     except CliApiClientError as error:
-        return _print_api_error(console=console, error=error)
+        return print_api_error(console=console, error=error)
 
     manifest = payload.get("manifest")
     if not isinstance(manifest, dict):
@@ -278,34 +282,10 @@ def download_export_manifest_command(
     return 0
 
 
-def _add_close_run_scope_arguments(parser: argparse.ArgumentParser) -> None:
-    """Add entity and close-run UUID arguments shared by report/export commands."""
-
-    parser.add_argument("entity_id", help="Entity workspace UUID.")
-    parser.add_argument("close_run_id", help="Close-run UUID.")
-
-
 def _export_path(args: argparse.Namespace, suffix: str) -> str:
     """Build a close-run export path from parsed command arguments."""
 
     return f"/entities/{args.entity_id}/close-runs/{args.close_run_id}/exports{suffix}"
-
-
-def _extract_rows(payload: dict[str, Any], key: str) -> tuple[dict[str, Any], ...]:
-    """Extract list-valued API rows and ignore malformed row entries."""
-
-    value = payload.get(key)
-    if not isinstance(value, list):
-        return ()
-
-    return tuple(cast(dict[str, Any], item) for item in value if isinstance(item, dict))
-
-
-def _print_api_error(*, console: Console, error: CliApiClientError) -> int:
-    """Render a structured API error and return a shell failure code."""
-
-    console.print(f"[bold red]{error.message}[/] [dim]({error.code})[/]")
-    return 1
 
 
 __all__ = [

@@ -56,9 +56,7 @@ export function readDashboardBootstrapSnapshot(): readonly DashboardEntityRuns[]
  * Behavior: Keeps the dashboard command center aligned with the authoritative current state.
  */
 export function invalidateDashboardBootstrap(): void {
-  invalidateClientCacheByPrefix(
-    buildEntityCacheInvalidationPrefixes(DASHBOARD_BOOTSTRAP_PATH),
-  );
+  invalidateClientCacheByPrefix(buildEntityCacheInvalidationPrefixes(DASHBOARD_BOOTSTRAP_PATH));
 }
 
 async function requestDashboardBootstrap(): Promise<DashboardBootstrapPayload> {

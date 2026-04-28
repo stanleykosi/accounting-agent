@@ -59,14 +59,17 @@ export function DiffViewer({
   title = "Review diff",
 }: Readonly<DiffViewerProps>): ReactElement {
   const rows = buildDiffRows(beforeValue, afterValue, emptyValueLabel);
-  const hasChanges = rows.some(
-    (row) => row.before.kind !== "equal" || row.after.kind !== "equal",
-  );
+  const hasChanges = rows.some((row) => row.before.kind !== "equal" || row.after.kind !== "equal");
 
   return (
     <section className="ui-diff-viewer" style={sectionStyle}>
       <header
-        style={{ alignItems: "center", display: "flex", flexWrap: "wrap", gap: reviewSpacing.dense }}
+        style={{
+          alignItems: "center",
+          display: "flex",
+          flexWrap: "wrap",
+          gap: reviewSpacing.dense,
+        }}
       >
         <strong style={{ fontSize: "0.92rem", letterSpacing: "-0.02em" }}>{title}</strong>
         <span
@@ -164,7 +167,10 @@ function normalizeDiffLines(value: string | null | undefined, emptyValueLabel: s
   return normalized.split("\n").map((line) => line.trimEnd());
 }
 
-function buildLineOperations(beforeLines: readonly string[], afterLines: readonly string[]): readonly DiffOperation[] {
+function buildLineOperations(
+  beforeLines: readonly string[],
+  afterLines: readonly string[],
+): readonly DiffOperation[] {
   const matrix = buildLcsMatrix(beforeLines, afterLines);
   const operations: DiffOperation[] = [];
 
@@ -211,10 +217,7 @@ function buildLineOperations(beforeLines: readonly string[], afterLines: readonl
   return operations;
 }
 
-function buildLcsMatrix(
-  beforeLines: readonly string[],
-  afterLines: readonly string[],
-): number[][] {
+function buildLcsMatrix(beforeLines: readonly string[], afterLines: readonly string[]): number[][] {
   const matrix = Array.from({ length: beforeLines.length + 1 }, () =>
     Array.from({ length: afterLines.length + 1 }, () => 0),
   );
@@ -222,8 +225,7 @@ function buildLcsMatrix(
   for (let beforeIndex = 1; beforeIndex <= beforeLines.length; beforeIndex += 1) {
     for (let afterIndex = 1; afterIndex <= afterLines.length; afterIndex += 1) {
       if (beforeLines[beforeIndex - 1] === afterLines[afterIndex - 1]) {
-        matrix[beforeIndex]![afterIndex] =
-          (matrix[beforeIndex - 1]?.[afterIndex - 1] ?? 0) + 1;
+        matrix[beforeIndex]![afterIndex] = (matrix[beforeIndex - 1]?.[afterIndex - 1] ?? 0) + 1;
         continue;
       }
 

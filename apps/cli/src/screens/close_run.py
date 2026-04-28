@@ -7,9 +7,10 @@ Dependencies: Textual widgets and the CLI API client protocol.
 
 from __future__ import annotations
 
-from typing import Any, ClassVar, cast
+from typing import Any, ClassVar
 
 from apps.cli.src.api_client import CliApiClientError, CliApiClientProtocol
+from apps.cli.src.command_helpers import extract_rows
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical
@@ -130,7 +131,7 @@ def _workflow_phases(payload: dict[str, Any]) -> tuple[dict[str, Any], ...]:
     for key in candidate_keys:
         value = workflow_state.get(key)
         if isinstance(value, list):
-            return tuple(cast(dict[str, Any], item) for item in value if isinstance(item, dict))
+            return extract_rows(workflow_state, key)
 
     return ()
 
@@ -138,11 +139,7 @@ def _workflow_phases(payload: dict[str, Any]) -> tuple[dict[str, Any], ...]:
 def _count_items(payload: dict[str, Any], key: str) -> int:
     """Return the number of records stored under a list-valued response key."""
 
-    value = payload.get(key)
-    if isinstance(value, list):
-        return len(value)
-
-    return 0
+    return len(extract_rows(payload, key))
 
 
 __all__ = ["CloseRunScreen"]

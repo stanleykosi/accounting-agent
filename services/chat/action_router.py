@@ -22,7 +22,6 @@ from typing import Any, Literal, Protocol
 from uuid import UUID
 
 from pydantic import Field, ValidationError
-from services.auth.service import serialize_uuid
 from services.chat.action_models import (
     CHAT_ACTION_INTENTS,
     ChatActionExecutionPlan,
@@ -32,19 +31,15 @@ from services.chat.action_models import (
     ChatReconciliationAction,
     ChatReportAction,
     ProposedEditPayload,
-    ProposedJournalEdit,
 )
 from services.chat.grounding import ChatGroundingService, GroundingContextRecord
 from services.common.enums import AutonomyMode, WorkflowPhase
 from services.common.types import utc_now
 from services.contracts.api_models import ContractModel
-from services.contracts.chat_models import ChatMessageRecord
 from services.db.models.audit import AuditSourceSurface
 from services.db.repositories.chat_action_repo import (
     ChatActionPlanRecord,
-    ChatActionRepository,
 )
-from services.db.repositories.chat_repo import ChatRepository
 from services.model_gateway.client import ModelResponseValidationError
 
 
@@ -482,7 +477,10 @@ class ChatActionRouter:
             raise ChatActionRouterError(
                 status_code=409,
                 code=ChatActionRouterErrorCode.POLICY_BLOCKED,
-                message=f"Cannot approve action plan in '{plan.status}' status. Only 'pending' actions can be approved.",
+                message=(
+                    f"Cannot approve action plan in '{plan.status}' status. "
+                    "Only 'pending' actions can be approved."
+                ),
             )
 
         try:
@@ -549,7 +547,10 @@ class ChatActionRouter:
             raise ChatActionRouterError(
                 status_code=409,
                 code=ChatActionRouterErrorCode.POLICY_BLOCKED,
-                message=f"Cannot reject action plan in '{plan.status}' status. Only 'pending' actions can be rejected.",
+                message=(
+                    f"Cannot reject action plan in '{plan.status}' status. "
+                    "Only 'pending' actions can be rejected."
+                ),
             )
 
         try:
@@ -653,11 +654,13 @@ Context:
 Valid action intents: {valid_intents}
 
 Action intent definitions:
-- proposed_edit: The user wants to change an accounting value (account code, amount, description, etc.)
+- proposed_edit: The user wants to change an accounting value
+  (account code, amount, description, etc.)
 - approval_request: The user wants to approve or reject a reviewable item
 - document_request: The user is requesting or identifying missing source documents
 - explanation: The user wants to understand why an accounting decision was made
-- workflow_action: The user wants to trigger a workflow action (advance phase, start reconciliation, etc.)
+- workflow_action: The user wants to trigger a workflow action
+  (advance phase, start reconciliation, etc.)
 - reconciliation_query: The user is asking about reconciliation status or exceptions
 - report_action: The user wants to regenerate, edit, or export a report
 
@@ -667,11 +670,22 @@ Rules:
 3. Always set requires_review=true for proposed edits and approval requests.
 4. If the message references a specific business object by ID, include it as target_id.
 5. Keep reasoning concise (max 200 characters).
-6. Natural operator phrasing still counts as action intent when it implies a supported workflow step.
-7. Examples of action phrasing include: "I need the reports", "can you get this ready for sign-off?", "we need to finish reconciliation", "please prepare the export pack", "reopen this close run so we can make changes", "take this back to reconciliation", "take this back to collection so I can upload more files", "start over from document intake", "start a new April close run", "open a fresh run for this month", "create another run for this period", "archive this run", and "ignore the PDF I uploaded by mistake".
-8. Requests to continue, resume, finish, reopen, archive, create a new run, move the workflow forward, or move it backward should be treated as action intent when the message is outcome-seeking.
-9. Only use intent "explanation" when the operator is asking to understand or inspect state, not when they are asking the system to make progress.
-10. Relative periods like "this month", "next month", or named months should still count as workflow_action when the operator is asking to start a new run.
+6. Natural operator phrasing counts as action intent when it implies a supported workflow step.
+7. Examples of action phrasing include: "I need the reports",
+   "can you get this ready for sign-off?", "we need to finish reconciliation",
+   "please prepare the export pack", "reopen this close run so we can make changes",
+   "take this back to reconciliation",
+   "take this back to collection so I can upload more files",
+   "start over from document intake", "start a new April close run",
+   "open a fresh run for this month", "create another run for this period",
+   "archive this run", and "ignore the PDF I uploaded by mistake".
+8. Requests to continue, resume, finish, reopen, archive, create a new run,
+   move the workflow forward, or move it backward should be treated as action intent
+   when the message is outcome-seeking.
+9. Only use intent "explanation" when the operator is asking to understand or inspect
+   state, not when they are asking the system to make progress.
+10. Relative periods like "this month", "next month", or named months should still
+    count as workflow_action when the operator is asking to start a new run.
 
 Respond with a JSON object only. Do not include markdown code blocks or extra text.
 

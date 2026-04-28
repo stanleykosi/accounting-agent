@@ -166,9 +166,7 @@ async function requestJson<T>(url: string, init: RequestInit = {}): Promise<T> {
 /* Template queries                                                    */
 /* ------------------------------------------------------------------ */
 
-export async function listReportTemplates(
-  entityId: string,
-): Promise<ReportTemplateListResponse> {
+export async function listReportTemplates(entityId: string): Promise<ReportTemplateListResponse> {
   return requestJson<ReportTemplateListResponse>(apiPath(entityId, "/templates"));
 }
 
@@ -176,9 +174,7 @@ export async function readReportTemplate(
   entityId: string,
   templateId: string,
 ): Promise<ReportTemplateDetail> {
-  return requestJson<ReportTemplateDetail>(
-    apiPath(entityId, `/templates/${templateId}`),
-  );
+  return requestJson<ReportTemplateDetail>(apiPath(entityId, `/templates/${templateId}`));
 }
 
 /* ------------------------------------------------------------------ */
@@ -200,13 +196,10 @@ export async function activateReportTemplate(
   templateId: string,
   reason?: string | null,
 ): Promise<ReportTemplateDetail> {
-  return requestJson<ReportTemplateDetail>(
-    apiPath(entityId, `/templates/${templateId}/activate`),
-    {
-      method: "POST",
-      body: JSON.stringify({ reason: reason ?? null }),
-    },
-  );
+  return requestJson<ReportTemplateDetail>(apiPath(entityId, `/templates/${templateId}/activate`), {
+    method: "POST",
+    body: JSON.stringify({ reason: reason ?? null }),
+  });
 }
 
 export async function validateReportTemplateGuardrails(
@@ -230,10 +223,7 @@ export async function updateReportCommentary(
   body: string,
 ): Promise<CommentarySummary> {
   return requestJson<CommentarySummary>(
-    apiPath(
-      entityId,
-      `/close-runs/${closeRunId}/runs/${reportRunId}/commentary/${sectionKey}`,
-    ),
+    apiPath(entityId, `/close-runs/${closeRunId}/runs/${reportRunId}/commentary/${sectionKey}`),
     {
       method: "PUT",
       body: JSON.stringify({ body }),
@@ -270,14 +260,8 @@ export async function generateReportRun(
   },
 ): Promise<ReportRunSummary> {
   const searchParams = new URLSearchParams();
-  searchParams.set(
-    "generate_commentary",
-    String(options?.generateCommentary ?? true),
-  );
-  searchParams.set(
-    "use_llm_commentary",
-    String(options?.useLlmCommentary ?? false),
-  );
+  searchParams.set("generate_commentary", String(options?.generateCommentary ?? true));
+  searchParams.set("use_llm_commentary", String(options?.useLlmCommentary ?? false));
   return requestJson<ReportRunSummary>(
     apiPath(entityId, `/close-runs/${closeRunId}/generate?${searchParams.toString()}`),
     {
@@ -300,7 +284,12 @@ export async function readReportRun(
   entityId: string,
   closeRunId: string,
   reportRunId: string,
-): Promise<ReportRunSummary & { artifact_refs: readonly Record<string, unknown>[]; commentary: readonly CommentarySummary[] }> {
+): Promise<
+  ReportRunSummary & {
+    artifact_refs: readonly Record<string, unknown>[];
+    commentary: readonly CommentarySummary[];
+  }
+> {
   return requestJson<
     ReportRunSummary & {
       artifact_refs: readonly Record<string, unknown>[];

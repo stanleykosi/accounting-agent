@@ -22,10 +22,7 @@ type AuthProxyRouteContext = {
  * Outputs: The backend auth response with cookies and JSON forwarded to the browser.
  * Behavior: Preserves status codes and rotated session cookies so the browser stays in sync.
  */
-export async function GET(
-  request: Request,
-  context: AuthProxyRouteContext,
-): Promise<Response> {
+export async function GET(request: Request, context: AuthProxyRouteContext): Promise<Response> {
   return proxyAuthRequest(request, context);
 }
 
@@ -35,10 +32,7 @@ export async function GET(
  * Outputs: The backend auth response with cookies and JSON forwarded to the browser.
  * Behavior: Keeps browser auth traffic same-origin while still using the canonical FastAPI auth routes.
  */
-export async function POST(
-  request: Request,
-  context: AuthProxyRouteContext,
-): Promise<Response> {
+export async function POST(request: Request, context: AuthProxyRouteContext): Promise<Response> {
   return proxyAuthRequest(request, context);
 }
 

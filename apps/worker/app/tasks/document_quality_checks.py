@@ -266,12 +266,6 @@ def run_document_quality_checks(
             }
         )
         results["transaction_match"] = transaction_match_result.to_payload()
-        _resolve_transaction_mismatch_issues(
-            issue_service=issue_service,
-            document_id=document_id,
-            actor_user_id=actor_user_id,
-            transaction_match_result=transaction_match_result,
-        )
 
         current_document = (
             db_session.get(Document, document_id) if hasattr(db_session, "get") else None
@@ -284,13 +278,6 @@ def run_document_quality_checks(
                 close_run_id=close_run_id,
             )
             results["transaction_match_refresh_count"] = len(refreshed_matches)
-            for refreshed_document_id, refreshed_result in refreshed_matches.items():
-                _resolve_transaction_mismatch_issues(
-                    issue_service=issue_service,
-                    document_id=refreshed_document_id,
-                    actor_user_id=actor_user_id,
-                    transaction_match_result=refreshed_result,
-                )
     except Exception as e:
         logger.error(f"Error running auto transaction-linking: {e}")
         results["checks_performed"].append(
@@ -306,35 +293,6 @@ def run_document_quality_checks(
         len(results["issues_created"]),
     )
     return results
-
-
-def _resolve_transaction_mismatch_issues(
-    *,
-    issue_service: DocumentIssueService,
-    document_id: UUID,
-    actor_user_id: UUID,
-    transaction_match_result,
-) -> None:
-    """Resolve any legacy transaction-mismatch blockers for one document."""
-
-    for existing_issue in issue_service.get_document_issues(document_id=document_id):
-        if (
-            existing_issue.status.value != "open"
-            or existing_issue.issue_type != "transaction_mismatch"
-        ):
-            continue
-        issue_service.resolve_issue(
-            issue_id=existing_issue.id,
-            resolution_details={
-                "resolution_reason": (
-                    "Transaction linking is recorded as supporting evidence and no longer "
-                    "blocks Collection. " + transaction_match_result.primary_reason
-                ),
-                "auto_transaction_match": transaction_match_result.to_payload(),
-            },
-            actor_user_id=actor_user_id,
-            source_surface=AuditSourceSurface.WORKER,
-        )
 
 
 def _duplicate_result_payload(duplicate_result) -> dict[str, object]:

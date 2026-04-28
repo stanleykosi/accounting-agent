@@ -104,7 +104,12 @@ export default function EntityLedgerPage(): ReactElement {
           setGlFile(null);
           setGlForm(defaultUploadFormState);
           setErrorMessage(null);
-          setStatusMessage(buildUploadStatusMessage(response.auto_bound_close_run_ids, response.skipped_close_run_ids));
+          setStatusMessage(
+            buildUploadStatusMessage(
+              response.auto_bound_close_run_ids,
+              response.skipped_close_run_ids,
+            ),
+          );
         })
         .catch((error: unknown) => {
           setErrorMessage(resolveLedgerErrorMessage(error));
@@ -134,7 +139,12 @@ export default function EntityLedgerPage(): ReactElement {
           setTbFile(null);
           setTbForm(defaultUploadFormState);
           setErrorMessage(null);
-          setStatusMessage(buildUploadStatusMessage(response.auto_bound_close_run_ids, response.skipped_close_run_ids));
+          setStatusMessage(
+            buildUploadStatusMessage(
+              response.auto_bound_close_run_ids,
+              response.skipped_close_run_ids,
+            ),
+          );
         })
         .catch((error: unknown) => {
           setErrorMessage(resolveLedgerErrorMessage(error));
@@ -177,7 +187,10 @@ export default function EntityLedgerPage(): ReactElement {
             </p>
           </div>
           <div className="quartz-page-toolbar">
-            <Link className="secondary-button quartz-toolbar-button" href={`/entities/${entityId}/settings`}>
+            <Link
+              className="secondary-button quartz-toolbar-button"
+              href={`/entities/${entityId}/settings`}
+            >
               <QuartzIcon className="quartz-inline-icon" name="settings" />
               Workspace Settings
             </Link>
@@ -469,13 +482,13 @@ function buildUploadStatusMessage(
   }
   if (autoBoundCloseRunIds.length === 0) {
     return (
-      `Import uploaded, but ${skippedCloseRunIds.length} matching close run(s) were left unbound `
-      + "because they already have ledger activity."
+      `Import uploaded, but ${skippedCloseRunIds.length} matching close run(s) were left unbound ` +
+      "because they already have ledger activity."
     );
   }
   return (
-    `Import uploaded, auto-bound to ${autoBoundCloseRunIds.length} close run(s), and skipped `
-    + `${skippedCloseRunIds.length} started close run(s).`
+    `Import uploaded, auto-bound to ${autoBoundCloseRunIds.length} close run(s), and skipped ` +
+    `${skippedCloseRunIds.length} started close run(s).`
   );
 }
 

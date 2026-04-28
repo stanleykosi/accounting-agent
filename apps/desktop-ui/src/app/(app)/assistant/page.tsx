@@ -84,9 +84,7 @@ export default function GlobalAssistantPage(): ReactElement {
   );
 
   const selectedEntity =
-    entities.find((entity) => entity.id === preferredEntityId) ??
-    entities[0] ??
-    null;
+    entities.find((entity) => entity.id === preferredEntityId) ?? entities[0] ?? null;
 
   return (
     <div

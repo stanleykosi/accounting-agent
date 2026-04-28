@@ -1,6 +1,6 @@
 """
 Purpose: Provide a reusable execution-policy layer for agent tool invocations.
-Scope: Human-approval requirements and future execution-policy expansion.
+Scope: Human-approval requirements and execution-policy decisions.
 Dependencies: The tool registry only.
 """
 
@@ -19,4 +19,3 @@ class ExecutionPolicy:
         """Return whether one tool invocation must stage for approval."""
 
         return self._tool_registry.get_tool(tool_name=tool_name).requires_human_approval
-

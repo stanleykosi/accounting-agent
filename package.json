@@ -26,13 +26,11 @@
     "@tauri-apps/cli": "^2.10.1",
     "@types/node": "25.5.2",
     "@types/react": "19.2.14",
-    "@types/react-dom": "19.2.3",
     "eslint": "9.39.4",
     "eslint-config-prettier": "10.1.8",
     "eslint-plugin-react-hooks": "7.0.1",
     "globals": "16.4.0",
     "prettier": "3.8.1",
-    "tsx": "^4.21.0",
     "typescript": "6.0.2",
     "typescript-eslint": "8.58.1"
   }

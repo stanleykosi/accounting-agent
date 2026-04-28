@@ -185,8 +185,8 @@ export default function ReportTemplatesPage(): ReactElement {
           <div>
             <h1>Report Templates</h1>
             <p className="quartz-page-subtitle">
-              Manage governed report templates for this entity. Every template must include the
-              five canonical workflow sections before it can become active.
+              Manage governed report templates for this entity. Every template must include the five
+              canonical workflow sections before it can become active.
             </p>
           </div>
           <div className="quartz-page-toolbar">
@@ -223,7 +223,10 @@ export default function ReportTemplatesPage(): ReactElement {
               {guardrailResult.violations.length > 0 ? (
                 <div className="quartz-reasoning-list">
                   {guardrailResult.violations.map((violation, index) => (
-                    <div className="quartz-reasoning-item" key={`${violation.section_key ?? "global"}-${index}`}>
+                    <div
+                      className="quartz-reasoning-item"
+                      key={`${violation.section_key ?? "global"}-${index}`}
+                    >
                       <strong>{violation.section_key ?? "Template rule"}</strong>
                       <span>{violation.message}</span>
                     </div>
@@ -248,7 +251,8 @@ export default function ReportTemplatesPage(): ReactElement {
             <article className="quartz-kpi-tile">
               <p className="quartz-kpi-label">Active Template</p>
               <p className="quartz-kpi-value quartz-kpi-value-small">
-                {templates.find((template) => template.id === activeTemplateId)?.name ?? "None active"}
+                {templates.find((template) => template.id === activeTemplateId)?.name ??
+                  "None active"}
               </p>
               <p className="quartz-kpi-meta">Current reporting baseline</p>
             </article>
@@ -450,7 +454,11 @@ function TemplateRow({
             {guardrailLoading ? "Checking..." : "Validate"}
           </button>
           {!isActive ? (
-            <button className="primary-button quartz-inline-button" onClick={onActivate} type="button">
+            <button
+              className="primary-button quartz-inline-button"
+              onClick={onActivate}
+              type="button"
+            >
               Activate
             </button>
           ) : null}

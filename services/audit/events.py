@@ -1,7 +1,7 @@
 """
 Purpose: Define the canonical audit-event vocabulary for privileged accounting workflows.
 Scope: Stable event type strings for close-run lifecycle, review decisions, worker execution,
-integration actions, and future document/report/reconciliation surfaces.
+integration actions, and document/report/reconciliation surfaces.
 Dependencies: Python's enum module only so this module stays safe for low-level imports.
 """
 
@@ -46,4 +46,3 @@ def review_action_event_type(action: str) -> str:
 
 
 __all__ = ["AuditEventType", "ReviewActionType", "review_action_event_type"]
-

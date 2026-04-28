@@ -7,9 +7,10 @@ Dependencies: Textual widgets plus the CLI API client protocol.
 
 from __future__ import annotations
 
-from typing import Any, ClassVar, cast
+from typing import ClassVar
 
 from apps.cli.src.api_client import CliApiClientError, CliApiClientProtocol
+from apps.cli.src.command_helpers import extract_rows
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical
@@ -61,7 +62,7 @@ class DashboardScreen(Screen[None]):
             return
 
         status.update("[green]Loaded current workspaces.[/]")
-        for entity in _extract_sequence(payload, "entities"):
+        for entity in extract_rows(payload, "entities"):
             table.add_row(
                 str(entity.get("name", "Unnamed entity")),
                 str(entity.get("base_currency", "—")),
@@ -76,16 +77,5 @@ class DashboardScreen(Screen[None]):
 
         table = self.query_one("#entity-table", DataTable)
         table.add_columns("Entity", "Currency", "Country", "Autonomy", "Status", "Entity ID")
-
-
-def _extract_sequence(payload: dict[str, Any], key: str) -> tuple[dict[str, Any], ...]:
-    """Return a tuple of object rows from an API payload while ignoring malformed entries."""
-
-    value = payload.get(key)
-    if not isinstance(value, list):
-        return ()
-
-    return tuple(cast(dict[str, Any], item) for item in value if isinstance(item, dict))
-
 
 __all__ = ["DashboardScreen"]

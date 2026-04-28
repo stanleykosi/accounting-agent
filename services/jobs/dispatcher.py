@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from typing import Any
 from uuid import uuid4
 
 from celery import Celery
@@ -47,8 +46,8 @@ class TaskDispatcher:
         self,
         *,
         task_name: TaskName | str,
-        args: tuple[Any, ...] | None = None,
-        kwargs: dict[str, Any] | None = None,
+        args: tuple[object, ...] | None = None,
+        kwargs: dict[str, object] | None = None,
         countdown: int | None = None,
         task_id: str | None = None,
     ) -> TaskDispatchReceipt:
@@ -111,8 +110,8 @@ class TaskDispatcher:
 
 def _ensure_json_payload_serializable(
     *,
-    args: tuple[Any, ...],
-    kwargs: dict[str, Any],
+    args: tuple[object, ...],
+    kwargs: dict[str, object],
 ) -> None:
     """Fail fast when a task payload cannot be serialized through the JSON-only Celery transport."""
 

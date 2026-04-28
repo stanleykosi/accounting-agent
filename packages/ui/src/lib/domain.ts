@@ -32,12 +32,7 @@ export type CloseRunStatus =
   | "archived"
   | "reopened";
 
-export type CloseRunPhaseStatus =
-  | "not_started"
-  | "in_progress"
-  | "blocked"
-  | "ready"
-  | "completed";
+export type CloseRunPhaseStatus = "not_started" | "in_progress" | "blocked" | "ready" | "completed";
 
 export type JobStatus = "queued" | "running" | "blocked" | "failed" | "canceled" | "completed";
 
@@ -74,8 +69,7 @@ const workflowPhaseMetadata = {
     label: "Processing",
   },
   reconciliation: {
-    description:
-      "Resolve matches, exceptions, and control checks before reports are prepared.",
+    description: "Resolve matches, exceptions, and control checks before reports are prepared.",
     label: "Reconciliation",
   },
   reporting: {
@@ -104,13 +98,11 @@ const closeRunStatusMetadata = {
     label: "Approved",
   },
   exported: {
-    description:
-      "Release artifacts or export-ready files were issued for this close run version.",
+    description: "Release artifacts or export-ready files were issued for this close run version.",
     label: "Exported",
   },
   archived: {
-    description:
-      "The close run is closed to normal editing and retained for traceable history.",
+    description: "The close run is closed to normal editing and retained for traceable history.",
     label: "Archived",
   },
   reopened: {
@@ -156,8 +148,7 @@ const jobStatusMetadata = {
     label: "Blocked",
   },
   failed: {
-    description:
-      "The job stopped with an error and requires explicit retry or intervention.",
+    description: "The job stopped with an error and requires explicit retry or intervention.",
     label: "Failed",
   },
   canceled: {
@@ -172,8 +163,7 @@ const jobStatusMetadata = {
 
 const autonomyModeMetadata = {
   human_review: {
-    description:
-      "Suggested changes must wait for explicit human approval before they apply.",
+    description: "Suggested changes must wait for explicit human approval before they apply.",
     label: "Human review",
   },
   reduced_interruption: {
@@ -194,8 +184,7 @@ const reviewStatusMetadata = {
     label: "Pending review",
   },
   approved: {
-    description:
-      "A reviewer accepted the item and it is eligible for downstream materialization.",
+    description: "A reviewer accepted the item and it is eligible for downstream materialization.",
     label: "Approved",
   },
   rejected: {
@@ -231,8 +220,7 @@ const artifactTypeMetadata = {
     label: "Evidence pack",
   },
   quickbooks_export: {
-    description:
-      "Stable export-ready file prepared for accountant upload into QuickBooks Online.",
+    description: "Stable export-ready file prepared for accountant upload into QuickBooks Online.",
     label: "QuickBooks export file",
   },
 } as const satisfies Record<ArtifactType, WorkflowPhaseMetadata>;

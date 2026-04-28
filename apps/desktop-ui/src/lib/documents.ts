@@ -9,6 +9,7 @@ import {
   invalidateClientCacheByPrefix,
   loadClientCachedValue,
 } from "./client-cache";
+import { buildEntityProxyPath } from "./entity-proxy";
 
 export type DocumentReviewFilter =
   | "all"
@@ -195,8 +196,6 @@ export class DocumentReviewApiError extends Error {
 }
 
 const DEFAULT_CLASSIFICATION_THRESHOLD = 0.75;
-const ENTITIES_PROXY_BASE_PATH = "/api/entities";
-
 export type UploadedDocumentBatchResult = {
   uploadedCount: number;
 };
@@ -513,11 +512,6 @@ async function documentReviewRequest<TResponse>(
   return payload;
 }
 
-function buildEntityProxyPath(entityId: string, pathSegments: readonly string[]): string {
-  const encodedSegments = [entityId, ...pathSegments].map((segment) => encodeURIComponent(segment));
-  return `${ENTITIES_PROXY_BASE_PATH}/${encodedSegments.join("/")}`;
-}
-
 function parseUploadedDocumentCount(payload: unknown): number {
   if (!isRecord(payload) || !Array.isArray(payload.uploaded_documents)) {
     throw new Error("Document upload must return an uploaded_documents array.");
@@ -534,10 +528,7 @@ function parseQueuedDocumentCount(payload: unknown): number {
   return payload.queued_documents.length;
 }
 
-function buildDocumentReviewApiError(
-  statusCode: number,
-  payload: unknown,
-): DocumentReviewApiError {
+function buildDocumentReviewApiError(statusCode: number, payload: unknown): DocumentReviewApiError {
   if (isRecord(payload)) {
     const detail = payload.detail;
     if (isRecord(detail)) {
@@ -642,7 +633,10 @@ function parseDocumentSummary(value: unknown, index: number): DocumentApiSummary
     id: requireString(value.id, `documents[${index}].id`),
     mimeType: requireString(value.mime_type, `documents[${index}].mime_type`),
     ocrRequired: requireBoolean(value.ocr_required, `documents[${index}].ocr_required`),
-    originalFilename: requireString(value.original_filename, `documents[${index}].original_filename`),
+    originalFilename: requireString(
+      value.original_filename,
+      `documents[${index}].original_filename`,
+    ),
     periodEnd: requireNullableString(value.period_end, `documents[${index}].period_end`),
     periodStart: requireNullableString(value.period_start, `documents[${index}].period_start`),
     sha256Hash: requireString(value.sha256_hash, `documents[${index}].sha256_hash`),
@@ -705,7 +699,10 @@ function parseDocumentDeleteResult(payload: unknown): DocumentDeleteResult {
   }
 
   return {
-    canceledJobCount: requireNumber(payload.canceled_job_count, "documentDelete.canceled_job_count"),
+    canceledJobCount: requireNumber(
+      payload.canceled_job_count,
+      "documentDelete.canceled_job_count",
+    ),
     deletedDocumentCount: requireNumber(
       payload.deleted_document_count,
       "documentDelete.deleted_document_count",
@@ -714,7 +711,10 @@ function parseDocumentDeleteResult(payload: unknown): DocumentDeleteResult {
       payload.deleted_document_filename,
       "documentDelete.deleted_document_filename",
     ),
-    deletedDocumentId: requireString(payload.deleted_document_id, "documentDelete.deleted_document_id"),
+    deletedDocumentId: requireString(
+      payload.deleted_document_id,
+      "documentDelete.deleted_document_id",
+    ),
   };
 }
 
@@ -743,10 +743,7 @@ function parseDocumentReparseResult(payload: unknown): DocumentReparseResult {
     ),
     dispatch: {
       queueName: requireString(dispatch.queue_name, "documentReparse.dispatch.queue_name"),
-      routingKey: requireString(
-        dispatch.routing_key,
-        "documentReparse.dispatch.routing_key",
-      ),
+      routingKey: requireString(dispatch.routing_key, "documentReparse.dispatch.routing_key"),
       taskId: requireString(dispatch.task_id, "documentReparse.dispatch.task_id"),
       taskName: requireString(dispatch.task_name, "documentReparse.dispatch.task_name"),
       traceId: requireNullableString(dispatch.trace_id, "documentReparse.dispatch.trace_id"),
@@ -953,17 +950,17 @@ function resolvePeriodState(
     return "unknown";
   }
 
-  if ((documentStart !== null && documentStart > closeEnd) || (documentEnd !== null && documentEnd < closeStart)) {
+  if (
+    (documentStart !== null && documentStart > closeEnd) ||
+    (documentEnd !== null && documentEnd < closeStart)
+  ) {
     return "out_of_period";
   }
 
   return "in_period";
 }
 
-function resolveConfidenceBand(
-  score: number | null,
-  threshold: number,
-): DocumentConfidenceBand {
+function resolveConfidenceBand(score: number | null, threshold: number): DocumentConfidenceBand {
   if (score === null) {
     return "unknown";
   }
@@ -1043,7 +1040,8 @@ function buildEvidenceRefs(
       kind: "workflow_state",
       label: "Blocked workflow state",
       location: "document.status",
-      snippet: "This document is blocked and cannot progress until an explicit recovery action is taken.",
+      snippet:
+        "This document is blocked and cannot progress until an explicit recovery action is taken.",
     });
   }
 
@@ -1054,7 +1052,8 @@ function buildEvidenceRefs(
       kind: "workflow_state",
       label: "Low-confidence routing",
       location: "review queue policy",
-      snippet: "The document entered review because confidence fell below the configured threshold.",
+      snippet:
+        "The document entered review because confidence fell below the configured threshold.",
     });
   }
 
@@ -1430,10 +1429,7 @@ function parseExtractedFieldSummary(
     id: requireString(value.id, `${fieldName}.id`),
     fieldName: fieldNameValue,
     fieldType: requireString(value.field_type, `${fieldName}.field_type`),
-    isHumanCorrected: requireBoolean(
-      value.is_human_corrected,
-      `${fieldName}.is_human_corrected`,
-    ),
+    isHumanCorrected: requireBoolean(value.is_human_corrected, `${fieldName}.is_human_corrected`),
     label: formatLabelValue(fieldNameValue),
     rawValue,
     value: formatFieldValue(rawValue),
@@ -1540,10 +1536,7 @@ function requireAutoTransactionMatchStatus(
   throw new Error(`${fieldName} must be a supported auto transaction-match status.`);
 }
 
-function parseDocumentIssues(
-  value: unknown,
-  path: string,
-): readonly DocumentIssueSummary[] {
+function parseDocumentIssues(value: unknown, path: string): readonly DocumentIssueSummary[] {
   if (value === undefined || value === null) {
     return [];
   }
@@ -1553,10 +1546,7 @@ function parseDocumentIssues(
   return value.map((entry, index) => parseDocumentIssue(entry, `${path}[${index}]`));
 }
 
-function parseDocumentIssue(
-  value: unknown,
-  path: string,
-): DocumentIssueSummary {
+function parseDocumentIssue(value: unknown, path: string): DocumentIssueSummary {
   if (!isRecord(value)) {
     throw new Error(`${path} was not an object.`);
   }

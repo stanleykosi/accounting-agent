@@ -24,7 +24,6 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from services.common.enums import ArtifactType
 from services.common.types import utc_now
 from services.contracts.export_models import EvidencePackBundle, EvidencePackItem
 from services.contracts.storage_models import CloseRunStorageScope

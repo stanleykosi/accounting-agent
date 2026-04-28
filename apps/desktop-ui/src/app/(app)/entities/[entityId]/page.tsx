@@ -141,10 +141,7 @@ export default function EntityWorkspacePage(): ReactElement {
   }, [refreshEntityHome]);
 
   const activeCloseRun = useMemo(() => findWorkingCloseRun(closeRuns), [closeRuns]);
-  const metricTiles = useMemo(
-    () => buildEntityMetricTiles(entity, closeRuns),
-    [closeRuns, entity],
-  );
+  const metricTiles = useMemo(() => buildEntityMetricTiles(entity, closeRuns), [closeRuns, entity]);
 
   const latestGeneralLedgerImport = ledgerWorkspace?.general_ledger_imports[0] ?? null;
   const latestTrialBalanceImport = ledgerWorkspace?.trial_balance_imports[0] ?? null;
@@ -314,9 +311,7 @@ export default function EntityWorkspacePage(): ReactElement {
   }
 
   function openUploadDialog(kind?: UploadEntityDataKind): void {
-    setSelectedUploadKind(
-      kind ?? resolvePreferredUploadKind(coaWorkspace, ledgerWorkspace),
-    );
+    setSelectedUploadKind(kind ?? resolvePreferredUploadKind(coaWorkspace, ledgerWorkspace));
     setCoaFile(null);
     setGlFile(null);
     setTbFile(null);
@@ -412,9 +407,7 @@ export default function EntityWorkspacePage(): ReactElement {
       return;
     }
     if (!tbUploadFormState.periodStart || !tbUploadFormState.periodEnd) {
-      setUploadDialogErrorMessage(
-        "Select the imported trial balance period start and end dates.",
-      );
+      setUploadDialogErrorMessage("Select the imported trial balance period start and end dates.");
       return;
     }
 
@@ -592,7 +585,9 @@ export default function EntityWorkspacePage(): ReactElement {
                         </td>
                         <td>
                           <div className="quartz-table-primary">
-                            {activePhase?.phase ? formatWorkflowPhaseLabel(activePhase.phase) : "Complete"}
+                            {activePhase?.phase
+                              ? formatWorkflowPhaseLabel(activePhase.phase)
+                              : "Complete"}
                           </div>
                           <div className="quartz-table-secondary">{rowAttention.detail}</div>
                         </td>
@@ -805,7 +800,9 @@ export default function EntityWorkspacePage(): ReactElement {
                     />
                   </label>
                   <div className="quartz-inline-note">
-                    {coaFile ? `Selected file: ${coaFile.name}` : "Accepted formats: CSV, XLSX, XLSM."}
+                    {coaFile
+                      ? `Selected file: ${coaFile.name}`
+                      : "Accepted formats: CSV, XLSX, XLSM."}
                   </div>
 
                   <div className="quartz-form-row quartz-modal-actions">
@@ -826,7 +823,8 @@ export default function EntityWorkspacePage(): ReactElement {
                   <div>
                     <h3 className="quartz-upload-panel-title">General Ledger</h3>
                     <p className="quartz-page-subtitle">
-                      Upload the baseline ledger for the period you want tied to eligible close runs.
+                      Upload the baseline ledger for the period you want tied to eligible close
+                      runs.
                     </p>
                   </div>
                   <div className="quartz-upload-panel-meta">
@@ -877,7 +875,9 @@ export default function EntityWorkspacePage(): ReactElement {
                     />
                   </label>
                   <div className="quartz-inline-note">
-                    {glFile ? `Selected file: ${glFile.name}` : "Accepted formats: CSV, XLSX, XLSM."}
+                    {glFile
+                      ? `Selected file: ${glFile.name}`
+                      : "Accepted formats: CSV, XLSX, XLSM."}
                   </div>
 
                   <div className="quartz-form-row quartz-modal-actions">
@@ -950,7 +950,9 @@ export default function EntityWorkspacePage(): ReactElement {
                     />
                   </label>
                   <div className="quartz-inline-note">
-                    {tbFile ? `Selected file: ${tbFile.name}` : "Accepted formats: CSV, XLSX, XLSM."}
+                    {tbFile
+                      ? `Selected file: ${tbFile.name}`
+                      : "Accepted formats: CSV, XLSX, XLSM."}
                   </div>
 
                   <div className="quartz-form-row quartz-modal-actions">
@@ -1042,14 +1044,14 @@ function buildLedgerUploadStatusMessage(
 
   if (response.auto_bound_close_run_ids.length === 0) {
     return (
-      `${label} uploaded, but ${response.skipped_close_run_ids.length} matching close run(s) were `
-      + "left unbound because they already have ledger activity."
+      `${label} uploaded, but ${response.skipped_close_run_ids.length} matching close run(s) were ` +
+      "left unbound because they already have ledger activity."
     );
   }
 
   return (
-    `${label} uploaded, auto-bound to ${response.auto_bound_close_run_ids.length} close run(s), `
-    + `and skipped ${response.skipped_close_run_ids.length} started close run(s).`
+    `${label} uploaded, auto-bound to ${response.auto_bound_close_run_ids.length} close run(s), ` +
+    `and skipped ${response.skipped_close_run_ids.length} started close run(s).`
   );
 }
 
@@ -1074,8 +1076,12 @@ function resolvePreferredUploadKind(
 
 function buildUploadDatasetCards(options: {
   activeCoaSet: Readonly<CoaWorkspaceResponse["active_set"]> | null;
-  latestGeneralLedgerImport: Readonly<LedgerWorkspaceResponse["general_ledger_imports"][number]> | null;
-  latestTrialBalanceImport: Readonly<LedgerWorkspaceResponse["trial_balance_imports"][number]> | null;
+  latestGeneralLedgerImport: Readonly<
+    LedgerWorkspaceResponse["general_ledger_imports"][number]
+  > | null;
+  latestTrialBalanceImport: Readonly<
+    LedgerWorkspaceResponse["trial_balance_imports"][number]
+  > | null;
 }): readonly UploadDatasetCard[] {
   return [
     {
@@ -1142,7 +1148,9 @@ function buildEntityMetricTiles(
   ];
 }
 
-function formatWorkflowPhaseLabel(phase: CloseRunSummary["workflowState"]["phaseStates"][number]["phase"]): string {
+function formatWorkflowPhaseLabel(
+  phase: CloseRunSummary["workflowState"]["phaseStates"][number]["phase"],
+): string {
   switch (phase) {
     case "collection":
       return "Inputs";
@@ -1157,9 +1165,7 @@ function formatWorkflowPhaseLabel(phase: CloseRunSummary["workflowState"]["phase
   }
 }
 
-function formatCoaSourceLabel(
-  source: CoaWorkspaceResponse["active_set"]["source"] | null,
-): string {
+function formatCoaSourceLabel(source: CoaWorkspaceResponse["active_set"]["source"] | null): string {
   switch (source) {
     case "manual_upload":
       return "Manual upload";

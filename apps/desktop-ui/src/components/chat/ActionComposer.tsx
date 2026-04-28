@@ -250,7 +250,10 @@ export function ActionComposer({
   const hasInput = inputValue.trim().length > 0 || attachments.length > 0;
   const isSubmitting = isLoading || disabled;
   const showSuggestions =
-    !disabled && inputValue.trim().length === 0 && attachments.length === 0 && starterPrompts.length > 0;
+    !disabled &&
+    inputValue.trim().length === 0 &&
+    attachments.length === 0 &&
+    starterPrompts.length > 0;
 
   return (
     <div style={composerContainerStyle}>
@@ -501,8 +504,7 @@ function buildStarterPrompts(options: {
 
 const composerContainerStyle = {
   borderTop: "1px solid var(--quartz-border)",
-  background:
-    "linear-gradient(180deg, rgba(247, 243, 242, 0.9) 0%, rgba(253, 248, 248, 1) 100%)",
+  background: "linear-gradient(180deg, rgba(247, 243, 242, 0.9) 0%, rgba(253, 248, 248, 1) 100%)",
   display: "grid",
   gap: 14,
   padding: "18px 28px 24px",

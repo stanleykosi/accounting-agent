@@ -12,7 +12,7 @@ from __future__ import annotations
 import logging
 import logging.config
 import sys
-from typing import Any, cast
+from typing import cast
 
 import structlog
 from services.common.settings import AppSettings
@@ -124,7 +124,7 @@ def get_logger(name: str | None = None) -> structlog.stdlib.BoundLogger:
     return cast(structlog.stdlib.BoundLogger, structlog.get_logger(name))
 
 
-def bind_log_context(**values: Any) -> None:
+def bind_log_context(**values: object) -> None:
     """Bind contextual values that should follow logs across a request or job boundary."""
 
     structlog.contextvars.bind_contextvars(**values)
@@ -174,7 +174,7 @@ class _LogLevelFilter(logging.Filter):
 def _inject_service_name(service_name: str) -> Processor:
     """Create a processor that stamps the active service name onto every event."""
 
-    def processor(_: Any, __: str, event_dict: EventDict) -> EventDict:
+    def processor(_: object, __: str, event_dict: EventDict) -> EventDict:
         event_dict["service"] = service_name
         return event_dict
 
@@ -201,7 +201,7 @@ def _normalize_log_level(value: str | int | None) -> int | None:
 def _redact_sensitive_fields(redact_fields: tuple[str, ...]) -> Processor:
     """Create a processor that redacts sensitive values from nested log payloads."""
 
-    def processor(_: Any, __: str, event_dict: EventDict) -> EventDict:
+    def processor(_: object, __: str, event_dict: EventDict) -> EventDict:
         return cast(
             EventDict,
             redact_log_payload(

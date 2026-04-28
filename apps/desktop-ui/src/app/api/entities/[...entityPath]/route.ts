@@ -62,7 +62,10 @@ export async function PUT(request: Request, context: EntityProxyRouteContext): P
  * Outputs: The backend response with status, JSON, and cookies preserved.
  * Behavior: Keeps deletion semantics and rotated session cookies intact for browser-originated deletes.
  */
-export async function DELETE(request: Request, context: EntityProxyRouteContext): Promise<Response> {
+export async function DELETE(
+  request: Request,
+  context: EntityProxyRouteContext,
+): Promise<Response> {
   const { entityPath } = await context.params;
   return proxyEntityRequest(request, entityPath);
 }

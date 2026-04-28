@@ -12,7 +12,6 @@ Note: This is a smoke-level E2E test. Full reconciliation flow testing
 
 from __future__ import annotations
 
-import re
 from typing import Any
 
 import pytest
@@ -20,7 +19,12 @@ import pytest
 pytestmark = pytest.mark.e2e
 
 
-@pytest.mark.skip(reason="E2E infrastructure (Playwright) not yet configured. Enable when the desktop UI E2E harness is available.")
+@pytest.mark.skip(
+    reason=(
+        "E2E infrastructure (Playwright) not yet configured. "
+        "Enable when the desktop UI E2E harness is available."
+    )
+)
 async def test_reconciliation_review_page_loads(page: Any) -> None:
     """Verify the reconciliation review page renders the core workspace elements.
 
@@ -70,7 +74,12 @@ async def test_reconciliation_review_page_loads(page: Any) -> None:
     assert "Select a reconciliation item" in panel_text or "Item Detail" in panel_text
 
 
-@pytest.mark.skip(reason="E2E infrastructure (Playwright) not yet configured. Enable when the desktop UI E2E harness is available.")
+@pytest.mark.skip(
+    reason=(
+        "E2E infrastructure (Playwright) not yet configured. "
+        "Enable when the desktop UI E2E harness is available."
+    )
+)
 async def test_reconciliation_review_filter_tabs(page: Any) -> None:
     """Verify that clicking filter tabs updates the active filter styling.
 
@@ -105,7 +114,12 @@ async def test_reconciliation_review_filter_tabs(page: Any) -> None:
     assert all_active_after == "false"
 
 
-@pytest.mark.skip(reason="E2E infrastructure (Playwright) not yet configured. Enable when the desktop UI E2E harness is available.")
+@pytest.mark.skip(
+    reason=(
+        "E2E infrastructure (Playwright) not yet configured. "
+        "Enable when the desktop UI E2E harness is available."
+    )
+)
 async def test_reconciliation_review_empty_queue(page: Any) -> None:
     """Verify the empty state message when no reconciliation items exist.
 

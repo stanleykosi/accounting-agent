@@ -18,10 +18,10 @@ from services.documents.transaction_matching import (
 )
 
 
-def test_quality_checks_skip_transaction_mismatch_until_extraction_exists(
+def test_quality_checks_record_unmatched_linking_as_evidence_only(
     monkeypatch,
 ) -> None:
-    """Missing extraction should not create a fake transaction-mismatch blocker."""
+    """Missing extraction should not create a blocking quality issue."""
 
     created_issue_types: list[str] = []
 
@@ -148,7 +148,7 @@ def test_quality_checks_skip_transaction_mismatch_until_extraction_exists(
         db_session=SimpleNamespace(),
     )
 
-    assert "transaction_mismatch" not in created_issue_types
+    assert created_issue_types == []
     assert result["issues_created"] == []
     assert result["passed_all_checks"] is True
     assert result["transaction_match"]["status"] == "unmatched"

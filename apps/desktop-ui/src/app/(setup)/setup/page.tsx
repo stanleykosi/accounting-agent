@@ -56,9 +56,16 @@ export default async function SetupPage({
             <ul className="detail-list">
               {isHostedMode ? (
                 <>
-                  <li>The hosted frontend should be deployed on Vercel or another public web origin.</li>
-                  <li>The backend API, worker, Redis, storage, and Postgres remain behind Railway.</li>
-                  <li>The protected workspace route resumes at {nextPath} without any loopback dependency checks.</li>
+                  <li>
+                    The hosted frontend should be deployed on Vercel or another public web origin.
+                  </li>
+                  <li>
+                    The backend API, worker, Redis, storage, and Postgres remain behind Railway.
+                  </li>
+                  <li>
+                    The protected workspace route resumes at {nextPath} without any loopback
+                    dependency checks.
+                  </li>
                 </>
               ) : (
                 <>
@@ -66,7 +73,8 @@ export default async function SetupPage({
                     The application never invents fallback infrastructure or silent retry paths.
                   </li>
                   <li>
-                    Operators recover from one canonical infrastructure path instead of mixed runtime states.
+                    Operators recover from one canonical infrastructure path instead of mixed
+                    runtime states.
                   </li>
                   <li>
                     The protected workspace route resumes at {nextPath} once the runtime is ready.

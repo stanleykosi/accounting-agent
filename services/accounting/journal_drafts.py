@@ -537,14 +537,14 @@ def generate_journal_number(
     sequence number padded to 5 digits.
 
     Args:
-        close_run_id: Not used in the number itself but reserved for scoped sequencing.
+        close_run_id: Close-run scope from the caller; numbering uses posting year and sequence.
         posting_date: Accounting date determining the year component.
         sequence_no: Sequential number within the year.
 
     Returns:
         A journal number string like 'JE-2026-00001'.
     """
-    _ = close_run_id  # Reserved for future scoped sequencing
+    _ = close_run_id
     return f"JE-{posting_date.year}-{sequence_no:05d}"
 
 

@@ -5,9 +5,8 @@ owns the single canonical path for all model calls used by accounting recommenda
 Dependencies: httpx, pydantic, settings, tenacity, structured logging.
 
 Design notes:
-- This is NOT a fake abstraction. It is the concrete OpenRouter-backed client used today.
-- A future MCP-ready boundary (Step 48) may wrap this interface, but no extra indirection
-  exists now because there is only one provider.
+- This is the concrete OpenRouter-backed client used today.
+- No extra provider indirection exists because there is only one canonical provider.
 - All model output must be validated against Pydantic schemas before any state mutation.
 """
 

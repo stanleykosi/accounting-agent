@@ -13,7 +13,7 @@ import socket
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, cast
+from typing import TypedDict, cast
 
 import httpx
 from apps.cli.src.config import (
@@ -24,6 +24,7 @@ from apps.cli.src.config import (
     save_cli_auth_config,
 )
 from services.common.settings import AppSettings
+from services.common.types import JsonObject
 
 
 @dataclass(frozen=True, slots=True)
@@ -32,6 +33,36 @@ class ApiErrorDetails:
 
     code: str
     message: str
+
+
+class ApiTokenPayload(TypedDict):
+    """Describe the token object returned by CLI auth endpoints."""
+
+    expires_at: str | None
+    name: str
+    token: str
+    token_type: str
+
+
+class AuthUserPayload(TypedDict):
+    """Describe the user object returned by CLI auth endpoints."""
+
+    email: str
+    full_name: str
+
+
+class LoginResponsePayload(TypedDict):
+    """Describe the successful CLI login response."""
+
+    api_token: ApiTokenPayload
+    user: AuthUserPayload
+
+
+class CurrentTokenResponsePayload(TypedDict):
+    """Describe the stored-token inspection response."""
+
+    api_token: ApiTokenPayload
+    user: AuthUserPayload
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -67,10 +98,13 @@ def login_command(args: argparse.Namespace) -> int:
     }
 
     try:
-        response_payload = _request_json(
-            method="POST",
-            url=f"{api_base_url}/api-tokens/login",
-            json_payload=request_payload,
+        response_payload = cast(
+            LoginResponsePayload,
+            _request_json(
+                method="POST",
+                url=f"{api_base_url}/api-tokens/login",
+                json_payload=request_payload,
+            ),
         )
     except RuntimeError as error:
         print(str(error), file=sys.stderr)
@@ -144,10 +178,13 @@ def whoami_command(_: argparse.Namespace) -> int:
         return 1
 
     try:
-        response_payload = _request_json(
-            method="GET",
-            url=f"{config.api_base_url}/api-tokens/current",
-            token=config.token,
+        response_payload = cast(
+            CurrentTokenResponsePayload,
+            _request_json(
+                method="GET",
+                url=f"{config.api_base_url}/api-tokens/current",
+                token=config.token,
+            ),
         )
     except RuntimeError as error:
         print(str(error), file=sys.stderr)
@@ -228,7 +265,7 @@ def _request_json(
     url: str,
     json_payload: dict[str, object] | None = None,
     token: str | None = None,
-) -> dict[str, Any]:
+) -> JsonObject:
     """Send one HTTP request to the API and return a JSON object or raise a friendly error."""
 
     headers: dict[str, str] = {}
@@ -250,7 +287,7 @@ def _request_json(
         payload = response.json()
         if not isinstance(payload, dict):
             raise RuntimeError("The API returned an unexpected non-object JSON payload.")
-        return payload
+        return cast(JsonObject, payload)
 
     error_details = _parse_error_details(response)
     raise RuntimeError(f"{error_details.message} (code: {error_details.code})")
@@ -265,6 +302,14 @@ def _parse_error_details(response: httpx.Response) -> ApiErrorDetails:
         return ApiErrorDetails(
             code=f"http_{response.status_code}",
             message=f"The API returned HTTP {response.status_code} without a JSON error body.",
+        )
+
+    if not isinstance(payload, dict):
+        return ApiErrorDetails(
+            code=f"http_{response.status_code}",
+            message=(
+                f"The API returned HTTP {response.status_code} with a non-object error payload."
+            ),
         )
 
     detail = payload.get("detail")

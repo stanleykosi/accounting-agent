@@ -24,7 +24,7 @@ from datetime import date
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
-from apps.worker.app.celery_app import celery_app
+from apps.worker.app.celery_runtime import celery_app
 from apps.worker.app.tasks.base import JobRuntimeContext, TrackedJobTask
 from apps.worker.app.tasks.close_run_phase_guard import ensure_close_run_active_phase
 from services.common.enums import (

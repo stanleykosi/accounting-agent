@@ -78,7 +78,9 @@ export default function EntityCoaPage(): ReactElement {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isPending, startTransition] = useTransition();
-  const [createForm, setCreateForm] = useState<CreateAccountFormState>(defaultCreateAccountFormState);
+  const [createForm, setCreateForm] = useState<CreateAccountFormState>(
+    defaultCreateAccountFormState,
+  );
   const [accountDrafts, setAccountDrafts] = useState<Readonly<Record<string, AccountDraft>>>({});
 
   useEffect(() => {
@@ -272,7 +274,10 @@ export default function EntityCoaPage(): ReactElement {
             </p>
           </div>
           <div className="quartz-page-toolbar">
-            <Link className="secondary-button quartz-toolbar-button" href={`/entities/${entityId}/settings`}>
+            <Link
+              className="secondary-button quartz-toolbar-button"
+              href={`/entities/${entityId}/settings`}
+            >
               <QuartzIcon className="quartz-inline-icon" name="settings" />
               Workspace Settings
             </Link>
@@ -300,7 +305,10 @@ export default function EntityCoaPage(): ReactElement {
               <p className="quartz-kpi-label">Active Version</p>
               <p className="quartz-kpi-value">v{workspace.active_set.version_no}</p>
               <p className="quartz-kpi-meta">
-                Activated {formatDateTime(workspace.active_set.activated_at ?? workspace.active_set.created_at)}
+                Activated{" "}
+                {formatDateTime(
+                  workspace.active_set.activated_at ?? workspace.active_set.created_at,
+                )}
               </p>
             </article>
             <article className="quartz-kpi-tile">
@@ -470,7 +478,9 @@ export default function EntityCoaPage(): ReactElement {
                       </div>
                     </div>
                     <div className="quartz-inline-actions">
-                      <span className={`quartz-status-badge ${coaSet.is_active ? "success" : "neutral"}`}>
+                      <span
+                        className={`quartz-status-badge ${coaSet.is_active ? "success" : "neutral"}`}
+                      >
                         {coaSet.is_active ? "Active" : "Inactive"}
                       </span>
                       {!coaSet.is_active ? (
@@ -571,7 +581,11 @@ export default function EntityCoaPage(): ReactElement {
                           <select
                             className="text-input compact-input"
                             onChange={(event) =>
-                              handleDraftFieldChange(account.id, "parentAccountId", event.target.value)
+                              handleDraftFieldChange(
+                                account.id,
+                                "parentAccountId",
+                                event.target.value,
+                              )
                             }
                             value={draft.parentAccountId}
                           >
@@ -590,7 +604,11 @@ export default function EntityCoaPage(): ReactElement {
                             <input
                               checked={draft.isPostable}
                               onChange={(event) =>
-                                handleDraftFieldChange(account.id, "isPostable", event.target.checked)
+                                handleDraftFieldChange(
+                                  account.id,
+                                  "isPostable",
+                                  event.target.checked,
+                                )
                               }
                               type="checkbox"
                             />
@@ -662,7 +680,9 @@ async function loadWorkspace(options: {
  * Outputs: Mutable draft map keyed by account UUID.
  * Behavior: Keeps UI edits isolated until users explicitly save a revision.
  */
-function buildAccountDrafts(accounts: readonly CoaAccountSummary[]): Readonly<Record<string, AccountDraft>> {
+function buildAccountDrafts(
+  accounts: readonly CoaAccountSummary[],
+): Readonly<Record<string, AccountDraft>> {
   return Object.fromEntries(
     accounts.map((account) => [
       account.id,

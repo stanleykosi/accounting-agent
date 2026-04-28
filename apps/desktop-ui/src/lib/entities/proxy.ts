@@ -22,9 +22,7 @@ export async function proxyEntityRequest(
 ): Promise<Response> {
   const requestUrl = new URL(request.url);
   const requestBody =
-    request.method === "GET" || request.method === "HEAD"
-      ? undefined
-      : await request.arrayBuffer();
+    request.method === "GET" || request.method === "HEAD" ? undefined : await request.arrayBuffer();
   let backendResponse: Response;
   try {
     backendResponse = await fetchBackendWithAvailabilityRetry(

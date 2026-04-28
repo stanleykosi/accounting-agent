@@ -121,11 +121,17 @@ export default function EntityIntegrationsPage(): ReactElement {
             </p>
           </div>
           <div className="quartz-page-toolbar">
-            <Link className="secondary-button quartz-toolbar-button" href={`/entities/${entityId}/settings`}>
+            <Link
+              className="secondary-button quartz-toolbar-button"
+              href={`/entities/${entityId}/settings`}
+            >
               <QuartzIcon className="quartz-inline-icon" name="settings" />
               Workspace Settings
             </Link>
-            <Link className="secondary-button quartz-toolbar-button" href={`/entities/${entityId}/coa`}>
+            <Link
+              className="secondary-button quartz-toolbar-button"
+              href={`/entities/${entityId}/coa`}
+            >
               <QuartzIcon className="quartz-inline-icon" name="entities" />
               Chart of Accounts
             </Link>
@@ -155,7 +161,9 @@ export default function EntityIntegrationsPage(): ReactElement {
           <div className="quartz-kpi-grid quartz-kpi-grid-triple">
             <article className="quartz-kpi-tile">
               <p className="quartz-kpi-label">Connection Status</p>
-              <p className="quartz-kpi-value">{formatStatus(connectionStatus?.status ?? "disconnected")}</p>
+              <p className="quartz-kpi-value">
+                {formatStatus(connectionStatus?.status ?? "disconnected")}
+              </p>
               <p className="quartz-kpi-meta">Current QuickBooks authorization posture</p>
             </article>
             <article className="quartz-kpi-tile">
@@ -168,7 +176,9 @@ export default function EntityIntegrationsPage(): ReactElement {
             <article className="quartz-kpi-tile highlight">
               <p className="quartz-kpi-label">Last Sync</p>
               <p className="quartz-kpi-value">
-                {connectionStatus?.last_sync_at ? formatDateTime(connectionStatus.last_sync_at) : "No sync yet"}
+                {connectionStatus?.last_sync_at
+                  ? formatDateTime(connectionStatus.last_sync_at)
+                  : "No sync yet"}
               </p>
               <p className="quartz-kpi-meta">Latest COA import pulled from QuickBooks</p>
             </article>
@@ -189,8 +199,15 @@ export default function EntityIntegrationsPage(): ReactElement {
                 explicit reconnect before another sync can run.
               </p>
               <div className="quartz-button-stack">
-                <button className="primary-button" disabled={isPending} onClick={handleConnect} type="button">
-                  {connectionStatus?.status === "connected" ? "Reconnect QuickBooks" : "Connect QuickBooks"}
+                <button
+                  className="primary-button"
+                  disabled={isPending}
+                  onClick={handleConnect}
+                  type="button"
+                >
+                  {connectionStatus?.status === "connected"
+                    ? "Reconnect QuickBooks"
+                    : "Connect QuickBooks"}
                 </button>
                 <button
                   className="secondary-button"

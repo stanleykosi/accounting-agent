@@ -331,18 +331,16 @@ export async function listChatThreads(
   return fetchJson<ChatThreadListResponse>(`${API_BASE}/threads?${params.toString()}`);
 }
 
-export async function listGlobalChatThreads(
-  options?: { limit?: number },
-): Promise<ChatThreadListResponse> {
+export async function listGlobalChatThreads(options?: {
+  limit?: number;
+}): Promise<ChatThreadListResponse> {
   const params = new URLSearchParams();
   if (options?.limit) {
     params.set("limit", String(options.limit));
   }
 
   const query = params.toString();
-  return fetchJson<ChatThreadListResponse>(
-    `${API_BASE}/global/threads${query ? `?${query}` : ""}`,
-  );
+  return fetchJson<ChatThreadListResponse>(`${API_BASE}/global/threads${query ? `?${query}` : ""}`);
 }
 
 /**
@@ -414,7 +412,7 @@ export async function sendChatMessage(
 }
 
 // ---------------------------------------------------------------------------
-// Chat action routing types and helpers (Step 35)
+// Chat action routing types and helpers
 // ---------------------------------------------------------------------------
 
 export type ChatActionIntent =
@@ -554,8 +552,7 @@ function normalizeOperatorControls(value: unknown): AgentOperatorControl[] {
       {
         command: item.command,
         description: typeof item.description === "string" ? item.description : null,
-        disabled_reason:
-          typeof item.disabled_reason === "string" ? item.disabled_reason : null,
+        disabled_reason: typeof item.disabled_reason === "string" ? item.disabled_reason : null,
         enabled: item.enabled !== false,
         id: item.id,
         kind: item.kind,
@@ -640,23 +637,17 @@ export function normalizeChatToolManifest(
 
   return {
     protocol:
-      typeof safeManifest.protocol === "string"
-        ? safeManifest.protocol
-        : "model-context-protocol",
-    tools: tools
-      .filter(isRecord)
-      .map((tool) => ({
-        description: typeof tool.description === "string" ? tool.description : "",
-        inputSchema: normalizeToolSchemaNode(tool.inputSchema),
-        name: typeof tool.name === "string" ? tool.name : "unknown_tool",
-      })),
+      typeof safeManifest.protocol === "string" ? safeManifest.protocol : "model-context-protocol",
+    tools: tools.filter(isRecord).map((tool) => ({
+      description: typeof tool.description === "string" ? tool.description : "",
+      inputSchema: normalizeToolSchemaNode(tool.inputSchema),
+      name: typeof tool.name === "string" ? tool.name : "unknown_tool",
+    })),
     version: typeof safeManifest.version === "string" ? safeManifest.version : "unknown",
   };
 }
 
-export function summarizeToolSchema(
-  schema: Record<string, unknown> | ToolSchemaNode,
-): {
+export function summarizeToolSchema(schema: Record<string, unknown> | ToolSchemaNode): {
   fieldCount: number;
   requiredCount: number;
 } {

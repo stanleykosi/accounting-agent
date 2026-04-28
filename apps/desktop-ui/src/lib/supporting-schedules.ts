@@ -1,9 +1,11 @@
 /*
-Purpose: Provide same-origin API helpers for standalone Step 6 supporting schedules.
+Purpose: Provide same-origin API helpers for standalone supporting schedules.
 Scope: Read the supporting-schedule workspace and mutate rows or review status
 for fixed assets, loan amortisation, accrual tracker, and budget-vs-actual workpapers.
 Dependencies: Native fetch and the /api/entities proxy path.
 */
+
+import { buildEntityProxyPath } from "./entity-proxy";
 
 export type SupportingScheduleType =
   | "fixed_assets"
@@ -11,11 +13,7 @@ export type SupportingScheduleType =
   | "accrual_tracker"
   | "budget_vs_actual";
 
-export type SupportingScheduleStatus =
-  | "draft"
-  | "in_review"
-  | "approved"
-  | "not_applicable";
+export type SupportingScheduleStatus = "draft" | "in_review" | "approved" | "not_applicable";
 
 export type FixedAssetRowPayload = {
   accumulated_depreciation: string;
@@ -115,13 +113,6 @@ export class SupportingScheduleApiError extends Error {
   }
 }
 
-const ENTITIES_PROXY_BASE_PATH = "/api/entities";
-
-function buildEntityProxyPath(entityId: string, pathSegments: readonly string[]): string {
-  const encodedSegments = [entityId, ...pathSegments].map((segment) => encodeURIComponent(segment));
-  return `${ENTITIES_PROXY_BASE_PATH}/${encodedSegments.join("/")}`;
-}
-
 function asString(value: unknown, fallback = ""): string {
   if (typeof value === "string") return value;
   if (typeof value === "number" || typeof value === "boolean") return String(value);
@@ -151,7 +142,9 @@ function parseScheduleType(value: unknown): SupportingScheduleType {
     case "budget_vs_actual":
       return normalized;
     default:
-      throw new SupportingScheduleApiError(`Unsupported supporting schedule type: ${normalized || "unknown"}.`);
+      throw new SupportingScheduleApiError(
+        `Unsupported supporting schedule type: ${normalized || "unknown"}.`,
+      );
   }
 }
 
@@ -164,7 +157,9 @@ function parseScheduleStatus(value: unknown): SupportingScheduleStatus {
     case "not_applicable":
       return normalized;
     default:
-      throw new SupportingScheduleApiError(`Unsupported supporting schedule status: ${normalized || "unknown"}.`);
+      throw new SupportingScheduleApiError(
+        `Unsupported supporting schedule status: ${normalized || "unknown"}.`,
+      );
   }
 }
 
@@ -206,8 +201,9 @@ function parseScheduleDetail(raw: Record<string, unknown>): SupportingScheduleDe
 
 async function readJsonOrThrow(response: Response): Promise<Record<string, unknown>> {
   const contentType = response.headers.get("content-type") ?? "";
-  const body =
-    contentType.includes("application/json") ? ((await response.json()) as Record<string, unknown>) : {};
+  const body = contentType.includes("application/json")
+    ? ((await response.json()) as Record<string, unknown>)
+    : {};
   if (!response.ok) {
     const detail = (body.detail as Record<string, unknown> | undefined) ?? body;
     throw new SupportingScheduleApiError(
@@ -237,7 +233,9 @@ export async function readSupportingScheduleWorkspace(
   const body = await readJsonOrThrow(response);
   const schedulesRaw = Array.isArray(body.schedules) ? body.schedules : [];
   return {
-    schedules: schedulesRaw.map((schedule) => parseScheduleDetail((schedule as Record<string, unknown>) ?? {})),
+    schedules: schedulesRaw.map((schedule) =>
+      parseScheduleDetail((schedule as Record<string, unknown>) ?? {}),
+    ),
   };
 }
 

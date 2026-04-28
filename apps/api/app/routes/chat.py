@@ -571,6 +571,7 @@ def _persist_inline_attachment_partial_success(
         message_id = str(assistant_message.id)
     except Exception:
         chat_repository.rollback()
+        raise
 
     return ChatActionResponse(
         message_id=message_id,
@@ -845,7 +846,7 @@ def send_chat_message(
 
 
 # ---------------------------------------------------------------------------
-# Action routing endpoints (Step 35)
+# Action routing endpoints
 # ---------------------------------------------------------------------------
 
 
@@ -895,9 +896,12 @@ def send_chat_action(
             entity_id=UUID(outcome.thread_entity_id),
             actor_user=_to_entity_user(session_result),
         )
-        operator_controls = workspace.operator_controls
-    except ChatActionExecutionError:
-        operator_controls = ()
+    except ChatActionExecutionError as error:
+        raise HTTPException(
+            status_code=error.status_code,
+            detail=_error_payload(code=error.code.value, message=error.message),
+        ) from error
+    operator_controls = workspace.operator_controls
 
     return ChatActionResponse(
         message_id=outcome.assistant_message_id,
@@ -1034,9 +1038,12 @@ async def send_chat_action_with_attachments(
             entity_id=UUID(outcome.thread_entity_id),
             actor_user=_to_entity_user(session_result),
         )
-        operator_controls = workspace.operator_controls
-    except ChatActionExecutionError:
-        operator_controls = ()
+    except ChatActionExecutionError as error:
+        raise HTTPException(
+            status_code=error.status_code,
+            detail=_error_payload(code=error.code.value, message=error.message),
+        ) from error
+    operator_controls = workspace.operator_controls
 
     return ChatActionResponse(
         message_id=outcome.assistant_message_id,

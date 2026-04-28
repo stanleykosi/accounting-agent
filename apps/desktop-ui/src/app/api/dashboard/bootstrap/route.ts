@@ -4,10 +4,7 @@ Scope: Authenticated entity list forwarding plus parallel close-run list hydrati
 Dependencies: Backend entity URL helpers, close-run response parsing, and shared proxy headers.
 */
 
-import {
-  parseCloseRunListResponse,
-  type CloseRunSummary,
-} from "../../../../lib/close-runs";
+import { parseCloseRunListResponse, type CloseRunSummary } from "../../../../lib/close-runs";
 import {
   buildBackendUnavailableResponse,
   fetchBackendWithAvailabilityRetry,

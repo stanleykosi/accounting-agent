@@ -1,5 +1,5 @@
 /*
-Purpose: Provide the generated TypeScript SDK entrypoint for local desktop and future TypeScript clients.
+Purpose: Provide the generated TypeScript SDK entrypoint for local TypeScript clients.
 Scope: Re-export generated OpenAPI types and expose a typed fetch client factory bound to the API schema.
 Dependencies: openapi-fetch and the generated OpenAPI types under src/generated/openapi.ts.
 */

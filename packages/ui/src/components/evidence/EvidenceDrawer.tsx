@@ -56,7 +56,14 @@ export function EvidenceDrawer({
 
   return (
     <aside aria-label="Evidence drawer" style={drawerContainerStyle}>
-      <header style={{ alignItems: "flex-start", display: "flex", justifyContent: "space-between", gap: "12px" }}>
+      <header
+        style={{
+          alignItems: "flex-start",
+          display: "flex",
+          justifyContent: "space-between",
+          gap: "12px",
+        }}
+      >
         <div style={{ display: "grid", gap: "4px" }}>
           <p
             style={{

@@ -9,6 +9,7 @@ import {
   invalidateClientCacheByPrefix,
   loadClientCachedValue,
 } from "./client-cache";
+import { buildEntityProxyPath } from "./entity-proxy";
 
 export type JobSummary = {
   attempt_count: number;
@@ -52,11 +53,6 @@ export class JobApiError extends Error {
     super(message);
     this.name = "JobApiError";
   }
-}
-
-function buildEntityProxyPath(entityId: string, pathSegments: readonly string[]): string {
-  const encodedSegments = [entityId, ...pathSegments].map((segment) => encodeURIComponent(segment));
-  return `/api/entities/${encodedSegments.join("/")}`;
 }
 
 async function requestJson<T>(url: string, init: RequestInit = {}): Promise<T> {

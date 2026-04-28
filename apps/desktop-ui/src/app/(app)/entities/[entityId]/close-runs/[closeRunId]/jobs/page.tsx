@@ -98,8 +98,8 @@ export default function JobsPage(): ReactElement {
                 <div>
                   <strong className="close-run-row-title">{job.task_name}</strong>
                   <p className="close-run-row-meta">
-                    {job.status.replaceAll("_", " ")} • {job.queue_name} • attempts {job.attempt_count}/
-                    {job.max_retries + 1}
+                    {job.status.replaceAll("_", " ")} • {job.queue_name} • attempts{" "}
+                    {job.attempt_count}/{job.max_retries + 1}
                   </p>
                 </div>
               </div>

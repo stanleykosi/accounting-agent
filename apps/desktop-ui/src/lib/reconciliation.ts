@@ -10,6 +10,7 @@ import {
   invalidateClientCacheByPrefix,
   loadClientCachedValue,
 } from "./client-cache";
+import { buildEntityProxyPath } from "./entity-proxy";
 
 /** Represent the filter state for the reconciliation review queue. */
 export type ReconciliationReviewFilter =
@@ -176,24 +177,6 @@ const SEVERITY_COLORS: Readonly<Record<string, string>> = {
 };
 
 // ---------------------------------------------------------------------------
-// API proxy path builder — mirrors the document review pattern
-// ---------------------------------------------------------------------------
-
-const ENTITIES_PROXY_BASE_PATH = "/api/entities";
-
-/**
- * Purpose: Build the /api/entities proxy path for one entity and route segments.
- * Inputs: Entity UUID and an ordered array of route segments.
- * Outputs: A URL path string that routes through the Next.js /api/entities proxy
- *          to the FastAPI backend.
- * Behavior: Encodes each segment to prevent path injection.
- */
-function buildEntityProxyPath(entityId: string, pathSegments: readonly string[]): string {
-  const encodedSegments = [entityId, ...pathSegments].map((segment) => encodeURIComponent(segment));
-  return `${ENTITIES_PROXY_BASE_PATH}/${encodedSegments.join("/")}`;
-}
-
-// ---------------------------------------------------------------------------
 // Response normalizers — convert snake_case API payloads to camelCase UI shapes
 // ---------------------------------------------------------------------------
 
@@ -319,12 +302,13 @@ export async function readReconciliationReviewWorkspace(
   entityId: string,
   closeRunId: string,
 ): Promise<ReconciliationReviewWorkspaceData> {
-  const [closeRunResp, reconciliationsResp, anomaliesResp, trialBalanceResp] = await Promise.allSettled([
-    fetchWithAuth(buildEntityProxyPath(entityId, ["close-runs", closeRunId])),
-    fetchWithAuth(buildEntityProxyPath(entityId, ["close-runs", closeRunId, "reconciliations"])),
-    fetchWithAuth(buildEntityProxyPath(entityId, ["close-runs", closeRunId, "anomalies"])),
-    fetchWithAuth(buildEntityProxyPath(entityId, ["close-runs", closeRunId, "trial-balance"])),
-  ]);
+  const [closeRunResp, reconciliationsResp, anomaliesResp, trialBalanceResp] =
+    await Promise.allSettled([
+      fetchWithAuth(buildEntityProxyPath(entityId, ["close-runs", closeRunId])),
+      fetchWithAuth(buildEntityProxyPath(entityId, ["close-runs", closeRunId, "reconciliations"])),
+      fetchWithAuth(buildEntityProxyPath(entityId, ["close-runs", closeRunId, "anomalies"])),
+      fetchWithAuth(buildEntityProxyPath(entityId, ["close-runs", closeRunId, "trial-balance"])),
+    ]);
 
   const closeRunRaw =
     closeRunResp.status === "fulfilled"
@@ -352,16 +336,18 @@ export async function readReconciliationReviewWorkspace(
   const operatingMode = closeRunRaw?.operating_mode ?? null;
   const activePhase = (workflowState?.active_phase as string | null) ?? null;
   const blockingReason =
-    ((workflowState?.phase_states ?? []).find(
+    (workflowState?.phase_states ?? []).find(
       (phaseState) =>
         asString(phaseState.phase) === activePhase && asString(phaseState.status) === "blocked",
-    )?.blocking_reason ?? null);
+    )?.blocking_reason ?? null;
 
   const reconciliationsRaw =
     reconciliationsResp.status === "fulfilled"
       ? (reconciliationsResp.value as { reconciliations?: Array<Record<string, unknown>> })
       : {};
-  const reconciliations = (reconciliationsRaw.reconciliations ?? []).map(parseReconciliationSummary);
+  const reconciliations = (reconciliationsRaw.reconciliations ?? []).map(
+    parseReconciliationSummary,
+  );
 
   const anomaliesRaw =
     anomaliesResp.status === "fulfilled"
@@ -423,9 +409,7 @@ export async function readReconciliationReviewWorkspace(
   const pendingRunApprovals = reconciliations.filter((r) => r.status !== "approved").length;
 
   const queueCounts = {
-    needsDecision: allItems.filter(
-      (i) => i.requiresDisposition && i.disposition === null,
-    ).length,
+    needsDecision: allItems.filter((i) => i.requiresDisposition && i.disposition === null).length,
     matched: allItems.filter((i) => i.matchStatus === "matched").length,
     exception: allItems.filter(
       (i) => i.matchStatus === "exception" || i.matchStatus === "unmatched",
@@ -472,14 +456,14 @@ export async function submitDispositionItem(
   disposition: DispositionActionValue,
   reason: string,
 ): Promise<{ itemId: string; disposition: string; requiresFurtherAction: boolean }> {
-  const result = await fetchWithAuth(
+  const result = (await fetchWithAuth(
     buildEntityProxyPath(entityId, ["close-runs", closeRunId, "items", itemId, "disposition"]),
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ disposition, reason }),
     },
-  ) as Record<string, unknown>;
+  )) as Record<string, unknown>;
   return {
     itemId: asString(result.item_id, itemId),
     disposition: asString(result.disposition, disposition),
@@ -500,14 +484,14 @@ export async function submitBulkDisposition(
   disposition: DispositionActionValue,
   reason: string,
 ): Promise<{ disposedCount: number; failedCount: number; failedItemIds: string[] }> {
-  const result = await fetchWithAuth(
+  const result = (await fetchWithAuth(
     buildEntityProxyPath(entityId, ["close-runs", closeRunId, "disposition", "bulk"]),
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ item_ids: itemIds, disposition, reason }),
     },
-  ) as Record<string, unknown>;
+  )) as Record<string, unknown>;
   return {
     disposedCount: asNumber(result.disposed_count),
     failedCount: asNumber(result.failed_count),
@@ -527,7 +511,7 @@ export async function approveReconciliation(
   reconciliationId: string,
   reason: string,
 ): Promise<{ reconciliationId: string; status: string; approvedByUserId: string }> {
-  const result = await fetchWithAuth(
+  const result = (await fetchWithAuth(
     buildEntityProxyPath(entityId, [
       "close-runs",
       closeRunId,
@@ -540,7 +524,7 @@ export async function approveReconciliation(
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ reason }),
     },
-  ) as Record<string, unknown>;
+  )) as Record<string, unknown>;
   return {
     reconciliationId: asString(result.reconciliation_id, reconciliationId),
     status: asString(result.status),
@@ -559,18 +543,17 @@ export async function runReconciliation(
   closeRunId: string,
   reconciliationTypes?: readonly string[],
 ): Promise<ReconciliationRunResponse> {
-  const result = await fetchWithAuth(
+  const result = (await fetchWithAuth(
     buildEntityProxyPath(entityId, ["close-runs", closeRunId, "reconciliations", "run"]),
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        reconciliation_types: reconciliationTypes && reconciliationTypes.length > 0
-          ? reconciliationTypes
-          : null,
+        reconciliation_types:
+          reconciliationTypes && reconciliationTypes.length > 0 ? reconciliationTypes : null,
       }),
     },
-  ) as Record<string, unknown>;
+  )) as Record<string, unknown>;
   return {
     job_id: (() => {
       const value = result.job_id;
@@ -601,14 +584,14 @@ export async function resolveAnomaly(
   anomalyId: string,
   resolutionNote: string,
 ): Promise<ReconciliationAnomalySummary> {
-  const result = await fetchWithAuth(
+  const result = (await fetchWithAuth(
     buildEntityProxyPath(entityId, ["close-runs", closeRunId, "anomalies", anomalyId, "resolve"]),
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ resolution_note: resolutionNote }),
     },
-  ) as Record<string, unknown>;
+  )) as Record<string, unknown>;
   return parseAnomalySummary(result);
 }
 
@@ -630,7 +613,9 @@ export function filterReconciliationItems(
     case "unresolved":
       return items.filter((i) => i.requiresDisposition && i.disposition === null);
     case "matched":
-      return items.filter((i) => i.matchStatus === "matched" || i.matchStatus === "partially_matched");
+      return items.filter(
+        (i) => i.matchStatus === "matched" || i.matchStatus === "partially_matched",
+      );
     case "exception":
       return items.filter((i) => i.matchStatus === "exception");
     case "unmatched":
@@ -647,7 +632,10 @@ export function filterReconciliationItems(
  * Behavior: Uses a lookup map; falls back to title-casing the raw value.
  */
 export function formatReconciliationTypeLabel(type: string): string {
-  return RECONCILIATION_TYPE_LABELS[type] ?? type.replaceAll("_", " ").replace(/\b\w/g, (c) => c.toUpperCase());
+  return (
+    RECONCILIATION_TYPE_LABELS[type] ??
+    type.replaceAll("_", " ").replace(/\b\w/g, (c) => c.toUpperCase())
+  );
 }
 
 /**
@@ -657,7 +645,10 @@ export function formatReconciliationTypeLabel(type: string): string {
  * Behavior: Uses a lookup map; falls back to title-casing the raw value.
  */
 export function formatMatchStatusLabel(status: string): string {
-  return MATCH_STATUS_LABELS[status] ?? status.replaceAll("_", " ").replace(/\b\w/g, (c) => c.toUpperCase());
+  return (
+    MATCH_STATUS_LABELS[status] ??
+    status.replaceAll("_", " ").replace(/\b\w/g, (c) => c.toUpperCase())
+  );
 }
 
 /**

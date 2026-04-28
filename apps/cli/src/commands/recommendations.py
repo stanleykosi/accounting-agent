@@ -9,9 +9,15 @@ and the reusable status-table builder.
 from __future__ import annotations
 
 import argparse
-from typing import Any, cast
+from typing import cast
 
 from apps.cli.src.api_client import CliApiClientError, CliApiClientProtocol
+from apps.cli.src.command_helpers import (
+    add_close_run_scope_arguments,
+    build_close_run_path,
+    extract_rows,
+    print_api_error,
+)
 from apps.cli.src.widgets.status_table import StatusColumn, build_status_table
 from rich.console import Console
 
@@ -34,14 +40,14 @@ def configure_recommendation_subcommands(
         "list",
         help="List recommendations for one close run.",
     )
-    _add_close_run_scope_arguments(list_parser)
+    add_close_run_scope_arguments(list_parser)
     list_parser.set_defaults(handler=list_recommendations_command)
 
     approve_parser = recommendation_subparsers.add_parser(
         "approve",
         help="Approve one recommendation and generate its journal draft.",
     )
-    _add_close_run_scope_arguments(approve_parser)
+    add_close_run_scope_arguments(approve_parser)
     approve_parser.add_argument("recommendation_id", help="Recommendation UUID to approve.")
     approve_parser.add_argument("--reason", help="Optional reviewer reason.")
     approve_parser.set_defaults(handler=approve_recommendation_command)
@@ -50,7 +56,7 @@ def configure_recommendation_subcommands(
         "reject",
         help="Reject one recommendation.",
     )
-    _add_close_run_scope_arguments(reject_parser)
+    add_close_run_scope_arguments(reject_parser)
     reject_parser.add_argument("recommendation_id", help="Recommendation UUID to reject.")
     reject_parser.add_argument("--reason", required=True, help="Required rejection reason.")
     reject_parser.set_defaults(handler=reject_recommendation_command)
@@ -62,12 +68,12 @@ def configure_recommendation_subcommands(
     journal_subparsers = journals.add_subparsers(dest="journal_command", required=True)
 
     journal_list = journal_subparsers.add_parser("list", help="List journals.")
-    _add_close_run_scope_arguments(journal_list)
+    add_close_run_scope_arguments(journal_list)
     journal_list.set_defaults(handler=list_journals_command)
 
     for action in ("approve", "apply", "reject"):
         action_parser = journal_subparsers.add_parser(action, help=f"{action.title()} a journal.")
-        _add_close_run_scope_arguments(action_parser)
+        add_close_run_scope_arguments(action_parser)
         action_parser.add_argument("journal_id", help="Journal UUID to mutate.")
         action_parser.add_argument(
             "--reason",
@@ -86,11 +92,11 @@ def list_recommendations_command(
     """Fetch and render recommendations for the selected close run."""
 
     try:
-        payload = client.get(_close_run_path(args, "/recommendations"))
+        payload = client.get(build_close_run_path(args, "/recommendations"))
     except CliApiClientError as error:
-        return _print_api_error(console=console, error=error)
+        return print_api_error(console=console, error=error)
 
-    rows = _extract_rows(payload, "recommendations")
+    rows = extract_rows(payload, "recommendations")
     console.print(
         build_status_table(
             title="Recommendations",
@@ -150,11 +156,11 @@ def list_journals_command(
     """Fetch and render journal drafts for the selected close run."""
 
     try:
-        payload = client.get(_close_run_path(args, "/journals"))
+        payload = client.get(build_close_run_path(args, "/journals"))
     except CliApiClientError as error:
-        return _print_api_error(console=console, error=error)
+        return print_api_error(console=console, error=error)
 
-    rows = _extract_rows(payload, "journals")
+    rows = extract_rows(payload, "journals")
     console.print(
         build_status_table(
             title="Journals",
@@ -183,11 +189,11 @@ def journal_action_command(
     action = cast(str, args.journal_action)
     try:
         payload = client.post(
-            _close_run_path(args, f"/journals/{args.journal_id}/{action}"),
+            build_close_run_path(args, f"/journals/{args.journal_id}/{action}"),
             json_payload={"reason": args.reason},
         )
     except CliApiClientError as error:
-        return _print_api_error(console=console, error=error)
+        return print_api_error(console=console, error=error)
 
     journal = payload.get("journal")
     if isinstance(journal, dict):
@@ -212,11 +218,11 @@ def _recommendation_action(
 
     try:
         response_payload = client.post(
-            _close_run_path(args, f"/recommendations/{args.recommendation_id}/{action}"),
+            build_close_run_path(args, f"/recommendations/{args.recommendation_id}/{action}"),
             json_payload=payload,
         )
     except CliApiClientError as error:
-        return _print_api_error(console=console, error=error)
+        return print_api_error(console=console, error=error)
 
     final_status = response_payload.get("final_status") or response_payload.get("status")
     console.print(
@@ -231,36 +237,6 @@ def _recommendation_action(
             f"({journal_draft.get('total_debits')} / {journal_draft.get('total_credits')})."
         )
     return 0
-
-
-def _add_close_run_scope_arguments(parser: argparse.ArgumentParser) -> None:
-    """Add entity and close-run UUID arguments shared by review commands."""
-
-    parser.add_argument("entity_id", help="Entity workspace UUID.")
-    parser.add_argument("close_run_id", help="Close-run UUID.")
-
-
-def _close_run_path(args: argparse.Namespace, suffix: str) -> str:
-    """Build a close-run-scoped API path from parsed command arguments."""
-
-    return f"/entities/{args.entity_id}/close-runs/{args.close_run_id}{suffix}"
-
-
-def _extract_rows(payload: dict[str, Any], key: str) -> tuple[dict[str, Any], ...]:
-    """Extract list-valued API rows and ignore malformed row entries."""
-
-    value = payload.get(key)
-    if not isinstance(value, list):
-        return ()
-
-    return tuple(cast(dict[str, Any], item) for item in value if isinstance(item, dict))
-
-
-def _print_api_error(*, console: Console, error: CliApiClientError) -> int:
-    """Render a structured API error and return a shell failure code."""
-
-    console.print(f"[bold red]{error.message}[/] [dim]({error.code})[/]")
-    return 1
 
 
 __all__ = [
