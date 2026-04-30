@@ -98,6 +98,25 @@ def _chat_action_execution_error_class() -> type[Exception]:
     return ChatActionExecutionError
 
 
+def _chat_action_router_error_class() -> type[Exception]:
+    """Create the chat-action router error stub with route-compatible attributes."""
+
+    class ChatActionRouterError(Exception):
+        def __init__(
+            self,
+            *,
+            status_code: int = 500,
+            code: str = "routing_failed",
+            message: str = "",
+        ) -> None:
+            super().__init__(message)
+            self.status_code = status_code
+            self.code = SimpleNamespace(value=code)
+            self.message = message
+
+    return ChatActionRouterError
+
+
 _task_dependency_stub = ModuleType("apps.api.app.dependencies.tasks")
 _task_dependency_stub.TaskDispatcherDependency = object
 _install_temporary_module("apps.api.app.dependencies.tasks", _task_dependency_stub)
@@ -120,7 +139,7 @@ _install_service_stub(
 _install_service_stub(
     "services.chat.action_router",
     ChatActionRouter=_dummy_class("ChatActionRouter"),
-    ChatActionRouterError=_dummy_error("ChatActionRouterError"),
+    ChatActionRouterError=_chat_action_router_error_class(),
     ChatActionRouterErrorCode=SimpleNamespace(ROUTING_FAILED="routing_failed"),
 )
 _install_service_stub(
@@ -1054,6 +1073,51 @@ def test_chat_action_route_uses_shared_agent_lane_for_plain_conversation(monkeyp
     assert executor.sent_action_message["content"] == "hello"
     assert executor.sent_action_message["source_surface"] == "desktop"
     assert result.operator_controls[0].command == "confirm"
+
+
+def test_list_thread_actions_returns_typed_error_when_thread_scope_is_stale(monkeypatch) -> None:
+    """Expected router misses should surface as API errors, not ASGI exceptions."""
+
+    _install_browser_auth_stub(monkeypatch)
+    thread_id = uuid4()
+    entity_id = uuid4()
+    request = Request(
+        {
+            "type": "http",
+            "app": SimpleNamespace(version="0.1.0"),
+            "method": "GET",
+            "path": f"/api/chat/threads/{thread_id}/actions",
+            "headers": [],
+        }
+    )
+
+    class StaleThreadActionRouter:
+        def list_pending_actions(self, **kwargs):
+            del kwargs
+            raise chat_routes.ChatActionRouterError(
+                status_code=404,
+                code="thread_not_found",
+                message="That chat thread does not exist or is not in this workspace.",
+            )
+
+    try:
+        chat_routes.list_thread_actions(
+            thread_id=thread_id,
+            entity_id=entity_id,
+            request=request,
+            response=Response(),
+            settings=SimpleNamespace(),
+            auth_service=SimpleNamespace(),
+            action_router=StaleThreadActionRouter(),
+        )
+    except chat_routes.HTTPException as error:
+        assert error.status_code == 404
+        assert error.detail == {
+            "code": "thread_not_found",
+            "message": "That chat thread does not exist or is not in this workspace.",
+        }
+    else:
+        raise AssertionError("Expected stale chat thread scope to return a typed API error.")
 
 
 def test_chat_action_attachment_route_reports_partial_success_when_follow_up_fails(

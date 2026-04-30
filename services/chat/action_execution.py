@@ -921,7 +921,12 @@ class ChatActionExecutor:
                         thread=thread,
                     )
 
-                if _is_terminal_workspace_admin_tool(action.tool.name):
+                if _is_terminal_workspace_admin_tool(
+                    action.tool.name
+                ) and not _should_continue_after_workspace_admin_tool(
+                    tool_name=action.tool.name,
+                    operator_content=content,
+                ):
                     last_snapshot = self._snapshot_for_thread(
                         actor_user=actor_user,
                         entity_id=active_entity_id,
@@ -8701,6 +8706,51 @@ def _is_terminal_workspace_admin_tool(tool_name: str | None) -> bool:
         "update_workspace",
         "delete_workspace",
     }
+
+
+def _should_continue_after_workspace_admin_tool(
+    *,
+    tool_name: str | None,
+    operator_content: str,
+) -> bool:
+    """Return whether a workspace-scope change is only the first step in the turn."""
+
+    if tool_name not in {"switch_workspace", "create_workspace", "update_workspace"}:
+        return False
+    normalized_content = _searchable_text(operator_content)
+    if not normalized_content:
+        return False
+    if " and " not in f" {normalized_content} ":
+        return False
+    return any(
+        phrase in normalized_content
+        for phrase in (
+            "tell me",
+            "more about",
+            "summarize",
+            "summary",
+            "overview",
+            "details",
+            "describe",
+            "explain",
+            "status",
+            "current state",
+            "what",
+            "show",
+            "list",
+            "open",
+            "create",
+            "start",
+            "run",
+            "generate",
+            "process",
+            "review",
+            "approve",
+            "reconcile",
+            "report",
+            "export",
+        )
+    )
 
 
 def _build_operator_failure_message(

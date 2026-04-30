@@ -61,7 +61,7 @@ from services.chat.action_models import (
     RejectChatActionRequest,
     SendChatActionRequest,
 )
-from services.chat.action_router import ChatActionRouter
+from services.chat.action_router import ChatActionRouter, ChatActionRouterError
 from services.chat.continuation_state import (
     embed_continuation_in_checkpoint,
     new_chat_operator_continuation,
@@ -1388,12 +1388,18 @@ def list_thread_actions(
         settings=settings,
     )
 
-    plans = action_router.list_pending_actions(
-        thread_id=thread_id,
-        entity_id=entity_id,
-        user_id=session_result.user.id,
-        limit=limit,
-    )
+    try:
+        plans = action_router.list_pending_actions(
+            thread_id=thread_id,
+            entity_id=entity_id,
+            user_id=session_result.user.id,
+            limit=limit,
+        )
+    except ChatActionRouterError as error:
+        raise HTTPException(
+            status_code=error.status_code,
+            detail=_error_payload(code=error.code.value, message=error.message),
+        ) from error
 
     return [
         ChatActionSummary(

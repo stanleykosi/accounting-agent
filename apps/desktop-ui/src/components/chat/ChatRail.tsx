@@ -1229,12 +1229,12 @@ const emptySidebarBodyStyle = {
 
 const threadListStyle = {
   display: "grid",
-  gap: 3,
+  gap: 1,
   listStyle: "none",
   margin: 0,
   minHeight: 0,
   overflow: "auto",
-  padding: "6px 0 2px",
+  padding: "4px 0 2px",
 } satisfies CSSProperties;
 
 const threadRowStyle = {
@@ -1247,7 +1247,7 @@ function threadCardStyle(active: boolean) {
   return {
     alignItems: "center",
     border: active ? "1px solid rgba(142, 115, 75, 0.35)" : "1px solid transparent",
-    borderRadius: 8,
+    borderRadius: 6,
     background: active ? "rgba(255, 251, 235, 0.78)" : "transparent",
     boxShadow: active
       ? "inset 3px 0 0 var(--quartz-gold)"
@@ -1256,7 +1256,7 @@ function threadCardStyle(active: boolean) {
     cursor: "pointer",
     display: "grid",
     minHeight: 0,
-    padding: "7px 32px 7px 10px",
+    padding: "5px 28px 5px 8px",
     textAlign: "left",
     transition: "background 120ms ease, border-color 120ms ease",
     width: "100%",

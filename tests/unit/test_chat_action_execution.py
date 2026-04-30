@@ -2293,6 +2293,159 @@ def test_send_action_message_switches_workspace_with_json_safe_uuid_result() -> 
     assert "UUID is not JSON serializable" not in outcome.assistant_content
 
 
+def test_send_action_message_continues_after_workspace_switch_when_user_asks_for_details() -> None:
+    """A compound switch-and-read request should not require a second user prompt."""
+
+    current_entity_id = uuid4()
+    target_entity_id = uuid4()
+    actor_user = EntityUserRecord(id=uuid4(), email="ops@example.com", full_name="Finance Ops")
+    thread_id = uuid4()
+    thread_by_entity: dict[UUID, SimpleNamespace] = {
+        current_entity_id: SimpleNamespace(
+            entity_id=current_entity_id,
+            close_run_id=None,
+            context_payload={
+                "entity_id": str(current_entity_id),
+                "entity_name": "Polymarket",
+                "close_run_id": None,
+                "period_label": None,
+                "autonomy_mode": "human_review",
+                "base_currency": "USD",
+            },
+        )
+    }
+    grounding_by_entity = {
+        current_entity_id: SimpleNamespace(
+            entity=SimpleNamespace(name="Polymarket"),
+            close_run=None,
+            context=SimpleNamespace(
+                entity_id=str(current_entity_id),
+                entity_name="Polymarket",
+                close_run_id=None,
+                period_label=None,
+                autonomy_mode="human_review",
+                base_currency="USD",
+            ),
+        ),
+        target_entity_id: SimpleNamespace(
+            entity=SimpleNamespace(name="Apex Meridian Distribution Limited"),
+            close_run=None,
+            context=SimpleNamespace(
+                entity_id=str(target_entity_id),
+                entity_name="Apex Meridian Distribution Limited",
+                close_run_id=None,
+                period_label=None,
+                autonomy_mode="human_review",
+                base_currency="NGN",
+            ),
+        ),
+    }
+    snapshot_by_entity = {
+        current_entity_id: {
+            "workspace": {"id": str(current_entity_id), "name": "Polymarket"},
+            "accessible_workspaces": [
+                {"id": str(current_entity_id), "name": "Polymarket"},
+                {
+                    "id": str(target_entity_id),
+                    "name": "Apex Meridian Distribution Limited",
+                },
+            ],
+            "readiness": {"next_actions": []},
+        },
+        target_entity_id: {
+            "workspace": {
+                "id": str(target_entity_id),
+                "name": "Apex Meridian Distribution Limited",
+            },
+            "readiness": {"next_actions": []},
+        },
+    }
+    plans = iter(
+        (
+            AgentPlanningResult(
+                mode="tool",
+                assistant_response="I'll switch this chat to Apex.",
+                reasoning="The operator asked to switch workspaces.",
+                tool_name="switch_workspace",
+                tool_arguments={"workspace_id": str(target_entity_id)},
+            ),
+            AgentPlanningResult(
+                mode="read_only",
+                assistant_response=(
+                    "Here's a full picture of the Apex Meridian Distribution Limited workspace."
+                ),
+                reasoning="The operator also asked for workspace details.",
+                tool_name=None,
+                tool_arguments={},
+            ),
+        )
+    )
+    db_session = _FakeLoopDbSession()
+    chat_repo = _FakeLoopChatRepository()
+    action_repo = _FakeLoopActionRepository(close_run_id=uuid4())
+    grounding_service = _FakeGroundingService(
+        reopened_close_run_id=uuid4(),
+        entity_id=target_entity_id,
+    )
+
+    def update_thread_scope(**kwargs):
+        updated_thread = SimpleNamespace(
+            entity_id=kwargs["entity_id"],
+            close_run_id=kwargs["close_run_id"],
+            context_payload=kwargs["context_payload"],
+        )
+        thread_by_entity[kwargs["entity_id"]] = updated_thread
+        return updated_thread
+
+    chat_repo.update_thread_scope = update_thread_scope  # type: ignore[method-assign]
+    executor = ChatActionExecutor.__new__(ChatActionExecutor)
+    executor._db_session = db_session
+    executor._chat_repo = chat_repo
+    executor._action_repo = action_repo
+    executor._grounding = grounding_service
+    executor._tool_registry = _build_fake_tool_registry("switch_workspace")
+    executor._ensure_entity_coa_available = lambda **kwargs: None
+    executor._handle_pending_plan_reply = lambda **kwargs: None  # type: ignore[method-assign]
+    executor._load_thread_context = lambda **kwargs: (  # type: ignore[method-assign]
+        grounding_by_entity[kwargs["entity_id"]],
+        thread_by_entity[kwargs["entity_id"]],
+    )
+    executor._snapshot_for_thread = lambda **kwargs: snapshot_by_entity[  # type: ignore[method-assign]
+        kwargs["entity_id"]
+    ]
+    executor._plan_action = lambda **kwargs: next(plans)  # type: ignore[method-assign]
+    executor._resolve_action = lambda **kwargs: _resolve_fake_action(  # type: ignore[method-assign]
+        kwargs["planning"]
+    )
+    executor._build_execution_context = lambda **kwargs: SimpleNamespace()  # type: ignore[method-assign]
+    executor._requires_human_approval = lambda **kwargs: False
+    executor._execute_action = lambda **kwargs: {  # type: ignore[method-assign]
+        "tool": "switch_workspace",
+        "switched_workspace_id": target_entity_id,
+        "workspace_id": target_entity_id,
+        "workspace_name": "Apex Meridian Distribution Limited",
+    }
+
+    outcome = executor.send_action_message(
+        thread_id=thread_id,
+        entity_id=current_entity_id,
+        actor_user=actor_user,
+        content="switch to the apex workspace and tell me more about it",
+        source_surface="desktop",
+        trace_id="trace-switch-apex-details",
+    )
+
+    assert outcome.thread_entity_id == str(target_entity_id)
+    assert (
+        "I switched this conversation to the Apex Meridian Distribution Limited workspace."
+        in outcome.assistant_content
+    )
+    assert (
+        "Here's a full picture of the Apex Meridian Distribution Limited workspace."
+        in outcome.assistant_content
+    )
+
+
 def test_send_action_message_returns_partial_progress_when_later_step_blocks() -> None:
     """A later failure should keep earlier loop progress and respond naturally."""
 
