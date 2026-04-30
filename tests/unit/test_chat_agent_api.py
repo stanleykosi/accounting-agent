@@ -939,6 +939,60 @@ def test_chat_action_attachment_route_ingests_source_documents(monkeypatch) -> N
     assert close_run_service.rewind_calls == []
 
 
+def test_chat_action_attachment_route_guides_workspace_upload_toward_close_run(
+    monkeypatch,
+) -> None:
+    """Source documents attached outside a close run should stay in the chat UX."""
+
+    _install_browser_auth_stub(monkeypatch)
+    executor = FakeChatActionExecutor()
+    repository = FakeChatRepository(close_run_id=None)
+    document_upload_service = FakeDocumentUploadService()
+    db_session = FakeDatabaseSession()
+    entity_id = uuid4()
+    thread_id = uuid4()
+    request = Request(
+        {
+            "type": "http",
+            "app": SimpleNamespace(version="0.1.0"),
+            "method": "POST",
+            "path": f"/api/chat/threads/{thread_id}/actions/attachments",
+            "headers": [],
+        }
+    )
+    file = UploadFile(filename="invoice.pdf", file=BytesIO(b"%PDF-1.4 test"))
+
+    result = asyncio.run(
+        chat_routes.send_chat_action_with_attachments(
+            thread_id=thread_id,
+            entity_id=entity_id,
+            request=request,
+            response=Response(),
+            settings=SimpleNamespace(),
+            auth_service=SimpleNamespace(),
+            action_executor=executor,
+            chat_repository=repository,
+            db_session=db_session,
+            document_upload_service=document_upload_service,
+            close_run_service=FakeCloseRunService(),
+            coa_service=FakeCoaService(),
+            content="Please upload this invoice.",
+            attachment_intent="source_documents",
+            files=(file,),
+        )
+    )
+
+    assert result.is_read_only is True
+    assert result.thread_close_run_id is None
+    assert "I did not upload the attached files" in result.content
+    assert "create an Apr 2026 close run" in result.content
+    assert len(document_upload_service.calls) == 0
+    assert executor.sent_action_message is None
+    assert result.operator_controls[0].command == "confirm"
+    assert [message["role"] for message in repository.messages] == ["user", "assistant"]
+    assert repository.messages[1]["model_metadata"]["action_status"] == "blocked"
+
+
 def test_chat_action_attachment_route_rewinds_mid_processing_upload(monkeypatch) -> None:
     """Mid-processing chat uploads should reopen Collection before ingestion."""
 

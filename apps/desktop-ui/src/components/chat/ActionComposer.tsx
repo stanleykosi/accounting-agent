@@ -449,48 +449,28 @@ export function ActionComposer({
       >
         <div style={composerShellStyle}>
           <div style={composerInputRowStyle}>
-            <div style={composerUtilityRowStyle}>
-              {allowAttachments ? (
-                <>
-                  <button
-                    aria-label="Add source"
-                    onClick={() => fileInputRef.current?.click()}
-                    style={attachmentButtonStyle}
-                    title="Add source"
-                    type="button"
-                  >
-                    <QuartzIcon name="upload" style={composerButtonIconStyle} />
-                  </button>
-                  <input
-                    accept=".pdf,.csv,.xlsx,.xls,.xlsm"
-                    multiple
-                    onChange={(event) => {
-                      setAttachments(Array.from(event.target.files ?? []));
-                      setError(null);
-                    }}
-                    ref={fileInputRef}
-                    style={{ display: "none" }}
-                    type="file"
-                  />
-
-                  {attachments.length > 0 ? (
-                    <button
-                      onClick={() => {
-                        setAttachments([]);
-                        setError(null);
-                        if (fileInputRef.current !== null) {
-                          fileInputRef.current.value = "";
-                        }
-                      }}
-                      style={clearButtonStyle}
-                      type="button"
-                    >
-                      Clear files
-                    </button>
-                  ) : null}
-                </>
-              ) : null}
-            </div>
+            <>
+              <button
+                aria-label="Upload document"
+                onClick={() => fileInputRef.current?.click()}
+                style={attachmentButtonStyle}
+                title="Upload document"
+                type="button"
+              >
+                <QuartzIcon name="upload" style={composerButtonIconStyle} />
+              </button>
+              <input
+                accept=".pdf,.csv,.xlsx,.xls,.xlsm"
+                multiple
+                onChange={(event) => {
+                  setAttachments(Array.from(event.target.files ?? []));
+                  setError(null);
+                }}
+                ref={fileInputRef}
+                style={{ display: "none" }}
+                type="file"
+              />
+            </>
 
             <textarea
               disabled={isSubmitting}
@@ -526,13 +506,28 @@ export function ActionComposer({
           </div>
 
           {attachments.length > 0 ? (
-            <div style={attachmentListStyle}>
-              {attachments.map((file) => (
-                <span key={`${file.name}:${file.size}`} style={attachmentTokenStyle}>
-                  <span style={attachmentTokenNameStyle}>{file.name}</span>
-                  <span style={attachmentTokenMetaStyle}>{formatByteSize(file.size)}</span>
-                </span>
-              ))}
+            <div style={attachmentBarStyle}>
+              <div style={attachmentListStyle}>
+                {attachments.map((file) => (
+                  <span key={`${file.name}:${file.size}`} style={attachmentTokenStyle}>
+                    <span style={attachmentTokenNameStyle}>{file.name}</span>
+                    <span style={attachmentTokenMetaStyle}>{formatByteSize(file.size)}</span>
+                  </span>
+                ))}
+              </div>
+              <button
+                onClick={() => {
+                  setAttachments([]);
+                  setError(null);
+                  if (fileInputRef.current !== null) {
+                    fileInputRef.current.value = "";
+                  }
+                }}
+                style={clearButtonStyle}
+                type="button"
+              >
+                Clear
+              </button>
             </div>
           ) : null}
         </div>
@@ -901,42 +896,44 @@ const attachmentTokenMetaStyle = {
   fontSize: 11,
 } satisfies React.CSSProperties;
 
-const composerUtilityRowStyle = {
+const attachmentBarStyle = {
   alignItems: "center",
   display: "flex",
-  flexWrap: "wrap",
   gap: 8,
+  justifyContent: "space-between",
 } satisfies React.CSSProperties;
 
 const attachmentButtonStyle = {
-  border: "1px solid rgba(69, 97, 123, 0.2)",
-  borderRadius: 8,
-  background: "rgba(247, 243, 242, 0.88)",
-  color: "var(--quartz-secondary)",
+  alignItems: "center",
+  alignSelf: "end",
+  border: "none",
+  borderRadius: 999,
+  background: "transparent",
+  color: "var(--quartz-muted)",
   cursor: "pointer",
   display: "inline-flex",
-  alignItems: "center",
-  fontSize: 12,
-  fontWeight: 600,
-  height: 36,
+  flex: "0 0 auto",
+  height: 34,
   justifyContent: "center",
   padding: 0,
-  width: 36,
+  transition: "color 120ms ease",
+  width: 34,
 } satisfies React.CSSProperties;
 
 const composerButtonIconStyle = {
-  height: 14,
-  width: 14,
+  height: 16,
+  width: 16,
 } satisfies React.CSSProperties;
 
 const clearButtonStyle = {
   border: "none",
   background: "transparent",
-  color: "var(--quartz-muted)",
+  color: "var(--quartz-error)",
   cursor: "pointer",
-  fontSize: 12,
+  flex: "0 0 auto",
+  fontSize: 11,
   fontWeight: 600,
-  padding: 0,
+  padding: "2px 4px",
 } satisfies React.CSSProperties;
 
 function sendButtonStyle(disabled: boolean) {

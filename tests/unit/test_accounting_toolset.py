@@ -14,7 +14,7 @@ import pytest
 import services.agents.accounting_toolset as accounting_toolset_module
 from services.agents.accounting_toolset import AccountingToolset
 from services.agents.models import AgentExecutionContext
-from services.common.enums import CloseRunStatus, WorkflowPhase
+from services.common.enums import CloseRunStatus, DocumentStatus, WorkflowPhase
 from services.db.models.documents import Document
 from services.db.models.recommendations import Recommendation
 from services.db.repositories.entity_repo import EntityUserRecord
@@ -55,13 +55,29 @@ class _FakeDocumentRepository:
     def list_documents_for_close_run(self, *, close_run_id: UUID):
         return self.documents_by_close_run_id[close_run_id]
 
+    def list_documents_for_close_run_with_latest_extraction(self, *, close_run_id: UUID):
+        return tuple(
+            SimpleNamespace(document=document, latest_extraction=None, open_issues=())
+            for document in self.documents_by_close_run_id[close_run_id]
+        )
+
 
 class _FakeEntityRepository:
     def __init__(self, *, accessible_workspaces: dict[UUID, object] | None = None) -> None:
+        self.allow_any_workspace = accessible_workspaces is None
         self.accessible_workspaces = accessible_workspaces or {}
 
     def get_entity_for_user(self, *, entity_id: UUID, user_id: UUID):
         del user_id
+        if self.allow_any_workspace:
+            return SimpleNamespace(
+                entity=SimpleNamespace(
+                    id=entity_id,
+                    name="Acme Finance",
+                    base_currency="USD",
+                    autonomy_mode=SimpleNamespace(value="human_review"),
+                )
+            )
         return self.accessible_workspaces.get(entity_id)
 
 
@@ -296,6 +312,99 @@ def test_create_close_run_tool_uses_canonical_contract_validation() -> None:
     assert close_run_service.create_call["duplicate_period_reason"] is None
     assert result["created_close_run_id"] == str(created_close_run_id)
     assert result["active_phase"] == WorkflowPhase.COLLECTION.value
+
+
+def test_review_documents_approves_clean_documents_and_reports_skips() -> None:
+    """Batch document approval should handle clear sets without requiring repeat prompts."""
+
+    actor = EntityUserRecord(id=uuid4(), email="ops@example.com", full_name="Finance Ops")
+    close_run_id = uuid4()
+    clean_document_id = uuid4()
+    issue_document_id = uuid4()
+    processing_document_id = uuid4()
+    calls: list[dict[str, object]] = []
+    documents_by_id = {
+        clean_document_id: SimpleNamespace(
+            id=clean_document_id,
+            original_filename="invoice-clean.pdf",
+            status=SimpleNamespace(value=DocumentStatus.APPROVED.value),
+        ),
+    }
+
+    class FakeDocumentReviewService:
+        def review_document(self, **kwargs):
+            calls.append(kwargs)
+            document_id = kwargs["document_id"]
+            return SimpleNamespace(
+                document=documents_by_id[document_id],
+                decision=kwargs["decision"],
+            )
+
+    class FakeBatchDocumentRepository(_FakeDocumentRepository):
+        def list_documents_for_close_run_with_latest_extraction(self, *, close_run_id: UUID):
+            del close_run_id
+            return (
+                SimpleNamespace(
+                    document=SimpleNamespace(
+                        id=clean_document_id,
+                        original_filename="invoice-clean.pdf",
+                        status=DocumentStatus.PARSED.value,
+                    ),
+                    latest_extraction=None,
+                    open_issues=(),
+                ),
+                SimpleNamespace(
+                    document=SimpleNamespace(
+                        id=issue_document_id,
+                        original_filename="invoice-open-issue.pdf",
+                        status=DocumentStatus.NEEDS_REVIEW.value,
+                    ),
+                    latest_extraction=None,
+                    open_issues=(SimpleNamespace(id=uuid4()),),
+                ),
+                SimpleNamespace(
+                    document=SimpleNamespace(
+                        id=processing_document_id,
+                        original_filename="invoice-processing.pdf",
+                        status=DocumentStatus.PROCESSING.value,
+                    ),
+                    latest_extraction=None,
+                    open_issues=(),
+                ),
+            )
+
+    toolset = _make_toolset(
+        close_run_service=_FakeCloseRunService(
+            close_run=SimpleNamespace(
+                status=CloseRunStatus.DRAFT,
+                workflow_state=SimpleNamespace(active_phase=WorkflowPhase.COLLECTION),
+            )
+        ),
+        document_repository=FakeBatchDocumentRepository(
+            source_document=SimpleNamespace(),
+            documents_by_close_run_id={close_run_id: ()},
+        ),
+    )
+    toolset._document_review_service = FakeDocumentReviewService()
+
+    result = toolset._review_documents(
+        {
+            "decision": "approved",
+            "verified_complete": True,
+            "verified_authorized": True,
+            "verified_period": True,
+        },
+        _build_execution_context(actor=actor, close_run_id=close_run_id),
+    )
+
+    assert result["reviewed_count"] == 1
+    assert result["skipped_count"] == 2
+    assert result["failed_count"] == 0
+    assert calls[0]["document_id"] == clean_document_id
+    assert {item["document_filename"] for item in result["skipped"]} == {
+        "invoice-open-issue.pdf",
+        "invoice-processing.pdf",
+    }
 
 
 def test_delete_workspace_rejects_current_workspace_scope() -> None:

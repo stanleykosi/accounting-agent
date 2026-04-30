@@ -29,6 +29,7 @@ from services.common.enums import (
     DEFAULT_RECONCILIATION_EXECUTION_TYPES,
     CloseRunStatus,
     DispositionAction,
+    DocumentStatus,
     ReconciliationType,
     ReviewStatus,
     SupportingScheduleStatus,
@@ -443,6 +444,55 @@ class AccountingToolset:
                     "reason": _optional_string_property("Optional reviewer rationale."),
                 },
                 required=("document_id", "decision"),
+            ),
+        )
+        self._register(
+            registry=registry,
+            name="review_documents",
+            namespace="document_control",
+            prompt_signature=(
+                "review_documents("
+                "decision: approved|rejected|needs_info, document_ids?, "
+                "include_documents_with_open_issues?, reason?"
+                ")"
+            ),
+            description=(
+                "Persist one review decision across multiple clear close-run documents. "
+                "When document_ids is omitted, applies to all reviewable parsed documents "
+                "and reports skipped documents."
+            ),
+            intent="proposed_edit",
+            requires_human_approval=False,
+            executor=self._review_documents,
+            target_type=None,
+            target_id_field=None,
+            input_schema=_schema_object(
+                properties={
+                    "decision": _enum_string_property(
+                        values=("approved", "rejected", "needs_info"),
+                        description="Document review decision to persist for each target.",
+                    ),
+                    "document_ids": _uuid_array_property(
+                        "Optional document UUIDs to review. Omit to review all eligible documents."
+                    ),
+                    "include_documents_with_open_issues": _boolean_property(
+                        "Whether approval may include documents that still have open issues."
+                    ),
+                    "verified_complete": _boolean_property(
+                        "Whether the reviewer confirmed each document is complete.",
+                    ),
+                    "verified_authorized": _boolean_property(
+                        "Whether the reviewer confirmed each document is authorized.",
+                    ),
+                    "verified_period": _boolean_property(
+                        "Whether the reviewer confirmed each document belongs to this period.",
+                    ),
+                    "verified_transaction_match": _boolean_property(
+                        "Whether the reviewer confirmed each document matches the transaction.",
+                    ),
+                    "reason": _optional_string_property("Optional reviewer rationale."),
+                },
+                required=("decision",),
             ),
         )
         self._register(
@@ -1208,6 +1258,129 @@ class AccountingToolset:
                 "document_filename": result.document.original_filename,
                 "status": result.document.status.value,
                 "decision": result.decision,
+            },
+        )
+
+    def _review_documents(
+        self,
+        arguments: dict[str, Any],
+        context: AgentExecutionContext,
+    ) -> dict[str, Any]:
+        actor_user = self._require_actor(context)
+        close_run_id = self._require_close_run_id(
+            context,
+            "Document review requires a close-run-scoped thread.",
+        )
+        source_close_run_id = self._source_close_run_id(
+            context=context,
+            current_close_run_id=close_run_id,
+        )
+        decision = _require_string(arguments, "decision").strip().lower()
+        reason = _optional_string(arguments, "reason")
+        include_open_issues = bool(arguments.get("include_documents_with_open_issues") is True)
+        requested_document_ids = {
+            UUID(document_id) for document_id in _optional_string_list(arguments, "document_ids")
+        }
+        prepared = self._prepare_phase_mutation_scope(
+            actor_user=actor_user,
+            entity_id=context.entity_id,
+            close_run_id=close_run_id,
+            required_phase=WorkflowPhase.COLLECTION,
+            action_label="Batch document review",
+            source_surface=cast(AuditSourceSurface, context.source_surface),
+            trace_id=context.trace_id,
+        )
+        source_rows = self._document_repo.list_documents_for_close_run_with_latest_extraction(
+            close_run_id=source_close_run_id
+        )
+        reviewed: list[dict[str, Any]] = []
+        skipped: list[dict[str, Any]] = []
+        failed: list[dict[str, Any]] = []
+
+        for row in source_rows:
+            document = row.document
+            document_id = UUID(str(document.id))
+            if requested_document_ids and document_id not in requested_document_ids:
+                continue
+            skip_reason = _batch_document_review_skip_reason(
+                status=str(document.status),
+                decision=decision,
+                has_open_issues=bool(row.open_issues),
+                include_open_issues=include_open_issues,
+            )
+            if skip_reason is not None:
+                skipped.append(
+                    {
+                        "document_id": str(document.id),
+                        "document_filename": document.original_filename,
+                        "status": str(document.status),
+                        "reason": skip_reason,
+                    }
+                )
+                continue
+            try:
+                target_document_id = self._resolve_document_id_for_scope(
+                    actor_user=actor_user,
+                    entity_id=context.entity_id,
+                    source_close_run_id=source_close_run_id,
+                    target_close_run_id=prepared.close_run_id,
+                    document_id=document_id,
+                )
+                result = self._document_review_service.review_document(
+                    actor_user=actor_user,
+                    entity_id=context.entity_id,
+                    close_run_id=prepared.close_run_id,
+                    document_id=target_document_id,
+                    decision=decision,
+                    reason=reason,
+                    verified_complete=_optional_bool(arguments, "verified_complete"),
+                    verified_authorized=_optional_bool(arguments, "verified_authorized"),
+                    verified_period=_optional_bool(arguments, "verified_period"),
+                    verified_transaction_match=_optional_bool(
+                        arguments, "verified_transaction_match"
+                    ),
+                    source_surface=cast(AuditSourceSurface, context.source_surface),
+                    trace_id=context.trace_id,
+                )
+                reviewed.append(
+                    {
+                        "document_id": str(result.document.id),
+                        "document_filename": result.document.original_filename,
+                        "status": result.document.status.value,
+                        "decision": result.decision,
+                    }
+                )
+            except Exception as error:
+                failed.append(
+                    {
+                        "document_id": str(document.id),
+                        "document_filename": document.original_filename,
+                        "status": str(document.status),
+                        "reason": str(error),
+                    }
+                )
+
+        if requested_document_ids:
+            found_ids = {UUID(str(row.document.id)) for row in source_rows}
+            for missing_id in sorted(requested_document_ids - found_ids, key=str):
+                failed.append(
+                    {
+                        "document_id": str(missing_id),
+                        "reason": "That document does not exist in the current close run.",
+                    }
+                )
+
+        return self._with_scope_metadata(
+            prepared=prepared,
+            result={
+                "tool": "review_documents",
+                "decision": decision,
+                "reviewed_count": len(reviewed),
+                "skipped_count": len(skipped),
+                "failed_count": len(failed),
+                "documents": reviewed,
+                "skipped": skipped,
+                "failed": failed,
             },
         )
 
@@ -3650,6 +3823,39 @@ def _build_document_fingerprint(document: Any) -> tuple[str, str, str, int]:
         document.sha256_hash,
         document.file_size_bytes,
     )
+
+
+def _batch_document_review_skip_reason(
+    *,
+    status: str,
+    decision: str,
+    has_open_issues: bool,
+    include_open_issues: bool,
+) -> str | None:
+    """Return the reason a document should not be included in a batch review."""
+
+    normalized_status = status.strip().lower()
+    if normalized_status in {
+        DocumentStatus.UPLOADED.value,
+        DocumentStatus.PROCESSING.value,
+    }:
+        return "Document parsing is still in progress."
+    if normalized_status in {
+        DocumentStatus.APPROVED.value,
+        DocumentStatus.REJECTED.value,
+        DocumentStatus.FAILED.value,
+        DocumentStatus.DUPLICATE.value,
+        DocumentStatus.BLOCKED.value,
+    }:
+        return f"Document is already {normalized_status.replace('_', ' ')}."
+    if normalized_status not in {
+        DocumentStatus.PARSED.value,
+        DocumentStatus.NEEDS_REVIEW.value,
+    }:
+        return f"Document status {normalized_status or 'unknown'} is not reviewable."
+    if decision == "approved" and has_open_issues and not include_open_issues:
+        return "Document still has open issues."
+    return None
 
 
 def _build_journal_fingerprint(journal_result: Any) -> tuple[Any, ...]:

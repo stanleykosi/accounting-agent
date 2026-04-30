@@ -75,6 +75,7 @@ from services.coa.service import CoaRepository, CoaService, CoaServiceError
 from services.common.enums import WorkflowPhase
 from services.common.settings import AppSettings, get_settings
 from services.contracts.chat_models import (
+    AgentOperatorControl,
     ChatMessageResponse,
     ChatThreadDeleteResponse,
     ChatThreadListResponse,
@@ -653,6 +654,79 @@ def _persist_inline_attachment_partial_success(
     )
 
 
+def _persist_inline_attachment_close_run_required(
+    *,
+    chat_repository: ChatRepository,
+    content: str | None,
+    filenames: tuple[str, ...],
+    operator_controls: tuple[AgentOperatorControl, ...],
+    thread_id: UUID,
+    thread_entity_id: UUID,
+    trace_id: str | None,
+) -> ChatActionResponse:
+    """Return chat guidance when files are attached outside a close-run thread."""
+
+    cleaned_content = content.strip() if isinstance(content, str) else ""
+    filename_list = ", ".join(filename for filename in filenames if filename) or "the files"
+    user_content = cleaned_content or f"Attached source documents: {filename_list}"
+    assistant_content = (
+        "Source documents need a close run first so I know the reporting period and can "
+        "parse them into the right workflow. I did not upload the attached files. Tell me "
+        "the period you want to close, for example 'create an Apr 2026 close run', then "
+        "attach the files again in that close-run chat."
+    )
+    message_id = f"inline-attachment-close-run-required:{thread_id}"
+
+    try:
+        chat_repository.create_message(
+            thread_id=thread_id,
+            role="user",
+            content=user_content,
+            message_type="action",
+            linked_action_id=None,
+            grounding_payload={
+                "attachment_intent": "source_documents",
+                "filenames": list(filenames),
+                "upload_status": "not_uploaded_close_run_required",
+            },
+            model_metadata=None,
+        )
+        assistant_message = chat_repository.create_message(
+            thread_id=thread_id,
+            role="assistant",
+            content=assistant_content,
+            message_type="analysis",
+            linked_action_id=None,
+            grounding_payload={
+                "attachment_intent": "source_documents",
+                "filenames": list(filenames),
+                "upload_status": "not_uploaded_close_run_required",
+            },
+            model_metadata={
+                "provider": "system",
+                "mode": "attachment_ingestion",
+                "action_status": "blocked",
+                "summary": "Close run required before source-document upload.",
+                "trace_id": trace_id,
+            },
+        )
+        chat_repository.commit()
+        message_id = str(assistant_message.id)
+    except Exception:
+        chat_repository.rollback()
+        raise
+
+    return ChatActionResponse(
+        message_id=message_id,
+        content=assistant_content,
+        action_plan=None,
+        is_read_only=True,
+        thread_entity_id=str(thread_entity_id),
+        thread_close_run_id=None,
+        operator_controls=operator_controls,
+    )
+
+
 @router.post(
     "/threads",
     response_model=ChatThreadWithMessages,
@@ -1039,6 +1113,25 @@ async def send_chat_action_with_attachments(
                     code="thread_not_found",
                     message="That chat thread does not exist in this workspace.",
                 ),
+            )
+        if attachment_intent.strip().lower() == "source_documents" and thread.close_run_id is None:
+            try:
+                workspace = action_executor.get_thread_workspace(
+                    thread_id=thread_id,
+                    entity_id=entity_id,
+                    actor_user=_to_entity_user(session_result),
+                )
+                operator_controls = workspace.operator_controls
+            except ChatActionExecutionError:
+                operator_controls = ()
+            return _persist_inline_attachment_close_run_required(
+                chat_repository=chat_repository,
+                content=content,
+                filenames=tuple(file.filename or "" for file in files),
+                operator_controls=operator_controls,
+                thread_id=thread_id,
+                thread_entity_id=thread.entity_id,
+                trace_id=trace_id,
             )
 
         inline_result = await _ingest_chat_attachments(

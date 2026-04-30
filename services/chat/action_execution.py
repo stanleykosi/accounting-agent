@@ -3317,6 +3317,17 @@ class ChatActionExecutor:
                     "unless the workspace state makes the target ambiguous."
                 ),
                 (
+                    "For broad document instructions such as 'approve all documents', use the "
+                    "batch document-review action. Explain any documents skipped because parsing "
+                    "is still running, open issues remain, or the status is not reviewable."
+                ),
+                (
+                    "When discussing uploaded documents, use parsed fields and open issues to "
+                    "summarize what the documents say, point out missing or unresolved evidence, "
+                    "and let the operator either upload more documents or explicitly continue "
+                    "with the available evidence."
+                ),
+                (
                     "Keep the tone natural and teammate-like. Default to short conversational "
                     "paragraphs. Match the operator's preferred explanation depth when it is "
                     "known. Avoid markdown bullets, bold markers, tables, or rigid templates "
@@ -3604,6 +3615,11 @@ class ChatActionExecutor:
                 snapshot=snapshot,
                 operator_content=operator_content,
                 operator_memory=operator_memory,
+            )
+        elif repaired_tool_name == "review_documents":
+            tool_arguments = _hydrate_review_documents_arguments(
+                tool_arguments=tool_arguments,
+                operator_content=operator_content,
             )
         elif repaired_tool_name == "ignore_document":
             document_id = _resolve_document_id_from_snapshot(
@@ -7199,6 +7215,20 @@ def _infer_document_control_tool_name(
         return "ignore_document"
     if any(
         token in normalized_content
+        for token in (
+            "all document",
+            "all source document",
+            "all uploaded document",
+            "all parsed document",
+            "every document",
+            "documents",
+        )
+    ) and any(
+        token in normalized_content for token in ("approve", "reject", "needs info", "review")
+    ):
+        return "review_documents"
+    if any(
+        token in normalized_content
         for token in ("approve", "reject", "needs info", "review", "document")
     ):
         return "review_document"
@@ -7349,6 +7379,37 @@ def _hydrate_review_document_arguments(
         hydrated.setdefault("verified_authorized", True)
         hydrated.setdefault("verified_period", True)
 
+    return hydrated
+
+
+def _hydrate_review_documents_arguments(
+    *,
+    tool_arguments: dict[str, Any],
+    operator_content: str,
+) -> dict[str, Any]:
+    """Fill safe defaults for batch document-review requests."""
+
+    hydrated = dict(tool_arguments)
+    if not isinstance(hydrated.get("decision"), str):
+        inferred_decision = _infer_document_review_decision(operator_content)
+        if inferred_decision is not None:
+            hydrated["decision"] = inferred_decision
+    if str(hydrated.get("decision") or "").strip().lower() == "approved":
+        hydrated.setdefault("verified_complete", True)
+        hydrated.setdefault("verified_authorized", True)
+        hydrated.setdefault("verified_period", True)
+    normalized_content = _searchable_text(operator_content)
+    if any(
+        phrase in normalized_content
+        for phrase in (
+            "ignore missing",
+            "ignore open issue",
+            "ignore issues",
+            "continue anyway",
+            "approve anyway",
+        )
+    ):
+        hydrated.setdefault("include_documents_with_open_issues", True)
     return hydrated
 
 
@@ -8393,6 +8454,24 @@ def _humanize_applied_result(applied_result: dict[str, Any]) -> str:
             return f"I left {filename} in review and flagged it for more information."
         return f"I updated the review decision for {filename}."
 
+    if tool_name == "review_documents":
+        reviewed_count = _optional_result_int(applied_result, "reviewed_count") or 0
+        skipped_count = _optional_result_int(applied_result, "skipped_count") or 0
+        failed_count = _optional_result_int(applied_result, "failed_count") or 0
+        decision = _optional_result_text(applied_result, "decision") or "reviewed"
+        summary = (
+            f"I marked {reviewed_count} document"
+            f"{'' if reviewed_count == 1 else 's'} as {decision.replace('_', ' ')}"
+        )
+        notes: list[str] = []
+        if skipped_count:
+            notes.append(f"skipped {skipped_count}")
+        if failed_count:
+            notes.append(f"{failed_count} failed")
+        if notes:
+            summary = f"{summary}; {', '.join(notes)}"
+        return f"{summary}."
+
     if tool_name == "ignore_document":
         filename = _optional_result_text(applied_result, "document_filename") or "the document"
         return f"I marked {filename} as ignored for this close run."
@@ -8924,6 +9003,13 @@ def _optional_result_text(applied_result: dict[str, Any], key: str) -> str | Non
 
     value = applied_result.get(key)
     return value if isinstance(value, str) and value.strip() else None
+
+
+def _optional_result_int(applied_result: dict[str, Any], key: str) -> int | None:
+    """Return one integer result field when present."""
+
+    value = applied_result.get(key)
+    return value if isinstance(value, int) else None
 
 
 def _format_report_section_label(section_key: str) -> str:

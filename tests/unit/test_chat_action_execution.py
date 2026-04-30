@@ -1252,6 +1252,49 @@ def test_hydrate_planning_result_skips_stale_remembered_document_targets() -> No
     assert hydrated.tool_arguments["decision"] == "approved"
 
 
+def test_hydrate_planning_result_routes_batch_document_approval() -> None:
+    """Namespace-level document approval should become the batch tool when phrased broadly."""
+
+    executor = ChatActionExecutor.__new__(ChatActionExecutor)
+    executor._tool_registry = _build_fake_tool_registry(
+        "review_document",
+        "review_documents",
+    )
+
+    hydrated = executor._hydrate_planning_result(
+        planning=AgentPlanningResult(
+            mode="tool",
+            assistant_response="I'll approve the documents.",
+            reasoning="The operator asked to approve all documents.",
+            tool_name="document_control",
+            tool_arguments={},
+        ),
+        snapshot={
+            "documents": [
+                {
+                    "id": str(uuid4()),
+                    "filename": "invoice-one.pdf",
+                    "status": "parsed",
+                },
+                {
+                    "id": str(uuid4()),
+                    "filename": "invoice-two.pdf",
+                    "status": "needs_review",
+                },
+            ],
+        },
+        operator_content="approve all the documents",
+        operator_memory=executor._memory_from_context_payload({}),
+    )
+
+    assert hydrated.mode == "tool"
+    assert hydrated.tool_name == "review_documents"
+    assert hydrated.tool_arguments["decision"] == "approved"
+    assert hydrated.tool_arguments["verified_complete"] is True
+    assert hydrated.tool_arguments["verified_authorized"] is True
+    assert hydrated.tool_arguments["verified_period"] is True
+
+
 def test_hydrate_planning_result_fills_create_workspace_defaults_from_current_scope() -> None:
     """Workspace creation should inherit canonical defaults from the current workspace."""
 
@@ -3701,6 +3744,7 @@ def _resolve_fake_action(planning: AgentPlanningResult):
 def _build_fake_tool_registry(*tool_names: str):
     required_fields = {
         "review_document": ["document_id", "decision"],
+        "review_documents": ["decision"],
         "ignore_document": ["document_id"],
         "approve_recommendation": ["recommendation_id"],
         "reject_recommendation": ["recommendation_id", "reason"],
@@ -3721,10 +3765,32 @@ def _build_fake_tool_registry(*tool_names: str):
     tool_definitions = {
         tool_name: SimpleNamespace(
             name=tool_name,
-            namespace="workspace_admin" if "workspace" in tool_name else "close_operator",
-            namespace_label="Workspace Admin" if "workspace" in tool_name else "Close Operations",
+            namespace=(
+                "workspace_admin"
+                if "workspace" in tool_name
+                else (
+                    "document_control"
+                    if tool_name in {"review_document", "review_documents", "ignore_document"}
+                    else "close_operator"
+                )
+            ),
+            namespace_label=(
+                "Workspace Admin"
+                if "workspace" in tool_name
+                else (
+                    "Document Control"
+                    if tool_name in {"review_document", "review_documents", "ignore_document"}
+                    else "Close Operations"
+                )
+            ),
             specialist_name=(
-                "Workspace Steward" if "workspace" in tool_name else "Close Run Operator"
+                "Workspace Steward"
+                if "workspace" in tool_name
+                else (
+                    "Document Controller"
+                    if tool_name in {"review_document", "review_documents", "ignore_document"}
+                    else "Close Run Operator"
+                )
             ),
             specialist_mission="Owns the requested workflow domain.",
             intent="workflow_action",
@@ -3738,6 +3804,11 @@ def _build_fake_tool_registry(*tool_names: str):
             name="workspace_admin",
             label="Workspace Admin",
             specialist_name="Workspace Steward",
+        ),
+        SimpleNamespace(
+            name="document_control",
+            label="Document Control",
+            specialist_name="Document Controller",
         ),
     )
 
