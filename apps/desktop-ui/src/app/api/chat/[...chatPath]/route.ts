@@ -56,7 +56,8 @@ async function proxyChatRequest(
 ): Promise<Response> {
   const { chatPath } = await context.params;
   const requestUrl = new URL(request.url);
-  const requestBody = request.method === "GET" ? null : await request.text();
+  const requestBody =
+    request.method === "GET" || request.method === "HEAD" ? undefined : await request.arrayBuffer();
   let backendResponse: Response;
   try {
     backendResponse = await fetchBackendWithAvailabilityRetry(
@@ -66,7 +67,7 @@ async function proxyChatRequest(
         headers: buildProxyHeaders(request),
         method: request.method,
         redirect: "manual",
-        ...(requestBody === null ? {} : { body: requestBody }),
+        ...(requestBody === undefined ? {} : { body: requestBody }),
       },
     );
   } catch {
@@ -84,7 +85,7 @@ async function proxyChatRequest(
     responseHeaders.append("set-cookie", setCookie);
   }
 
-  return new Response(await backendResponse.text(), {
+  return new Response(await backendResponse.arrayBuffer(), {
     headers: responseHeaders,
     status: backendResponse.status,
     statusText: backendResponse.statusText,

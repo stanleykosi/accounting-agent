@@ -335,6 +335,12 @@ export function ChatRail({
   }, [createFreshThread, entityId, loadThreadWorkspace, loadThreads, presentation]);
 
   const renderableMessages = useMemo(() => buildRenderableMessages(messages), [messages]);
+  const scopedCloseRunId = selectedThread?.close_run_id ?? closeRunId;
+  const conversationAssistantMode: "close_run" | "entity" | "global" = isGlobalAssistant
+    ? "global"
+    : scopedCloseRunId
+      ? "close_run"
+      : "entity";
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({
@@ -449,7 +455,7 @@ export function ChatRail({
 
         <section style={conversationPaneStyle}>
           <ConversationHeader
-            assistantMode={resolvedAssistantMode}
+            assistantMode={conversationAssistantMode}
             error={error}
             isCreatingThread={isCreatingThread}
             isLoading={isBusy}
@@ -458,7 +464,7 @@ export function ChatRail({
           />
 
           <MessageList
-            assistantMode={resolvedAssistantMode}
+            assistantMode={conversationAssistantMode}
             isAwaitingReply={isAwaitingReply}
             isLoading={isBusy}
             messages={renderableMessages}
@@ -466,8 +472,8 @@ export function ChatRail({
           />
 
           <ActionComposer
-            assistantMode={resolvedAssistantMode}
-            closeRunId={selectedThread?.close_run_id ?? closeRunId}
+            assistantMode={conversationAssistantMode}
+            closeRunId={scopedCloseRunId}
             disabled={isBusy || selectedThread === null}
             entityId={activeEntityId}
             onActionStateChange={() => {
@@ -476,6 +482,14 @@ export function ChatRail({
             onMessageSent={(response: ChatActionResponse, draft: ComposerDraft) => {
               const threadId = selectedThread?.id;
               if (threadId) {
+                setSelectedThread((current) =>
+                  current === null ? current : reconcileThreadFromActionResponse(current, response),
+                );
+                setThreads((current) =>
+                  current.map((thread) =>
+                    thread.id === threadId ? reconcileThreadFromActionResponse(thread, response) : thread,
+                  ),
+                );
                 setMessages((current) =>
                   mergeMessages(
                     current,
@@ -1064,6 +1078,22 @@ function buildLocalTurnMessages(options: {
       thread_id: options.threadId,
     },
   ];
+}
+
+function reconcileThreadFromActionResponse(
+  thread: ChatThreadSummary,
+  response: ChatActionResponse,
+): ChatThreadSummary {
+  return {
+    ...thread,
+    close_run_id: response.thread_close_run_id,
+    entity_id: response.thread_entity_id,
+    grounding: {
+      ...thread.grounding,
+      close_run_id: response.thread_close_run_id,
+      entity_id: response.thread_entity_id,
+    },
+  };
 }
 
 function mergeMessages(

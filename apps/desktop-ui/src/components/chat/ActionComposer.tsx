@@ -84,7 +84,8 @@ export function ActionComposer({
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const resolvedAssistantMode = assistantMode ?? (closeRunId ? "close_run" : "entity");
-  const allowAttachments = resolvedAssistantMode === "close_run";
+  const hasCloseRunScope = typeof closeRunId === "string" && closeRunId.trim().length > 0;
+  const allowAttachments = hasCloseRunScope;
 
   const starterPrompts = useMemo(
     () => buildStarterPrompts({ assistantMode: resolvedAssistantMode, closeRunId, workspace }),
@@ -150,6 +151,10 @@ export function ActionComposer({
       }
       if (threadId.trim().length === 0) {
         setError("Open a chat before sending a message.");
+        return;
+      }
+      if (attachments.length > 0 && !allowAttachments) {
+        setError("Open a close run before uploading source documents in chat.");
         return;
       }
 
@@ -452,17 +457,33 @@ export function ActionComposer({
             <>
               <button
                 aria-label="Upload document"
-                onClick={() => fileInputRef.current?.click()}
+                onClick={() => {
+                  if (!allowAttachments) {
+                    setError("Open a close run before uploading source documents in chat.");
+                    return;
+                  }
+                  fileInputRef.current?.click();
+                }}
                 style={attachmentButtonStyle}
-                title="Upload document"
+                title={
+                  allowAttachments
+                    ? "Upload document"
+                    : "Open a close run before uploading source documents"
+                }
                 type="button"
               >
                 <QuartzIcon name="upload" style={composerButtonIconStyle} />
               </button>
               <input
                 accept=".pdf,.csv,.xlsx,.xls,.xlsm"
+                disabled={!allowAttachments}
                 multiple
                 onChange={(event) => {
+                  if (!allowAttachments) {
+                    setAttachments([]);
+                    setError("Open a close run before uploading source documents in chat.");
+                    return;
+                  }
                   setAttachments(Array.from(event.target.files ?? []));
                   setError(null);
                 }}
