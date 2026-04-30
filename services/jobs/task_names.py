@@ -26,6 +26,7 @@ class TaskName(StrEnum):
     """Enumerate canonical Celery task identifiers that must not drift across services."""
 
     SYSTEM_TRACE_PROBE = "system.trace_probe"
+    CHAT_EXECUTE_OPERATOR_TURN = "chat.execute_operator_turn"
     CHAT_RESUME_OPERATOR_TURN = "chat.resume_operator_turn"
     DOCUMENT_PARSE_AND_EXTRACT = "documents.parse_and_extract"
     DOCUMENT_EXTRACT = "documents.extract_document"
@@ -52,6 +53,11 @@ TASK_ROUTE_DEFINITIONS: dict[TaskName, TaskRouteDefinition] = {
         queue=TaskQueue.CONTROL,
         routing_key="control.system.trace_probe",
         max_retries=3,
+    ),
+    TaskName.CHAT_EXECUTE_OPERATOR_TURN: TaskRouteDefinition(
+        queue=TaskQueue.CONTROL,
+        routing_key="control.chat.execute_operator_turn",
+        max_retries=2,
     ),
     TaskName.CHAT_RESUME_OPERATOR_TURN: TaskRouteDefinition(
         queue=TaskQueue.CONTROL,

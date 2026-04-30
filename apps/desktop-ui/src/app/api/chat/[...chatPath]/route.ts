@@ -85,6 +85,16 @@ async function proxyChatRequest(
     responseHeaders.append("set-cookie", setCookie);
   }
 
+  if (contentType?.startsWith("text/event-stream") && backendResponse.body !== null) {
+    responseHeaders.set("cache-control", "no-cache, no-transform");
+    responseHeaders.set("connection", "keep-alive");
+    return new Response(backendResponse.body, {
+      headers: responseHeaders,
+      status: backendResponse.status,
+      statusText: backendResponse.statusText,
+    });
+  }
+
   return new Response(await backendResponse.arrayBuffer(), {
     headers: responseHeaders,
     status: backendResponse.status,

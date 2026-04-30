@@ -524,6 +524,13 @@ class FakeChatRepository:
         del thread_id, entity_id
         return self.thread
 
+    def list_messages_for_thread(self, *, thread_id, limit=None):
+        del thread_id, limit
+        return tuple(
+            SimpleNamespace(message_order=index)
+            for index, _message in enumerate(self.messages, start=1)
+        )
+
     def create_message(
         self,
         *,
@@ -538,6 +545,7 @@ class FakeChatRepository:
         message = SimpleNamespace(
             id=uuid4(),
             thread_id=thread_id,
+            message_order=len(self.messages) + 1,
             role=role,
             content=content,
             message_type=message_type,
@@ -689,6 +697,51 @@ class FakeDatabaseSession:
 
     def rollback(self) -> None:
         self.rollback_count += 1
+
+
+class FakeJobService:
+    calls: list[dict[str, object]] = []
+
+    def __init__(self, *, db_session) -> None:
+        self.db_session = db_session
+
+    def dispatch_job(self, **kwargs):
+        self.calls.append(kwargs)
+        self.db_session.commit()
+        return SimpleNamespace(id=uuid4())
+
+
+def _install_job_service_stub(monkeypatch):
+    FakeJobService.calls = []
+    monkeypatch.setattr(chat_routes, "JobService", FakeJobService)
+    return FakeJobService.calls
+
+
+class FakeEntityRepository:
+    allow_access = True
+
+    def __init__(self, *, db_session) -> None:
+        self.db_session = db_session
+
+    def get_entity_for_user(self, **kwargs):
+        del kwargs
+        if not self.allow_access:
+            return None
+        return SimpleNamespace(membership=SimpleNamespace(user=TEST_USER))
+
+
+def _install_entity_repository_stub(monkeypatch, *, allow_access: bool = True) -> None:
+    FakeEntityRepository.allow_access = allow_access
+    monkeypatch.setattr(chat_routes, "EntityRepository", FakeEntityRepository)
+
+
+class FailingJobService:
+    def __init__(self, *, db_session) -> None:
+        self.db_session = db_session
+
+    def dispatch_job(self, **kwargs):
+        del kwargs
+        raise RuntimeError("queue unavailable")
 
 
 class FailingChatActionExecutor(FakeChatActionExecutor):
@@ -891,8 +944,16 @@ def test_chat_action_attachment_route_ingests_source_documents(monkeypatch) -> N
     """Ensure inline source-document attachments route through canonical upload before chat."""
 
     _install_browser_auth_stub(monkeypatch)
+    job_calls = _install_job_service_stub(monkeypatch)
     executor = FakeChatActionExecutor()
     repository = FakeChatRepository(close_run_id=uuid4())
+    original_activate_async_job_group = executor.activate_async_job_group
+
+    def activate_async_job_group_with_order_assertion(**kwargs):
+        assert [message["role"] for message in repository.messages] == ["user"]
+        return original_activate_async_job_group(**kwargs)
+
+    executor.activate_async_job_group = activate_async_job_group_with_order_assertion  # type: ignore[method-assign]
     document_upload_service = FakeDocumentUploadService()
     close_run_service = FakeCloseRunService()
     db_session = FakeDatabaseSession()
@@ -920,6 +981,7 @@ def test_chat_action_attachment_route_ingests_source_documents(monkeypatch) -> N
             action_executor=executor,
             chat_repository=repository,
             db_session=db_session,
+            task_dispatcher=SimpleNamespace(),
             document_upload_service=document_upload_service,
             close_run_service=close_run_service,
             coa_service=FakeCoaService(),
@@ -929,23 +991,61 @@ def test_chat_action_attachment_route_ingests_source_documents(monkeypatch) -> N
         )
     )
 
-    assert result.content == "Inline attachments acknowledged."
+    assert result.content == "I uploaded the files and I'm processing the chat follow-up now."
+    assert result.turn_status == "accepted"
+    assert result.turn_job_id is not None
+    assert result.stream_after_message_order == 1
     assert document_upload_service.calls[0]["file_count"] == 1
-    assert executor.sent_action_message is not None
-    assert executor.sent_action_message["message_grounding_payload"]["attachment_intent"] == (
+    assert executor.sent_action_message is None
+    assert [message["role"] for message in repository.messages] == ["user"]
+    assert repository.commit_count == 1
+    assert len(job_calls) == 1
+    assert job_calls[0]["task_name"] is chat_routes.TaskName.CHAT_EXECUTE_OPERATOR_TURN
+    assert job_calls[0]["payload"]["message_grounding_payload"]["attachment_intent"] == (
         "source_documents"
     )
-    assert db_session.commit_count == 1
+    assert db_session.commit_count == 2
     assert db_session.rollback_count == 0
-    attachments = executor.sent_action_message["message_grounding_payload"]["attachments"]
+    attachments = job_calls[0]["payload"]["message_grounding_payload"]["attachments"]
     assert attachments[0]["filename"] == "invoice.pdf"
-    assert "parsing started" in executor.sent_action_message["content"]
-    assert executor.sent_action_message["user_message_content"] == "Start recommendations after intake."
+    assert "parsing started" in job_calls[0]["payload"]["content"]
+    assert job_calls[0]["payload"]["user_message_content"] == "Start recommendations after intake."
     assert (
-        executor.sent_action_message["operator_message_for_memory"]
+        job_calls[0]["payload"]["operator_message_for_memory"]
         == "Start recommendations after intake."
     )
+    assert job_calls[0]["payload"]["persist_user_message"] is False
+    assert job_calls[0]["payload"]["process_existing_user_turn"] is True
     assert close_run_service.rewind_calls == []
+
+
+def test_chat_thread_event_stream_filters_messages_by_client_turn() -> None:
+    """A stream for one accepted turn should not complete on another turn's assistant reply."""
+
+    matching_message = SimpleNamespace(
+        model_metadata={"chat_turn_id": "turn-current"},
+    )
+    other_message = SimpleNamespace(
+        model_metadata={"chat_turn_id": "turn-previous"},
+    )
+    untracked_message = SimpleNamespace(model_metadata=None)
+
+    assert chat_routes._message_matches_stream_turn(
+        message=matching_message,
+        client_turn_id="turn-current",
+    )
+    assert not chat_routes._message_matches_stream_turn(
+        message=other_message,
+        client_turn_id="turn-current",
+    )
+    assert not chat_routes._message_matches_stream_turn(
+        message=untracked_message,
+        client_turn_id="turn-current",
+    )
+    assert chat_routes._message_matches_stream_turn(
+        message=other_message,
+        client_turn_id=None,
+    )
 
 
 def test_chat_action_attachment_route_guides_workspace_upload_toward_close_run(
@@ -982,6 +1082,7 @@ def test_chat_action_attachment_route_guides_workspace_upload_toward_close_run(
             action_executor=executor,
             chat_repository=repository,
             db_session=db_session,
+            task_dispatcher=SimpleNamespace(),
             document_upload_service=document_upload_service,
             close_run_service=FakeCloseRunService(),
             coa_service=FakeCoaService(),
@@ -1006,6 +1107,7 @@ def test_chat_action_attachment_route_rewinds_mid_processing_upload(monkeypatch)
     """Mid-processing chat uploads should reopen Collection before ingestion."""
 
     _install_browser_auth_stub(monkeypatch)
+    job_calls = _install_job_service_stub(monkeypatch)
     executor = FakeChatActionExecutor()
     repository = FakeChatRepository(close_run_id=uuid4())
     document_upload_service = FakeDocumentUploadService()
@@ -1035,6 +1137,7 @@ def test_chat_action_attachment_route_rewinds_mid_processing_upload(monkeypatch)
             action_executor=executor,
             chat_repository=repository,
             db_session=db_session,
+            task_dispatcher=SimpleNamespace(),
             document_upload_service=document_upload_service,
             close_run_service=close_run_service,
             coa_service=FakeCoaService(),
@@ -1044,12 +1147,13 @@ def test_chat_action_attachment_route_rewinds_mid_processing_upload(monkeypatch)
         )
     )
 
-    assert result.content == "Inline attachments acknowledged."
+    assert result.content == "I uploaded the files and I'm processing the chat follow-up now."
+    assert result.turn_status == "accepted"
     assert close_run_service.rewind_calls[0]["target_phase"] is chat_routes.WorkflowPhase.COLLECTION
-    assert db_session.commit_count == 1
+    assert db_session.commit_count == 2
     assert db_session.rollback_count == 0
-    assert "moved from Processing back to Collection" in executor.sent_action_message["content"]
-    assert "continue the close to reporting" in executor.sent_action_message["content"]
+    assert "moved from Processing back to Collection" in job_calls[0]["payload"]["content"]
+    assert "continue the close to reporting" in job_calls[0]["payload"]["content"]
 
 
 def test_chat_action_attachment_route_rolls_back_rewind_when_queue_fails(monkeypatch) -> None:
@@ -1085,6 +1189,7 @@ def test_chat_action_attachment_route_rolls_back_rewind_when_queue_fails(monkeyp
                 action_executor=FakeChatActionExecutor(),
                 chat_repository=repository,
                 db_session=db_session,
+                task_dispatcher=SimpleNamespace(),
                 document_upload_service=document_upload_service,
                 close_run_service=close_run_service,
                 coa_service=FakeCoaService(),
@@ -1107,7 +1212,9 @@ def test_chat_action_route_uses_shared_agent_lane_for_plain_conversation(monkeyp
     """Ensure the browser action route stays the single canonical chat entrypoint."""
 
     _install_browser_auth_stub(monkeypatch)
-    executor = FakeChatActionExecutor()
+    job_calls = _install_job_service_stub(monkeypatch)
+    repository = FakeChatRepository(close_run_id=None)
+    db_session = FakeDatabaseSession()
     thread_id = uuid4()
     entity_id = uuid4()
     request = Request(
@@ -1128,14 +1235,62 @@ def test_chat_action_route_uses_shared_agent_lane_for_plain_conversation(monkeyp
         response=Response(),
         settings=SimpleNamespace(),
         auth_service=SimpleNamespace(),
-        action_executor=executor,
+        chat_repository=repository,
+        db_session=db_session,
+        task_dispatcher=SimpleNamespace(),
     )
 
     assert result.is_read_only is True
-    assert executor.sent_action_message is not None
-    assert executor.sent_action_message["content"] == "hello"
-    assert executor.sent_action_message["source_surface"] == "desktop"
-    assert result.operator_controls[0].command == "confirm"
+    assert result.turn_status == "accepted"
+    assert result.turn_job_id is not None
+    assert result.stream_after_message_order == 0
+    assert len(job_calls) == 1
+    assert job_calls[0]["task_name"] is chat_routes.TaskName.CHAT_EXECUTE_OPERATOR_TURN
+    assert job_calls[0]["payload"]["content"] == "hello"
+    assert job_calls[0]["payload"]["process_existing_user_turn"] is True
+    assert result.operator_controls == ()
+
+
+def test_chat_action_route_rejects_non_member_before_dispatch(monkeypatch) -> None:
+    """Unauthorized users should not learn thread existence or queue worker jobs."""
+
+    _install_browser_auth_stub(monkeypatch)
+    _install_entity_repository_stub(monkeypatch, allow_access=False)
+    job_calls = _install_job_service_stub(monkeypatch)
+    repository = FakeChatRepository(close_run_id=None)
+    db_session = FakeDatabaseSession()
+    thread_id = uuid4()
+    entity_id = uuid4()
+    request = Request(
+        {
+            "type": "http",
+            "app": SimpleNamespace(version="0.1.0"),
+            "method": "POST",
+            "path": f"/api/chat/threads/{thread_id}/actions",
+            "headers": [],
+        }
+    )
+
+    try:
+        chat_routes.send_chat_action(
+            thread_id=thread_id,
+            payload=chat_routes.SendChatActionRequest(content="hello"),
+            entity_id=entity_id,
+            request=request,
+            response=Response(),
+            settings=SimpleNamespace(),
+            auth_service=SimpleNamespace(),
+            chat_repository=repository,
+            db_session=db_session,
+            task_dispatcher=SimpleNamespace(),
+        )
+    except chat_routes.HTTPException as error:
+        assert error.status_code == 403
+        assert error.detail["code"] == "access_denied"
+    else:
+        raise AssertionError("Expected non-member chat action to be rejected.")
+
+    assert job_calls == []
 
 
 def test_list_thread_actions_returns_typed_error_when_thread_scope_is_stale(monkeypatch) -> None:
@@ -1183,12 +1338,13 @@ def test_list_thread_actions_returns_typed_error_when_thread_scope_is_stale(monk
         raise AssertionError("Expected stale chat thread scope to return a typed API error.")
 
 
-def test_chat_action_attachment_route_reports_partial_success_when_follow_up_fails(
+def test_chat_action_attachment_route_returns_dispatch_error_when_follow_up_cannot_queue(
     monkeypatch,
 ) -> None:
-    """Ensure successful attachment ingestion is not reported as a hard failure."""
+    """Ensure the canonical async handoff fails fast when the worker queue is unavailable."""
 
     _install_browser_auth_stub(monkeypatch)
+    monkeypatch.setattr(chat_routes, "JobService", FailingJobService)
     repository = FakeChatRepository(close_run_id=uuid4())
     document_upload_service = FakeDocumentUploadService()
     db_session = FakeDatabaseSession()
@@ -1205,43 +1361,42 @@ def test_chat_action_attachment_route_reports_partial_success_when_follow_up_fai
     )
     file = UploadFile(filename="invoice.pdf", file=BytesIO(b"%PDF-1.4 test"))
 
-    result = asyncio.run(
-        chat_routes.send_chat_action_with_attachments(
-            thread_id=thread_id,
-            entity_id=entity_id,
-            request=request,
-            response=Response(),
-            settings=SimpleNamespace(),
-            auth_service=SimpleNamespace(),
-            action_executor=FailingChatActionExecutor(),
-            chat_repository=repository,
-            db_session=db_session,
-            document_upload_service=document_upload_service,
-            close_run_service=FakeCloseRunService(),
-            coa_service=FakeCoaService(),
-            content="Start recommendations after intake.",
-            attachment_intent="source_documents",
-            files=(file,),
+    try:
+        asyncio.run(
+            chat_routes.send_chat_action_with_attachments(
+                thread_id=thread_id,
+                entity_id=entity_id,
+                request=request,
+                response=Response(),
+                settings=SimpleNamespace(),
+                auth_service=SimpleNamespace(),
+                action_executor=FailingChatActionExecutor(),
+                chat_repository=repository,
+                db_session=db_session,
+                task_dispatcher=SimpleNamespace(),
+                document_upload_service=document_upload_service,
+                close_run_service=FakeCloseRunService(),
+                coa_service=FakeCoaService(),
+                content="Start recommendations after intake.",
+                attachment_intent="source_documents",
+                files=(file,),
+            )
         )
-    )
+    except chat_routes.HTTPException as error:
+        assert error.status_code == 503
+        assert error.detail["code"] == "chat_turn_dispatch_failed"
+    else:
+        raise AssertionError("Expected chat turn dispatch failure.")
 
-    assert result.is_read_only is True
-    assert result.action_plan is None
-    assert "upload completed successfully" in result.content.lower()
-    assert "without re-uploading the files" in result.content
-    assert result.operator_controls == ()
     assert document_upload_service.calls[0]["file_count"] == 1
     assert db_session.commit_count == 1
     assert db_session.rollback_count == 0
-    assert repository.commit_count == 1
-    assert repository.rollback_count == 0
-    assert [message["role"] for message in repository.messages] == ["user", "assistant"]
-    assert repository.messages[1]["message_type"] == "warning"
 
 
 def _install_browser_auth_stub(monkeypatch) -> None:
     """Install a deterministic browser auth stub for direct route tests."""
 
+    _install_entity_repository_stub(monkeypatch)
     monkeypatch.setattr(
         chat_routes,
         "_require_authenticated_browser_session",

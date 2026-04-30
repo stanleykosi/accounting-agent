@@ -10,6 +10,8 @@ from datetime import UTC, datetime
 from types import SimpleNamespace
 from uuid import UUID, uuid4
 
+import pytest
+
 from services.agents.models import AgentPlanningResult
 from services.chat.action_execution import (
     ChatActionExecutionError,
@@ -2462,8 +2464,8 @@ def test_send_action_message_executes_multiple_steps_before_replying() -> None:
     assert "I queued recommendation generation for 1 document." in outcome.assistant_content
     assert "The close is ready for reconciliation now." in outcome.assistant_content
     assert len(chat_repo.messages) == 2
-    assert db_session.commit_calls == 3
-    assert len(load_calls) == 3
+    assert db_session.commit_calls == 4
+    assert len(load_calls) == 4
     assert memory_updates[-1]["action_status"] == "applied"
 
 
@@ -2529,6 +2531,75 @@ def test_send_action_message_replays_completed_client_turn_without_reapplying() 
     assert outcome.assistant_content == "Created workspace Stanley."
     assert outcome.assistant_message_id == str(assistant_message.id)
     assert len(chat_repo.messages) == 1
+
+
+def test_send_action_message_rejects_duplicate_in_flight_client_turn() -> None:
+    """Retries for a committed-but-unfinished turn should not duplicate work."""
+
+    actor_user = EntityUserRecord(id=uuid4(), email="ops@example.com", full_name="Finance Ops")
+    thread_id = uuid4()
+    entity_id = uuid4()
+    client_turn_id = "turn-upload-documents-1"
+    thread = SimpleNamespace(
+        id=thread_id,
+        entity_id=entity_id,
+        close_run_id=uuid4(),
+        context_payload={},
+    )
+    grounding = SimpleNamespace(
+        context=SimpleNamespace(
+            entity_id=str(entity_id),
+            entity_name="Apex Meridian Nigeria Ltd",
+            close_run_id=str(thread.close_run_id),
+            period_label="Mar 2026",
+            autonomy_mode="human_review",
+            base_currency="NGN",
+        ),
+    )
+    chat_repo = _FakeLoopChatRepository()
+    chat_repo.thread = thread
+    chat_repo.messages.append(
+        SimpleNamespace(
+            id=uuid4(),
+            content="Tell me about these documents.",
+            role="user",
+            linked_action_id=None,
+            message_type="action",
+            model_metadata={
+                "chat_turn_id": client_turn_id,
+                "turn_status": "received",
+            },
+        )
+    )
+    db_session = _FakeLoopDbSession()
+
+    executor = ChatActionExecutor.__new__(ChatActionExecutor)
+    executor._db_session = db_session
+    executor._chat_repo = chat_repo
+    executor._action_repo = _FakeLoopActionRepository(close_run_id=uuid4())
+    executor._entity_repo = SimpleNamespace(get_entity_for_user=lambda **kwargs: object())
+    executor._ensure_entity_coa_available = lambda **kwargs: None
+    executor._load_thread_context = lambda **kwargs: (grounding, thread)  # type: ignore[method-assign]
+    executor._plan_action = lambda **kwargs: (_ for _ in ()).throw(  # type: ignore[method-assign]
+        AssertionError("An in-flight retry must not invoke the planner.")
+    )
+
+    with pytest.raises(ChatActionExecutionError) as caught:
+        executor.send_action_message(
+            thread_id=thread_id,
+            entity_id=entity_id,
+            actor_user=actor_user,
+            content="Tell me about these documents.",
+            client_turn_id=client_turn_id,
+            source_surface="desktop",
+            trace_id="trace-in-flight-replay",
+        )
+
+    assert caught.value.status_code == 409
+    assert caught.value.code is ChatActionExecutionErrorCode.THREAD_TURN_IN_PROGRESS
+    assert len(chat_repo.messages) == 1
+    assert db_session.rollback_calls == 1
+    assert db_session.commit_calls == 0
 
 
 def test_send_action_message_switches_workspace_with_json_safe_uuid_result() -> None:
@@ -2942,7 +3013,7 @@ def test_send_action_message_returns_partial_progress_when_later_step_blocks() -
         in outcome.assistant_content
     )
     assert db_session.rollback_calls == 1
-    assert db_session.commit_calls == 2
+    assert db_session.commit_calls == 3
     assert memory_updates[-1]["action_status"] == "partial"
 
 
@@ -3034,7 +3105,7 @@ def test_send_action_message_stops_after_async_dispatch_and_marks_pending_group(
 
     assert outcome.is_read_only is False
     assert "I'll keep going automatically" in outcome.assistant_content
-    assert db_session.commit_calls == 2
+    assert db_session.commit_calls == 3
     async_turn = memory_updates[-1]["existing_payload"]["agent_async_turn"]
     assert async_turn["status"] == "pending"
     assert async_turn["continuation_group_id"] == str(continuation_group_id)
@@ -3373,7 +3444,7 @@ def test_send_action_message_surfaces_action_failure_in_thread() -> None:
         in outcome.assistant_content
     )
     assert db_session.rollback_calls == 1
-    assert db_session.commit_calls == 1
+    assert db_session.commit_calls == 2
     assert memory_updates[-1]["action_status"] == "failed"
 
 
@@ -3444,7 +3515,7 @@ def test_send_action_message_surfaces_access_denied_tool_failure_in_thread() -> 
     assert "I didn't make any changes" in outcome.assistant_content
     assert "could not be completed" not in outcome.assistant_content.lower()
     assert db_session.rollback_calls == 1
-    assert db_session.commit_calls == 1
+    assert db_session.commit_calls == 2
     assert memory_updates[-1]["action_status"] == "failed"
 
 
@@ -3518,7 +3589,7 @@ def test_send_action_message_surfaces_unexpected_runtime_failure_in_thread() -> 
     )
     assert "Next, I can review the close-run setup before retrying." in outcome.assistant_content
     assert db_session.rollback_calls == 1
-    assert db_session.commit_calls == 1
+    assert db_session.commit_calls == 2
     assert memory_updates[-1]["action_status"] == "failed"
 
 

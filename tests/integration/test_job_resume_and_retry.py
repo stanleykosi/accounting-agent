@@ -324,6 +324,18 @@ def test_parse_resume_skips_duplicate_parse_and_store_side_effects(
             AssertionError("parse_and_store_document should not rerun")
         ),
     )
+    monkeypatch.setattr(
+        parse_documents_task,
+        "_post_process_parsed_document",
+        lambda **_: {
+            "document_type": "unknown",
+            "classification_confidence": None,
+            "extraction_created": False,
+            "needs_review": True,
+            "quality_issue_count": 0,
+            "recommendation_job_id": None,
+        },
+    )
 
     job_context = FakeCheckpointContext(
         completed_steps={"parse_and_store_document"},
@@ -893,7 +905,12 @@ def _build_parse_record() -> Any:
     document_id = UUID("40000000-0000-0000-0000-000000000001")
     return SimpleNamespace(
         entity=SimpleNamespace(id=entity_id),
-        close_run=SimpleNamespace(id=close_run_id, entity_id=entity_id),
+        close_run=SimpleNamespace(
+            id=close_run_id,
+            entity_id=entity_id,
+            period_start=datetime(2026, 3, 1, tzinfo=UTC).date(),
+            period_end=datetime(2026, 3, 31, tzinfo=UTC).date(),
+        ),
         document=SimpleNamespace(
             id=document_id,
             original_filename="invoice.pdf",

@@ -131,7 +131,7 @@ def _run_report_generation_task(
                 repo.update_report_run_status(
                     report_run_id=parsed_report_run_id,
                     status=ReportRunStatus.FAILED,
-                    failure_reason=failure_reason,
+                    failure_reason=_report_failure_reason_for_cancellation(failure_reason),
                     completed_at=utc_now(),
                 )
                 repo.commit()
@@ -393,7 +393,7 @@ def _run_report_generation_task(
                 repo.update_report_run_status(
                     report_run_id=run_record.id,
                     status=ReportRunStatus.FAILED,
-                    failure_reason=error.message,
+                    failure_reason=_report_failure_reason_for_cancellation(error.message),
                     artifact_refs=artifact_refs if artifact_refs else None,
                     completed_at=utc_now(),
                 )
@@ -786,6 +786,14 @@ def _build_pdf_report(
     )
 
     return build_pdf_report_pack(input_data)
+
+
+def _report_failure_reason_for_cancellation(message: str) -> str:
+    """Return the report-run failure reason shown for operator cancellations."""
+
+    if "operator requested cancellation" in message:
+        return "Report generation was canceled by an operator."
+    return message
 
 
 # ---------------------------------------------------------------------------

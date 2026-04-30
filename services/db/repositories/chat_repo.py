@@ -13,9 +13,15 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
+import psycopg
+from services.chat.message_events import (
+    CHAT_MESSAGE_NOTIFY_CHANNEL,
+    build_chat_message_notification_payload,
+)
+from services.common.settings import get_settings
 from services.db.models.chat import ChatMessage, ChatThread
 from services.db.models.entity import EntityMembership
-from sqlalchemy import desc, func, select
+from sqlalchemy import desc, func, select, text
 from sqlalchemy.orm import Session
 
 
@@ -64,6 +70,7 @@ class ChatRepository:
         """Capture the request-scoped SQLAlchemy session used by the chat service."""
 
         self._db_session = db_session
+        self._turn_lock_connection: psycopg.Connection[Any] | None = None
 
     def create_thread(
         self,
@@ -96,13 +103,36 @@ class ChatRepository:
         return _map_thread(thread)
 
     def lock_thread_for_turn(self, *, thread_id: UUID) -> ChatThreadRecord | None:
-        """Lock one thread row for a chat turn so retries cannot apply concurrently."""
+        """Serialize worker-side operator turns for one thread without blocking readers."""
 
-        statement = select(ChatThread).where(ChatThread.id == thread_id).with_for_update()
+        statement = select(ChatThread).where(ChatThread.id == thread_id)
         thread = self._db_session.execute(statement).scalar_one_or_none()
         if thread is None:
             return None
+
+        bind = self._db_session.get_bind()
+        if bind.dialect.name == "postgresql":
+            self._acquire_thread_turn_lock(thread_id=thread_id)
         return _map_thread(thread)
+
+    def release_thread_turn_lock(self, *, thread_id: UUID) -> None:
+        """Release the dedicated Postgres advisory lock connection for one operator turn."""
+
+        bind = self._db_session.get_bind()
+        if bind.dialect.name != "postgresql":
+            return
+        if self._turn_lock_connection is None:
+            return
+
+        connection = self._turn_lock_connection
+        self._turn_lock_connection = None
+        try:
+            connection.execute(
+                "SELECT pg_advisory_unlock(%s)",
+                (_thread_advisory_lock_key(thread_id),),
+            )
+        finally:
+            connection.close()
 
     def get_thread_for_entity(
         self,
@@ -341,6 +371,7 @@ class ChatRepository:
         )
         self._db_session.add(message)
         self._db_session.flush()
+        self._notify_message_created(message)
         return _map_message(message)
 
     def list_messages_for_thread(
@@ -392,6 +423,52 @@ class ChatRepository:
 
         self._db_session.rollback()
 
+    def _acquire_thread_turn_lock(self, *, thread_id: UUID) -> None:
+        """Acquire a turn-long advisory lock on a dedicated non-pooled connection."""
+
+        if self._turn_lock_connection is not None:
+            raise RuntimeError("A chat turn advisory lock is already held by this repository.")
+
+        settings = get_settings()
+        connect_kwargs: dict[str, object] = {}
+        preferred_hostaddr = settings.database.resolve_preferred_hostaddr()
+        if preferred_hostaddr is not None:
+            connect_kwargs["hostaddr"] = preferred_hostaddr
+        connection = psycopg.connect(
+            settings.database.connection_url,
+            autocommit=True,
+            **connect_kwargs,
+        )
+        try:
+            connection.execute(
+                "SELECT pg_advisory_lock(%s)",
+                (_thread_advisory_lock_key(thread_id),),
+            )
+        except Exception:
+            connection.close()
+            raise
+        self._turn_lock_connection = connection
+
+    def _notify_message_created(self, message: ChatMessage) -> None:
+        """Stage a Postgres notification that fires when this message commits."""
+
+        bind = self._db_session.get_bind()
+        if bind.dialect.name != "postgresql":
+            return
+
+        self._db_session.execute(
+            text("SELECT pg_notify(:channel, :payload)"),
+            {
+                "channel": CHAT_MESSAGE_NOTIFY_CHANNEL,
+                "payload": build_chat_message_notification_payload(
+                    thread_id=message.thread_id,
+                    message_id=message.id,
+                    message_order=message.message_order,
+                    role=message.role,
+                ),
+            },
+        )
+
 
 def _map_thread(model: ChatThread) -> ChatThreadRecord:
     """Convert an ORM chat thread model into the immutable record consumed by services."""
@@ -405,6 +482,12 @@ def _map_thread(model: ChatThread) -> ChatThreadRecord:
         created_at=model.created_at,
         updated_at=model.updated_at,
     )
+
+
+def _thread_advisory_lock_key(thread_id: UUID) -> int:
+    """Return a stable positive bigint key for Postgres advisory locks."""
+
+    return thread_id.int % (2**63)
 
 
 def _inherit_turn_metadata(
@@ -421,23 +504,19 @@ def _inherit_turn_metadata(
     if model_metadata.get("chat_turn_id") is not None:
         return model_metadata
 
-    latest_message = db_session.execute(
+    active_user_message = db_session.execute(
         select(ChatMessage)
-        .where(ChatMessage.thread_id == thread_id)
+        .where(ChatMessage.thread_id == thread_id, ChatMessage.role == "user")
         .order_by(desc(ChatMessage.message_order))
         .limit(1)
     ).scalar_one_or_none()
-    latest_metadata = (
-        latest_message.model_metadata
-        if latest_message is not None and isinstance(latest_message.model_metadata, dict)
+    active_metadata = (
+        active_user_message.model_metadata
+        if active_user_message is not None and isinstance(active_user_message.model_metadata, dict)
         else {}
     )
-    client_turn_id = latest_metadata.get("chat_turn_id")
-    if (
-        latest_message is None
-        or latest_message.role != "user"
-        or not isinstance(client_turn_id, str)
-    ):
+    client_turn_id = active_metadata.get("chat_turn_id")
+    if not isinstance(client_turn_id, str):
         return model_metadata
 
     return {

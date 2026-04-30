@@ -100,6 +100,7 @@ class ChatActionExecutionErrorCode(StrEnum):
     THREAD_NOT_FOUND = "thread_not_found"
     ACCESS_DENIED = "access_denied"
     PLANNING_FAILED = "planning_failed"
+    THREAD_TURN_IN_PROGRESS = "thread_turn_in_progress"
     ACTION_PLAN_NOT_FOUND = "action_plan_not_found"
     INVALID_ACTION_PLAN = "invalid_action_plan"
     EXECUTION_FAILED = "execution_failed"
@@ -288,12 +289,24 @@ class ChatActionExecutor:
                 message="That chat thread does not exist.",
             )
 
+    def _release_thread_turn_lock(self, *, thread_id: UUID) -> None:
+        """Release the thread turn serialization lock without masking turn outcomes."""
+
+        release_lock = getattr(self._chat_repo, "release_thread_turn_lock", None)
+        if not callable(release_lock):
+            return
+        try:
+            release_lock(thread_id=thread_id)
+        except Exception:
+            self._db_session.rollback()
+
     def _replay_completed_turn_if_present(
         self,
         *,
         thread_id: UUID,
         actor_user: EntityUserRecord,
         client_turn_id: str | None,
+        allow_received_turn: bool = False,
     ) -> ChatExecutionOutcome | None:
         """Return the already-persisted answer for an idempotent turn retry."""
 
@@ -321,6 +334,21 @@ class ChatActionExecutor:
         messages = self._chat_repo.list_messages_for_thread(thread_id=thread_id)
         for message in reversed(messages):
             metadata = message.model_metadata if isinstance(message.model_metadata, dict) else {}
+            if (
+                message.role == "user"
+                and metadata.get("chat_turn_id") == client_turn_id
+                and metadata.get("turn_status") == "received"
+            ):
+                if allow_received_turn:
+                    return None
+                raise ChatActionExecutionError(
+                    status_code=409,
+                    code=ChatActionExecutionErrorCode.THREAD_TURN_IN_PROGRESS,
+                    message=(
+                        "That chat turn is still running. I saved the request and will attach "
+                        "the assistant reply to this thread when it finishes."
+                    ),
+                )
             if (
                 message.role == "assistant"
                 and metadata.get("chat_turn_id") == client_turn_id
@@ -403,6 +431,8 @@ class ChatActionExecutor:
         user_message_content: str | None = None,
         source_surface: AuditSourceSurface,
         trace_id: str | None,
+        persist_user_message: bool = True,
+        process_existing_user_turn: bool = False,
     ) -> ChatExecutionOutcome:
         """Plan a chat response and optionally execute the selected deterministic tool."""
 
@@ -419,7 +449,8 @@ class ChatActionExecutor:
             ),
             client_turn_id=client_turn_id,
             message_grounding_payload=message_grounding_payload,
-            persist_user_message=True,
+            persist_user_message=persist_user_message,
+            process_existing_user_turn=process_existing_user_turn,
             user_message_content=visible_user_content,
             source_surface=source_surface,
             trace_id=trace_id,
@@ -465,9 +496,10 @@ class ChatActionExecutor:
         client_turn_id: str | None,
         message_grounding_payload: dict[str, Any] | None,
         persist_user_message: bool,
-        user_message_content: str | None = None,
         source_surface: AuditSourceSurface,
         trace_id: str | None,
+        process_existing_user_turn: bool = False,
+        user_message_content: str | None = None,
     ) -> ChatExecutionOutcome:
         """Execute one bounded operator turn with optional user-message persistence."""
 
@@ -488,13 +520,17 @@ class ChatActionExecutor:
         applied_results: list[dict[str, Any]] = []
         completed_summaries: list[str] = []
         seen_action_signatures: set[str] = set()
+        user_message_persisted = False
+        turn_lock_acquired = False
 
         try:
             self._lock_thread_for_turn(thread_id=thread_id)
+            turn_lock_acquired = True
             replayed_outcome = self._replay_completed_turn_if_present(
                 thread_id=thread_id,
                 actor_user=actor_user,
                 client_turn_id=client_turn_id,
+                allow_received_turn=process_existing_user_turn,
             )
             if replayed_outcome is not None:
                 return replayed_outcome
@@ -513,6 +549,14 @@ class ChatActionExecutor:
                         turn_status="received",
                     ),
                 )
+                user_message_persisted = True
+                self._db_session.commit()
+                grounding, thread = self._load_thread_context(
+                    thread_id=thread_id,
+                    entity_id=active_entity_id,
+                    user_id=actor_user.id,
+                )
+                active_entity_id = thread.entity_id
                 pending_confirmation_outcome = self._handle_pending_plan_reply(
                     thread_id=thread_id,
                     entity_id=active_entity_id,
@@ -1033,6 +1077,9 @@ class ChatActionExecutor:
                         thread=thread,
                     )
         except ChatActionExecutionError as error:
+            if error.code is ChatActionExecutionErrorCode.THREAD_TURN_IN_PROGRESS:
+                self._db_session.rollback()
+                raise
             if applied_results:
                 self._db_session.rollback()
                 grounding, thread = self._load_thread_context(
@@ -1097,7 +1144,7 @@ class ChatActionExecutor:
                 operator_message_for_memory=operator_message_for_memory,
                 client_turn_id=client_turn_id,
                 message_grounding_payload=message_grounding_payload,
-                persist_user_message=persist_user_message,
+                persist_user_message=persist_user_message and not user_message_persisted,
                 user_message_content=user_message_content,
                 trace_id=trace_id,
                 error=error,
@@ -1121,7 +1168,7 @@ class ChatActionExecutor:
                 operator_message_for_memory=operator_message_for_memory,
                 client_turn_id=client_turn_id,
                 message_grounding_payload=message_grounding_payload,
-                persist_user_message=persist_user_message,
+                persist_user_message=persist_user_message and not user_message_persisted,
                 user_message_content=user_message_content,
                 trace_id=trace_id,
                 error=surfaced_error,
@@ -1130,6 +1177,9 @@ class ChatActionExecutor:
             if surfaced_outcome is not None:
                 return surfaced_outcome
             raise surfaced_error from error
+        finally:
+            if turn_lock_acquired:
+                self._release_thread_turn_lock(thread_id=thread_id)
 
     def _surface_operator_error_in_thread(
         self,
@@ -5570,7 +5620,7 @@ def _build_document_upload_status_response(
     count_text = _format_document_count_summary(counts=counts)
     details = [
         detail
-        for record in records[:3]
+        for record in records[:8]
         if (detail := _format_uploaded_document_detail(record=record)) is not None
     ]
     detail_text = " ".join(details)
@@ -5608,10 +5658,35 @@ def _is_document_upload_status_request(value: str) -> bool:
             "did the upload",
             "do you see the upload",
             "source document",
+            "source documents",
             "uploaded document",
+            "uploaded documents",
             "attached document",
+            "attached documents",
             "uploaded file",
+            "uploaded files",
             "attached file",
+            "attached files",
+            "all them parsed",
+            "all parsed",
+            "are they parsed",
+            "are all parsed",
+            "are all of them parsed",
+            "is parsing done",
+            "parsing done",
+            "parsing finished",
+            "extraction done",
+            "extraction finished",
+            "tell me about the contents",
+            "tell me about contents",
+            "content of this document",
+            "content of these documents",
+            "contents of this document",
+            "contents of these documents",
+            "what is inside the document",
+            "what is inside these documents",
+            "what's inside the document",
+            "what's inside these documents",
         )
     ):
         return True

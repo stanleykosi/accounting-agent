@@ -30,6 +30,7 @@ export type ComposerDraft = {
 };
 
 export type ActionComposerProps = {
+  actionRefreshKey?: number;
   assistantMode?: "close_run" | "entity" | "global";
   closeRunId?: string | undefined;
   disabled?: boolean;
@@ -63,6 +64,7 @@ const PENDING_TOOL_LABELS: Record<string, string> = {
 const AUTO_RELEASE_TOOLS = new Set(["approve_close_run", "archive_close_run", "distribute_export"]);
 
 export function ActionComposer({
+  actionRefreshKey = 0,
   assistantMode,
   closeRunId,
   disabled = false,
@@ -132,6 +134,10 @@ export function ActionComposer({
     resetComposer();
     void loadPendingActions();
   }, [loadPendingActions, resetComposer, threadId]);
+
+  useEffect(() => {
+    void loadPendingActions();
+  }, [actionRefreshKey, loadPendingActions]);
 
   useEffect(() => {
     const textarea = textareaRef.current;
@@ -622,6 +628,9 @@ function buildSubmissionFailureMessage(caughtError: unknown): string {
     }
     if (caughtError.status === 404) {
       return `I couldn't find the selected chat or workspace context. ${caughtError.message}`;
+    }
+    if (caughtError.status === 409 && caughtError.code === "thread_turn_in_progress") {
+      return caughtError.message;
     }
     if (caughtError.status === 504) {
       return "The chat request took too long to return its final state. I retried the same turn key, so refresh the thread and I will continue from the latest confirmed workspace state.";

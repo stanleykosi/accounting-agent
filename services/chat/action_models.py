@@ -435,6 +435,22 @@ class ChatActionResponse(ContractModel):
             "with the assistant reply."
         ),
     )
+    turn_status: str = Field(
+        default="completed",
+        description="Lifecycle status for this chat turn: completed or accepted.",
+    )
+    turn_job_id: str | None = Field(
+        default=None,
+        description="Durable background job UUID when the turn was accepted asynchronously.",
+    )
+    client_turn_id: str | None = Field(
+        default=None,
+        description="Client-generated idempotency key for the submitted turn, if supplied.",
+    )
+    stream_after_message_order: int | None = Field(
+        default=None,
+        description="Message order after which SSE clients should stream this turn's updates.",
+    )
 
 
 class ApproveChatActionRequest(ContractModel):

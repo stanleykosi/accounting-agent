@@ -1,7 +1,7 @@
 /*
 Purpose: Enforce protected desktop route access with one canonical cookie gate.
 Scope: Redirect anonymous users to login, preserve local runtime setup routing, and only validate sessions on the login screen handoff.
-Dependencies: Next.js middleware APIs and the canonical desktop auth session helpers.
+Dependencies: Next.js proxy APIs and the canonical desktop auth session helpers.
 */
 
 import { NextResponse, type NextRequest } from "next/server";
@@ -22,7 +22,7 @@ const SETUP_PATH = "/setup";
  * Outputs: A redirect, a cookie-clearing recovery response, or the admitted protected request.
  * Behavior: Uses cookie presence as the protected-route gate so route loads do not depend on a server-side auth roundtrip.
  */
-export async function middleware(request: NextRequest): Promise<NextResponse> {
+export async function proxy(request: NextRequest): Promise<NextResponse> {
   const { pathname } = request.nextUrl;
   if (shouldBypassPath(pathname)) {
     return NextResponse.next();

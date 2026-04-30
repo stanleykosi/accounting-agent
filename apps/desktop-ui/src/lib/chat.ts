@@ -544,12 +544,16 @@ export type SendChatActionRequest = {
 
 export type ChatActionResponse = {
   action_plan: ChatActionSummary | null;
+  client_turn_id: string | null;
   content: string;
   is_read_only: boolean;
   message_id: string;
+  stream_after_message_order: number | null;
   thread_close_run_id: string | null;
   thread_entity_id: string;
   operator_controls: AgentOperatorControl[];
+  turn_job_id: string | null;
+  turn_status: string;
 };
 
 export type ApproveChatActionRequest = {
@@ -589,9 +593,25 @@ export async function sendChatAction(
   );
   return {
     ...response,
+    client_turn_id:
+      typeof (response as Record<string, unknown>).client_turn_id === "string"
+        ? ((response as Record<string, unknown>).client_turn_id as string)
+        : null,
     operator_controls: normalizeOperatorControls(
       (response as Record<string, unknown>).operator_controls,
     ),
+    stream_after_message_order:
+      typeof (response as Record<string, unknown>).stream_after_message_order === "number"
+        ? ((response as Record<string, unknown>).stream_after_message_order as number)
+        : null,
+    turn_job_id:
+      typeof (response as Record<string, unknown>).turn_job_id === "string"
+        ? ((response as Record<string, unknown>).turn_job_id as string)
+        : null,
+    turn_status:
+      typeof (response as Record<string, unknown>).turn_status === "string"
+        ? ((response as Record<string, unknown>).turn_status as string)
+        : "completed",
   };
 }
 
@@ -639,10 +659,81 @@ export async function sendChatActionWithAttachments(
   const payload = (await parseJsonResponse(response)) as ChatActionResponse;
   return {
     ...payload,
+    client_turn_id:
+      typeof (payload as Record<string, unknown>).client_turn_id === "string"
+        ? ((payload as Record<string, unknown>).client_turn_id as string)
+        : null,
     operator_controls: normalizeOperatorControls(
       (payload as Record<string, unknown>).operator_controls,
     ),
+    stream_after_message_order:
+      typeof (payload as Record<string, unknown>).stream_after_message_order === "number"
+        ? ((payload as Record<string, unknown>).stream_after_message_order as number)
+        : null,
+    turn_job_id:
+      typeof (payload as Record<string, unknown>).turn_job_id === "string"
+        ? ((payload as Record<string, unknown>).turn_job_id as string)
+        : null,
+    turn_status:
+      typeof (payload as Record<string, unknown>).turn_status === "string"
+        ? ((payload as Record<string, unknown>).turn_status as string)
+        : "completed",
   };
+}
+
+export function subscribeToChatThreadEvents(
+  threadId: string,
+  entityId: string,
+  options: {
+    afterMessageOrder: number;
+    clientTurnId?: string | null;
+    onAssistantMessage: (message: ChatMessageRecord) => void;
+    onError?: (message: string) => void;
+    onTimeout?: (message: string) => void;
+  },
+): () => void {
+  const params = new URLSearchParams({
+    after_message_order: String(options.afterMessageOrder),
+    entity_id: entityId,
+  });
+  if (typeof options.clientTurnId === "string" && options.clientTurnId.length > 0) {
+    params.set("client_turn_id", options.clientTurnId);
+  }
+  const source = new EventSource(
+    `${API_BASE}/threads/${encodeURIComponent(threadId)}/events?${params.toString()}`,
+    { withCredentials: true },
+  );
+
+  source.addEventListener("message", (event) => {
+    const payload = parseEventPayload(event);
+    const message = isRecord(payload) ? payload.message : null;
+    if (isValidChatMessageRecord(message) && message.role === "assistant") {
+      options.onAssistantMessage(message);
+    }
+  });
+  source.addEventListener("done", () => {
+    source.close();
+  });
+  source.addEventListener("timeout", (event) => {
+    const payload = parseEventPayload(event);
+    const message =
+      isRecord(payload) && typeof payload.message === "string"
+        ? payload.message
+        : "The assistant is still working. Reopen the thread to read the final reply.";
+    options.onTimeout?.(message);
+    source.close();
+  });
+  source.addEventListener("error", (event) => {
+    const payload = parseEventPayload(event);
+    const message =
+      isRecord(payload) && typeof payload.message === "string"
+        ? payload.message
+        : "The assistant event stream disconnected before the final reply arrived.";
+    options.onError?.(message);
+    source.close();
+  });
+
+  return () => source.close();
 }
 
 export function invalidateChatCache(): void {
@@ -997,6 +1088,17 @@ function extractChatApiErrorMessage(body: unknown): string | undefined {
   }
 
   return undefined;
+}
+
+function parseEventPayload(event: Event): unknown {
+  if (!(event instanceof MessageEvent) || typeof event.data !== "string") {
+    return null;
+  }
+  try {
+    return JSON.parse(event.data) as unknown;
+  } catch {
+    return null;
+  }
 }
 
 function extractChatApiErrorCode(body: unknown): string | undefined {

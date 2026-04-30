@@ -24,6 +24,7 @@ import {
   readChatThreadSnapshot,
   readChatThreadWorkspaceSnapshot,
   readGlobalChatThreadListSnapshot,
+  subscribeToChatThreadEvents,
   type ChatActionResponse,
   type ChatMessageRecord,
   type ChatThreadSummary,
@@ -101,6 +102,7 @@ export function ChatRail({
   const [isBootstrapping, setIsBootstrapping] = useState(!initialState.hasHydratedState);
   const [isCreatingThread, setIsCreatingThread] = useState(false);
   const [isLoadingThread, setIsLoadingThread] = useState(false);
+  const [actionRefreshKey, setActionRefreshKey] = useState(0);
   const isCreatingThreadRef = useRef(false);
   const activeEntityIdRef = useRef(entityId);
   const selectedThreadRef = useRef<ChatThreadSummary | null>(null);
@@ -110,6 +112,7 @@ export function ChatRail({
   const threadLoadRequestIdRef = useRef(0);
   const pendingTurnVersionRef = useRef(0);
   const hasHydratedStateRef = useRef(initialState.hasHydratedState);
+  const activeEventStreamCleanupRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     hasHydratedStateRef.current = initialState.hasHydratedState;
@@ -123,6 +126,14 @@ export function ChatRail({
     setWorkspace(initialState.workspace);
     setIsBootstrapping(false);
   }, [initialState]);
+
+  useEffect(
+    () => () => {
+      activeEventStreamCleanupRef.current?.();
+      activeEventStreamCleanupRef.current = null;
+    },
+    [],
+  );
 
   useEffect(() => {
     selectedThreadRef.current = selectedThread;
@@ -472,6 +483,7 @@ export function ChatRail({
           />
 
           <ActionComposer
+            actionRefreshKey={actionRefreshKey}
             assistantMode={conversationAssistantMode}
             closeRunId={scopedCloseRunId}
             disabled={isBusy || selectedThread === null}
@@ -505,6 +517,38 @@ export function ChatRail({
               setPendingTurn(null);
               activeEntityIdRef.current = response.thread_entity_id;
               setActiveEntityId(response.thread_entity_id);
+              if (
+                threadId &&
+                response.turn_status === "accepted" &&
+                typeof response.stream_after_message_order === "number"
+              ) {
+                activeEventStreamCleanupRef.current?.();
+                activeEventStreamCleanupRef.current = subscribeToChatThreadEvents(
+                  threadId,
+                  response.thread_entity_id,
+                  {
+                    afterMessageOrder: response.stream_after_message_order,
+                    clientTurnId: response.client_turn_id,
+                    onAssistantMessage: () => {
+                      activeEventStreamCleanupRef.current?.();
+                      activeEventStreamCleanupRef.current = null;
+                      setActionRefreshKey((current) => current + 1);
+                      void refreshSelectedThread({
+                        entityIdOverride: response.thread_entity_id,
+                      });
+                    },
+                    onError: (message) => {
+                      activeEventStreamCleanupRef.current = null;
+                      setError(message);
+                    },
+                    onTimeout: (message) => {
+                      activeEventStreamCleanupRef.current = null;
+                      setError(message);
+                    },
+                  },
+                );
+                return;
+              }
               void refreshSelectedThread({
                 entityIdOverride: response.thread_entity_id,
               });

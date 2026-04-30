@@ -7,6 +7,7 @@ Dependencies: Celery runtime configuration and worker task modules.
 from __future__ import annotations
 
 import apps.worker.app.tasks.extract_documents as _extract_documents  # noqa: F401
+import apps.worker.app.tasks.execute_chat_operator as _execute_chat_operator  # noqa: F401
 import apps.worker.app.tasks.generate_exports as _generate_exports  # noqa: F401
 import apps.worker.app.tasks.generate_recommendations as _generate_recommendations  # noqa: F401
 import apps.worker.app.tasks.generate_reports as _generate_reports  # noqa: F401
