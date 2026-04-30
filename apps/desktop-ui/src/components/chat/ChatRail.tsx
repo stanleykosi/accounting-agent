@@ -112,16 +112,16 @@ export function ChatRail({
       const response = isGlobalAssistant
         ? await listGlobalChatThreads({ limit: 50 })
         : await listChatThreads(
-            resolvedEntityId,
-            closeRunId
-              ? {
-                  closeRunId,
-                  limit: 50,
-                }
-              : {
-                  limit: 50,
-                },
-          );
+          resolvedEntityId,
+          closeRunId
+            ? {
+              closeRunId,
+              limit: 50,
+            }
+            : {
+              limit: 50,
+            },
+        );
       setThreads(response.threads);
       setSelectedThread((current) => {
         if (current === null) {
@@ -207,16 +207,16 @@ export function ChatRail({
         const response = isGlobalAssistant
           ? await createGlobalChatThread()
           : await createChatThread(
-              closeRunId
-                ? {
-                    close_run_id: closeRunId,
-                    entity_id: resolvedEntityId,
-                    title: nextThreadTitle ?? "Close run chat",
-                  }
-                : {
-                    entity_id: resolvedEntityId,
-                  },
-            );
+            closeRunId
+              ? {
+                close_run_id: closeRunId,
+                entity_id: resolvedEntityId,
+                title: nextThreadTitle ?? "Close run chat",
+              }
+              : {
+                entity_id: resolvedEntityId,
+              },
+          );
         const nextThread = response.thread;
         activeEntityIdRef.current = nextThread.entity_id;
         setActiveEntityId(nextThread.entity_id);
@@ -383,9 +383,9 @@ export function ChatRail({
           presentation === "workspace"
             ? workbenchShellStyle
             : {
-                ...workbenchShellStyle,
-                gridTemplateColumns: "minmax(180px, 220px) minmax(0, 1fr)",
-              }
+              ...workbenchShellStyle,
+              gridTemplateColumns: "minmax(170px, 200px) minmax(0, 1fr)",
+            }
         }
       >
         <ThreadSidebar
@@ -458,9 +458,9 @@ export function ChatRail({
                 current === null
                   ? null
                   : {
-                      ...current,
-                      assistantContent: message,
-                    },
+                    ...current,
+                    assistantContent: message,
+                  },
               );
             }}
             onSubmissionStart={(draft: ComposerDraft) => {
@@ -946,11 +946,11 @@ function buildLocalTurnMessages(options: {
   const attachmentPayload =
     options.draft.attachmentNames.length > 0
       ? {
-          attachments: options.draft.attachmentNames.map((filename) => ({
-            filename,
-            intent: "source_documents",
-          })),
-        }
+        attachments: options.draft.attachmentNames.map((filename) => ({
+          filename,
+          intent: "source_documents",
+        })),
+      }
       : {};
 
   return [
@@ -1095,7 +1095,7 @@ function buildNewThreadTitle(options: {
 
 const workbenchShellStyle = {
   display: "grid",
-  gridTemplateColumns: "minmax(220px, 280px) minmax(0, 1fr)",
+  gridTemplateColumns: "minmax(200px, 240px) minmax(0, 1fr)",
   height: "100%",
   minHeight: 0,
   overflow: "hidden",
@@ -1106,59 +1106,67 @@ const threadSidebarStyle = {
     "linear-gradient(180deg, rgba(247, 243, 242, 0.94) 0%, rgba(241, 237, 236, 0.98) 100%)",
   borderRight: "1px solid var(--quartz-border)",
   display: "grid",
-  gap: 12,
+  gap: 0,
+  gridTemplateRows: "auto minmax(0, 1fr)",
   minHeight: 0,
-  padding: "12px 10px",
+  overflow: "hidden",
+  padding: "10px 8px 6px",
 } satisfies CSSProperties;
 
 const threadSidebarHeaderStyle = {
   display: "grid",
-  gap: 10,
+  gap: 6,
+  paddingBottom: 6,
 } satisfies CSSProperties;
 
 function newChatButtonStyle(disabled: boolean) {
   return {
     alignItems: "center",
     border: "1px solid var(--quartz-primary)",
-    borderRadius: 10,
+    borderRadius: 8,
     background: "var(--quartz-primary)",
     color: "var(--quartz-primary-contrast)",
     cursor: disabled ? "not-allowed" : "pointer",
     display: "inline-flex",
+    flex: "0 0 auto",
     justifyContent: "center",
-    minHeight: 38,
+    height: 32,
     opacity: disabled ? 0.72 : 1,
     padding: 0,
-    width: 38,
+    transition: "opacity 150ms ease",
+    width: 32,
   } satisfies CSSProperties;
 }
 
 const buttonIconStyle = {
-  height: 15,
-  width: 15,
+  height: 13,
+  width: 13,
 } satisfies CSSProperties;
 
 const threadToolbarStyle = {
-  display: "grid",
+  alignItems: "center",
+  display: "flex",
   gap: 6,
-  gridTemplateColumns: "minmax(0, 1fr) 38px",
 } satisfies CSSProperties;
 
 const threadSearchShellStyle = {
   alignItems: "center",
   background: "rgba(255, 255, 255, 0.86)",
   border: "1px solid var(--quartz-border)",
-  borderRadius: 10,
+  borderRadius: 8,
   display: "flex",
-  gap: 8,
-  minHeight: 38,
-  padding: "0 10px",
+  flex: "1 1 0%",
+  gap: 6,
+  height: 32,
+  minWidth: 0,
+  padding: "0 8px",
 } satisfies CSSProperties;
 
 const threadSearchIconStyle = {
   color: "var(--quartz-muted)",
-  height: 15,
-  width: 15,
+  flex: "0 0 auto",
+  height: 13,
+  width: 13,
 } satisfies CSSProperties;
 
 const threadSearchInputStyle = {
@@ -1166,9 +1174,10 @@ const threadSearchInputStyle = {
   border: "none",
   color: "var(--quartz-ink)",
   font: "inherit",
-  fontSize: 13,
+  fontSize: 12,
   minWidth: 0,
   outline: "none",
+  padding: 0,
   width: "100%",
 } satisfies CSSProperties;
 
@@ -1176,6 +1185,7 @@ const threadScopeTabsStyle = {
   borderBottom: "1px solid var(--quartz-border)",
   display: "grid",
   gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+  marginTop: 2,
 } satisfies CSSProperties;
 
 function threadScopeTabStyle(active: boolean) {
@@ -1185,44 +1195,46 @@ function threadScopeTabStyle(active: boolean) {
     borderBottom: active ? "2px solid var(--quartz-secondary)" : "2px solid transparent",
     color: active ? "var(--quartz-secondary)" : "var(--quartz-muted)",
     cursor: "pointer",
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: active ? 700 : 500,
-    minHeight: 34,
+    minHeight: 28,
     padding: 0,
+    transition: "color 150ms ease, border-color 150ms ease",
   } satisfies CSSProperties;
 }
 
 const emptySidebarCardStyle = {
   border: "1px solid var(--quartz-border)",
-  borderRadius: 18,
+  borderRadius: 10,
   background: "rgba(255, 255, 255, 0.88)",
   display: "grid",
-  gap: 8,
-  padding: 18,
+  gap: 4,
+  margin: "8px 0",
+  padding: "12px 10px",
 } satisfies CSSProperties;
 
 const emptySidebarTitleStyle = {
   color: "var(--quartz-ink)",
-  fontSize: 15,
+  fontSize: 12,
   fontWeight: 700,
   margin: 0,
 } satisfies CSSProperties;
 
 const emptySidebarBodyStyle = {
   color: "var(--quartz-muted)",
-  fontSize: 13,
-  lineHeight: "20px",
+  fontSize: 11,
+  lineHeight: "16px",
   margin: 0,
 } satisfies CSSProperties;
 
 const threadListStyle = {
   display: "grid",
-  gap: 6,
+  gap: 3,
   listStyle: "none",
   margin: 0,
   minHeight: 0,
   overflow: "auto",
-  padding: 0,
+  padding: "6px 0 2px",
 } satisfies CSSProperties;
 
 const threadRowStyle = {
@@ -1233,18 +1245,20 @@ const threadRowStyle = {
 
 function threadCardStyle(active: boolean) {
   return {
-    border: active ? "1px solid rgba(142, 115, 75, 0.42)" : "1px solid var(--quartz-border)",
-    borderRadius: 10,
-    background: active ? "rgba(255, 251, 235, 0.78)" : "rgba(255, 255, 255, 0.82)",
+    alignItems: "center",
+    border: active ? "1px solid rgba(142, 115, 75, 0.35)" : "1px solid transparent",
+    borderRadius: 8,
+    background: active ? "rgba(255, 251, 235, 0.78)" : "transparent",
     boxShadow: active
-      ? "inset 3px 0 0 var(--quartz-gold), 0 10px 24px rgba(28, 27, 27, 0.04)"
-      : "0 6px 18px rgba(28, 27, 27, 0.025)",
+      ? "inset 3px 0 0 var(--quartz-gold)"
+      : "none",
     color: "var(--quartz-ink)",
     cursor: "pointer",
     display: "grid",
-    minHeight: 50,
-    padding: "10px 42px 10px 12px",
+    minHeight: 0,
+    padding: "7px 32px 7px 10px",
     textAlign: "left",
+    transition: "background 120ms ease, border-color 120ms ease",
     width: "100%",
   } satisfies CSSProperties;
 }
@@ -1252,37 +1266,40 @@ function threadCardStyle(active: boolean) {
 const threadTitleStyle = {
   color: "var(--quartz-ink)",
   display: "-webkit-box",
-  fontSize: 13,
-  fontWeight: 700,
-  lineHeight: "18px",
+  fontSize: 12,
+  fontWeight: 600,
+  lineHeight: "16px",
   overflow: "hidden",
   textOverflow: "ellipsis",
   WebkitBoxOrient: "vertical",
   WebkitLineClamp: 2,
+  wordBreak: "break-word",
 } satisfies CSSProperties;
 
 function threadDeleteButtonStyle(disabled: boolean) {
   return {
     alignItems: "center",
-    background: "rgba(255, 255, 255, 0.72)",
-    border: "1px solid rgba(123, 45, 38, 0.16)",
-    borderRadius: 10,
-    color: "var(--quartz-error)",
+    background: "transparent",
+    border: "none",
+    borderRadius: 6,
+    color: "var(--quartz-muted)",
     cursor: disabled ? "not-allowed" : "pointer",
     display: "inline-flex",
-    height: 30,
+    height: 22,
     justifyContent: "center",
-    opacity: disabled ? 0.6 : 1,
+    opacity: disabled ? 0.4 : 0.5,
     position: "absolute",
-    right: 8,
-    top: 10,
-    width: 30,
+    right: 6,
+    top: "50%",
+    transform: "translateY(-50%)",
+    transition: "opacity 120ms ease, color 120ms ease",
+    width: 22,
   } satisfies CSSProperties;
 }
 
 const threadDeleteIconStyle = {
-  height: 16,
-  width: 16,
+  height: 13,
+  width: 13,
 } satisfies CSSProperties;
 
 const conversationPaneStyle = {
@@ -1295,31 +1312,33 @@ const conversationPaneStyle = {
 const conversationHeaderStyle = {
   borderBottom: "1px solid var(--quartz-border)",
   display: "grid",
-  gap: 8,
-  padding: "12px 24px",
+  gap: 4,
+  padding: "8px 20px",
 } satisfies CSSProperties;
 
 const conversationHeaderTopRowStyle = {
   alignItems: "center",
   display: "flex",
-  gap: 16,
+  gap: 12,
   justifyContent: "space-between",
+  minHeight: 36,
 } satisfies CSSProperties;
 
 const conversationTitleBlockStyle = {
   display: "grid",
   minWidth: 0,
+  flex: "1 1 0%",
 } satisfies CSSProperties;
 
 const conversationScopePillStyle = {
   border: "1px solid var(--quartz-border)",
-  borderRadius: 8,
+  borderRadius: 6,
   color: "var(--quartz-muted)",
-  fontSize: 12,
+  fontSize: 11,
   fontWeight: 600,
-  maxWidth: 320,
+  maxWidth: 260,
   overflow: "hidden",
-  padding: "8px 10px",
+  padding: "4px 8px",
   textOverflow: "ellipsis",
   whiteSpace: "nowrap",
 } satisfies CSSProperties;
@@ -1327,10 +1346,10 @@ const conversationScopePillStyle = {
 const conversationTitleStyle = {
   color: "var(--quartz-ink)",
   fontFamily: "var(--font-display)",
-  fontSize: 24,
+  fontSize: 17,
   fontWeight: 600,
-  letterSpacing: "-0.03em",
-  lineHeight: 1.1,
+  letterSpacing: "-0.02em",
+  lineHeight: 1.2,
   margin: 0,
   overflow: "hidden",
   textOverflow: "ellipsis",
@@ -1340,8 +1359,9 @@ const conversationTitleStyle = {
 const conversationStatusRowStyle = {
   alignItems: "center",
   display: "flex",
+  flex: "0 0 auto",
   flexWrap: "wrap",
-  gap: 8,
+  gap: 6,
   justifyContent: "flex-end",
 } satisfies CSSProperties;
 
@@ -1349,19 +1369,19 @@ const conversationToolbarPillStyle = {
   alignItems: "center",
   background: "rgba(255, 255, 255, 0.84)",
   border: "1px solid var(--quartz-border)",
-  borderRadius: 8,
+  borderRadius: 6,
   color: "var(--quartz-ink)",
   display: "inline-flex",
-  fontSize: 12,
+  fontSize: 11,
   fontWeight: 600,
-  gap: 8,
-  minHeight: 36,
-  padding: "0 12px",
+  gap: 5,
+  minHeight: 28,
+  padding: "0 8px",
 } satisfies CSSProperties;
 
 const conversationToolbarIconStyle = {
-  height: 14,
-  width: 14,
+  height: 12,
+  width: 12,
 } satisfies CSSProperties;
 
 const conversationStatusPillStyle = {
@@ -1369,18 +1389,18 @@ const conversationStatusPillStyle = {
   borderRadius: 999,
   background: "rgba(69, 97, 123, 0.08)",
   color: "var(--quartz-secondary)",
-  fontSize: 12,
+  fontSize: 11,
   fontWeight: 600,
-  padding: "6px 10px",
+  padding: "3px 8px",
 } satisfies CSSProperties;
 
 const conversationMutedPillStyle = {
   border: "1px solid var(--quartz-border)",
   borderRadius: 999,
   color: "var(--quartz-muted)",
-  fontSize: 12,
+  fontSize: 11,
   fontWeight: 600,
-  padding: "6px 10px",
+  padding: "3px 8px",
 } satisfies CSSProperties;
 
 const conversationErrorStyle = {
@@ -1388,41 +1408,41 @@ const conversationErrorStyle = {
   borderRadius: 999,
   background: "rgba(255, 218, 214, 0.72)",
   color: "var(--quartz-error)",
-  fontSize: 12,
+  fontSize: 11,
   fontWeight: 600,
-  lineHeight: "18px",
-  padding: "6px 10px",
+  lineHeight: "16px",
+  padding: "3px 8px",
 } satisfies CSSProperties;
 
 const messageListStyle = {
   minHeight: 0,
   overflow: "auto",
-  padding: "28px 32px 22px",
+  padding: "20px 24px 16px",
 } satisfies CSSProperties;
 
 const messageStreamStyle = {
   display: "grid",
-  gap: 20,
+  gap: 16,
   margin: "0 auto",
-  maxWidth: 1220,
+  maxWidth: 1080,
   width: "100%",
 } satisfies CSSProperties;
 
 const emptyConversationCardStyle = {
   alignSelf: "center",
   border: "1px solid var(--quartz-border)",
-  borderRadius: 24,
+  borderRadius: 16,
   background: "rgba(255, 255, 255, 0.84)",
   display: "grid",
-  gap: 10,
+  gap: 8,
   marginTop: 36,
-  padding: "28px 30px",
+  padding: "24px 26px",
   textAlign: "center",
 } satisfies CSSProperties;
 
 const emptyConversationEyebrowStyle = {
   color: "var(--quartz-secondary)",
-  fontSize: 11,
+  fontSize: 10,
   fontWeight: 700,
   letterSpacing: "0.08em",
   margin: 0,
@@ -1432,23 +1452,23 @@ const emptyConversationEyebrowStyle = {
 const emptyConversationTitleStyle = {
   color: "var(--quartz-ink)",
   fontFamily: "var(--font-display)",
-  fontSize: 30,
+  fontSize: 22,
   fontWeight: 600,
-  letterSpacing: "-0.05em",
+  letterSpacing: "-0.04em",
   margin: 0,
 } satisfies CSSProperties;
 
 const emptyConversationBodyStyle = {
   color: "var(--quartz-muted)",
-  fontSize: 14,
-  lineHeight: "22px",
+  fontSize: 13,
+  lineHeight: "20px",
   margin: 0,
-  maxWidth: 520,
+  maxWidth: 480,
 } satisfies CSSProperties;
 
 const assistantMessageContainerStyle = {
   display: "flex",
-  gap: 12,
+  gap: 10,
   justifyContent: "flex-start",
 } satisfies CSSProperties;
 
@@ -1464,26 +1484,27 @@ const assistantAvatarStyle = {
   color: "var(--quartz-primary-contrast)",
   display: "inline-flex",
   flex: "0 0 auto",
-  height: 34,
+  height: 28,
   justifyContent: "center",
-  marginTop: 18,
-  width: 34,
+  marginTop: 12,
+  width: 28,
 } satisfies CSSProperties;
 
 const assistantAvatarIconStyle = {
-  height: 18,
-  width: 18,
+  height: 14,
+  width: 14,
 } satisfies CSSProperties;
 
 const assistantMessageBubbleStyle = {
   border: "1px solid var(--quartz-border)",
-  borderRadius: 12,
+  borderRadius: 10,
   background: "rgba(255, 255, 255, 0.92)",
   display: "grid",
-  gap: 14,
-  maxWidth: "min(100%, 1120px)",
-  padding: "18px 18px 16px",
-  width: "min(100%, 1120px)",
+  gap: 10,
+  maxWidth: "min(100%, 1080px)",
+  minWidth: 0,
+  padding: "14px 16px 12px",
+  width: "min(100%, 1080px)",
 } satisfies CSSProperties;
 
 const userMessageBubbleStyle = {
@@ -1491,22 +1512,23 @@ const userMessageBubbleStyle = {
   borderRadius: 10,
   background: "rgba(255, 251, 235, 0.72)",
   display: "grid",
-  gap: 10,
-  maxWidth: "min(100%, 680px)",
-  padding: "14px 16px",
+  gap: 8,
+  maxWidth: "min(100%, 600px)",
+  minWidth: 0,
+  padding: "10px 14px",
 } satisfies CSSProperties;
 
 const messageHeaderStyle = {
   alignItems: "center",
   display: "flex",
-  gap: 10,
+  gap: 8,
   justifyContent: "space-between",
 } satisfies CSSProperties;
 
 function messageRoleStyle(role: ChatMessageRecord["role"]) {
   return {
     color: role === "user" ? "var(--quartz-secondary)" : "var(--quartz-ink)",
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: 700,
     letterSpacing: "0.04em",
     textTransform: "uppercase",
@@ -1515,16 +1537,17 @@ function messageRoleStyle(role: ChatMessageRecord["role"]) {
 
 const messageTimeStyle = {
   color: "var(--quartz-muted)",
-  fontSize: 12,
+  fontSize: 11,
 } satisfies CSSProperties;
 
 const messageContentStyle = {
   color: "var(--quartz-ink)",
-  fontSize: 15,
-  lineHeight: "25px",
+  fontSize: 14,
+  lineHeight: "22px",
   margin: 0,
   overflowWrap: "anywhere",
   whiteSpace: "pre-wrap",
+  wordBreak: "break-word",
 } satisfies CSSProperties;
 
 const inlineAttachmentRowStyle = {

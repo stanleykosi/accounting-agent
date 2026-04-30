@@ -173,21 +173,21 @@ export function ActionComposer({
         const actionResponse =
           allowAttachments && attachments.length > 0
             ? await sendChatActionWithAttachments(
-                threadId,
-                entityId,
-                trimmed.length > 0
-                  ? {
-                      attachmentIntent: "source_documents",
-                      clientTurnId,
-                      content: trimmed,
-                      files: attachments,
-                    }
-                  : {
-                      attachmentIntent: "source_documents",
-                      clientTurnId,
-                      files: attachments,
-                    },
-              )
+              threadId,
+              entityId,
+              trimmed.length > 0
+                ? {
+                  attachmentIntent: "source_documents",
+                  clientTurnId,
+                  content: trimmed,
+                  files: attachments,
+                }
+                : {
+                  attachmentIntent: "source_documents",
+                  clientTurnId,
+                  files: attachments,
+                },
+            )
             : await sendChatAction(threadId, entityId, trimmed, clientTurnId);
 
         resetComposer();
@@ -253,12 +253,12 @@ export function ActionComposer({
           entityId,
           shouldAutoApproveRelease
             ? {
-                approvalPolicy: "auto_release_for_thread",
-                reason: "Approved from chat; auto-approve release controls for this thread.",
-              }
+              approvalPolicy: "auto_release_for_thread",
+              reason: "Approved from chat; auto-approve release controls for this thread.",
+            }
             : {
-                reason: "Approved from chat.",
-              },
+              reason: "Approved from chat.",
+            },
         );
         setPendingActions((current) => current.filter((action) => action.id !== actionId));
         onActionStateChange?.(updated);
@@ -557,8 +557,8 @@ function buildApprovalContinuationPrompt(input: {
     input.action.tool_name !== null
       ? formatPendingActionTitle(input.action)
       : input.action.target_type !== null
-      ? `${input.action.target_type}${input.action.target_id ? ` ${input.action.target_id}` : ""}`
-      : input.action.intent.replaceAll("_", " ");
+        ? `${input.action.target_type}${input.action.target_id ? ` ${input.action.target_id}` : ""}`
+        : input.action.intent.replaceAll("_", " ");
   if (input.wasApproved) {
     return input.autoApproveRelease
       ? `I approved the pending ${targetLabel}. Continue the same workflow, and apply the thread's auto-release approval policy to future non-destructive release steps.`
@@ -692,15 +692,15 @@ const composerContainerStyle = {
   borderTop: "1px solid var(--quartz-border)",
   background: "linear-gradient(180deg, rgba(247, 243, 242, 0.9) 0%, rgba(253, 248, 248, 1) 100%)",
   display: "grid",
-  gap: 10,
-  padding: "10px 24px 14px",
+  gap: 8,
+  padding: "8px 20px 10px",
 } satisfies React.CSSProperties;
 
 const pendingActionListStyle = {
   display: "grid",
-  gap: 10,
+  gap: 8,
   margin: "0 auto",
-  maxWidth: 1220,
+  maxWidth: 1080,
   paddingBottom: 2,
   width: "100%",
 } satisfies React.CSSProperties;
@@ -836,14 +836,14 @@ const composerFormStyle = {
 
 const composerShellStyle = {
   border: "1px solid var(--quartz-border)",
-  borderRadius: 14,
+  borderRadius: 12,
   background: "rgba(255, 255, 255, 0.92)",
-  boxShadow: "0 10px 28px rgba(28, 27, 27, 0.07)",
+  boxShadow: "0 8px 24px rgba(28, 27, 27, 0.06)",
   display: "grid",
   gap: 8,
   margin: "0 auto",
-  maxWidth: 1220,
-  padding: "9px 10px",
+  maxWidth: 1080,
+  padding: "8px 10px",
   width: "100%",
 } satisfies React.CSSProperties;
 
@@ -856,15 +856,15 @@ const composerInputRowStyle = {
 
 const composerTextareaStyle = {
   width: "100%",
-  minHeight: 36,
-  maxHeight: 156,
+  minHeight: 34,
+  maxHeight: 140,
   border: "none",
-  borderRadius: 10,
+  borderRadius: 8,
   background: "rgba(252, 252, 250, 0.72)",
   color: "var(--quartz-ink)",
   fontFamily: "inherit",
-  fontSize: 15,
-  lineHeight: "22px",
+  fontSize: 14,
+  lineHeight: "20px",
   outline: "none",
   overflowY: "auto",
   padding: "7px 10px",
@@ -942,7 +942,7 @@ const clearButtonStyle = {
 function sendButtonStyle(disabled: boolean) {
   return {
     border: "none",
-    borderRadius: 10,
+    borderRadius: 8,
     background: disabled ? "var(--quartz-surface-high)" : "var(--quartz-primary)",
     color: disabled ? "var(--quartz-muted)" : "var(--quartz-primary-contrast)",
     cursor: disabled ? "not-allowed" : "pointer",
@@ -951,15 +951,16 @@ function sendButtonStyle(disabled: boolean) {
     justifyContent: "center",
     fontSize: 12,
     fontWeight: 700,
-    height: 36,
-    minWidth: disabled ? 70 : 40,
-    padding: disabled ? "0 12px" : 0,
+    height: 34,
+    minWidth: disabled ? 64 : 36,
+    padding: disabled ? "0 10px" : 0,
+    transition: "background 120ms ease",
   } satisfies React.CSSProperties;
 }
 
 const sendIconStyle = {
-  height: 17,
-  width: 17,
+  height: 15,
+  width: 15,
 } satisfies React.CSSProperties;
 
 const sendButtonTextStyle = {

@@ -1041,7 +1041,7 @@ def _build_readiness_summary(
             "blockers": [],
             "warnings": [],
             "next_actions": [
-                "Create or open a close run to let the agent execute close-run workflows."
+                "Create or open a close run so I can run the close workflow here."
             ],
             "document_count": 0,
             "has_source_documents": False,

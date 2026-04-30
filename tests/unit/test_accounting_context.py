@@ -30,6 +30,30 @@ from services.documents.imported_ledger_representation import (
 )
 
 
+def test_readiness_summary_speaks_as_the_agent_control_surface_without_close_run() -> None:
+    """Workspace-level next action should not imply chat and agent are separate systems."""
+
+    readiness = _build_readiness_summary(
+        close_run=None,
+        coa_summary={"is_available": True, "requires_operator_upload": False},
+        document_summary={},
+        gl_coding_document_count=0,
+        recommendation_summary={},
+        journal_summary={},
+        reconciliation_summary={},
+        schedule_summary={},
+        report_summary={},
+        export_summary={},
+        distribution_summary={},
+        pending_action_count=0,
+    )
+
+    assert readiness["next_actions"] == [
+        "Create or open a close run so I can run the close workflow here."
+    ]
+    assert "let the agent" not in readiness["next_actions"][0]
+
+
 def test_readiness_summary_treats_fallback_coa_as_warning_and_prompts_phase_advance() -> None:
     """Fallback COA should not block collection when approved documents are already ready."""
 
