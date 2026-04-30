@@ -590,6 +590,27 @@ class AccountingToolset:
         )
         self._register(
             registry=registry,
+            name="open_close_run",
+            namespace="close_operator",
+            prompt_signature="open_close_run(close_run_id)",
+            description=(
+                "Pin this chat thread to an existing accessible close run. Use this when "
+                "the operator asks to work on, enter, open, select, or use an existing run."
+            ),
+            intent="workflow_action",
+            requires_human_approval=False,
+            executor=self._open_close_run,
+            target_type="close_run",
+            target_id_field="close_run_id",
+            input_schema=_schema_object(
+                properties={
+                    "close_run_id": _uuid_property("Existing close run UUID to open."),
+                },
+                required=("close_run_id",),
+            ),
+        )
+        self._register(
+            registry=registry,
             name="delete_close_run",
             namespace="close_operator",
             prompt_signature="delete_close_run(close_run_id?)",
@@ -694,7 +715,7 @@ class AccountingToolset:
             registry=registry,
             name="reopen_close_run",
             namespace="close_operator",
-            prompt_signature="reopen_close_run(reason?)",
+            prompt_signature="reopen_close_run(close_run_id?, reason?)",
             description=(
                 "Create a reopened working version of an approved, exported, or archived close run "
                 "so the operator can continue making changes."
@@ -704,6 +725,9 @@ class AccountingToolset:
             executor=self._reopen_close_run,
             input_schema=_schema_object(
                 properties={
+                    "close_run_id": _uuid_or_null_property(
+                        "Optional close-run UUID to reopen from a workspace-level thread."
+                    ),
                     "reason": _optional_string_property(
                         "Optional operator rationale for reopening the close run."
                     ),
@@ -1677,6 +1701,45 @@ class AccountingToolset:
             "version_no": result.current_version_no,
         }
 
+    def _open_close_run(
+        self,
+        arguments: dict[str, Any],
+        context: AgentExecutionContext,
+    ) -> dict[str, Any]:
+        actor_user = self._require_actor(context)
+        close_run_id = UUID(_require_string(arguments, "close_run_id"))
+        result = self._close_run_service.get_close_run(
+            actor_user=actor_user,
+            entity_id=context.entity_id,
+            close_run_id=close_run_id,
+        )
+        workspace_access = self._entity_repo.get_entity_for_user(
+            entity_id=context.entity_id,
+            user_id=actor_user.id,
+        )
+        workspace_name = (
+            workspace_access.entity.name
+            if workspace_access is not None and hasattr(workspace_access, "entity")
+            else None
+        )
+        return {
+            "tool": "open_close_run",
+            "opened_close_run_id": result.id,
+            "close_run_id": result.id,
+            "workspace_id": str(context.entity_id),
+            "workspace_name": workspace_name,
+            "period_start": result.period_start.isoformat(),
+            "period_end": result.period_end.isoformat(),
+            "reporting_currency": result.reporting_currency,
+            "active_phase": (
+                result.workflow_state.active_phase.value
+                if result.workflow_state.active_phase is not None
+                else None
+            ),
+            "status": result.status.value,
+            "version_no": result.current_version_no,
+        }
+
     def _delete_close_run(
         self,
         arguments: dict[str, Any],
@@ -1827,9 +1890,13 @@ class AccountingToolset:
         context: AgentExecutionContext,
     ) -> dict[str, Any]:
         actor_user = self._require_actor(context)
-        close_run_id = self._require_close_run_id(
-            context,
-            "Reopening a close run requires a close-run-scoped thread.",
+        close_run_id = (
+            UUID(_require_string(arguments, "close_run_id"))
+            if isinstance(arguments.get("close_run_id"), str)
+            else self._require_close_run_id(
+                context,
+                "Reopening a close run requires a close-run target or a close-run-scoped thread.",
+            )
         )
         result = self._close_run_service.reopen_close_run(
             actor_user=actor_user,

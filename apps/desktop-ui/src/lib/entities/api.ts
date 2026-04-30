@@ -9,7 +9,7 @@ import {
   buildEntityCacheInvalidationPrefixes,
   invalidateClientCacheByPrefix,
   loadClientCachedValue,
-  readClientCacheSnapshot,
+  readValidatedClientCacheSnapshot,
 } from "../client-cache";
 import { buildEntityProxyPath, ENTITY_PROXY_BASE_PATH } from "../entity-proxy";
 import { resolveBackendApiBaseUrl } from "../runtime";
@@ -93,7 +93,10 @@ export async function listEntities(): Promise<EntityListResponse> {
 }
 
 export function readEntityListSnapshot(): EntityListResponse | null {
-  return readClientCacheSnapshot<EntityListResponse>(ENTITY_PROXY_BASE_PATH);
+  return readValidatedClientCacheSnapshot<EntityListResponse>(
+    ENTITY_PROXY_BASE_PATH,
+    isValidEntityListResponse,
+  );
 }
 
 /**
@@ -124,7 +127,10 @@ export async function readEntityWorkspace(entityId: string): Promise<EntityWorks
 }
 
 export function readEntityWorkspaceSnapshot(entityId: string): EntityWorkspace | null {
-  return readClientCacheSnapshot<EntityWorkspace>(buildEntityProxyPath(entityId, []));
+  return readValidatedClientCacheSnapshot<EntityWorkspace>(
+    buildEntityProxyPath(entityId, []),
+    isValidEntityWorkspace,
+  );
 }
 
 /**
@@ -218,7 +224,9 @@ async function entityRequest<TResponse>(
   };
 
   if (requestMethod === "GET") {
-    return loadClientCachedValue(path, performRequest, ENTITY_READ_CACHE_TTL_MS);
+    return loadClientCachedValue(path, performRequest, ENTITY_READ_CACHE_TTL_MS, {
+      isValid: (payload) => isValidEntityCachePayload(path, payload),
+    });
   }
 
   const payload = await performRequest();
@@ -287,6 +295,48 @@ function asEntityApiErrorCode(value: unknown): EntityApiErrorCode {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
+}
+
+function isValidEntityCachePayload(path: string, payload: unknown): boolean {
+  const pathname = path.split("?")[0] ?? path;
+  if (pathname === ENTITY_PROXY_BASE_PATH) {
+    return isValidEntityListResponse(payload);
+  }
+  return isValidEntityWorkspace(payload);
+}
+
+function isValidEntityListResponse(value: unknown): value is EntityListResponse {
+  if (!isRecord(value) || !Array.isArray(value.entities)) {
+    return false;
+  }
+  return value.entities.every(isValidEntitySummary);
+}
+
+function isValidEntityWorkspace(value: unknown): value is EntityWorkspace {
+  if (!isValidEntitySummary(value) || !isRecord(value)) {
+    return false;
+  }
+  const record = value as Record<string, unknown>;
+  const memberships = record.memberships;
+  const activity = record.activity;
+  return (
+    (memberships === undefined || Array.isArray(memberships)) &&
+    (activity === undefined || Array.isArray(activity))
+  );
+}
+
+function isValidEntitySummary(value: unknown): value is EntitySummary {
+  return (
+    isRecord(value) &&
+    typeof value.id === "string" &&
+    typeof value.name === "string" &&
+    (typeof value.legal_name === "string" || value.legal_name === null) &&
+    typeof value.base_currency === "string" &&
+    typeof value.country_code === "string" &&
+    typeof value.timezone === "string" &&
+    typeof value.status === "string" &&
+    typeof value.member_count === "number"
+  );
 }
 
 function normalizeRequestMethod(value: string | null | undefined): string {

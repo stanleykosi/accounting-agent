@@ -17,7 +17,7 @@ import {
   buildEntityCacheInvalidationPrefixes,
   invalidateClientCacheByPrefix,
   loadClientCachedValue,
-  readClientCacheSnapshot,
+  readValidatedClientCacheSnapshot,
 } from "./client-cache";
 import {
   readEntityWorkspace,
@@ -174,7 +174,11 @@ export async function listCloseRuns(entityId: string): Promise<readonly CloseRun
 }
 
 export function readCloseRunListSnapshot(entityId: string): readonly CloseRunSummary[] | null {
-  const payload = readClientCacheSnapshot<unknown>(buildEntityProxyPath(entityId, ["close-runs"]));
+  const cacheKey = buildEntityProxyPath(entityId, ["close-runs"]);
+  const payload = readValidatedClientCacheSnapshot<unknown>(
+    cacheKey,
+    isValidCloseRunListResponsePayload,
+  );
   return payload === null ? null : parseCloseRunListResponse(payload);
 }
 
@@ -212,8 +216,10 @@ export async function readCloseRun(entityId: string, closeRunId: string): Promis
 }
 
 export function readCloseRunSnapshot(entityId: string, closeRunId: string): CloseRunSummary | null {
-  const payload = readClientCacheSnapshot<unknown>(
-    buildEntityProxyPath(entityId, ["close-runs", closeRunId]),
+  const cacheKey = buildEntityProxyPath(entityId, ["close-runs", closeRunId]);
+  const payload = readValidatedClientCacheSnapshot<unknown>(
+    cacheKey,
+    isValidCloseRunSummaryPayload,
   );
   return payload === null ? null : parseCloseRunSummary(payload);
 }
@@ -529,7 +535,9 @@ async function closeRunRequest<TResponse>(
   };
 
   if (requestMethod === "GET") {
-    return loadClientCachedValue(path, performRequest, CLOSE_RUN_READ_CACHE_TTL_MS);
+    return loadClientCachedValue(path, performRequest, CLOSE_RUN_READ_CACHE_TTL_MS, {
+      isValid: (payload) => isValidCloseRunCachePayload(path, payload),
+    });
   }
 
   const payload = await performRequest();
@@ -543,6 +551,32 @@ export function parseCloseRunListResponse(payload: unknown): readonly CloseRunSu
   }
 
   return payload.close_runs.map((closeRun) => parseCloseRunSummary(closeRun));
+}
+
+function isValidCloseRunCachePayload(path: string, payload: unknown): boolean {
+  const pathname = path.split("?")[0] ?? path;
+  if (pathname.endsWith("/close-runs")) {
+    return isValidCloseRunListResponsePayload(payload);
+  }
+  return isValidCloseRunSummaryPayload(payload);
+}
+
+function isValidCloseRunListResponsePayload(payload: unknown): boolean {
+  try {
+    parseCloseRunListResponse(payload);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function isValidCloseRunSummaryPayload(payload: unknown): boolean {
+  try {
+    parseCloseRunSummary(payload);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function parseCloseRunSummary(payload: unknown): CloseRunSummary {

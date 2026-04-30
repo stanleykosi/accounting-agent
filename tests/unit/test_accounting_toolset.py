@@ -22,10 +22,18 @@ from services.jobs.task_names import TaskName
 
 
 class _FakeCloseRunService:
-    def __init__(self, *, close_run: object, create_result: object | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        close_run: object,
+        create_result: object | None = None,
+        reopen_result: object | None = None,
+    ) -> None:
         self.close_run = close_run
         self.create_result = create_result
+        self.reopen_result = reopen_result
         self.create_call: dict[str, object] | None = None
+        self.reopen_call: dict[str, object] | None = None
 
     def get_close_run(self, **kwargs):
         del kwargs
@@ -36,6 +44,12 @@ class _FakeCloseRunService:
         if self.create_result is None:
             raise AssertionError("create_close_run was not expected in this test.")
         return self.create_result
+
+    def reopen_close_run(self, **kwargs):
+        self.reopen_call = kwargs
+        if self.reopen_result is None:
+            raise AssertionError("reopen_close_run was not expected in this test.")
+        return self.reopen_result
 
 
 class _FakeDocumentRepository:
@@ -311,6 +325,85 @@ def test_create_close_run_tool_uses_canonical_contract_validation() -> None:
     assert close_run_service.create_call["allow_duplicate_period"] is False
     assert close_run_service.create_call["duplicate_period_reason"] is None
     assert result["created_close_run_id"] == str(created_close_run_id)
+    assert result["active_phase"] == WorkflowPhase.COLLECTION.value
+
+
+def test_reopen_close_run_tool_accepts_workspace_level_target() -> None:
+    """Workspace chat should reopen an explicitly resolved approved close run."""
+
+    actor = EntityUserRecord(id=uuid4(), email="ops@example.com", full_name="Finance Ops")
+    approved_close_run_id = uuid4()
+    reopened_close_run_id = uuid4()
+    close_run_service = _FakeCloseRunService(
+        close_run=SimpleNamespace(),
+        reopen_result=SimpleNamespace(
+            source_close_run_id=str(approved_close_run_id),
+            close_run=SimpleNamespace(
+                id=str(reopened_close_run_id),
+                current_version_no=2,
+                status=CloseRunStatus.REOPENED,
+            ),
+        ),
+    )
+    toolset = _make_toolset(close_run_service=close_run_service)
+
+    result = toolset._reopen_close_run(
+        {
+            "close_run_id": str(approved_close_run_id),
+            "reason": "Reopen from chat to rerun reconciliation.",
+        },
+        _build_execution_context(actor=actor, close_run_id=None),
+    )
+
+    assert close_run_service.reopen_call is not None
+    assert close_run_service.reopen_call["close_run_id"] == approved_close_run_id
+    assert close_run_service.reopen_call["reason"] == (
+        "Reopen from chat to rerun reconciliation."
+    )
+    assert result["source_close_run_id"] == str(approved_close_run_id)
+    assert result["reopened_close_run_id"] == str(reopened_close_run_id)
+
+
+def test_open_close_run_tool_returns_thread_scope_payload() -> None:
+    """Opening an existing run should expose enough metadata for chat scope handoff."""
+
+    actor = EntityUserRecord(id=uuid4(), email="ops@example.com", full_name="Finance Ops")
+    close_run_id = uuid4()
+    entity_id = uuid4()
+    close_run_service = _FakeCloseRunService(
+        close_run=SimpleNamespace(
+            id=str(close_run_id),
+            entity_id=str(entity_id),
+            period_start=date(2026, 3, 1),
+            period_end=date(2026, 3, 31),
+            reporting_currency="NGN",
+            current_version_no=1,
+            status=CloseRunStatus.DRAFT,
+            workflow_state=SimpleNamespace(active_phase=WorkflowPhase.COLLECTION),
+        ),
+    )
+    toolset = _make_toolset(close_run_service=close_run_service)
+
+    result = toolset._open_close_run(
+        {"close_run_id": str(close_run_id)},
+        AgentExecutionContext(
+            actor=actor,
+            entity_id=entity_id,
+            close_run_id=None,
+            source_close_run_id=None,
+            thread_id=uuid4(),
+            operator_objective=None,
+            trace_id=None,
+            source_surface=None,
+        ),
+    )
+
+    assert result["tool"] == "open_close_run"
+    assert result["opened_close_run_id"] == str(close_run_id)
+    assert result["close_run_id"] == str(close_run_id)
+    assert result["workspace_id"] == str(entity_id)
+    assert result["period_start"] == "2026-03-01"
+    assert result["period_end"] == "2026-03-31"
     assert result["active_phase"] == WorkflowPhase.COLLECTION.value
 
 
@@ -776,7 +869,7 @@ def _make_toolset(
 def _build_execution_context(
     *,
     actor: EntityUserRecord,
-    close_run_id: UUID,
+    close_run_id: UUID | None,
     thread_id: UUID | None = None,
     operator_objective: str | None = None,
     source_surface: object | None = None,

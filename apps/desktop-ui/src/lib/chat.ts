@@ -6,6 +6,11 @@ Dependencies: Browser Fetch APIs, existing `/api/**` proxy routes, and strict
 runtime response guards.
 */
 
+import {
+  invalidateClientCacheByPrefix,
+  loadClientCachedValue,
+  readValidatedClientCacheSnapshot,
+} from "./client-cache";
 import { resolveBackendApiBaseUrl } from "./runtime";
 
 export type ChatMessageRole = "user" | "assistant" | "system";
@@ -229,6 +234,7 @@ export type SendChatMessageRequest = {
 };
 
 const API_BASE = "/api/chat";
+const CHAT_READ_CACHE_TTL_MS = 30_000;
 
 /**
  * Purpose: Build the canonical backend chat URL targeted by server-side proxy routes.
@@ -249,6 +255,7 @@ export function buildBackendChatUrl(path: string): string {
  * Behavior: Throws `ChatApiError` on non-2xx responses so callers can surface recovery steps.
  */
 async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
+  const method = (init?.method ?? "GET").toUpperCase();
   const response = await fetch(path, {
     credentials: "include",
     headers: {
@@ -266,7 +273,11 @@ async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
     );
   }
 
-  return (await parseJsonResponse(response)) as T;
+  const payload = (await parseJsonResponse(response)) as T;
+  if (method !== "GET") {
+    invalidateChatCache();
+  }
+  return payload;
 }
 
 /**
@@ -319,6 +330,50 @@ export async function listChatThreads(
   entityId: string,
   options?: { closeRunId?: string; limit?: number },
 ): Promise<ChatThreadListResponse> {
+  const path = buildChatThreadListPath(entityId, options);
+  return loadClientCachedValue(
+    path,
+    () => fetchJson<ChatThreadListResponse>(path),
+    CHAT_READ_CACHE_TTL_MS,
+    { isValid: isValidChatThreadListResponse },
+  );
+}
+
+export async function listGlobalChatThreads(options?: {
+  limit?: number;
+}): Promise<ChatThreadListResponse> {
+  const path = buildGlobalChatThreadListPath(options);
+  return loadClientCachedValue(
+    path,
+    () => fetchJson<ChatThreadListResponse>(path),
+    CHAT_READ_CACHE_TTL_MS,
+    { isValid: isValidChatThreadListResponse },
+  );
+}
+
+export function readChatThreadListSnapshot(
+  entityId: string,
+  options?: { closeRunId?: string; limit?: number },
+): ChatThreadListResponse | null {
+  return readValidatedClientCacheSnapshot<ChatThreadListResponse>(
+    buildChatThreadListPath(entityId, options),
+    isValidChatThreadListResponse,
+  );
+}
+
+export function readGlobalChatThreadListSnapshot(options?: {
+  limit?: number;
+}): ChatThreadListResponse | null {
+  return readValidatedClientCacheSnapshot<ChatThreadListResponse>(
+    buildGlobalChatThreadListPath(options),
+    isValidChatThreadListResponse,
+  );
+}
+
+function buildChatThreadListPath(
+  entityId: string,
+  options?: { closeRunId?: string; limit?: number },
+): string {
   const params = new URLSearchParams();
   params.set("entity_id", entityId);
   if (options?.closeRunId) {
@@ -328,19 +383,17 @@ export async function listChatThreads(
     params.set("limit", String(options.limit));
   }
 
-  return fetchJson<ChatThreadListResponse>(`${API_BASE}/threads?${params.toString()}`);
+  return `${API_BASE}/threads?${params.toString()}`;
 }
 
-export async function listGlobalChatThreads(options?: {
-  limit?: number;
-}): Promise<ChatThreadListResponse> {
+function buildGlobalChatThreadListPath(options?: { limit?: number }): string {
   const params = new URLSearchParams();
   if (options?.limit) {
     params.set("limit", String(options.limit));
   }
 
   const query = params.toString();
-  return fetchJson<ChatThreadListResponse>(`${API_BASE}/global/threads${query ? `?${query}` : ""}`);
+  return `${API_BASE}/global/threads${query ? `?${query}` : ""}`;
 }
 
 /**
@@ -354,13 +407,38 @@ export async function getChatThread(
   entityId: string,
   messageLimit?: number,
 ): Promise<ChatThreadWithMessages> {
+  const path = buildChatThreadDetailPath(threadId, entityId, messageLimit);
+  return loadClientCachedValue(
+    path,
+    () => fetchJson<ChatThreadWithMessages>(path),
+    CHAT_READ_CACHE_TTL_MS,
+    { isValid: isValidChatThreadWithMessages },
+  );
+}
+
+export function readChatThreadSnapshot(
+  threadId: string,
+  entityId: string,
+  messageLimit?: number,
+): ChatThreadWithMessages | null {
+  return readValidatedClientCacheSnapshot<ChatThreadWithMessages>(
+    buildChatThreadDetailPath(threadId, entityId, messageLimit),
+    isValidChatThreadWithMessages,
+  );
+}
+
+function buildChatThreadDetailPath(
+  threadId: string,
+  entityId: string,
+  messageLimit?: number,
+): string {
   const params = new URLSearchParams();
   params.set("entity_id", entityId);
   if (messageLimit) {
     params.set("message_limit", String(messageLimit));
   }
 
-  return fetchJson<ChatThreadWithMessages>(`${API_BASE}/threads/${threadId}?${params.toString()}`);
+  return `${API_BASE}/threads/${threadId}?${params.toString()}`;
 }
 
 export async function deleteChatThread(
@@ -379,9 +457,30 @@ export async function getChatThreadWorkspace(
   threadId: string,
   entityId: string,
 ): Promise<ChatThreadWorkspace> {
-  const workspace = await fetchJson<ChatThreadWorkspace>(
-    `${API_BASE}/threads/${threadId}/workspace?entity_id=${encodeURIComponent(entityId)}`,
+  const path = buildChatThreadWorkspacePath(threadId, entityId);
+  return loadClientCachedValue(
+    path,
+    async () => normalizeChatThreadWorkspace(await fetchJson<ChatThreadWorkspace>(path)),
+    CHAT_READ_CACHE_TTL_MS,
+    { isValid: isValidChatThreadWorkspace },
   );
+}
+
+export function readChatThreadWorkspaceSnapshot(
+  threadId: string,
+  entityId: string,
+): ChatThreadWorkspace | null {
+  return readValidatedClientCacheSnapshot<ChatThreadWorkspace>(
+    buildChatThreadWorkspacePath(threadId, entityId),
+    isValidChatThreadWorkspace,
+  );
+}
+
+function buildChatThreadWorkspacePath(threadId: string, entityId: string): string {
+  return `${API_BASE}/threads/${threadId}/workspace?entity_id=${encodeURIComponent(entityId)}`;
+}
+
+function normalizeChatThreadWorkspace(workspace: ChatThreadWorkspace): ChatThreadWorkspace {
   return {
     ...workspace,
     mcp_manifest: normalizeChatToolManifest(workspace.mcp_manifest as Record<string, unknown>),
@@ -536,6 +635,7 @@ export async function sendChatActionWithAttachments(
     );
   }
 
+  invalidateChatCache();
   const payload = (await parseJsonResponse(response)) as ChatActionResponse;
   return {
     ...payload,
@@ -543,6 +643,10 @@ export async function sendChatActionWithAttachments(
       (payload as Record<string, unknown>).operator_controls,
     ),
   };
+}
+
+export function invalidateChatCache(): void {
+  invalidateClientCacheByPrefix([API_BASE]);
 }
 
 function normalizeOperatorControls(value: unknown): AgentOperatorControl[] {
@@ -806,6 +910,79 @@ function normalizeToolSchemaItems(value: unknown): ToolSchemaNode | undefined {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
+}
+
+function isValidChatThreadListResponse(value: unknown): value is ChatThreadListResponse {
+  if (!isRecord(value) || !Array.isArray(value.threads)) {
+    return false;
+  }
+  return value.threads.every(isValidChatThreadSummary);
+}
+
+function isValidChatThreadWithMessages(value: unknown): value is ChatThreadWithMessages {
+  return (
+    isRecord(value) &&
+    isValidChatThreadSummary(value.thread) &&
+    Array.isArray(value.messages) &&
+    value.messages.every(isValidChatMessageRecord)
+  );
+}
+
+function isValidChatThreadWorkspace(value: unknown): value is ChatThreadWorkspace {
+  if (!isRecord(value)) {
+    return false;
+  }
+  return (
+    isValidGroundingContext(value.grounding) &&
+    isRecord(value.coa) &&
+    isRecord(value.memory) &&
+    isRecord(value.readiness) &&
+    Array.isArray(value.tools) &&
+    Array.isArray(value.recent_traces) &&
+    Array.isArray(value.operator_controls) &&
+    typeof value.thread_id === "string"
+  );
+}
+
+function isValidChatThreadSummary(value: unknown): value is ChatThreadSummary {
+  return (
+    isRecord(value) &&
+    typeof value.id === "string" &&
+    typeof value.entity_id === "string" &&
+    (typeof value.close_run_id === "string" || value.close_run_id === null) &&
+    typeof value.created_at === "string" &&
+    typeof value.updated_at === "string" &&
+    (typeof value.last_message_at === "string" || value.last_message_at === null) &&
+    typeof value.message_count === "number" &&
+    (typeof value.title === "string" || value.title === null) &&
+    isValidGroundingContext(value.grounding)
+  );
+}
+
+function isValidChatMessageRecord(value: unknown): value is ChatMessageRecord {
+  return (
+    isRecord(value) &&
+    typeof value.id === "string" &&
+    typeof value.thread_id === "string" &&
+    typeof value.content === "string" &&
+    typeof value.created_at === "string" &&
+    typeof value.message_order === "number" &&
+    typeof value.role === "string" &&
+    typeof value.message_type === "string" &&
+    isRecord(value.grounding_payload)
+  );
+}
+
+function isValidGroundingContext(value: unknown): value is GroundingContext {
+  return (
+    isRecord(value) &&
+    typeof value.entity_id === "string" &&
+    typeof value.entity_name === "string" &&
+    typeof value.autonomy_mode === "string" &&
+    typeof value.base_currency === "string" &&
+    (typeof value.close_run_id === "string" || value.close_run_id === null) &&
+    (typeof value.period_label === "string" || value.period_label === null)
+  );
 }
 
 function extractChatApiErrorMessage(body: unknown): string | undefined {

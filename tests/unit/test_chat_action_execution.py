@@ -16,6 +16,7 @@ from services.chat.action_execution import (
     ChatActionExecutionErrorCode,
     ChatActionExecutor,
     _format_next_step,
+    _resolve_action_thread_scope,
     _should_suppress_generic_next_step,
 )
 from services.chat.continuation_state import (
@@ -844,6 +845,129 @@ def test_hydrate_planning_result_answers_next_step_read_only() -> None:
     )
 
 
+def test_hydrate_planning_result_answers_upload_status_before_stale_workspace_prompt() -> None:
+    """Document upload questions should beat old create-workspace clarification memory."""
+
+    document_id = uuid4()
+    executor = ChatActionExecutor.__new__(ChatActionExecutor)
+
+    hydrated = executor._hydrate_planning_result(
+        planning=AgentPlanningResult(
+            mode="read_only",
+            assistant_response="What would you like to name the new workspace?",
+            reasoning="The model latched onto stale workspace memory.",
+            tool_name=None,
+            tool_arguments={},
+        ),
+        snapshot={
+            "close_run_id": str(uuid4()),
+            "documents": [
+                {
+                    "id": str(document_id),
+                    "filename": "invoice-ppw-4406.pdf",
+                    "status": "parsed",
+                    "document_type": "vendor_invoice",
+                    "open_issues": [],
+                    "fields": [
+                        {"field_name": "vendor_name", "value": "Apex Meridian"},
+                        {"field_name": "total_amount", "value": "NGN 6,800,000"},
+                    ],
+                }
+            ],
+            "readiness": {
+                "blockers": [],
+                "warnings": [],
+                "next_actions": ["Review the remaining source document."],
+            },
+        },
+        operator_content="i already made an upload",
+        operator_memory=executor._memory_from_context_payload(
+            {
+                "agent_memory": {
+                    "last_operator_message": "i want to create a new workspace",
+                    "last_assistant_response": "What would you like to name the new workspace?",
+                    "working_subtask": "Create the new workspace",
+                },
+                "agent_recent_objectives": ("i want to create a new workspace",),
+            }
+        ),
+    )
+
+    assert hydrated.mode == "read_only"
+    assert hydrated.tool_name is None
+    assert "invoice-ppw-4406.pdf" in hydrated.assistant_response
+    assert "parsed fields include vendor name: Apex Meridian" in hydrated.assistant_response
+    assert "What would you like to name" not in hydrated.assistant_response
+
+
+def test_hydrate_planning_result_does_not_treat_upload_followup_as_workspace_name() -> None:
+    """Pending workspace creation should not consume document/upload follow-up text."""
+
+    executor = ChatActionExecutor.__new__(ChatActionExecutor)
+
+    hydrated = executor._hydrate_planning_result(
+        planning=AgentPlanningResult(
+            mode="read_only",
+            assistant_response="I do not see a document yet.",
+            reasoning="The planner answered from the close-run context.",
+            tool_name=None,
+            tool_arguments={},
+        ),
+        snapshot={
+            "close_run_id": str(uuid4()),
+            "documents": [],
+        },
+        operator_content="this me about the upload",
+        operator_memory=executor._memory_from_context_payload(
+            {
+                "agent_memory": {
+                    "last_assistant_response": "What would you like to name the new workspace?",
+                    "working_subtask": "Create the new workspace",
+                }
+            }
+        ),
+    )
+
+    assert hydrated.mode == "read_only"
+    assert hydrated.tool_name is None
+    assert "do not see any source documents" in hydrated.assistant_response
+    assert "new workspace" not in hydrated.assistant_response
+
+
+def test_hydrate_planning_result_treats_here_as_upload_followup_in_close_run() -> None:
+    """A bare 'here' in close-run context should not revive stale workspace creation."""
+
+    executor = ChatActionExecutor.__new__(ChatActionExecutor)
+
+    hydrated = executor._hydrate_planning_result(
+        planning=AgentPlanningResult(
+            mode="read_only",
+            assistant_response="What would you like to name the new workspace?",
+            reasoning="The model reused an old workspace clarification.",
+            tool_name=None,
+            tool_arguments={},
+        ),
+        snapshot={
+            "close_run_id": str(uuid4()),
+            "documents": [],
+        },
+        operator_content="here",
+        operator_memory=executor._memory_from_context_payload(
+            {
+                "agent_memory": {
+                    "last_assistant_response": "What would you like to name the new workspace?",
+                    "working_subtask": "Create the new workspace",
+                }
+            }
+        ),
+    )
+
+    assert hydrated.mode == "read_only"
+    assert hydrated.tool_name is None
+    assert "do not see any source documents" in hydrated.assistant_response
+    assert "new workspace" not in hydrated.assistant_response
+
+
 def test_format_next_step_does_not_claim_agent_can_supply_operator_files() -> None:
     """File-dependent next actions should not be rewritten as agent capabilities."""
 
@@ -1293,6 +1417,137 @@ def test_hydrate_planning_result_routes_batch_document_approval() -> None:
     assert hydrated.tool_arguments["verified_complete"] is True
     assert hydrated.tool_arguments["verified_authorized"] is True
     assert hydrated.tool_arguments["verified_period"] is True
+
+
+def test_hydrate_planning_result_resolves_reopen_target_from_workspace_runs() -> None:
+    """Workspace-level reopen requests should target the clear approved close run."""
+
+    approved_close_run_id = uuid4()
+    draft_close_run_id = uuid4()
+    executor = ChatActionExecutor.__new__(ChatActionExecutor)
+    executor._tool_registry = _build_fake_tool_registry("reopen_close_run")
+
+    hydrated = executor._hydrate_planning_result(
+        planning=AgentPlanningResult(
+            mode="tool",
+            assistant_response="I'll reopen that close run.",
+            reasoning="The operator confirmed the previously offered reopen path.",
+            tool_name="reopen_close_run",
+            tool_arguments={},
+        ),
+        snapshot={
+            "close_run_id": None,
+            "entity_close_runs": [
+                {
+                    "id": str(draft_close_run_id),
+                    "status": "draft",
+                    "period_label": "Apr 2026",
+                    "active_phase": "collection",
+                },
+                {
+                    "id": str(approved_close_run_id),
+                    "status": "approved",
+                    "period_label": "Mar 2026",
+                    "active_phase": None,
+                },
+            ],
+        },
+        operator_content="reopen it then",
+        operator_memory=executor._memory_from_context_payload({}),
+    )
+
+    assert hydrated.mode == "tool"
+    assert hydrated.tool_name == "reopen_close_run"
+    assert hydrated.tool_arguments["close_run_id"] == str(approved_close_run_id)
+
+
+def test_hydrate_planning_result_opens_existing_close_run_instead_of_creating_duplicate() -> None:
+    """Work-on-period requests should pin an existing run, not create another one."""
+
+    close_run_id = uuid4()
+    executor = ChatActionExecutor.__new__(ChatActionExecutor)
+    executor._tool_registry = _build_fake_tool_registry("open_close_run", "create_close_run")
+
+    hydrated = executor._hydrate_planning_result(
+        planning=AgentPlanningResult(
+            mode="tool",
+            assistant_response="I'll create that run now.",
+            reasoning="The model treated the requested period as a new run.",
+            tool_name="create_close_run",
+            tool_arguments={
+                "period_start": "2026-03-01",
+                "period_end": "2026-03-31",
+            },
+        ),
+        snapshot={
+            "close_run_id": None,
+            "entity_close_runs": [
+                {
+                    "id": str(close_run_id),
+                    "status": "draft",
+                    "period_label": "Mar 2026",
+                    "period_start": "2026-03-01",
+                    "period_end": "2026-03-31",
+                    "active_phase": "collection",
+                }
+            ],
+        },
+        operator_content="lets work on march 2026",
+        operator_memory=executor._memory_from_context_payload({}),
+    )
+
+    assert hydrated.mode == "tool"
+    assert hydrated.tool_name == "open_close_run"
+    assert hydrated.tool_arguments["close_run_id"] == str(close_run_id)
+
+
+def test_hydrate_planning_result_targets_current_run_for_mistake_delete() -> None:
+    """Correction requests should delete the current mistaken run before using the new period."""
+
+    mistaken_close_run_id = uuid4()
+    intended_close_run_id = uuid4()
+    executor = ChatActionExecutor.__new__(ChatActionExecutor)
+    executor._tool_registry = _build_fake_tool_registry("delete_close_run", "open_close_run")
+
+    hydrated = executor._hydrate_planning_result(
+        planning=AgentPlanningResult(
+            mode="tool",
+            assistant_response="I'll create March 2026.",
+            reasoning="The model focused on the corrected period.",
+            tool_name="create_close_run",
+            tool_arguments={
+                "period_start": "2026-03-01",
+                "period_end": "2026-03-31",
+            },
+        ),
+        snapshot={
+            "close_run_id": str(mistaken_close_run_id),
+            "entity_close_runs": [
+                {
+                    "id": str(mistaken_close_run_id),
+                    "status": "draft",
+                    "period_label": "Mar 2016",
+                    "period_start": "2016-03-01",
+                    "period_end": "2016-03-31",
+                    "active_phase": "collection",
+                },
+                {
+                    "id": str(intended_close_run_id),
+                    "status": "draft",
+                    "period_label": "Mar 2026",
+                    "period_start": "2026-03-01",
+                    "period_end": "2026-03-31",
+                    "active_phase": "collection",
+                },
+            ],
+        },
+        operator_content="delete this run, its march 2026 i made a mistake",
+        operator_memory=executor._memory_from_context_payload({}),
+    )
+
+    assert hydrated.mode == "tool"
+    assert hydrated.tool_name == "delete_close_run"
+    assert hydrated.tool_arguments["close_run_id"] == str(mistaken_close_run_id)
 
 
 def test_hydrate_planning_result_fills_create_workspace_defaults_from_current_scope() -> None:
@@ -1994,6 +2249,98 @@ def test_handoff_thread_scope_moves_to_created_close_run_workspace() -> None:
     assert handoff_message is not None
     assert "Apex Meridian Distribution Limited" in handoff_message
     assert fake_action_repo.supersede_calls == []
+
+
+def test_resolve_action_thread_scope_uses_reopen_target_close_run() -> None:
+    """A workspace-level reopen action should execute against the selected close run."""
+
+    close_run_id = uuid4()
+    entity_id = uuid4()
+    planning = AgentPlanningResult(
+        mode="tool",
+        assistant_response="I'll reopen that close run.",
+        reasoning="The target close run was resolved from the workspace list.",
+        tool_name="reopen_close_run",
+        tool_arguments={"close_run_id": str(close_run_id)},
+    )
+    action = _resolve_fake_action(planning)
+
+    assert action is not None
+    assert _resolve_action_thread_scope(
+        action=action,
+        default_entity_id=entity_id,
+        default_close_run_id=None,
+    ) == (entity_id, close_run_id)
+
+
+def test_resolve_action_thread_scope_uses_open_target_close_run() -> None:
+    """Opening an existing run should execute and record against the selected close run."""
+
+    close_run_id = uuid4()
+    entity_id = uuid4()
+    planning = AgentPlanningResult(
+        mode="tool",
+        assistant_response="I'll pin that close run.",
+        reasoning="The target close run was resolved from the workspace list.",
+        tool_name="open_close_run",
+        tool_arguments={"close_run_id": str(close_run_id)},
+    )
+    action = _resolve_fake_action(planning)
+
+    assert action is not None
+    assert _resolve_action_thread_scope(
+        action=action,
+        default_entity_id=entity_id,
+        default_close_run_id=None,
+    ) == (entity_id, close_run_id)
+
+
+def test_handoff_thread_scope_pins_existing_close_run() -> None:
+    """Open-close-run results should move the chat into the selected close-run scope."""
+
+    source_close_run_id = uuid4()
+    target_close_run_id = uuid4()
+    entity_id = uuid4()
+    actor_user = EntityUserRecord(id=uuid4(), email="ops@example.com", full_name="Finance Ops")
+    thread_id = uuid4()
+    fake_action_repo = _FakeActionRepository()
+    executor = ChatActionExecutor.__new__(ChatActionExecutor)
+    executor._action_repo = fake_action_repo
+    executor._chat_repo = _FakeChatRepository(reopened_close_run_id=target_close_run_id)
+    executor._grounding = _FakeGroundingService(
+        reopened_close_run_id=target_close_run_id,
+        entity_id=entity_id,
+    )
+
+    _, updated_thread, handoff_message = executor._handoff_thread_scope_if_needed(
+        actor_user=actor_user,
+        entity_id=entity_id,
+        thread_id=thread_id,
+        thread=SimpleNamespace(
+            entity_id=entity_id,
+            close_run_id=source_close_run_id,
+            context_payload={},
+        ),
+        grounding=SimpleNamespace(context=SimpleNamespace()),
+        applied_result={
+            "tool": "open_close_run",
+            "opened_close_run_id": str(target_close_run_id),
+            "workspace_name": "Polymarket",
+            "period_start": "2026-03-01",
+            "period_end": "2026-03-31",
+            "active_phase": "collection",
+        },
+    )
+
+    assert updated_thread.close_run_id == target_close_run_id
+    assert handoff_message is not None
+    assert "existing close run" in handoff_message
+    assert fake_action_repo.supersede_calls == [
+        {
+            "thread_id": thread_id,
+            "close_run_id": source_close_run_id,
+        }
+    ]
 
 
 def test_send_action_message_executes_multiple_steps_before_replying() -> None:
@@ -3755,12 +4102,14 @@ def _build_fake_tool_registry(*tool_names: str):
         "update_workspace": ["workspace_id"],
         "delete_workspace": ["workspace_id"],
         "create_close_run": ["period_start", "period_end"],
+        "open_close_run": ["close_run_id"],
         "approve_reconciliation": ["reconciliation_id"],
         "disposition_reconciliation_item": ["item_id", "disposition", "reason"],
         "resolve_reconciliation_anomaly": ["anomaly_id", "resolution_note"],
         "update_commentary": ["report_run_id", "section_key", "body"],
         "approve_commentary": ["report_run_id", "section_key"],
         "delete_close_run": ["close_run_id"],
+        "reopen_close_run": [],
     }
     tool_definitions = {
         tool_name: SimpleNamespace(
@@ -3809,6 +4158,11 @@ def _build_fake_tool_registry(*tool_names: str):
             name="document_control",
             label="Document Control",
             specialist_name="Document Controller",
+        ),
+        SimpleNamespace(
+            name="close_operator",
+            label="Close Operations",
+            specialist_name="Close Run Operator",
         ),
     )
 

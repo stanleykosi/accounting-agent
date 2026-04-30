@@ -20,6 +20,10 @@ import {
   getChatThreadWorkspace,
   listChatThreads,
   listGlobalChatThreads,
+  readChatThreadListSnapshot,
+  readChatThreadSnapshot,
+  readChatThreadWorkspaceSnapshot,
+  readGlobalChatThreadListSnapshot,
   type ChatActionResponse,
   type ChatMessageRecord,
   type ChatThreadSummary,
@@ -48,6 +52,14 @@ type CreateThreadOptions = {
 
 type ThreadScopeFilter = "all" | "workspace" | "close";
 
+type InitialChatRailState = {
+  hasHydratedState: boolean;
+  messages: ChatMessageRecord[];
+  selectedThread: ChatThreadSummary | null;
+  threads: ChatThreadSummary[];
+  workspace: ChatThreadWorkspace | null;
+};
+
 const THREAD_SCOPE_FILTERS: ReadonlyArray<{ label: string; value: ThreadScopeFilter }> = [
   { label: "All", value: "all" },
   { label: "Workspace", value: "workspace" },
@@ -62,18 +74,31 @@ export function ChatRail({
 }: Readonly<ChatRailProps>): ReactElement {
   const resolvedAssistantMode = assistantMode ?? (closeRunId ? "close_run" : "entity");
   const isGlobalAssistant = resolvedAssistantMode === "global";
+  const initialState = useMemo(
+    () =>
+      readInitialChatRailState({
+        entityId,
+        isGlobalAssistant,
+        ...(closeRunId === undefined ? {} : { closeRunId }),
+      }),
+    [closeRunId, entityId, isGlobalAssistant],
+  );
   const [activeEntityId, setActiveEntityId] = useState(entityId);
-  const [threads, setThreads] = useState<ChatThreadSummary[]>([]);
-  const [selectedThread, setSelectedThread] = useState<ChatThreadSummary | null>(null);
-  const [messages, setMessages] = useState<ChatMessageRecord[]>([]);
-  const [workspace, setWorkspace] = useState<ChatThreadWorkspace | null>(null);
+  const [threads, setThreads] = useState<ChatThreadSummary[]>(() => initialState.threads);
+  const [selectedThread, setSelectedThread] = useState<ChatThreadSummary | null>(
+    () => initialState.selectedThread,
+  );
+  const [messages, setMessages] = useState<ChatMessageRecord[]>(() => initialState.messages);
+  const [workspace, setWorkspace] = useState<ChatThreadWorkspace | null>(
+    () => initialState.workspace,
+  );
   const [pendingTurn, setPendingTurn] = useState<PendingTurn | null>(null);
   const [pendingDeletionThread, setPendingDeletionThread] = useState<ChatThreadSummary | null>(
     null,
   );
   const [deletingThreadId, setDeletingThreadId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [isBootstrapping, setIsBootstrapping] = useState(true);
+  const [isBootstrapping, setIsBootstrapping] = useState(!initialState.hasHydratedState);
   const [isCreatingThread, setIsCreatingThread] = useState(false);
   const [isLoadingThread, setIsLoadingThread] = useState(false);
   const isCreatingThreadRef = useRef(false);
@@ -84,6 +109,20 @@ export function ChatRail({
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const threadLoadRequestIdRef = useRef(0);
   const pendingTurnVersionRef = useRef(0);
+  const hasHydratedStateRef = useRef(initialState.hasHydratedState);
+
+  useEffect(() => {
+    hasHydratedStateRef.current = initialState.hasHydratedState;
+    if (!initialState.hasHydratedState) {
+      return;
+    }
+
+    setThreads(initialState.threads);
+    setSelectedThread(initialState.selectedThread);
+    setMessages(initialState.messages);
+    setWorkspace(initialState.workspace);
+    setIsBootstrapping(false);
+  }, [initialState]);
 
   useEffect(() => {
     selectedThreadRef.current = selectedThread;
@@ -250,12 +289,15 @@ export function ChatRail({
     let isMounted = true;
 
     async function bootstrap(): Promise<void> {
-      setIsBootstrapping(true);
+      const keepHydratedState = hasHydratedStateRef.current;
+      setIsBootstrapping(!keepHydratedState);
       setError(null);
       setPendingTurn(null);
-      setMessages([]);
-      setWorkspace(null);
-      setSelectedThread(null);
+      if (!keepHydratedState) {
+        setMessages([]);
+        setWorkspace(null);
+        setSelectedThread(null);
+      }
 
       try {
         const loadedThreads = await loadThreads();
@@ -266,7 +308,7 @@ export function ChatRail({
         if (loadedThreads[0] !== undefined) {
           await loadThreadWorkspace(loadedThreads[0], {
             entityIdOverride: loadedThreads[0].entity_id,
-            showLoader: false,
+            showLoader: !keepHydratedState,
           });
           return;
         }
@@ -878,6 +920,49 @@ function buildRenderableMessages(messages: readonly ChatMessageRecord[]): Render
     }));
 }
 
+function readInitialChatRailState(
+  options: Readonly<{
+    closeRunId?: string;
+    entityId: string;
+    isGlobalAssistant: boolean;
+  }>,
+): InitialChatRailState {
+  const threadResponse = options.isGlobalAssistant
+    ? readGlobalChatThreadListSnapshot({ limit: 50 })
+    : readChatThreadListSnapshot(
+      options.entityId,
+      options.closeRunId
+        ? {
+          closeRunId: options.closeRunId,
+          limit: 50,
+        }
+        : {
+          limit: 50,
+        },
+    );
+  const threads = threadResponse?.threads ?? [];
+  const selectedThread = threads[0] ?? null;
+  if (selectedThread === null) {
+    return {
+      hasHydratedState: threadResponse !== null,
+      messages: [],
+      selectedThread: null,
+      threads,
+      workspace: null,
+    };
+  }
+
+  const threadDetail = readChatThreadSnapshot(selectedThread.id, selectedThread.entity_id);
+  const workspace = readChatThreadWorkspaceSnapshot(selectedThread.id, selectedThread.entity_id);
+  return {
+    hasHydratedState: threadResponse !== null || threadDetail !== null || workspace !== null,
+    messages: threadDetail?.messages ?? [],
+    selectedThread: threadDetail?.thread ?? selectedThread,
+    threads,
+    workspace,
+  };
+}
+
 function filterThreads(options: {
   query: string;
   scope: ThreadScopeFilter;
@@ -1437,7 +1522,9 @@ const emptyConversationCardStyle = {
   background: "rgba(255, 255, 255, 0.84)",
   display: "grid",
   gap: 8,
+  justifySelf: "center",
   marginTop: 36,
+  maxWidth: 600,
   padding: "24px 26px",
   textAlign: "center",
 } satisfies CSSProperties;
@@ -1464,7 +1551,7 @@ const emptyConversationBodyStyle = {
   color: "var(--quartz-muted)",
   fontSize: 13,
   lineHeight: "20px",
-  margin: 0,
+  margin: "0 auto",
   maxWidth: 480,
 } satisfies CSSProperties;
 

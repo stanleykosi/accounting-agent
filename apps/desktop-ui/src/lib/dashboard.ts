@@ -9,7 +9,7 @@ import {
   buildEntityCacheInvalidationPrefixes,
   invalidateClientCacheByPrefix,
   loadClientCachedValue,
-  readClientCacheSnapshot,
+  readValidatedClientCacheSnapshot,
   writeClientCacheValue,
 } from "./client-cache";
 import type { EntitySummary } from "./entities/api";
@@ -45,7 +45,10 @@ export async function readDashboardBootstrap(): Promise<readonly DashboardEntity
  * Behavior: Used by the portfolio page to render immediately after refresh.
  */
 export function readDashboardBootstrapSnapshot(): readonly DashboardEntityRuns[] | null {
-  const payload = readClientCacheSnapshot<DashboardBootstrapPayload>(DASHBOARD_BOOTSTRAP_PATH);
+  const payload = readValidatedClientCacheSnapshot<DashboardBootstrapPayload>(
+    DASHBOARD_BOOTSTRAP_PATH,
+    isValidDashboardBootstrapPayload,
+  );
   return payload?.entries ?? null;
 }
 
@@ -81,6 +84,9 @@ async function requestDashboardBootstrap(): Promise<DashboardBootstrapPayload> {
       return normalizedPayload;
     },
     DASHBOARD_CACHE_TTL_MS,
+    {
+      isValid: isValidDashboardBootstrapPayload,
+    },
   );
 }
 
@@ -122,4 +128,37 @@ function resolveDashboardBootstrapErrorMessage(
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
+}
+
+function isValidDashboardBootstrapPayload(value: DashboardBootstrapPayload): boolean {
+  if (!isRecord(value) || !Array.isArray(value.entries)) {
+    return false;
+  }
+  return value.entries.every(
+    (entry) =>
+      isRecord(entry) &&
+      isRecord(entry.entity) &&
+      typeof entry.entity.id === "string" &&
+      typeof entry.entity.name === "string" &&
+      Array.isArray(entry.closeRuns) &&
+      entry.closeRuns.every(isValidCachedCloseRunSummary),
+  );
+}
+
+function isValidCachedCloseRunSummary(value: unknown): boolean {
+  if (!isRecord(value)) {
+    return false;
+  }
+  const workflowState = value.workflowState;
+  if (!isRecord(workflowState) || !Array.isArray(workflowState.phaseStates)) {
+    return false;
+  }
+  return (
+    typeof value.id === "string" &&
+    typeof value.entityId === "string" &&
+    typeof value.periodStart === "string" &&
+    typeof value.periodEnd === "string" &&
+    typeof value.status === "string" &&
+    typeof workflowState.status === "string"
+  );
 }

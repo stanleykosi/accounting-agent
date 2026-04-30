@@ -658,8 +658,8 @@ class ChatActionExecutor:
                 if action_signature in seen_action_signatures:
                     assistant_content = _compose_assistant_content(
                         assistant_response=(
-                            "I completed the useful steps I could safely take in this turn "
-                            "and stopped before repeating the same action."
+                            "I handled the part I could complete and stopped because the next "
+                            "step was resolving to the same action again."
                             if applied_results
                             else (
                                 "I stopped because the next step would only repeat the "
@@ -1430,19 +1430,41 @@ class ChatActionExecutor:
                 message="That action plan could not be updated.",
             )
 
+        applied_results = [applied_result]
+        if thread is not None and action.tool.name == "delete_close_run":
+            follow_up_result = self._apply_post_approval_close_run_follow_up(
+                thread_id=thread_id,
+                entity_id=entity_id,
+                actor_user=actor_user,
+                thread=thread,
+                grounding=grounding,
+                payload=payload,
+                source_surface=source_surface,
+                trace_id=trace_id,
+            )
+            if follow_up_result is not None:
+                grounding, thread, follow_up_applied_result = follow_up_result
+                applied_results.append(follow_up_applied_result)
+
         self._chat_repo.create_message(
             thread_id=thread_id,
             role="assistant",
-            content=_format_approval_message(
-                payload.get("assistant_response"),
-                applied_result,
+            content=_compose_assistant_content(
+                assistant_response=(
+                    payload.get("assistant_response")
+                    if isinstance(payload.get("assistant_response"), str)
+                    else "Approved action executed."
+                ),
                 handoff_message=handoff_message,
-                snapshot=(
-                    self._snapshot_for_thread(
-                        actor_user=actor_user,
-                        entity_id=entity_id,
-                        close_run_id=thread.close_run_id,
-                        thread_id=thread_id,
+                result_summary=_format_operator_loop_result_summary(applied_results),
+                next_step=(
+                    _format_next_step(
+                        self._snapshot_for_thread(
+                            actor_user=actor_user,
+                            entity_id=entity_id,
+                            close_run_id=thread.close_run_id,
+                            thread_id=thread_id,
+                        )
                     )
                     if thread is not None
                     else None
@@ -1487,6 +1509,108 @@ class ChatActionExecutor:
             )
         self._db_session.commit()
         return updated
+
+    def _apply_post_approval_close_run_follow_up(
+        self,
+        *,
+        thread_id: UUID,
+        entity_id: UUID,
+        actor_user: EntityUserRecord,
+        thread: Any,
+        grounding: GroundingContextRecord | None,
+        payload: dict[str, Any],
+        source_surface: AuditSourceSurface,
+        trace_id: str | None,
+    ) -> tuple[GroundingContextRecord | None, Any, dict[str, Any]] | None:
+        """Continue a governed close-run correction after the destructive step is approved."""
+
+        objective = payload.get("turn_objective")
+        if not isinstance(objective, str) or not objective.strip():
+            return None
+
+        snapshot = self._snapshot_for_thread(
+            actor_user=actor_user,
+            entity_id=entity_id,
+            close_run_id=thread.close_run_id,
+            thread_id=thread_id,
+        )
+        planning = _build_open_close_run_intent_planning(
+            snapshot=snapshot,
+            operator_content=objective,
+        )
+        if (
+            planning is None
+            or planning.mode != "tool"
+            or planning.tool_name != "open_close_run"
+        ):
+            return None
+
+        action = self._resolve_action(planning=planning)
+        if action is None:
+            return None
+        action_entity_id, action_close_run_id = _resolve_action_thread_scope(
+            action=action,
+            default_entity_id=entity_id,
+            default_close_run_id=thread.close_run_id,
+        )
+        execution_context = self._build_execution_context(
+            actor_user=actor_user,
+            entity_id=action_entity_id,
+            close_run_id=action_close_run_id,
+            source_close_run_id=thread.close_run_id,
+            thread_id=thread_id,
+            operator_objective=objective,
+            trace_id=trace_id,
+            source_surface=source_surface,
+        )
+        if self._requires_human_approval(action=action, execution_context=execution_context):
+            return None
+
+        safe_tool_arguments = _json_safe_payload(action.planning.tool_arguments)
+        follow_up_record = self._action_repo.create_action_plan(
+            thread_id=thread_id,
+            message_id=None,
+            entity_id=action_entity_id,
+            close_run_id=action_close_run_id,
+            actor_user_id=actor_user.id,
+            intent=action.tool.intent,
+            target_type=action.target_type,
+            target_id=action.target_id,
+            payload={
+                "tool_name": action.tool.name,
+                "tool_arguments": safe_tool_arguments,
+                "assistant_response": action.planning.assistant_response,
+                "reasoning": action.planning.reasoning,
+                "requires_human_approval": False,
+                "turn_objective": _truncate_text(objective, limit=300),
+            },
+            confidence=1.0,
+            autonomy_mode=(
+                grounding.context.autonomy_mode if grounding is not None else "human_review"
+            ),
+            requires_human_approval=False,
+            reasoning=action.planning.reasoning,
+        )
+        applied_result = _json_safe_payload(
+            self._execute_action(
+                action=action,
+                execution_context=execution_context,
+            )
+        )
+        grounding, thread, _ = self._handoff_thread_scope_if_needed(
+            actor_user=actor_user,
+            entity_id=entity_id,
+            thread_id=thread_id,
+            thread=thread,
+            grounding=grounding,
+            applied_result=applied_result,
+        )
+        self._action_repo.update_action_plan_status(
+            action_plan_id=follow_up_record.id,
+            status="applied",
+            applied_result=applied_result,
+        )
+        return grounding, thread, applied_result
 
     def reject_action_plan(
         self,
@@ -2188,6 +2312,10 @@ class ChatActionExecutor:
             applied_result=applied_result,
             key="reopened_close_run_id",
         )
+        opened_close_run_id = _optional_uuid_from_result(
+            applied_result=applied_result,
+            key="opened_close_run_id",
+        )
         created_close_run_id = _optional_uuid_from_result(
             applied_result=applied_result,
             key="created_close_run_id",
@@ -2208,7 +2336,7 @@ class ChatActionExecutor:
             applied_result=applied_result,
             key="deleted_close_run_id",
         )
-        target_close_run_id = reopened_close_run_id or created_close_run_id
+        target_close_run_id = reopened_close_run_id or opened_close_run_id or created_close_run_id
         if (
             switched_workspace_id is None
             and created_workspace_id is None
@@ -2291,6 +2419,15 @@ class ChatActionExecutor:
                 thread_id=thread_id,
                 from_close_run_id=previous_close_run_id,
                 to_close_run_id=target_close_run_id,
+            )
+        elif (
+            opened_close_run_id is not None
+            and previous_close_run_id is not None
+            and previous_close_run_id != target_close_run_id
+        ):
+            self._action_repo.supersede_pending_actions_for_close_run_scope(
+                thread_id=thread_id,
+                close_run_id=previous_close_run_id,
             )
         elif (
             created_close_run_id is not None
@@ -3057,6 +3194,20 @@ class ChatActionExecutor:
                 tool_arguments={},
             )
 
+        correction_delete_planning = _build_close_run_correction_delete_planning(
+            snapshot=snapshot,
+            operator_content=content,
+        )
+        if correction_delete_planning is not None:
+            return correction_delete_planning
+
+        open_close_run_planning = _build_open_close_run_intent_planning(
+            snapshot=snapshot,
+            operator_content=content,
+        )
+        if open_close_run_planning is not None:
+            return open_close_run_planning
+
         create_close_run_planning = _build_create_close_run_intent_planning(
             snapshot=snapshot,
             operator_content=content,
@@ -3208,7 +3359,22 @@ class ChatActionExecutor:
                 ),
                 (
                     "If the operator wants to revisit a released close run to make more "
-                    "changes, you may reopen it and continue inside the same thread."
+                    "changes, you may reopen it and continue inside the same thread. From a "
+                    "workspace-level thread, resolve the target from the workspace close-run "
+                    "list when exactly one approved, exported, or archived run is clearly "
+                    "named or implied."
+                ),
+                (
+                    "If the operator asks to work on, enter, open, pin, select, or use an "
+                    "existing close run, use open_close_run instead of creating another run. "
+                    "Create a run only when the operator asks for a new, fresh, or duplicate "
+                    "run, or when no existing run matches the requested period."
+                ),
+                (
+                    "If the operator says the current close run was a mistake and asks to "
+                    "delete or remove it, target the current close run first. If they also "
+                    "name the intended period, handle the deletion first and then continue "
+                    "toward the named existing run after the governed delete is confirmed."
                 ),
                 (
                     "When a requested change belongs in an earlier workflow phase, you may "
@@ -3526,6 +3692,23 @@ class ChatActionExecutor:
                 }
             )
 
+        correction_delete_planning = _build_close_run_correction_delete_planning(
+            snapshot=snapshot,
+            operator_content=operator_content,
+        )
+        if correction_delete_planning is not None:
+            return correction_delete_planning
+
+        open_close_run_planning = _build_open_close_run_intent_planning(
+            snapshot=snapshot,
+            operator_content=operator_content,
+        )
+        if open_close_run_planning is not None and (
+            planning.mode != "tool"
+            or _normalize_planned_tool_name(planning.tool_name) != "open_close_run"
+        ):
+            return open_close_run_planning
+
         create_close_run_planning = _build_create_close_run_intent_planning(
             snapshot=snapshot,
             operator_content=operator_content,
@@ -3683,6 +3866,13 @@ class ChatActionExecutor:
                 operator_content=operator_content,
                 operator_memory=operator_memory,
             )
+        elif repaired_tool_name == "open_close_run":
+            tool_arguments = _hydrate_open_close_run_arguments(
+                tool_arguments=tool_arguments,
+                snapshot=snapshot,
+                operator_content=operator_content,
+                operator_memory=operator_memory,
+            )
         elif repaired_tool_name in {"switch_workspace", "update_workspace", "delete_workspace"}:
             tool_arguments = _hydrate_workspace_arguments(
                 tool_name=repaired_tool_name,
@@ -3693,6 +3883,13 @@ class ChatActionExecutor:
             )
         elif repaired_tool_name == "delete_close_run":
             tool_arguments = _hydrate_delete_close_run_arguments(
+                tool_arguments=tool_arguments,
+                snapshot=snapshot,
+                operator_content=operator_content,
+                operator_memory=operator_memory,
+            )
+        elif repaired_tool_name == "reopen_close_run":
+            tool_arguments = _hydrate_reopen_close_run_arguments(
                 tool_arguments=tool_arguments,
                 snapshot=snapshot,
                 operator_content=operator_content,
@@ -3932,6 +4129,15 @@ def _describe_pending_action(
             return f"I can permanently delete the {close_run_label} close run."
         return "I can permanently delete this close run."
 
+    if tool_name == "open_close_run":
+        close_run_label = _resolve_close_run_label(
+            snapshot=snapshot,
+            close_run_id=_optional_argument_text(tool_arguments, "close_run_id"),
+        )
+        if close_run_label is not None:
+            return f"I can pin this thread to the {close_run_label} close run."
+        return "I can pin this thread to that close run."
+
     if tool_name == "delete_workspace":
         workspace_label = _resolve_workspace_label(
             snapshot=snapshot,
@@ -4107,6 +4313,15 @@ def _build_target_clarification(
                 f"I can use { _join_choice_labels(choices) }."
             )
         return "Which close run should I delete?"
+
+    if tool_name == "open_close_run" and not isinstance(tool_arguments.get("close_run_id"), str):
+        choices = _close_run_choice_labels(snapshot=snapshot)
+        if choices:
+            return (
+                "Which close run should I use? "
+                f"I can use { _join_choice_labels(choices) }."
+            )
+        return "Which close run should I use?"
 
     return None
 
@@ -5008,6 +5223,20 @@ def _resolve_action_thread_scope(
         )
         if workspace_id is not None:
             return workspace_id, None
+    if action.tool.name == "reopen_close_run":
+        close_run_id = _optional_uuid_from_arguments(
+            arguments=action.planning.tool_arguments,
+            key="close_run_id",
+        )
+        if close_run_id is not None:
+            return default_entity_id, close_run_id
+    if action.tool.name == "open_close_run":
+        close_run_id = _optional_uuid_from_arguments(
+            arguments=action.planning.tool_arguments,
+            key="close_run_id",
+        )
+        if close_run_id is not None:
+            return default_entity_id, close_run_id
     return default_entity_id, default_close_run_id
 
 
@@ -5115,6 +5344,7 @@ def _build_direct_operator_status_response(
     for builder in (
         _build_workspace_scope_status_response,
         _build_close_run_scope_status_response,
+        _build_document_upload_status_response,
         _build_close_blocker_status_response,
         _build_next_step_status_response,
         _build_financial_report_analysis_response,
@@ -5295,6 +5525,171 @@ def _build_next_step_status_response(
             f"First, we still need to clear {blockers[0]}."
         )
     return f"The next best move is to { _lowercase_leading_character(next_action) }"
+
+
+def _build_document_upload_status_response(
+    *,
+    snapshot: dict[str, Any],
+    operator_content: str,
+) -> str | None:
+    """Answer document/upload follow-ups from the live close-run snapshot."""
+
+    if not _is_document_upload_status_request(operator_content):
+        return None
+    if snapshot.get("close_run_id") is None:
+        return (
+            "This chat is not pinned to a close run, so I cannot see close-run source "
+            "documents here yet. Open or create the close run first, then upload the "
+            "document into that run."
+        )
+
+    documents = snapshot.get("documents")
+    if not isinstance(documents, list):
+        return None
+    records = [record for record in documents if isinstance(record, dict)]
+    if not records:
+        return (
+            "I do not see any source documents attached to this close run yet. If you just "
+            "uploaded one, it has not reached the close-run snapshot I can see from this "
+            "thread."
+        )
+
+    counts = _document_status_counts(records=records)
+    count_text = _format_document_count_summary(counts=counts)
+    details = [
+        detail
+        for record in records[:3]
+        if (detail := _format_uploaded_document_detail(record=record)) is not None
+    ]
+    detail_text = " ".join(details)
+    next_text = _document_upload_next_step(counts=counts)
+    if detail_text and next_text:
+        return f"I can see {count_text}. {detail_text} {next_text}"
+    if detail_text:
+        return f"I can see {count_text}. {detail_text}"
+    if next_text:
+        return f"I can see {count_text}. {next_text}"
+    return f"I can see {count_text}."
+
+
+def _is_document_upload_status_request(value: str) -> bool:
+    """Return whether the operator is asking about uploaded close-run documents."""
+
+    normalized = _searchable_text(value)
+    if not normalized:
+        return False
+    if any(token in normalized for token in ("coa", "chart of accounts")):
+        return False
+    if normalized in {"here", "attached here", "uploaded here", "i uploaded it here"}:
+        return True
+    if any(
+        phrase in normalized
+        for phrase in (
+            "already made an upload",
+            "already uploaded",
+            "i made an upload",
+            "i uploaded",
+            "the upload",
+            "tell me about the upload",
+            "this me about the upload",
+            "what about the upload",
+            "did the upload",
+            "do you see the upload",
+            "source document",
+            "uploaded document",
+            "attached document",
+            "uploaded file",
+            "attached file",
+        )
+    ):
+        return True
+    return "upload" in normalized and any(
+        token in normalized for token in ("document", "file", "source", "already", "made")
+    )
+
+
+def _document_status_counts(*, records: list[dict[str, Any]]) -> dict[str, int]:
+    """Count document statuses from a snapshot document list."""
+
+    counts: dict[str, int] = {}
+    for record in records:
+        status = str(record.get("status") or "unknown")
+        counts[status] = counts.get(status, 0) + 1
+    return counts
+
+
+def _format_document_count_summary(*, counts: dict[str, int]) -> str:
+    """Render a compact document-count summary."""
+
+    total = sum(counts.values())
+    parts = [
+        f"{count} {_format_document_status_label(status)}"
+        for status, count in sorted(counts.items())
+        if count > 0
+    ]
+    if not parts:
+        return f"{total} source document{'' if total == 1 else 's'}"
+    return (
+        f"{total} source document{'' if total == 1 else 's'} "
+        f"({_join_choice_labels(parts)})"
+    )
+
+
+def _format_document_status_label(status: str) -> str:
+    """Return a plain label for one document status."""
+
+    labels = {
+        "uploaded": "uploaded",
+        "processing": "processing",
+        "parsed": "parsed",
+        "needs_review": "awaiting review",
+        "approved": "approved",
+        "rejected": "rejected",
+        "ignored": "ignored",
+    }
+    return labels.get(status, status.replace("_", " "))
+
+
+def _format_uploaded_document_detail(*, record: dict[str, Any]) -> str | None:
+    """Summarize one uploaded document with parsed fields and issues when available."""
+
+    filename = record.get("filename")
+    if not isinstance(filename, str) or not filename.strip():
+        return None
+    status = _format_document_status_label(str(record.get("status") or "unknown"))
+    document_type = str(record.get("document_type") or "").replace("_", " ").strip()
+    prefix = f"{filename.strip()} is {status}"
+    if document_type:
+        prefix = f"{prefix} as {document_type}"
+    open_issues = record.get("open_issues")
+    issue_count = len(open_issues) if isinstance(open_issues, list) else 0
+    if issue_count:
+        prefix = f"{prefix} with {issue_count} open issue{'' if issue_count == 1 else 's'}"
+    fields = record.get("fields")
+    field_parts: list[str] = []
+    if isinstance(fields, list):
+        for field in fields[:3]:
+            if not isinstance(field, dict):
+                continue
+            name = str(field.get("field_name") or "").replace("_", " ").strip()
+            value = str(field.get("value") or "").strip()
+            if name and value:
+                field_parts.append(f"{name}: {value}")
+    if field_parts:
+        return f"{prefix}; parsed fields include {', '.join(field_parts)}."
+    return f"{prefix}."
+
+
+def _document_upload_next_step(*, counts: dict[str, int]) -> str | None:
+    """Return the next document-specific action from upload state."""
+
+    if counts.get("uploaded", 0) > 0 or counts.get("processing", 0) > 0:
+        return "Parsing is still in progress, so the next step is to wait for extraction to finish."
+    if counts.get("needs_review", 0) > 0 or counts.get("parsed", 0) > 0:
+        return "The next step is document review; I can review or approve the clean ones from chat."
+    if counts.get("approved", 0) > 0:
+        return "Approved documents are ready for recommendation generation or the next close step."
+    return None
 
 
 def _safe_text(value: object) -> str | None:
@@ -6039,7 +6434,7 @@ def _build_create_workspace_intent_planning(
     is_create_request = _is_workspace_creation_request(operator_content)
     is_name_follow_up = _memory_indicates_pending_workspace_creation(
         operator_memory=operator_memory,
-    )
+    ) and _is_workspace_creation_follow_up_candidate(operator_content)
     if not is_create_request and not is_name_follow_up:
         return None
 
@@ -6155,6 +6550,46 @@ def _memory_indicates_pending_workspace_creation(
         if "legal entity name" in normalized:
             return True
     return False
+
+
+def _is_workspace_creation_follow_up_candidate(value: str) -> bool:
+    """Return whether a message plausibly supplies a missing workspace name/legal name."""
+
+    normalized = _searchable_text(value)
+    if not normalized:
+        return False
+    if _is_document_upload_status_request(value):
+        return False
+    if normalized in {"here", "done", "ok", "okay", "yes", "no", "uploaded"}:
+        return False
+    if any(
+        phrase in normalized
+        for phrase in (
+            "already uploaded",
+            "already made",
+            "upload",
+            "uploaded",
+            "document",
+            "source file",
+            "close run",
+            "close-run",
+            "recommendation",
+            "journal",
+            "reconciliation",
+            "report",
+            "export",
+            "next step",
+            "what next",
+        )
+    ):
+        return False
+    has_question = "?" in value
+    if has_question and not any(token in normalized for token in ("name", "legal")):
+        return False
+    token_count = len(normalized.split())
+    if token_count > 12 and not any(token in normalized for token in ("name", "legal")):
+        return False
+    return True
 
 
 def _resolve_pending_workspace_name_from_memory(
@@ -6337,6 +6772,138 @@ def _build_create_close_run_intent_planning(
     )
 
 
+def _build_close_run_correction_delete_planning(
+    *,
+    snapshot: dict[str, Any],
+    operator_content: str,
+) -> AgentPlanningResult | None:
+    """Delete the current mistaken run before resolving a corrected target period."""
+
+    normalized = _searchable_text(operator_content)
+    if not any(token in normalized for token in ("delete", "remove", "cancel")):
+        return None
+    if not any(
+        phrase in normalized
+        for phrase in (
+            "mistake",
+            "wrong",
+            "typo",
+            "made a mistake",
+            "i meant",
+            "should be",
+            "its ",
+            "it s ",
+        )
+    ):
+        return None
+    current_close_run_id = snapshot.get("close_run_id")
+    if not isinstance(current_close_run_id, str) or not current_close_run_id.strip():
+        return None
+    return AgentPlanningResult(
+        mode="tool",
+        assistant_response=(
+            "I'll remove the mistaken close run first, then continue with the corrected "
+            "period once that governed deletion is confirmed."
+        ),
+        reasoning=(
+            "The operator asked to delete the current mistaken close run before moving to "
+            "the corrected period."
+        ),
+        tool_name="delete_close_run",
+        tool_arguments={"close_run_id": current_close_run_id},
+    )
+
+
+def _build_open_close_run_intent_planning(
+    *,
+    snapshot: dict[str, Any],
+    operator_content: str,
+) -> AgentPlanningResult | None:
+    """Plan an existing close-run scope switch when the operator asks to work there."""
+
+    if _is_close_run_creation_request(operator_content):
+        return None
+    normalized = _searchable_text(operator_content)
+    if any(
+        phrase in normalized
+        for phrase in (
+            "reopen",
+            "alter it after approval",
+            "alter after approval",
+            "change it after approval",
+            "approved working version",
+        )
+    ):
+        return None
+    is_correction_target = (
+        _infer_close_run_period_from_text(operator_content) is not None
+        and any(
+            phrase in normalized
+            for phrase in (
+                "mistake",
+                "wrong",
+                "typo",
+                "i meant",
+                "should be",
+                "its ",
+                "it s ",
+            )
+        )
+    )
+    if not is_correction_target and not any(
+        phrase in normalized
+        for phrase in (
+            "work on ",
+            "lets work on",
+            "let s work on",
+            "open ",
+            "enter ",
+            "pin ",
+            "select ",
+            "use ",
+            "switch to ",
+        )
+    ):
+        return None
+
+    close_run_id = _resolve_close_run_id_from_snapshot(
+        snapshot=snapshot,
+        operator_content=operator_content,
+        operator_memory=AgentMemorySummary(),
+    )
+    if close_run_id is None:
+        return None
+    if snapshot.get("close_run_id") == close_run_id:
+        label = _resolve_close_run_label(snapshot=snapshot, close_run_id=close_run_id)
+        return AgentPlanningResult(
+            mode="read_only",
+            assistant_response=(
+                f"We're already working in the {label} close run."
+                if label is not None
+                else "We're already working in that close run."
+            ),
+            reasoning="The requested close run is already the active thread scope.",
+            tool_name=None,
+            tool_arguments={},
+        )
+
+    label = _resolve_close_run_label(snapshot=snapshot, close_run_id=close_run_id)
+    return AgentPlanningResult(
+        mode="tool",
+        assistant_response=(
+            f"I'll pin this thread to the {label} close run now."
+            if label is not None
+            else "I'll pin this thread to that close run now."
+        ),
+        reasoning=(
+            "The operator asked to work on an existing close run, so the existing run "
+            "should be opened instead of creating a duplicate."
+        ),
+        tool_name="open_close_run",
+        tool_arguments={"close_run_id": close_run_id},
+    )
+
+
 def _is_close_run_creation_request(value: str) -> bool:
     """Return whether the operator is asking to create, not list, a close run."""
 
@@ -6415,6 +6982,29 @@ def _build_create_close_run_follow_up_arguments(
     if workspace_id is not None:
         arguments["workspace_id"] = workspace_id
     return arguments
+
+
+def _hydrate_open_close_run_arguments(
+    *,
+    tool_arguments: dict[str, Any],
+    snapshot: dict[str, Any],
+    operator_content: str,
+    operator_memory: AgentMemorySummary,
+) -> dict[str, Any]:
+    """Fill the close-run identifier for existing-run open requests."""
+
+    hydrated = dict(tool_arguments)
+    if isinstance(hydrated.get("close_run_id"), str):
+        return hydrated
+
+    resolved_close_run_id = _resolve_close_run_id_from_snapshot(
+        snapshot=snapshot,
+        operator_content=operator_content,
+        operator_memory=operator_memory,
+    )
+    if resolved_close_run_id is not None:
+        hydrated["close_run_id"] = resolved_close_run_id
+    return hydrated
 
 
 def _hydrate_create_close_run_arguments(
@@ -6827,6 +7417,7 @@ def _tool_memory_subtask_verb(*, tool_name: str) -> str | None:
         "update_workspace": "Update",
         "delete_workspace": "Delete",
         "create_close_run": "Create a close run in",
+        "open_close_run": "Work in",
         "delete_close_run": "Delete",
     }
     return mapping.get(tool_name)
@@ -6843,6 +7434,7 @@ def _tool_memory_generic_subtask(*, tool_name: str) -> str | None:
         "assemble_evidence_pack": "Assemble the evidence pack for the current close run",
         "create_workspace": "Create the new workspace",
         "create_close_run": "Create the next close run",
+        "open_close_run": "Open the close run",
         "advance_close_run": "Advance the close run",
         "rewind_close_run": "Move the close run back to the requested phase",
         "reopen_close_run": "Reopen the close run as a working version",
@@ -6927,7 +7519,9 @@ def _tool_memory_target_spec(*, tool_name: str | None) -> tuple[str, str] | None
         "update_workspace": ("workspace", "workspace_id"),
         "delete_workspace": ("workspace", "workspace_id"),
         "create_close_run": ("workspace", "workspace_id"),
+        "open_close_run": ("close_run", "close_run_id"),
         "delete_close_run": ("close_run", "close_run_id"),
+        "reopen_close_run": ("close_run", "close_run_id"),
     }
     return mapping.get(tool_name or "")
 
@@ -7171,7 +7765,17 @@ def _infer_close_operator_tool_name(
         return "delete_close_run"
     if any(token in normalized_content for token in ("archive",)):
         return "archive_close_run"
-    if any(token in normalized_content for token in ("reopen", "open it again")):
+    if any(
+        token in normalized_content
+        for token in (
+            "reopen",
+            "open it again",
+            "enter that approved",
+            "enter the approved",
+            "work inside the approved",
+            "alter it after approval",
+        )
+    ):
         return "reopen_close_run"
     if any(token in normalized_content for token in ("approve", "sign off", "signoff")):
         return "approve_close_run"
@@ -7188,6 +7792,19 @@ def _infer_close_operator_tool_name(
         return "rewind_close_run"
     if any(token in normalized_content for token in ("start", "new run", "fresh run", "new close")):
         return "create_close_run"
+    if any(
+        token in normalized_content
+        for token in (
+            "work on ",
+            "open ",
+            "enter ",
+            "pin ",
+            "select ",
+            "use ",
+            "switch to ",
+        )
+    ):
+        return "open_close_run"
     if any(
         token in normalized_content
         for token in ("advance", "move forward", "continue to ", "move to ")
@@ -8229,6 +8846,60 @@ def _hydrate_delete_close_run_arguments(
     return hydrated
 
 
+def _hydrate_reopen_close_run_arguments(
+    *,
+    tool_arguments: dict[str, Any],
+    snapshot: dict[str, Any],
+    operator_content: str,
+    operator_memory: AgentMemorySummary,
+) -> dict[str, Any]:
+    """Resolve one released close run for reopening when the workspace target is clear."""
+
+    hydrated = dict(tool_arguments)
+    if isinstance(hydrated.get("close_run_id"), str):
+        return hydrated
+
+    resolved_close_run_id = _resolve_reopen_close_run_id_from_snapshot(
+        snapshot=snapshot,
+        operator_content=operator_content,
+        operator_memory=operator_memory,
+    )
+    if resolved_close_run_id is not None:
+        hydrated["close_run_id"] = resolved_close_run_id
+    return hydrated
+
+
+def _resolve_reopen_close_run_id_from_snapshot(
+    *,
+    snapshot: dict[str, Any],
+    operator_content: str,
+    operator_memory: AgentMemorySummary,
+) -> str | None:
+    """Resolve a released close run target from workspace context for reopen requests."""
+
+    resolved_close_run_id = _resolve_close_run_id_from_snapshot(
+        snapshot=snapshot,
+        operator_content=operator_content,
+        operator_memory=operator_memory,
+    )
+    if resolved_close_run_id is not None:
+        return resolved_close_run_id
+
+    close_runs = snapshot.get("entity_close_runs")
+    if not isinstance(close_runs, list):
+        return None
+    released_records = [
+        record
+        for record in close_runs
+        if isinstance(record, dict)
+        and str(record.get("status") or "") in {"approved", "exported", "archived"}
+        and isinstance(record.get("id"), str)
+    ]
+    if len(released_records) == 1:
+        return str(released_records[0]["id"])
+    return None
+
+
 def _resolve_close_run_id_from_snapshot(
     *,
     snapshot: dict[str, Any],
@@ -8246,12 +8917,18 @@ def _resolve_close_run_id_from_snapshot(
         return None
 
     normalized_content = _searchable_text(operator_content)
+    inferred_period = _infer_close_run_period_from_text(operator_content)
     explicit_matches = [
         record
         for record in records
         if (
             isinstance(record.get("period_label"), str)
             and _text_value_matches_text(str(record["period_label"]), normalized_content)
+        )
+        or (
+            inferred_period is not None
+            and record.get("period_start") == inferred_period[0]
+            and record.get("period_end") == inferred_period[1]
         )
         or (
             isinstance(record.get("active_phase"), str)
@@ -8518,6 +9195,13 @@ def _humanize_applied_result(applied_result: dict[str, Any]) -> str:
             return f"I started a new close run in {workspace_name}."
         return "I started a new close run."
 
+    if tool_name == "open_close_run":
+        period_start = _optional_result_text(applied_result, "period_start")
+        period_end = _optional_result_text(applied_result, "period_end")
+        if period_start and period_end:
+            return f"I pinned this thread to the close run for {period_start} to {period_end}."
+        return "I pinned this thread to that close run."
+
     if tool_name == "delete_close_run":
         return "I deleted that close run."
 
@@ -8730,6 +9414,8 @@ def _should_suppress_generic_next_step(
     normalized_content = _searchable_text(operator_content)
     if not normalized_content:
         return False
+    if _is_document_upload_status_request(operator_content):
+        return True
     if "workspace" not in normalized_content and "entity" not in normalized_content:
         return _is_capability_boundary_follow_up(normalized_content)
     return any(
@@ -9189,6 +9875,8 @@ def _summarize_applied_result(applied_result: dict[str, Any] | None) -> str | No
             parts.append(f"started close run version {version_no}")
         else:
             parts.append("started a new close run")
+    elif isinstance(applied_result.get("opened_close_run_id"), str):
+        parts.append("pinned the conversation to the close run")
     elif isinstance(applied_result.get("deleted_close_run_id"), str):
         parts.append("deleted the close run")
 
@@ -9243,6 +9931,7 @@ def _build_scope_handoff_message(*, applied_result: dict[str, Any]) -> str | Non
     """Return an operator-facing note when a tool reopens, creates, or rewinds workflow scope."""
 
     reopened_close_run_id = applied_result.get("reopened_close_run_id")
+    opened_close_run_id = applied_result.get("opened_close_run_id")
     created_close_run_id = applied_result.get("created_close_run_id")
     deleted_close_run_id = applied_result.get("deleted_close_run_id")
     reopened_from_status = applied_result.get("reopened_from_status")
@@ -9266,6 +9955,15 @@ def _build_scope_handoff_message(*, applied_result: dict[str, Any]) -> str | Non
                 notes.append(f"I reopened this close run as working version {version_no}.")
         else:
             notes.append("I reopened this close run as a new working version.")
+    elif isinstance(opened_close_run_id, str):
+        period_suffix = ""
+        if isinstance(period_start, str) and isinstance(period_end, str):
+            period_suffix = f" for {period_start} to {period_end}"
+        workspace_suffix = f" in {workspace_name}" if workspace_name is not None else ""
+        notes.append(
+            "I pinned this thread to the existing close run"
+            f"{workspace_suffix}{period_suffix}."
+        )
     elif isinstance(created_close_run_id, str):
         period_suffix = ""
         if isinstance(period_start, str) and isinstance(period_end, str):
@@ -9290,6 +9988,7 @@ def _build_scope_handoff_message(*, applied_result: dict[str, Any]) -> str | Non
         )
     elif (
         isinstance(reopened_close_run_id, str)
+        or isinstance(opened_close_run_id, str)
         or isinstance(created_close_run_id, str)
         or isinstance(deleted_close_run_id, str)
     ) and isinstance(active_phase, str):

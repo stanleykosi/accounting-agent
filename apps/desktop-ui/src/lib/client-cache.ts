@@ -9,12 +9,20 @@ type CacheEntry<TValue> = Readonly<{
   value: TValue;
 }>;
 
+type InFlightEntry = Readonly<{
+  generation: number;
+  promise: Promise<unknown>;
+}>;
+
+type CacheValidation<TValue> = (value: TValue) => boolean;
+
 const DEFAULT_CACHE_TTL_MS = 30_000;
 const STORAGE_SCHEMA_VERSION = 2;
 const STORAGE_KEY_PREFIX = `accounting-ai-agent:json-cache:v${STORAGE_SCHEMA_VERSION}:`;
 
 const memoryCache = new Map<string, CacheEntry<unknown>>();
-const inFlightCache = new Map<string, Promise<unknown>>();
+const inFlightCache = new Map<string, InFlightEntry>();
+let cacheGeneration = 0;
 
 /**
  * Purpose: Read a fresh browser snapshot for one cache key without performing network I/O.
@@ -45,28 +53,83 @@ export async function loadClientCachedValue<TValue>(
   cacheKey: string,
   loader: () => Promise<TValue>,
   ttlMs = DEFAULT_CACHE_TTL_MS,
+  options: Readonly<{ isValid?: CacheValidation<TValue> }> = {},
 ): Promise<TValue> {
   const snapshot = readPersistentClientCacheSnapshot<TValue>(cacheKey);
   if (snapshot !== null) {
-    return snapshot;
+    if (options.isValid !== undefined && !options.isValid(snapshot)) {
+      discardClientCacheValue(cacheKey);
+    } else {
+      return snapshot;
+    }
   }
 
-  const inFlightValue = inFlightCache.get(cacheKey);
-  if (inFlightValue !== undefined) {
-    return inFlightValue as Promise<TValue>;
+  const refreshedMemorySnapshot = readClientCacheSnapshot<TValue>(cacheKey);
+  if (refreshedMemorySnapshot !== null) {
+    if (options.isValid === undefined || options.isValid(refreshedMemorySnapshot)) {
+      return refreshedMemorySnapshot;
+    }
+    discardClientCacheValue(cacheKey);
   }
 
+  const inFlightEntry = inFlightCache.get(cacheKey);
+  if (inFlightEntry !== undefined) {
+    const resolvedValue = (await inFlightEntry.promise) as TValue;
+    if (inFlightEntry.generation !== cacheGeneration) {
+      return loadClientCachedValue(cacheKey, loader, ttlMs, options);
+    }
+    if (options.isValid !== undefined && !options.isValid(resolvedValue)) {
+      discardClientCacheValue(cacheKey);
+    }
+    return resolvedValue;
+  }
+
+  const requestGeneration = cacheGeneration;
   const nextRequest = loader()
     .then((value) => {
+      if (requestGeneration !== cacheGeneration) {
+        return value;
+      }
+      if (options.isValid !== undefined && !options.isValid(value)) {
+        discardClientCacheValue(cacheKey);
+        return value;
+      }
       writeClientCacheValue(cacheKey, value, ttlMs);
       return value;
     })
     .finally(() => {
-      inFlightCache.delete(cacheKey);
+      if (inFlightCache.get(cacheKey)?.promise === nextRequest) {
+        inFlightCache.delete(cacheKey);
+      }
     });
 
-  inFlightCache.set(cacheKey, nextRequest as Promise<unknown>);
+  inFlightCache.set(cacheKey, {
+    generation: requestGeneration,
+    promise: nextRequest as Promise<unknown>,
+  });
   return nextRequest;
+}
+
+/**
+ * Purpose: Resolve one JSON resource only from cache and validation.
+ * Inputs: Cache key and a validation predicate for the expected current schema.
+ * Outputs: The cached value when fresh and valid; otherwise null after cache eviction.
+ * Behavior: Lets route-level snapshot readers fail soft on stale local schema without network I/O.
+ */
+export function readValidatedClientCacheSnapshot<TValue>(
+  cacheKey: string,
+  isValid: CacheValidation<TValue>,
+): TValue | null {
+  const snapshot = readClientCacheSnapshot<TValue>(cacheKey);
+  if (snapshot === null) {
+    return null;
+  }
+  if (isValid(snapshot)) {
+    return snapshot;
+  }
+
+  discardClientCacheValue(cacheKey);
+  return null;
 }
 
 /**
@@ -109,6 +172,7 @@ export function invalidateClientCacheByPrefix(prefixes: readonly string[]): void
     return;
   }
 
+  cacheGeneration += 1;
   const uniquePrefixes = [...new Set(prefixes)];
 
   for (const cacheKey of [...memoryCache.keys()]) {
@@ -137,6 +201,19 @@ export function invalidateClientCacheByPrefix(prefixes: readonly string[]): void
   } catch {
     // Ignore storage access failures; memory invalidation is still safe.
   }
+}
+
+/**
+ * Purpose: Remove one exact cached entry from memory and sessionStorage.
+ * Inputs: The cache key to discard.
+ * Outputs: None.
+ * Behavior: Used when a cached value is fresh by time but invalid for the current schema.
+ */
+export function discardClientCacheValue(cacheKey: string): void {
+  cacheGeneration += 1;
+  memoryCache.delete(cacheKey);
+  inFlightCache.delete(cacheKey);
+  clearStorageEntry(cacheKey);
 }
 
 /**
