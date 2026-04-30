@@ -10,7 +10,8 @@ type CacheEntry<TValue> = Readonly<{
 }>;
 
 const DEFAULT_CACHE_TTL_MS = 30_000;
-const STORAGE_KEY_PREFIX = "accounting-ai-agent:json-cache:";
+const STORAGE_SCHEMA_VERSION = 2;
+const STORAGE_KEY_PREFIX = `accounting-ai-agent:json-cache:v${STORAGE_SCHEMA_VERSION}:`;
 
 const memoryCache = new Map<string, CacheEntry<unknown>>();
 const inFlightCache = new Map<string, Promise<unknown>>();
@@ -19,13 +20,9 @@ const inFlightCache = new Map<string, Promise<unknown>>();
  * Purpose: Read a fresh browser snapshot for one cache key without performing network I/O.
  * Inputs: The stable cache key used by the corresponding loader.
  * Outputs: The cached value when it is still fresh, otherwise null.
- * Behavior: Keeps memory and sessionStorage synchronized and removes expired entries eagerly.
+ * Behavior: Reads memory only so the first browser render matches the server render after hard refresh.
  */
 export function readClientCacheSnapshot<TValue>(cacheKey: string): TValue | null {
-  if (!canUseBrowserCache()) {
-    return null;
-  }
-
   const memoryEntry = memoryCache.get(cacheKey);
   if (isFreshEntry(memoryEntry)) {
     return memoryEntry.value as TValue;
@@ -35,14 +32,7 @@ export function readClientCacheSnapshot<TValue>(cacheKey: string): TValue | null
     memoryCache.delete(cacheKey);
   }
 
-  const storageEntry = readStorageEntry(cacheKey);
-  if (!isFreshEntry(storageEntry)) {
-    clearStorageEntry(cacheKey);
-    return null;
-  }
-
-  memoryCache.set(cacheKey, storageEntry);
-  return storageEntry.value as TValue;
+  return null;
 }
 
 /**
@@ -56,7 +46,7 @@ export async function loadClientCachedValue<TValue>(
   loader: () => Promise<TValue>,
   ttlMs = DEFAULT_CACHE_TTL_MS,
 ): Promise<TValue> {
-  const snapshot = readClientCacheSnapshot<TValue>(cacheKey);
+  const snapshot = readPersistentClientCacheSnapshot<TValue>(cacheKey);
   if (snapshot !== null) {
     return snapshot;
   }
@@ -190,6 +180,22 @@ function canUseBrowserCache(): boolean {
 
 function isFreshEntry(entry: CacheEntry<unknown> | null | undefined): entry is CacheEntry<unknown> {
   return entry !== null && entry !== undefined && entry.expiresAt > Date.now();
+}
+
+function readPersistentClientCacheSnapshot<TValue>(cacheKey: string): TValue | null {
+  const memorySnapshot = readClientCacheSnapshot<TValue>(cacheKey);
+  if (memorySnapshot !== null) {
+    return memorySnapshot;
+  }
+
+  const storageEntry = readStorageEntry(cacheKey);
+  if (!isFreshEntry(storageEntry)) {
+    clearStorageEntry(cacheKey);
+    return null;
+  }
+
+  memoryCache.set(cacheKey, storageEntry);
+  return storageEntry.value as TValue;
 }
 
 function readStorageEntry(cacheKey: string): CacheEntry<unknown> | null {

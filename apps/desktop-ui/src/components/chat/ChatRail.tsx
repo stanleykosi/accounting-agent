@@ -1228,8 +1228,10 @@ const emptySidebarBodyStyle = {
 } satisfies CSSProperties;
 
 const threadListStyle = {
-  display: "grid",
-  gap: 1,
+  display: "flex",
+  flexDirection: "column",
+  gap: 2,
+  justifyContent: "flex-start",
   listStyle: "none",
   margin: 0,
   minHeight: 0,
