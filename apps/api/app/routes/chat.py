@@ -585,6 +585,13 @@ def _build_inline_attachment_prompt(
     )
 
 
+def _build_inline_attachment_visible_content(*, content: str | None, summary: str) -> str:
+    """Build the operator-facing message shown in the transcript after inline ingestion."""
+
+    cleaned_content = content.strip() if isinstance(content, str) else ""
+    return cleaned_content or summary
+
+
 def _persist_inline_attachment_partial_success(
     *,
     chat_repository: ChatRepository,
@@ -1164,6 +1171,14 @@ async def send_chat_action_with_attachments(
             actor_user=_to_entity_user(session_result),
             content=inline_result.operator_prompt,
             client_turn_id=client_turn_id,
+            operator_message_for_memory=_build_inline_attachment_visible_content(
+                content=content,
+                summary=inline_result.summary,
+            ),
+            user_message_content=_build_inline_attachment_visible_content(
+                content=content,
+                summary=inline_result.summary,
+            ),
             message_grounding_payload={
                 "attachment_intent": inline_result.attachment_intent,
                 "attachments": list(inline_result.files),

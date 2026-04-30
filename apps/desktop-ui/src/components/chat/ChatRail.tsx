@@ -796,7 +796,7 @@ function MessageList({
                 </div>
               ) : null}
 
-              <p style={messageContentStyle}>{message.content}</p>
+              <p style={messageContentStyle}>{getMessageDisplayContent(message)}</p>
 
             </div>
           </article>
@@ -1138,6 +1138,28 @@ function extractInlineAttachments(message: ChatMessageRecord): Array<{
       intentLabel:
         typeof item.intent === "string" ? item.intent.replaceAll("_", " ") : "attachment",
     }));
+}
+
+function getMessageDisplayContent(message: ChatMessageRecord): string {
+  if (message.role !== "user") {
+    return message.content;
+  }
+
+  const payload = message.grounding_payload;
+  if (payload.attachment_intent !== "source_documents") {
+    return message.content;
+  }
+
+  const originalOperatorContent = getNonEmptyPayloadString(payload.original_operator_content);
+  if (originalOperatorContent !== null) {
+    return originalOperatorContent;
+  }
+
+  return getNonEmptyPayloadString(payload.ingestion_summary) ?? message.content;
+}
+
+function getNonEmptyPayloadString(value: unknown): string | null {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
 }
 
 function looksLikeInternalContextDump(content: string): boolean {

@@ -399,20 +399,28 @@ class ChatActionExecutor:
         content: str,
         client_turn_id: str | None = None,
         message_grounding_payload: dict[str, Any] | None = None,
+        operator_message_for_memory: str | None = None,
+        user_message_content: str | None = None,
         source_surface: AuditSourceSurface,
         trace_id: str | None,
     ) -> ChatExecutionOutcome:
         """Plan a chat response and optionally execute the selected deterministic tool."""
 
+        visible_user_content = user_message_content if user_message_content is not None else content
         return self._run_operator_turn(
             thread_id=thread_id,
             entity_id=entity_id,
             actor_user=actor_user,
             content=content,
-            operator_message_for_memory=content,
+            operator_message_for_memory=(
+                operator_message_for_memory
+                if operator_message_for_memory is not None
+                else visible_user_content
+            ),
             client_turn_id=client_turn_id,
             message_grounding_payload=message_grounding_payload,
             persist_user_message=True,
+            user_message_content=visible_user_content,
             source_surface=source_surface,
             trace_id=trace_id,
         )
@@ -457,6 +465,7 @@ class ChatActionExecutor:
         client_turn_id: str | None,
         message_grounding_payload: dict[str, Any] | None,
         persist_user_message: bool,
+        user_message_content: str | None = None,
         source_surface: AuditSourceSurface,
         trace_id: str | None,
     ) -> ChatExecutionOutcome:
@@ -494,7 +503,7 @@ class ChatActionExecutor:
                 user_message = self._chat_repo.create_message(
                     thread_id=thread_id,
                     role="user",
-                    content=content,
+                    content=user_message_content if user_message_content is not None else content,
                     message_type="action",
                     linked_action_id=None,
                     grounding_payload=dict(message_grounding_payload or {}),
@@ -1089,6 +1098,7 @@ class ChatActionExecutor:
                 client_turn_id=client_turn_id,
                 message_grounding_payload=message_grounding_payload,
                 persist_user_message=persist_user_message,
+                user_message_content=user_message_content,
                 trace_id=trace_id,
                 error=error,
                 tool_name=last_tool_name,
@@ -1112,6 +1122,7 @@ class ChatActionExecutor:
                 client_turn_id=client_turn_id,
                 message_grounding_payload=message_grounding_payload,
                 persist_user_message=persist_user_message,
+                user_message_content=user_message_content,
                 trace_id=trace_id,
                 error=surfaced_error,
                 tool_name=last_tool_name,
@@ -1131,6 +1142,7 @@ class ChatActionExecutor:
         client_turn_id: str | None,
         message_grounding_payload: dict[str, Any] | None,
         persist_user_message: bool,
+        user_message_content: str | None,
         trace_id: str | None,
         error: ChatActionExecutionError,
         tool_name: str | None,
@@ -1150,7 +1162,7 @@ class ChatActionExecutor:
                 self._chat_repo.create_message(
                     thread_id=thread_id,
                     role="user",
-                    content=content,
+                    content=user_message_content if user_message_content is not None else content,
                     message_type="action",
                     linked_action_id=None,
                     grounding_payload=dict(message_grounding_payload or {}),

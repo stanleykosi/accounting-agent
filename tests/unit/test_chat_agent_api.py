@@ -482,6 +482,8 @@ class FakeChatActionExecutor:
         content,
         client_turn_id=None,
         message_grounding_payload=None,
+        operator_message_for_memory=None,
+        user_message_content=None,
         source_surface,
         trace_id,
     ):
@@ -492,6 +494,8 @@ class FakeChatActionExecutor:
             "content": content,
             "client_turn_id": client_turn_id,
             "message_grounding_payload": message_grounding_payload,
+            "operator_message_for_memory": operator_message_for_memory,
+            "user_message_content": user_message_content,
             "source_surface": source_surface.value,
             "trace_id": trace_id,
         }
@@ -936,6 +940,11 @@ def test_chat_action_attachment_route_ingests_source_documents(monkeypatch) -> N
     attachments = executor.sent_action_message["message_grounding_payload"]["attachments"]
     assert attachments[0]["filename"] == "invoice.pdf"
     assert "parsing started" in executor.sent_action_message["content"]
+    assert executor.sent_action_message["user_message_content"] == "Start recommendations after intake."
+    assert (
+        executor.sent_action_message["operator_message_for_memory"]
+        == "Start recommendations after intake."
+    )
     assert close_run_service.rewind_calls == []
 
 
