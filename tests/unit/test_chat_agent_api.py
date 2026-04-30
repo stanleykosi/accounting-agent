@@ -461,6 +461,7 @@ class FakeChatActionExecutor:
         entity_id,
         actor_user,
         content,
+        client_turn_id=None,
         message_grounding_payload=None,
         source_surface,
         trace_id,
@@ -470,6 +471,7 @@ class FakeChatActionExecutor:
             "entity_id": str(entity_id),
             "actor_user_id": str(actor_user.id),
             "content": content,
+            "client_turn_id": client_turn_id,
             "message_grounding_payload": message_grounding_payload,
             "source_surface": source_surface.value,
             "trace_id": trace_id,
@@ -578,6 +580,9 @@ class FakeDocumentUploadService:
             )
         )
 
+    def stage_upload_documents(self, **kwargs):
+        return self.upload_documents(**kwargs)
+
     def queue_specific_uploaded_documents_for_parse(
         self,
         *,
@@ -601,6 +606,19 @@ class FakeDocumentUploadService:
             }
         )
 
+    def stage_queue_specific_uploaded_documents_for_parse(self, **kwargs) -> None:
+        self.queue_specific_uploaded_documents_for_parse(**kwargs)
+
+
+class QueueFailingDocumentUploadService(FakeDocumentUploadService):
+    def stage_queue_specific_uploaded_documents_for_parse(self, **kwargs) -> None:
+        del kwargs
+        raise chat_routes.DocumentUploadServiceError(
+            status_code=409,
+            code="no_uploaded_documents",
+            message="Parse queue failed.",
+        )
+
 
 class FakeCoaService:
     def upload_manual_coa(self, **kwargs):
@@ -612,6 +630,42 @@ class FakeCoaService:
                 account_count=132,
             )
         )
+
+
+class FakeCloseRunService:
+    def __init__(self, *, active_phase=None) -> None:
+        self.active_phase = active_phase or chat_routes.WorkflowPhase.COLLECTION
+        self.rewind_calls: list[dict[str, object]] = []
+
+    def get_close_run(self, **kwargs):
+        del kwargs
+        return SimpleNamespace(
+            workflow_state=SimpleNamespace(active_phase=self.active_phase)
+        )
+
+    def rewind_close_run(self, **kwargs):
+        self.rewind_calls.append(kwargs)
+        previous_phase = self.active_phase
+        self.active_phase = kwargs["target_phase"]
+        return SimpleNamespace(
+            previous_active_phase=previous_phase,
+            active_phase=self.active_phase,
+        )
+
+    def stage_close_run_rewind(self, **kwargs):
+        return self.rewind_close_run(**kwargs)
+
+
+class FakeDatabaseSession:
+    def __init__(self) -> None:
+        self.commit_count = 0
+        self.rollback_count = 0
+
+    def commit(self) -> None:
+        self.commit_count += 1
+
+    def rollback(self) -> None:
+        self.rollback_count += 1
 
 
 class FailingChatActionExecutor(FakeChatActionExecutor):
@@ -814,10 +868,11 @@ def test_chat_action_attachment_route_ingests_source_documents(monkeypatch) -> N
     """Ensure inline source-document attachments route through canonical upload before chat."""
 
     _install_browser_auth_stub(monkeypatch)
-    monkeypatch.setattr(chat_routes, "require_active_close_run_phase", lambda **kwargs: None)
     executor = FakeChatActionExecutor()
     repository = FakeChatRepository(close_run_id=uuid4())
     document_upload_service = FakeDocumentUploadService()
+    close_run_service = FakeCloseRunService()
+    db_session = FakeDatabaseSession()
     entity_id = uuid4()
     thread_id = uuid4()
     request = Request(
@@ -841,8 +896,9 @@ def test_chat_action_attachment_route_ingests_source_documents(monkeypatch) -> N
             auth_service=SimpleNamespace(),
             action_executor=executor,
             chat_repository=repository,
-            db_session=SimpleNamespace(),
+            db_session=db_session,
             document_upload_service=document_upload_service,
+            close_run_service=close_run_service,
             coa_service=FakeCoaService(),
             content="Start recommendations after intake.",
             attachment_intent="source_documents",
@@ -856,9 +912,113 @@ def test_chat_action_attachment_route_ingests_source_documents(monkeypatch) -> N
     assert executor.sent_action_message["message_grounding_payload"]["attachment_intent"] == (
         "source_documents"
     )
+    assert db_session.commit_count == 1
+    assert db_session.rollback_count == 0
     attachments = executor.sent_action_message["message_grounding_payload"]["attachments"]
     assert attachments[0]["filename"] == "invoice.pdf"
     assert "parsing started" in executor.sent_action_message["content"]
+    assert close_run_service.rewind_calls == []
+
+
+def test_chat_action_attachment_route_rewinds_mid_processing_upload(monkeypatch) -> None:
+    """Mid-processing chat uploads should reopen Collection before ingestion."""
+
+    _install_browser_auth_stub(monkeypatch)
+    executor = FakeChatActionExecutor()
+    repository = FakeChatRepository(close_run_id=uuid4())
+    document_upload_service = FakeDocumentUploadService()
+    close_run_service = FakeCloseRunService(active_phase=chat_routes.WorkflowPhase.PROCESSING)
+    db_session = FakeDatabaseSession()
+    entity_id = uuid4()
+    thread_id = uuid4()
+    request = Request(
+        {
+            "type": "http",
+            "app": SimpleNamespace(version="0.1.0"),
+            "method": "POST",
+            "path": f"/api/chat/threads/{thread_id}/actions/attachments",
+            "headers": [],
+        }
+    )
+    file = UploadFile(filename="late-invoice.pdf", file=BytesIO(b"%PDF-1.4 test"))
+
+    result = asyncio.run(
+        chat_routes.send_chat_action_with_attachments(
+            thread_id=thread_id,
+            entity_id=entity_id,
+            request=request,
+            response=Response(),
+            settings=SimpleNamespace(),
+            auth_service=SimpleNamespace(),
+            action_executor=executor,
+            chat_repository=repository,
+            db_session=db_session,
+            document_upload_service=document_upload_service,
+            close_run_service=close_run_service,
+            coa_service=FakeCoaService(),
+            content="Add this and continue the close to reporting.",
+            attachment_intent="source_documents",
+            files=(file,),
+        )
+    )
+
+    assert result.content == "Inline attachments acknowledged."
+    assert close_run_service.rewind_calls[0]["target_phase"] is chat_routes.WorkflowPhase.COLLECTION
+    assert db_session.commit_count == 1
+    assert db_session.rollback_count == 0
+    assert "moved from Processing back to Collection" in executor.sent_action_message["content"]
+    assert "continue the close to reporting" in executor.sent_action_message["content"]
+
+
+def test_chat_action_attachment_route_rolls_back_rewind_when_queue_fails(monkeypatch) -> None:
+    """A failed parse queue request should roll back the staged phase rewind."""
+
+    _install_browser_auth_stub(monkeypatch)
+    repository = FakeChatRepository(close_run_id=uuid4())
+    document_upload_service = QueueFailingDocumentUploadService()
+    close_run_service = FakeCloseRunService(active_phase=chat_routes.WorkflowPhase.PROCESSING)
+    db_session = FakeDatabaseSession()
+    entity_id = uuid4()
+    thread_id = uuid4()
+    request = Request(
+        {
+            "type": "http",
+            "app": SimpleNamespace(version="0.1.0"),
+            "method": "POST",
+            "path": f"/api/chat/threads/{thread_id}/actions/attachments",
+            "headers": [],
+        }
+    )
+    file = UploadFile(filename="late-invoice.pdf", file=BytesIO(b"%PDF-1.4 test"))
+
+    try:
+        asyncio.run(
+            chat_routes.send_chat_action_with_attachments(
+                thread_id=thread_id,
+                entity_id=entity_id,
+                request=request,
+                response=Response(),
+                settings=SimpleNamespace(),
+                auth_service=SimpleNamespace(),
+                action_executor=FakeChatActionExecutor(),
+                chat_repository=repository,
+                db_session=db_session,
+                document_upload_service=document_upload_service,
+                close_run_service=close_run_service,
+                coa_service=FakeCoaService(),
+                content="Add this and continue the close to reporting.",
+                attachment_intent="source_documents",
+                files=(file,),
+            )
+        )
+    except chat_routes.HTTPException as error:
+        assert error.status_code == 409
+    else:
+        raise AssertionError("Expected parse queue failure.")
+
+    assert close_run_service.rewind_calls[0]["target_phase"] is chat_routes.WorkflowPhase.COLLECTION
+    assert db_session.commit_count == 0
+    assert db_session.rollback_count == 1
 
 
 def test_chat_action_route_uses_shared_agent_lane_for_plain_conversation(monkeypatch) -> None:
@@ -902,9 +1062,9 @@ def test_chat_action_attachment_route_reports_partial_success_when_follow_up_fai
     """Ensure successful attachment ingestion is not reported as a hard failure."""
 
     _install_browser_auth_stub(monkeypatch)
-    monkeypatch.setattr(chat_routes, "require_active_close_run_phase", lambda **kwargs: None)
     repository = FakeChatRepository(close_run_id=uuid4())
     document_upload_service = FakeDocumentUploadService()
+    db_session = FakeDatabaseSession()
     entity_id = uuid4()
     thread_id = uuid4()
     request = Request(
@@ -928,8 +1088,9 @@ def test_chat_action_attachment_route_reports_partial_success_when_follow_up_fai
             auth_service=SimpleNamespace(),
             action_executor=FailingChatActionExecutor(),
             chat_repository=repository,
-            db_session=SimpleNamespace(),
+            db_session=db_session,
             document_upload_service=document_upload_service,
+            close_run_service=FakeCloseRunService(),
             coa_service=FakeCoaService(),
             content="Start recommendations after intake.",
             attachment_intent="source_documents",
@@ -943,6 +1104,8 @@ def test_chat_action_attachment_route_reports_partial_success_when_follow_up_fai
     assert "without re-uploading the files" in result.content
     assert result.operator_controls == ()
     assert document_upload_service.calls[0]["file_count"] == 1
+    assert db_session.commit_count == 1
+    assert db_session.rollback_count == 0
     assert repository.commit_count == 1
     assert repository.rollback_count == 0
     assert [message["role"] for message in repository.messages] == ["user", "assistant"]

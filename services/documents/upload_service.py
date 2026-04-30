@@ -387,6 +387,40 @@ class DocumentUploadService:
     ) -> BatchUploadDocumentsResponse:
         """Validate, store, and persist one uploaded document batch."""
 
+        try:
+            response = self.stage_upload_documents(
+                actor_user=actor_user,
+                entity_id=entity_id,
+                close_run_id=close_run_id,
+                files=files,
+                source_surface=source_surface,
+                trace_id=trace_id,
+            )
+            self._repository.commit()
+        except Exception as error:
+            self._repository.rollback()
+            if self._repository.is_integrity_error(error):
+                raise DocumentUploadServiceError(
+                    status_code=409,
+                    code=DocumentUploadServiceErrorCode.INTEGRITY_CONFLICT,
+                    message="The uploaded document metadata conflicts with existing state.",
+                ) from error
+            raise
+
+        return response
+
+    def stage_upload_documents(
+        self,
+        *,
+        actor_user: EntityUserRecord,
+        entity_id: UUID,
+        close_run_id: UUID,
+        files: tuple[UploadFilePayload, ...],
+        source_surface: AuditSourceSurface,
+        trace_id: str | None,
+    ) -> BatchUploadDocumentsResponse:
+        """Stage one uploaded document batch inside the caller-owned transaction."""
+
         if not files:
             raise DocumentUploadServiceError(
                 status_code=400,
@@ -406,8 +440,8 @@ class DocumentUploadService:
                 message="Archived entity workspaces cannot accept new document uploads.",
             )
 
-        uploaded_documents: list[UploadedDocumentResult] = []
         try:
+            uploaded_documents: list[UploadedDocumentResult] = []
             for file_payload in files:
                 uploaded_documents.append(
                     self._upload_one_document(
@@ -418,9 +452,7 @@ class DocumentUploadService:
                         trace_id=trace_id,
                     )
                 )
-            self._repository.commit()
         except Exception as error:
-            self._repository.rollback()
             if self._repository.is_integrity_error(error):
                 raise DocumentUploadServiceError(
                     status_code=409,
@@ -484,6 +516,42 @@ class DocumentUploadService:
     ) -> BatchQueueDocumentsForParseResponse:
         """Queue one explicit set of uploaded documents for parsing."""
 
+        try:
+            response = self.stage_queue_specific_uploaded_documents_for_parse(
+                actor_user=actor_user,
+                entity_id=entity_id,
+                close_run_id=close_run_id,
+                document_ids=document_ids,
+                source_surface=source_surface,
+                trace_id=trace_id,
+                checkpoint_payload=checkpoint_payload,
+            )
+            self._repository.commit()
+        except Exception as error:
+            self._repository.rollback()
+            if self._repository.is_integrity_error(error):
+                raise DocumentUploadServiceError(
+                    status_code=409,
+                    code=DocumentUploadServiceErrorCode.INTEGRITY_CONFLICT,
+                    message="The parse queue request conflicts with existing document state.",
+                ) from error
+            raise
+
+        return response
+
+    def stage_queue_specific_uploaded_documents_for_parse(
+        self,
+        *,
+        actor_user: EntityUserRecord,
+        entity_id: UUID,
+        close_run_id: UUID,
+        document_ids: tuple[UUID, ...],
+        source_surface: AuditSourceSurface,
+        trace_id: str | None,
+        checkpoint_payload: JsonObject | None,
+    ) -> BatchQueueDocumentsForParseResponse:
+        """Stage explicit parse requests inside the caller-owned transaction."""
+
         access_record = self._require_close_run_access(
             actor_user=actor_user,
             entity_id=entity_id,
@@ -497,8 +565,8 @@ class DocumentUploadService:
                 message="Select at least one uploaded document before parsing starts.",
             )
 
-        queued_documents: list[QueuedDocumentParseResult] = []
         try:
+            queued_documents: list[QueuedDocumentParseResult] = []
             for document_id in normalized_document_ids:
                 access_document = self._repository.get_document_for_user(
                     entity_id=entity_id,
@@ -560,11 +628,11 @@ class DocumentUploadService:
                             routing_key=dispatch.routing_key,
                             trace_id=dispatch.trace_id,
                         ),
-                    )
+                    ),
                 )
-            self._repository.commit()
+        except DocumentUploadServiceError:
+            raise
         except Exception as error:
-            self._repository.rollback()
             if self._repository.is_integrity_error(error):
                 raise DocumentUploadServiceError(
                     status_code=409,

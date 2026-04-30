@@ -15,6 +15,8 @@ from services.chat.action_execution import (
     ChatActionExecutionError,
     ChatActionExecutionErrorCode,
     ChatActionExecutor,
+    _format_next_step,
+    _should_suppress_generic_next_step,
 )
 from services.chat.continuation_state import (
     build_pending_async_turn_payload,
@@ -255,6 +257,46 @@ def test_handoff_thread_scope_moves_thread_to_switched_workspace() -> None:
     assert handoff_message is None
 
 
+def test_handoff_thread_scope_moves_thread_to_created_workspace() -> None:
+    """Workspace creation should anchor the current thread to the new workspace."""
+
+    previous_entity_id = uuid4()
+    created_entity_id = uuid4()
+    actor_user = EntityUserRecord(id=uuid4(), email="ops@example.com", full_name="Finance Ops")
+    thread_id = uuid4()
+    fake_action_repo = _FakeActionRepository()
+    fake_chat_repo = _FakeChatRepository(reopened_close_run_id=uuid4())
+    fake_grounding = _FakeGroundingService(
+        reopened_close_run_id=uuid4(),
+        entity_id=created_entity_id,
+    )
+    executor = ChatActionExecutor.__new__(ChatActionExecutor)
+    executor._action_repo = fake_action_repo
+    executor._chat_repo = fake_chat_repo
+    executor._grounding = fake_grounding
+
+    _, updated_thread, handoff_message = executor._handoff_thread_scope_if_needed(
+        actor_user=actor_user,
+        entity_id=previous_entity_id,
+        thread_id=thread_id,
+        thread=SimpleNamespace(
+            entity_id=previous_entity_id,
+            close_run_id=None,
+            context_payload={"mode": "chat"},
+        ),
+        grounding=SimpleNamespace(context=SimpleNamespace()),
+        applied_result={
+            "tool": "create_workspace",
+            "created_workspace_id": str(created_entity_id),
+            "workspace_name": "Stanley",
+        },
+    )
+
+    assert updated_thread.entity_id == created_entity_id
+    assert updated_thread.close_run_id is None
+    assert handoff_message is None
+
+
 def test_hydrate_planning_result_resolves_recommendation_rejection_in_chat() -> None:
     """The chat executor should resolve a single recommendation and fill a safe reason."""
 
@@ -321,6 +363,54 @@ def test_hydrate_planning_result_resolves_journal_apply_to_internal_ledger() -> 
 
     assert hydrated.tool_arguments["journal_id"] == str(journal_id)
     assert hydrated.tool_arguments["posting_target"] == "internal_ledger"
+
+
+def test_hydrate_planning_result_repairs_schema_formatting_drift() -> None:
+    """Harmless model argument drift should be repaired before strict validation."""
+
+    journal_id = uuid4()
+    executor = ChatActionExecutor.__new__(ChatActionExecutor)
+    executor._tool_registry = SimpleNamespace(
+        get_tool=lambda **kwargs: SimpleNamespace(
+            input_schema={
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {
+                    "journal_id": {"type": "string"},
+                    "posting_target": {
+                        "type": "string",
+                        "enum": ["internal_ledger", "external_posting_package"],
+                    },
+                    "allow_duplicate_period": {"type": "boolean"},
+                },
+                "required": ["journal_id", "posting_target"],
+            }
+        )
+    )
+
+    hydrated = executor._hydrate_planning_result(
+        planning=AgentPlanningResult(
+            mode="tool",
+            assistant_response="I'll apply that journal.",
+            reasoning="The operator asked to post the approved journal.",
+            tool_name="apply_journal",
+            tool_arguments={
+                "journal_id": str(journal_id),
+                "posting_target": "internal ledger",
+                "allow_duplicate_period": "yes",
+                "extra_model_comment": "safe to post",
+            },
+        ),
+        snapshot={},
+        operator_content="apply it to the internal ledger",
+        operator_memory=executor._memory_from_context_payload({}),
+    )
+
+    assert hydrated.tool_arguments == {
+        "journal_id": str(journal_id),
+        "posting_target": "internal_ledger",
+        "allow_duplicate_period": True,
+    }
 
 
 def test_hydrate_planning_result_does_not_resolve_apply_journal_to_unapproved_singleton() -> None:
@@ -754,6 +844,33 @@ def test_hydrate_planning_result_answers_next_step_read_only() -> None:
     )
 
 
+def test_format_next_step_does_not_claim_agent_can_supply_operator_files() -> None:
+    """File-dependent next actions should not be rewritten as agent capabilities."""
+
+    next_step = _format_next_step(
+        {
+            "readiness": {
+                "next_actions": [
+                    "Upload a production chart of accounts file from the Chart of Accounts page."
+                ]
+            }
+        }
+    )
+
+    assert next_step == (
+        "Next, upload a production chart of accounts file from the Chart of Accounts page."
+    )
+
+
+def test_generic_next_step_suppresses_capability_boundary_follow_ups() -> None:
+    """Capability questions should not get the same stale readiness CTA appended."""
+
+    assert _should_suppress_generic_next_step(
+        operator_content="Where will you get the production chart of accounts from to upload?",
+        last_tool_name=None,
+    )
+
+
 def test_hydrate_planning_result_answers_approved_close_run_reports_read_only() -> None:
     """Report-detail questions about a known approved run should not generate reports."""
 
@@ -1146,7 +1263,10 @@ def test_hydrate_planning_result_fills_create_workspace_defaults_from_current_sc
             assistant_response="I'll create that workspace.",
             reasoning="The operator named a workspace and omitted optional setup defaults.",
             tool_name="create_workspace",
-            tool_arguments={"name": "Apex Meridian Ghana Ltd"},
+            tool_arguments={
+                "name": "Apex Meridian Ghana",
+                "legal_name": "Apex Meridian Ghana Ltd",
+            },
         ),
         snapshot={
             "workspace": {
@@ -1157,14 +1277,176 @@ def test_hydrate_planning_result_fills_create_workspace_defaults_from_current_sc
                 "autonomy_mode": "human_review",
             }
         },
-        operator_content="create a new workspace called Apex Meridian Ghana Ltd",
+        operator_content=(
+            "create a new workspace called Apex Meridian Ghana with legal name "
+            "Apex Meridian Ghana Ltd"
+        ),
         operator_memory=executor._memory_from_context_payload({}),
     )
 
+    assert hydrated.tool_arguments["name"] == "Apex Meridian Ghana"
+    assert hydrated.tool_arguments["legal_name"] == "Apex Meridian Ghana Ltd"
     assert hydrated.tool_arguments["base_currency"] == "NGN"
     assert hydrated.tool_arguments["country_code"] == "NG"
     assert hydrated.tool_arguments["timezone"] == "Africa/Lagos"
     assert hydrated.tool_arguments["autonomy_mode"] == "human_review"
+
+
+def test_hydrate_planning_result_asks_for_legal_name_after_name_follow_up() -> None:
+    """A name-only reply should ask for legal identity before creating a workspace."""
+
+    executor = ChatActionExecutor.__new__(ChatActionExecutor)
+
+    hydrated = executor._hydrate_planning_result(
+        planning=AgentPlanningResult(
+            mode="read_only",
+            assistant_response="Sure, what should I call it?",
+            reasoning="The planner did not recognize the follow-up as actionable.",
+            tool_name=None,
+            tool_arguments={},
+        ),
+        snapshot={
+            "workspace": {
+                "id": str(uuid4()),
+                "base_currency": "NGN",
+                "country_code": "NG",
+                "timezone": "Africa/Lagos",
+                "autonomy_mode": "human_review",
+            }
+        },
+        operator_content="Stanley would be the name, any other details you need?",
+        operator_memory=executor._memory_from_context_payload(
+            {
+                "agent_memory": {
+                    "last_operator_message": "i want to create a new workspace",
+                    "last_assistant_response": "What would you like to name the new workspace?",
+                }
+            }
+        ),
+    )
+
+    assert hydrated.mode == "read_only"
+    assert hydrated.tool_name is None
+    assert "legal entity name for Stanley" in hydrated.assistant_response
+
+
+def test_hydrate_planning_result_creates_workspace_from_legal_name_follow_up() -> None:
+    """A legal-name reply should complete the pending create-workspace request."""
+
+    executor = ChatActionExecutor.__new__(ChatActionExecutor)
+
+    hydrated = executor._hydrate_planning_result(
+        planning=AgentPlanningResult(
+            mode="read_only",
+            assistant_response="Sure, what should I call it?",
+            reasoning="The planner did not recognize the follow-up as actionable.",
+            tool_name=None,
+            tool_arguments={},
+        ),
+        snapshot={
+            "workspace": {
+                "id": str(uuid4()),
+                "base_currency": "NGN",
+                "country_code": "NG",
+                "timezone": "Africa/Lagos",
+                "autonomy_mode": "human_review",
+            }
+        },
+        operator_content="Stanley Holdings Limited",
+        operator_memory=executor._memory_from_context_payload(
+            {
+                "agent_memory": {
+                    "last_operator_message": "Stanley would be the name",
+                    "last_assistant_response": "What is the legal entity name for Stanley?",
+                },
+                "agent_recent_objectives": ("i want to create a new workspace",),
+            }
+        ),
+    )
+
+    assert hydrated.mode == "tool"
+    assert hydrated.tool_name == "create_workspace"
+    assert hydrated.tool_arguments["name"] == "Stanley"
+    assert hydrated.tool_arguments["legal_name"] == "Stanley Holdings Limited"
+    assert hydrated.tool_arguments["base_currency"] == "NGN"
+    assert "current workspace defaults" in hydrated.assistant_response
+
+
+def test_hydrate_planning_result_asks_only_for_workspace_name() -> None:
+    """Create-workspace requests should not block on optional setup details."""
+
+    executor = ChatActionExecutor.__new__(ChatActionExecutor)
+
+    hydrated = executor._hydrate_planning_result(
+        planning=AgentPlanningResult(
+            mode="read_only",
+            assistant_response="I can help with that.",
+            reasoning="The planner stayed conversational.",
+            tool_name=None,
+            tool_arguments={},
+        ),
+        snapshot={
+            "workspace": {
+                "id": str(uuid4()),
+                "base_currency": "NGN",
+                "country_code": "NG",
+                "timezone": "Africa/Lagos",
+                "autonomy_mode": "human_review",
+            }
+        },
+        operator_content="i want to create a new workspace",
+        operator_memory=executor._memory_from_context_payload({}),
+    )
+
+    assert hydrated.mode == "read_only"
+    assert hydrated.tool_name is None
+    assert hydrated.assistant_response == "What would you like to name the new workspace?"
+
+
+def test_hydrate_planning_result_rejects_duplicate_workspace_name() -> None:
+    """Chat workspace creation should not create a duplicate accessible display name."""
+
+    workspace_id = str(uuid4())
+    executor = ChatActionExecutor.__new__(ChatActionExecutor)
+
+    hydrated = executor._hydrate_planning_result(
+        planning=AgentPlanningResult(
+            mode="tool",
+            assistant_response="I'll create it.",
+            reasoning="The planner was too eager.",
+            tool_name="create_workspace",
+            tool_arguments={"name": "Stanley"},
+        ),
+        snapshot={
+            "workspace": {
+                "id": str(uuid4()),
+                "name": "Apex Meridian",
+                "base_currency": "NGN",
+                "country_code": "NG",
+                "timezone": "Africa/Lagos",
+                "autonomy_mode": "human_review",
+            },
+            "accessible_workspaces": [
+                {
+                    "id": workspace_id,
+                    "name": "Stanley",
+                }
+            ],
+        },
+        operator_content="Stanley would be the name",
+        operator_memory=executor._memory_from_context_payload(
+            {
+                "agent_memory": {
+                    "last_operator_message": "i want to create a new workspace",
+                    "last_assistant_response": "What would you like to name the new workspace?",
+                }
+            }
+        ),
+    )
+
+    assert hydrated.mode == "read_only"
+    assert hydrated.tool_name is None
+    assert "already exists" in hydrated.assistant_response
 
 
 def test_hydrate_planning_result_resolves_named_workspace_delete() -> None:
@@ -1795,6 +2077,70 @@ def test_send_action_message_executes_multiple_steps_before_replying() -> None:
     assert memory_updates[-1]["action_status"] == "applied"
 
 
+def test_send_action_message_replays_completed_client_turn_without_reapplying() -> None:
+    """Retries with the same client turn key should return the stored assistant answer."""
+
+    actor_user = EntityUserRecord(id=uuid4(), email="ops@example.com", full_name="Finance Ops")
+    thread_id = uuid4()
+    entity_id = uuid4()
+    client_turn_id = "turn-create-workspace-1"
+    thread = SimpleNamespace(
+        id=thread_id,
+        entity_id=entity_id,
+        close_run_id=None,
+        context_payload={},
+    )
+    grounding = SimpleNamespace(
+        context=SimpleNamespace(
+            entity_id=str(entity_id),
+            entity_name="Apex Meridian Nigeria Ltd",
+            close_run_id=None,
+            period_label=None,
+            autonomy_mode="human_review",
+            base_currency="NGN",
+        ),
+    )
+    chat_repo = _FakeLoopChatRepository()
+    chat_repo.thread = thread
+    assistant_message = SimpleNamespace(
+        id=uuid4(),
+        content="Created workspace Stanley.",
+        role="assistant",
+        linked_action_id=None,
+        message_type="action",
+        model_metadata={
+            "chat_turn_id": client_turn_id,
+            "turn_status": "completed",
+        },
+    )
+    chat_repo.messages.append(assistant_message)
+
+    executor = ChatActionExecutor.__new__(ChatActionExecutor)
+    executor._db_session = _FakeLoopDbSession()
+    executor._chat_repo = chat_repo
+    executor._action_repo = _FakeLoopActionRepository(close_run_id=uuid4())
+    executor._entity_repo = SimpleNamespace(get_entity_for_user=lambda **kwargs: object())
+    executor._ensure_entity_coa_available = lambda **kwargs: None
+    executor._load_thread_context = lambda **kwargs: (grounding, thread)  # type: ignore[method-assign]
+    executor._plan_action = lambda **kwargs: (_ for _ in ()).throw(  # type: ignore[method-assign]
+        AssertionError("A completed retry must not invoke the planner.")
+    )
+
+    outcome = executor.send_action_message(
+        thread_id=thread_id,
+        entity_id=entity_id,
+        actor_user=actor_user,
+        content="create workspace Stanley",
+        client_turn_id=client_turn_id,
+        source_surface="desktop",
+        trace_id="trace-replay",
+    )
+
+    assert outcome.assistant_content == "Created workspace Stanley."
+    assert outcome.assistant_message_id == str(assistant_message.id)
+    assert len(chat_repo.messages) == 1
+
+
 def test_send_action_message_switches_workspace_with_json_safe_uuid_result() -> None:
     """Workspace switch results containing UUID objects should not break JSON persistence."""
 
@@ -1940,7 +2286,10 @@ def test_send_action_message_switches_workspace_with_json_safe_uuid_result() -> 
     assert applied_result["switched_workspace_id"] == str(target_entity_id)
     assert applied_result["workspace_id"] == str(target_entity_id)
     assert outcome.thread_entity_id == str(target_entity_id)
-    assert "You're now in Apex Meridian Distribution Limited." in outcome.assistant_content
+    assert (
+        "I switched this conversation to the Apex Meridian Distribution Limited workspace."
+        in outcome.assistant_content
+    )
     assert "UUID is not JSON serializable" not in outcome.assistant_content
 
 
@@ -2358,6 +2707,44 @@ def test_build_operator_controls_surfaces_pending_governance_and_next_steps() ->
     assert "confirm" in commands
     assert "cancel" in commands
     assert "Generate the export package." in commands
+
+
+def test_auto_release_policy_bypasses_only_release_governance() -> None:
+    """Scoped approval policy should not bypass destructive governed tools."""
+
+    thread_id = uuid4()
+    executor = ChatActionExecutor.__new__(ChatActionExecutor)
+    executor._toolset = SimpleNamespace(
+        requires_human_approval_for_invocation=lambda **kwargs: True
+    )
+    executor._chat_repo = SimpleNamespace(
+        get_thread_by_id=lambda **kwargs: SimpleNamespace(
+            context_payload={
+                "agent_approval_policy": {
+                    "mode": "auto_release_for_thread",
+                }
+            }
+        )
+    )
+
+    release_action = SimpleNamespace(
+        tool=SimpleNamespace(name="approve_close_run"),
+        planning=SimpleNamespace(tool_arguments={}),
+    )
+    delete_action = SimpleNamespace(
+        tool=SimpleNamespace(name="delete_workspace"),
+        planning=SimpleNamespace(tool_arguments={}),
+    )
+    execution_context = SimpleNamespace(thread_id=thread_id)
+
+    assert executor._requires_human_approval(
+        action=release_action,
+        execution_context=execution_context,
+    ) is False
+    assert executor._requires_human_approval(
+        action=delete_action,
+        execution_context=execution_context,
+    ) is True
 
 
 def test_send_action_message_surfaces_action_failure_in_thread() -> None:
@@ -2984,16 +3371,47 @@ class _FakeLoopChatRepository:
     def __init__(self) -> None:
         self.messages: list[SimpleNamespace] = []
         self.updated_context_payload: dict[str, object] | None = None
+        self.thread = SimpleNamespace(
+            id=uuid4(),
+            entity_id=uuid4(),
+            close_run_id=None,
+            context_payload={},
+        )
+
+    def lock_thread_for_turn(self, *, thread_id: UUID):
+        self.thread = SimpleNamespace(
+            id=thread_id,
+            entity_id=self.thread.entity_id,
+            close_run_id=self.thread.close_run_id,
+            context_payload=self.thread.context_payload,
+        )
+        return self.thread
+
+    def get_thread_by_id(self, *, thread_id: UUID):
+        if self.thread.id != thread_id:
+            self.thread = SimpleNamespace(
+                id=thread_id,
+                entity_id=self.thread.entity_id,
+                close_run_id=self.thread.close_run_id,
+                context_payload=self.thread.context_payload,
+            )
+        return self.thread
 
     def create_message(self, **kwargs):
         message = SimpleNamespace(
             id=uuid4(),
             content=kwargs["content"],
             role=kwargs["role"],
+            linked_action_id=kwargs.get("linked_action_id"),
+            message_type=kwargs.get("message_type"),
             model_metadata=kwargs.get("model_metadata"),
         )
         self.messages.append(message)
         return message
+
+    def list_messages_for_thread(self, **kwargs):
+        del kwargs
+        return tuple(self.messages)
 
     def update_thread_context(self, *, thread_id: UUID, context_payload: dict[str, object]) -> None:
         del thread_id
@@ -3015,11 +3433,33 @@ class _FakeLoopActionRepository:
         self.status_updates: list[dict[str, object]] = []
 
     def create_action_plan(self, **kwargs) -> ChatActionPlanRecord:
-        record = _build_plan(
+        base_record = _build_plan(
             close_run_id=kwargs["close_run_id"] or self.close_run_id,
             action_plan_id=uuid4(),
             thread_id=kwargs["thread_id"],
             entity_id=kwargs["entity_id"],
+        )
+        record = base_record.__class__(
+            id=base_record.id,
+            thread_id=base_record.thread_id,
+            message_id=kwargs.get("message_id"),
+            entity_id=base_record.entity_id,
+            close_run_id=base_record.close_run_id,
+            actor_user_id=kwargs["actor_user_id"],
+            intent=kwargs["intent"],
+            target_type=kwargs["target_type"],
+            target_id=kwargs["target_id"],
+            payload=kwargs["payload"],
+            confidence=kwargs["confidence"],
+            autonomy_mode=kwargs["autonomy_mode"],
+            status=base_record.status,
+            requires_human_approval=kwargs["requires_human_approval"],
+            reasoning=kwargs["reasoning"],
+            applied_result=base_record.applied_result,
+            rejected_reason=base_record.rejected_reason,
+            superseded_by_id=base_record.superseded_by_id,
+            created_at=base_record.created_at,
+            updated_at=base_record.updated_at,
         )
         self.created_records.append(record)
         return record
@@ -3067,6 +3507,20 @@ class _FakeLoopActionRepository:
                 updated_at=record.updated_at,
             )
         return None
+
+    def get_action_plan_by_id(self, *, action_plan_id: UUID) -> ChatActionPlanRecord | None:
+        for record in self.created_records:
+            if record.id == action_plan_id:
+                return record
+        return None
+
+    def list_actions_for_thread_turn(self, **kwargs):
+        client_turn_id = kwargs["client_turn_id"]
+        return tuple(
+            record
+            for record in self.created_records
+            if record.payload.get("chat_turn_id") == client_turn_id
+        )
 
 
 def _resolve_fake_action(planning: AgentPlanningResult):

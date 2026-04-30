@@ -425,6 +425,7 @@ export type ChatActionIntent =
   | "report_action";
 
 export type ChatActionSummary = {
+  assistant_response: string | null;
   created_at: string;
   id: string;
   intent: ChatActionIntent;
@@ -433,9 +434,11 @@ export type ChatActionSummary = {
   target_id: string | null;
   target_type: string | null;
   thread_id: string;
+  tool_name: string | null;
 };
 
 export type SendChatActionRequest = {
+  client_turn_id?: string;
   content: string;
   force_action_mode?: boolean;
 };
@@ -451,6 +454,7 @@ export type ChatActionResponse = {
 };
 
 export type ApproveChatActionRequest = {
+  approval_policy?: "auto_release_for_thread";
   reason?: string;
 };
 
@@ -468,11 +472,19 @@ export async function sendChatAction(
   threadId: string,
   entityId: string,
   content: string,
+  clientTurnId?: string,
 ): Promise<ChatActionResponse> {
+  const body: SendChatActionRequest =
+    clientTurnId === undefined
+      ? { content }
+      : {
+          client_turn_id: clientTurnId,
+          content,
+        };
   const response = await fetchJson<ChatActionResponse>(
     `${API_BASE}/threads/${threadId}/actions?entity_id=${encodeURIComponent(entityId)}`,
     {
-      body: JSON.stringify({ content } satisfies SendChatActionRequest),
+      body: JSON.stringify(body),
       method: "POST",
     },
   );
@@ -489,12 +501,16 @@ export async function sendChatActionWithAttachments(
   entityId: string,
   input: {
     attachmentIntent: ChatAttachmentIntent;
+    clientTurnId?: string;
     content?: string;
     files: readonly File[];
   },
 ): Promise<ChatActionResponse> {
   const formData = new FormData();
   formData.append("attachment_intent", input.attachmentIntent);
+  if (typeof input.clientTurnId === "string") {
+    formData.append("client_turn_id", input.clientTurnId);
+  }
   if (typeof input.content === "string") {
     formData.append("content", input.content);
   }
@@ -592,9 +608,18 @@ export async function approveChatAction(
   actionPlanId: string,
   threadId: string,
   entityId: string,
-  reason?: string,
+  options?: {
+    approvalPolicy?: "auto_release_for_thread";
+    reason?: string;
+  },
 ): Promise<ChatActionSummary> {
-  const body: ApproveChatActionRequest = reason !== undefined ? { reason } : {};
+  const body: ApproveChatActionRequest = {};
+  if (options?.approvalPolicy !== undefined) {
+    body.approval_policy = options.approvalPolicy;
+  }
+  if (options?.reason !== undefined) {
+    body.reason = options.reason;
+  }
   return fetchJson<ChatActionSummary>(
     `${API_BASE}/actions/${encodeURIComponent(actionPlanId)}/approve?thread_id=${encodeURIComponent(threadId)}&entity_id=${encodeURIComponent(entityId)}`,
     {

@@ -146,11 +146,19 @@ class McpToolCallOutcome:
     result: dict[str, Any] | None
 
 
-_MAX_OPERATOR_LOOP_STEPS = 4
+_MAX_OPERATOR_LOOP_STEPS = 8
 _OPERATOR_PLANNER_POLICY_VERSION = "2026-04-21.operator-planner.v1"
 _OPERATOR_CONFIRMATION_POLICY_VERSION = "2026-04-21.operator-confirmation.v1"
 _OPERATOR_EVAL_SCHEMA_VERSION = "2026-04-21.operator-eval.v1"
 _MCP_MANIFEST_VERSION = "2025-11-25"
+_TERMINAL_TURN_STATUSES = frozenset(
+    {"completed", "pending", "waiting_async", "partial", "failed"}
+)
+_AUTO_APPROVABLE_RELEASE_TOOLS = frozenset(
+    {"approve_close_run", "archive_close_run", "distribute_export"}
+)
+_NEVER_AUTO_APPROVE_TOOLS = frozenset({"delete_close_run", "delete_workspace"})
+_THREAD_APPROVAL_POLICY_KEY = "agent_approval_policy"
 
 
 @dataclass(frozen=True, slots=True)
@@ -269,6 +277,119 @@ class ChatActionExecutor:
             else None,
         )
 
+    def _lock_thread_for_turn(self, *, thread_id: UUID) -> None:
+        """Serialize operator turns for one thread before any side effect is planned."""
+
+        thread = self._chat_repo.lock_thread_for_turn(thread_id=thread_id)
+        if thread is None:
+            raise ChatActionExecutionError(
+                status_code=404,
+                code=ChatActionExecutionErrorCode.THREAD_NOT_FOUND,
+                message="That chat thread does not exist.",
+            )
+
+    def _replay_completed_turn_if_present(
+        self,
+        *,
+        thread_id: UUID,
+        actor_user: EntityUserRecord,
+        client_turn_id: str | None,
+    ) -> ChatExecutionOutcome | None:
+        """Return the already-persisted answer for an idempotent turn retry."""
+
+        if client_turn_id is None:
+            return None
+
+        thread = self._chat_repo.get_thread_by_id(thread_id=thread_id)
+        if thread is None:
+            raise ChatActionExecutionError(
+                status_code=404,
+                code=ChatActionExecutionErrorCode.THREAD_NOT_FOUND,
+                message="That chat thread does not exist.",
+            )
+        access = self._entity_repo.get_entity_for_user(
+            entity_id=thread.entity_id,
+            user_id=actor_user.id,
+        )
+        if access is None:
+            raise ChatActionExecutionError(
+                status_code=403,
+                code=ChatActionExecutionErrorCode.ACCESS_DENIED,
+                message="You are not a member of this workspace.",
+            )
+
+        messages = self._chat_repo.list_messages_for_thread(thread_id=thread_id)
+        for message in reversed(messages):
+            metadata = message.model_metadata if isinstance(message.model_metadata, dict) else {}
+            if (
+                message.role == "assistant"
+                and metadata.get("chat_turn_id") == client_turn_id
+                and metadata.get("turn_status") in _TERMINAL_TURN_STATUSES
+            ):
+                action_plan = (
+                    self._action_repo.get_action_plan_by_id(
+                        action_plan_id=message.linked_action_id,
+                    )
+                    if message.linked_action_id is not None
+                    else None
+                )
+                return self._build_execution_outcome(
+                    assistant_message_id=serialize_uuid(message.id),
+                    assistant_content=message.content,
+                    action_plan=action_plan,
+                    is_read_only=message.linked_action_id is None,
+                    thread=thread,
+                )
+
+        staged_actions = self._action_repo.list_actions_for_thread_turn(
+            thread_id=thread_id,
+            entity_id=thread.entity_id,
+            client_turn_id=client_turn_id,
+            limit=5,
+        )
+        for action in staged_actions:
+            if action.status not in {"pending", "applied"}:
+                continue
+            grounding = self._grounding.resolve_context(
+                entity_id=thread.entity_id,
+                close_run_id=thread.close_run_id,
+                user_id=actor_user.id,
+            )
+            summary = _build_recovered_turn_summary(action=action)
+            assistant_message = self._chat_repo.create_message(
+                thread_id=thread_id,
+                role="assistant",
+                content=summary,
+                message_type="action",
+                linked_action_id=action.id,
+                grounding_payload=self._build_grounding_payload(grounding),
+                model_metadata=_build_turn_metadata(
+                    metadata=self._build_trace_metadata(
+                        trace_id=None,
+                        mode="planner",
+                        tool_name=(
+                            str(action.payload.get("tool_name"))
+                            if isinstance(action.payload.get("tool_name"), str)
+                            else None
+                        ),
+                        action_status=action.status,
+                        summary=summary,
+                    ),
+                    client_turn_id=client_turn_id,
+                    turn_status="pending" if action.status == "pending" else "completed",
+                ),
+            )
+            self._db_session.commit()
+            return self._build_execution_outcome(
+                assistant_message_id=serialize_uuid(assistant_message.id),
+                assistant_content=assistant_message.content,
+                action_plan=action,
+                is_read_only=False,
+                thread=thread,
+            )
+
+        return None
+
     def send_action_message(
         self,
         *,
@@ -276,6 +397,7 @@ class ChatActionExecutor:
         entity_id: UUID,
         actor_user: EntityUserRecord,
         content: str,
+        client_turn_id: str | None = None,
         message_grounding_payload: dict[str, Any] | None = None,
         source_surface: AuditSourceSurface,
         trace_id: str | None,
@@ -288,6 +410,7 @@ class ChatActionExecutor:
             actor_user=actor_user,
             content=content,
             operator_message_for_memory=content,
+            client_turn_id=client_turn_id,
             message_grounding_payload=message_grounding_payload,
             persist_user_message=True,
             source_surface=source_surface,
@@ -316,6 +439,7 @@ class ChatActionExecutor:
                 completed_jobs=completed_jobs,
             ),
             operator_message_for_memory=None,
+            client_turn_id=None,
             message_grounding_payload=None,
             persist_user_message=False,
             source_surface=source_surface,
@@ -330,6 +454,7 @@ class ChatActionExecutor:
         actor_user: EntityUserRecord,
         content: str,
         operator_message_for_memory: str | None,
+        client_turn_id: str | None,
         message_grounding_payload: dict[str, Any] | None,
         persist_user_message: bool,
         source_surface: AuditSourceSurface,
@@ -338,12 +463,13 @@ class ChatActionExecutor:
         """Execute one bounded operator turn with optional user-message persistence."""
 
         active_entity_id = entity_id
-        self._ensure_entity_coa_available(actor_user=actor_user, entity_id=active_entity_id)
         grounding, thread = self._load_thread_context(
             thread_id=thread_id,
             entity_id=active_entity_id,
             user_id=actor_user.id,
         )
+        active_entity_id = thread.entity_id
+        self._ensure_entity_coa_available(actor_user=actor_user, entity_id=active_entity_id)
         user_message = None
         final_record: ChatActionPlanRecord | None = None
         last_tool_name: str | None = None
@@ -355,6 +481,15 @@ class ChatActionExecutor:
         seen_action_signatures: set[str] = set()
 
         try:
+            self._lock_thread_for_turn(thread_id=thread_id)
+            replayed_outcome = self._replay_completed_turn_if_present(
+                thread_id=thread_id,
+                actor_user=actor_user,
+                client_turn_id=client_turn_id,
+            )
+            if replayed_outcome is not None:
+                return replayed_outcome
+
             if persist_user_message:
                 user_message = self._chat_repo.create_message(
                     thread_id=thread_id,
@@ -363,7 +498,11 @@ class ChatActionExecutor:
                     message_type="action",
                     linked_action_id=None,
                     grounding_payload=dict(message_grounding_payload or {}),
-                    model_metadata=None,
+                    model_metadata=_build_turn_metadata(
+                        metadata=None,
+                        client_turn_id=client_turn_id,
+                        turn_status="received",
+                    ),
                 )
                 pending_confirmation_outcome = self._handle_pending_plan_reply(
                     thread_id=thread_id,
@@ -467,7 +606,14 @@ class ChatActionExecutor:
                         assistant_response=planning.assistant_response,
                         handoff_message=None,
                         result_summary=_format_operator_loop_result_summary(applied_results),
-                        next_step=_format_next_step(last_snapshot),
+                        next_step=(
+                            None
+                            if _should_suppress_generic_next_step(
+                                operator_content=content,
+                                last_tool_name=last_tool_name,
+                            )
+                            else _format_next_step(last_snapshot)
+                        ),
                     )
                     assistant_message = self._chat_repo.create_message(
                         thread_id=thread_id,
@@ -596,6 +742,7 @@ class ChatActionExecutor:
                         "requires_human_approval": requires_human_approval,
                         "loop_iteration": iteration,
                         "turn_objective": _truncate_text(content, limit=300),
+                        "chat_turn_id": client_turn_id,
                         "operator_control": self._build_operator_control_payload(
                             tool=action.tool,
                             target_type=action.target_type,
@@ -774,6 +921,54 @@ class ChatActionExecutor:
                         thread=thread,
                     )
 
+                if _is_terminal_workspace_admin_tool(action.tool.name):
+                    last_snapshot = self._snapshot_for_thread(
+                        actor_user=actor_user,
+                        entity_id=active_entity_id,
+                        close_run_id=thread.close_run_id,
+                        thread_id=thread_id,
+                    )
+                    assistant_content = _compose_assistant_content(
+                        assistant_response=_format_operator_loop_result_summary(applied_results),
+                        handoff_message=None,
+                        result_summary=None,
+                        next_step=None,
+                    )
+                    assistant_message = self._chat_repo.create_message(
+                        thread_id=thread_id,
+                        role="assistant",
+                        content=assistant_content,
+                        message_type="action",
+                        linked_action_id=final_record.id if final_record is not None else None,
+                        grounding_payload=self._build_grounding_payload(grounding),
+                        model_metadata=self._build_trace_metadata(
+                            trace_id=trace_id,
+                            mode="planner",
+                            tool_name=last_tool_name,
+                            action_status="applied",
+                            summary=_format_operator_loop_result_summary(applied_results),
+                        ),
+                    )
+                    self._update_thread_memory(
+                        thread_id=thread_id,
+                        existing_payload=thread.context_payload,
+                        operator_message=operator_message_for_memory,
+                        assistant_response=assistant_content,
+                        tool_name=last_tool_name,
+                        tool_arguments=last_tool_arguments,
+                        action_status="applied",
+                        trace_id=trace_id,
+                        snapshot=last_snapshot,
+                    )
+                    self._db_session.commit()
+                    return self._build_execution_outcome(
+                        assistant_message_id=serialize_uuid(assistant_message.id),
+                        assistant_content=assistant_message.content,
+                        action_plan=final_record,
+                        is_read_only=False,
+                        thread=thread,
+                    )
+
                 if iteration == _MAX_OPERATOR_LOOP_STEPS:
                     last_snapshot = self._snapshot_for_thread(
                         actor_user=actor_user,
@@ -886,6 +1081,7 @@ class ChatActionExecutor:
                 actor_user=actor_user,
                 content=content,
                 operator_message_for_memory=operator_message_for_memory,
+                client_turn_id=client_turn_id,
                 message_grounding_payload=message_grounding_payload,
                 persist_user_message=persist_user_message,
                 trace_id=trace_id,
@@ -908,6 +1104,7 @@ class ChatActionExecutor:
                 actor_user=actor_user,
                 content=content,
                 operator_message_for_memory=operator_message_for_memory,
+                client_turn_id=client_turn_id,
                 message_grounding_payload=message_grounding_payload,
                 persist_user_message=persist_user_message,
                 trace_id=trace_id,
@@ -926,6 +1123,7 @@ class ChatActionExecutor:
         actor_user: EntityUserRecord,
         content: str,
         operator_message_for_memory: str | None,
+        client_turn_id: str | None,
         message_grounding_payload: dict[str, Any] | None,
         persist_user_message: bool,
         trace_id: str | None,
@@ -951,7 +1149,11 @@ class ChatActionExecutor:
                     message_type="action",
                     linked_action_id=None,
                     grounding_payload=dict(message_grounding_payload or {}),
-                    model_metadata=None,
+                    model_metadata=_build_turn_metadata(
+                        metadata=None,
+                        client_turn_id=client_turn_id,
+                        turn_status="received",
+                    ),
                 )
             snapshot = self._snapshot_for_thread(
                 actor_user=actor_user,
@@ -1112,6 +1314,7 @@ class ChatActionExecutor:
         entity_id: UUID,
         actor_user: EntityUserRecord,
         reason: str | None,
+        approval_policy: str | None = None,
         source_surface: AuditSourceSurface,
         trace_id: str | None,
     ) -> ChatActionPlanRecord:
@@ -1135,6 +1338,22 @@ class ChatActionExecutor:
             )
 
         thread = self._chat_repo.get_thread_for_entity(thread_id=thread_id, entity_id=entity_id)
+        thread_context_payload = (
+            dict(getattr(thread, "context_payload", {})) if thread is not None else {}
+        )
+        if approval_policy == "auto_release_for_thread":
+            thread_context_payload = _with_thread_approval_policy(
+                context_payload=thread_context_payload,
+                mode="auto_release_for_thread",
+                actor_user_id=actor_user.id,
+                reason=reason,
+            )
+            updated_thread = self._chat_repo.update_thread_context(
+                thread_id=thread_id,
+                context_payload=thread_context_payload,
+            )
+            if updated_thread is not None:
+                thread = updated_thread
         payload = dict(plan.payload)
         self._require_plan_scope_match(
             thread=thread,
@@ -1248,7 +1467,7 @@ class ChatActionExecutor:
             )
             self._update_thread_memory(
                 thread_id=thread_id,
-                existing_payload=thread.context_payload,
+                existing_payload=thread_context_payload,
                 operator_message=None,
                 assistant_response=(
                     payload.get("assistant_response")
@@ -1705,11 +1924,33 @@ class ChatActionExecutor:
     ) -> bool:
         """Resolve the runtime approval requirement for one planned action."""
 
-        return self._toolset.requires_human_approval_for_invocation(
+        requires_approval = self._toolset.requires_human_approval_for_invocation(
             tool_name=action.tool.name,
             tool_arguments=action.planning.tool_arguments,
             context=execution_context,
         )
+        if not requires_approval:
+            return False
+        if action.tool.name in _NEVER_AUTO_APPROVE_TOOLS:
+            return True
+        if action.tool.name not in _AUTO_APPROVABLE_RELEASE_TOOLS:
+            return True
+        return not self._thread_allows_auto_release_approval(
+            thread_id=execution_context.thread_id,
+        )
+
+    def _thread_allows_auto_release_approval(self, *, thread_id: UUID | None) -> bool:
+        """Return whether this thread has an explicit release-control approval policy."""
+
+        if thread_id is None:
+            return False
+        thread = self._chat_repo.get_thread_by_id(thread_id=thread_id)
+        if thread is None:
+            return False
+        policy = thread.context_payload.get(_THREAD_APPROVAL_POLICY_KEY)
+        if not isinstance(policy, dict):
+            return False
+        return policy.get("mode") == "auto_release_for_thread"
 
     def _handle_pending_plan_reply(
         self,
@@ -1965,15 +2206,17 @@ class ChatActionExecutor:
         target_close_run_id = reopened_close_run_id or created_close_run_id
         if (
             switched_workspace_id is None
+            and created_workspace_id is None
             and target_close_run_id is None
             and deleted_close_run_id is None
         ):
             return grounding, thread, None
 
         previous_close_run_id = thread.close_run_id
-        if switched_workspace_id is not None and target_close_run_id is None:
+        workspace_scope_entity_id = switched_workspace_id or created_workspace_id
+        if workspace_scope_entity_id is not None and target_close_run_id is None:
             workspace_grounding = self._grounding.resolve_context(
-                entity_id=switched_workspace_id,
+                entity_id=workspace_scope_entity_id,
                 close_run_id=None,
                 user_id=actor_user.id,
             )
@@ -1983,7 +2226,7 @@ class ChatActionExecutor:
             }
             updated_thread = self._chat_repo.update_thread_scope(
                 thread_id=thread_id,
-                entity_id=switched_workspace_id,
+                entity_id=workspace_scope_entity_id,
                 close_run_id=None,
                 context_payload=updated_payload,
             )
@@ -2715,19 +2958,50 @@ class ChatActionExecutor:
 
         access = self._entity_repo.get_entity_for_user(entity_id=entity_id, user_id=user_id)
         if access is None:
-            raise ChatActionExecutionError(
-                status_code=403,
-                code=ChatActionExecutionErrorCode.ACCESS_DENIED,
-                message="You are not a member of this workspace.",
+            relocated_thread = self._chat_repo.get_thread_by_id(thread_id=thread_id)
+            if relocated_thread is None:
+                raise ChatActionExecutionError(
+                    status_code=404,
+                    code=ChatActionExecutionErrorCode.THREAD_NOT_FOUND,
+                    message="That chat thread does not exist.",
+                )
+            relocated_access = self._entity_repo.get_entity_for_user(
+                entity_id=relocated_thread.entity_id,
+                user_id=user_id,
             )
-
-        thread = self._chat_repo.get_thread_for_entity(thread_id=thread_id, entity_id=entity_id)
-        if thread is None:
-            raise ChatActionExecutionError(
-                status_code=404,
-                code=ChatActionExecutionErrorCode.THREAD_NOT_FOUND,
-                message="That chat thread does not exist in this workspace.",
+            if relocated_access is None:
+                raise ChatActionExecutionError(
+                    status_code=403,
+                    code=ChatActionExecutionErrorCode.ACCESS_DENIED,
+                    message="You are not a member of this workspace.",
+                )
+            entity_id = relocated_thread.entity_id
+            thread = relocated_thread
+        else:
+            thread = self._chat_repo.get_thread_for_entity(
+                thread_id=thread_id,
+                entity_id=entity_id,
             )
+            if thread is None:
+                relocated_thread = self._chat_repo.get_thread_by_id(thread_id=thread_id)
+                if relocated_thread is None:
+                    raise ChatActionExecutionError(
+                        status_code=404,
+                        code=ChatActionExecutionErrorCode.THREAD_NOT_FOUND,
+                        message="That chat thread does not exist.",
+                    )
+                relocated_access = self._entity_repo.get_entity_for_user(
+                    entity_id=relocated_thread.entity_id,
+                    user_id=user_id,
+                )
+                if relocated_access is None:
+                    raise ChatActionExecutionError(
+                        status_code=403,
+                        code=ChatActionExecutionErrorCode.ACCESS_DENIED,
+                        message="You are not a member of this workspace.",
+                    )
+                thread = relocated_thread
+                entity_id = relocated_thread.entity_id
 
         grounding = self._grounding.resolve_context(
             entity_id=entity_id,
@@ -2785,6 +3059,14 @@ class ChatActionExecutor:
         )
         if create_close_run_planning is not None:
             return create_close_run_planning
+
+        create_workspace_planning = _build_create_workspace_intent_planning(
+            snapshot=snapshot,
+            operator_content=content,
+            operator_memory=operator_memory,
+        )
+        if create_workspace_planning is not None:
+            return create_workspace_planning
 
         try:
             return self._kernel.plan(
@@ -2989,18 +3271,18 @@ class ChatActionExecutor:
                     "Otherwise do not create a duplicate run."
                 ),
                 (
-                    "Choose mode=tool when the operator is asking you to make a change, "
-                    "trigger a workflow step, approve or reject work, generate an artifact, "
-                    "or otherwise do something the registered actions can accomplish."
+                    "Call a concrete platform tool when the operator is asking you to make "
+                    "a change, trigger a workflow step, approve or reject work, generate an "
+                    "artifact, or otherwise do something the registered actions can accomplish."
                 ),
                 (
-                    "Choose mode=read_only for analysis, explanation, status narration, "
+                    "Call answer_operator for analysis, explanation, status narration, "
                     "missing identifiers, or ambiguous requests."
                 ),
                 (
                     "When the operator asks for business recommendations, management advice, "
-                    "growth assessment, or what the financial report implies, choose "
-                    "mode=read_only. Do not route that to generate_recommendations unless the "
+                    "growth assessment, or what the financial report implies, call "
+                    "answer_operator. Do not route that to generate_recommendations unless the "
                     "operator explicitly asks to generate accounting recommendations."
                 ),
                 (
@@ -3008,14 +3290,14 @@ class ChatActionExecutor:
                     "useful read_only response grounded in the current workspace."
                 ),
                 (
-                    "When you choose mode=tool, use only the registered deterministic "
-                    "actions and include JSON-safe arguments. The tool_name must be the exact "
+                    "When you call a platform tool, use only the registered deterministic "
+                    "actions and include JSON-safe arguments. The tool call must use the exact "
                     "concrete action name such as switch_workspace or create_close_run, never "
                     "a namespace or specialist label."
                 ),
                 (
                     "If a required identifier is missing and there is no single clear target in "
-                    "the snapshot, do not invent it. Respond in read_only mode and ask one "
+                    "the snapshot, do not invent it. Call answer_operator and ask one "
                     "short clarifying question."
                 ),
                 (
@@ -3036,7 +3318,7 @@ class ChatActionExecutor:
                     "unless the operator explicitly asks for structure."
                 ),
                 (
-                    "When you choose mode=tool, the assistant_response must be brief and "
+                    "When you call a platform tool, the assistant_response must be brief and "
                     "operator-facing. Say what you are doing for the operator in one or two "
                     "plain sentences. Do not mention internal tool names, JSON fields, or "
                     "implementation details."
@@ -3054,13 +3336,44 @@ class ChatActionExecutor:
                 (
                     "If the active chart of accounts is missing, do not choose an action for "
                     "recommendation generation, journals, reconciliation, reporting, or exports. "
-                    "Respond in read_only mode and ask the operator to upload a production COA "
-                    "from the entity workspace first."
+                    "Call answer_operator and ask the operator to upload a production COA "
+                    "from the entity workspace or Chart of Accounts page first. Do not say you "
+                    "can source or upload a production COA through chat; the operator must provide "
+                    "the file or use an installed accounting-system integration such as QuickBooks."
+                ),
+                (
+                    "If the workspace has an active fallback chart of accounts, treat it as "
+                    "usable for the close workflow. Do not imply that a production COA is "
+                    "required. If the operator asks about a production COA, explain that it "
+                    "is optional and must come from the operator's accounting system, "
+                    "accountant, or an installed integration."
                 ),
                 (
                     "If source documents are missing, tell the operator they can upload them "
                     "through chat or from the document workspace and that parsing starts "
                     "automatically after upload."
+                ),
+                (
+                    "If the operator asks you to run, finish, process, or report the close "
+                    "end-to-end, treat that as permission to drive the workflow autonomously "
+                    "with the available non-governed tools. Continue through document review, "
+                    "phase advancement, recommendation generation, recommendation and journal "
+                    "review/application, applicable reconciliation, reporting, export, and "
+                    "evidence-pack assembly until the objective is complete or a concrete "
+                    "blocker appears."
+                ),
+                (
+                    "For autonomous close work, make discretionary decisions only from the "
+                    "workspace evidence: approve clean parsed documents, recommendations, "
+                    "journals, and reconciliations when there are no open issues; skip or mark "
+                    "work not applicable only when the snapshot or tool result supports that "
+                    "decision. Stop and explain when evidence is missing, ambiguous, failed, "
+                    "blocked, or a governed release/destructive action requires confirmation."
+                ),
+                (
+                    "When an autonomous close objective stops or completes, summarize what "
+                    "went through, what did not run, what failed or was skipped, and the "
+                    "decision basis for each material step."
                 ),
                 (
                     "High-stakes sign-off and release actions may still require confirmation. "
@@ -3091,13 +3404,18 @@ class ChatActionExecutor:
                     ),
                     (
                         "If there is another clear, safe, and useful deterministic action "
-                        "that materially advances the same objective, choose mode=tool for "
+                        "that materially advances the same objective, call the platform tool for "
                         "the single best next action."
                     ),
                     (
+                        "For explicit autonomous/end-to-end close objectives, keep choosing "
+                        "the next workflow tool across phases until final reporting/export is "
+                        "done or the snapshot shows a concrete blocker."
+                    ),
+                    (
                         "If the main objective is now waiting on human approval, asynchronous "
-                        "processing, missing inputs, ambiguity, or a blocker, choose mode="
-                        "read_only and explain the current state briefly."
+                        "processing, missing inputs, ambiguity, or a blocker, call "
+                        "answer_operator and explain the current state briefly."
                     ),
                     (
                         "Do not repeat an action already completed in this turn unless the "
@@ -3202,6 +3520,14 @@ class ChatActionExecutor:
             or _normalize_planned_tool_name(planning.tool_name) != "create_close_run"
         ):
             return create_close_run_planning
+
+        create_workspace_planning = _build_create_workspace_intent_planning(
+            snapshot=snapshot,
+            operator_content=operator_content,
+            operator_memory=operator_memory,
+        )
+        if create_workspace_planning is not None:
+            return create_workspace_planning
 
         cross_domain_clarification = _build_cross_domain_ambiguity_clarification(
             snapshot=snapshot,
@@ -3350,6 +3676,13 @@ class ChatActionExecutor:
                 snapshot=snapshot,
                 operator_content=operator_content,
                 operator_memory=operator_memory,
+            )
+
+        tool_definition = self._resolve_tool_definition(tool_name=repaired_tool_name)
+        if tool_definition is not None:
+            tool_arguments = _normalize_tool_arguments_against_schema(
+                tool_arguments=tool_arguments,
+                schema=getattr(tool_definition, "input_schema", None),
             )
 
         return planning.model_copy(
@@ -3800,6 +4133,135 @@ def _build_missing_field_clarification(
     if len(field_labels) == 1:
         return f"I can do that, but I still need {field_labels[0]}."
     return f"I can do that, but I still need {field_labels[0]} and {field_labels[1]}."
+
+
+def _normalize_tool_arguments_against_schema(
+    *,
+    tool_arguments: dict[str, Any],
+    schema: object,
+) -> dict[str, Any]:
+    """Repair harmless model formatting drift before strict registry validation."""
+
+    if not isinstance(schema, dict):
+        return tool_arguments
+    normalized = _normalize_schema_object_value(value=tool_arguments, schema=schema)
+    return normalized if isinstance(normalized, dict) else tool_arguments
+
+
+def _normalize_schema_object_value(*, value: Any, schema: dict[str, Any]) -> Any:
+    schema_types = _schema_type_names(schema.get("type"))
+    if "object" in schema_types or isinstance(schema.get("properties"), dict):
+        if not isinstance(value, dict):
+            return value
+        properties = schema.get("properties")
+        if not isinstance(properties, dict):
+            return value
+        allow_extra = schema.get("additionalProperties") is not False
+        normalized_object: dict[str, Any] = {}
+        for key, nested_value in value.items():
+            if not isinstance(key, str):
+                continue
+            nested_schema = properties.get(key)
+            if not isinstance(nested_schema, dict):
+                if allow_extra:
+                    normalized_object[key] = nested_value
+                continue
+            normalized_object[key] = _normalize_schema_object_value(
+                value=nested_value,
+                schema=nested_schema,
+            )
+        return normalized_object
+
+    if isinstance(value, str):
+        enum_values = schema.get("enum")
+        if isinstance(enum_values, list):
+            enum_match = _match_schema_enum_value(value=value, enum_values=enum_values)
+            if enum_match is not None:
+                return enum_match
+        if "boolean" in schema_types:
+            boolean_value = _coerce_string_boolean(value)
+            if boolean_value is not None:
+                return boolean_value
+        if "integer" in schema_types:
+            integer_value = _coerce_string_integer(value)
+            if integer_value is not None:
+                return integer_value
+        if "number" in schema_types:
+            number_value = _coerce_string_number(value)
+            if number_value is not None:
+                return number_value
+
+    if isinstance(value, list):
+        item_schema = schema.get("items")
+        if isinstance(item_schema, dict):
+            return [
+                _normalize_schema_object_value(value=item, schema=item_schema)
+                for item in value
+            ]
+        return value
+
+    return value
+
+
+def _schema_type_names(raw_type: object) -> set[str]:
+    """Return JSON-schema type names from a scalar or union type declaration."""
+
+    if isinstance(raw_type, str):
+        return {raw_type}
+    if isinstance(raw_type, list):
+        return {item for item in raw_type if isinstance(item, str)}
+    return set()
+
+
+def _match_schema_enum_value(*, value: str, enum_values: list[object]) -> Any | None:
+    """Return an enum member matching relaxed user/model spelling."""
+
+    normalized_value = _enum_match_key(value)
+    for enum_value in enum_values:
+        if not isinstance(enum_value, str):
+            continue
+        if _enum_match_key(enum_value) == normalized_value:
+            return enum_value
+    return None
+
+
+def _enum_match_key(value: str) -> str:
+    """Normalize a string for enum repair without changing canonical output."""
+
+    return " ".join(
+        value.strip().lower().replace("-", " ").replace("_", " ").split()
+    )
+
+
+def _coerce_string_boolean(value: str) -> bool | None:
+    normalized = value.strip().lower()
+    if normalized in {"true", "yes", "y", "1"}:
+        return True
+    if normalized in {"false", "no", "n", "0"}:
+        return False
+    return None
+
+
+def _coerce_string_integer(value: str) -> int | None:
+    stripped = value.strip()
+    if not stripped:
+        return None
+    try:
+        parsed = int(stripped)
+    except ValueError:
+        return None
+    return parsed
+
+
+def _coerce_string_number(value: str) -> int | float | None:
+    stripped = value.strip()
+    if not stripped:
+        return None
+    try:
+        parsed = float(stripped)
+    except ValueError:
+        return None
+    return int(parsed) if parsed.is_integer() else parsed
 
 
 def _humanize_field_name(field_name: str) -> str:
@@ -5543,6 +6005,254 @@ def _build_cross_domain_candidate_labels(
         if anomaly_label is not None:
             labels.append(anomaly_label)
     return labels
+
+
+def _build_create_workspace_intent_planning(
+    *,
+    snapshot: dict[str, Any],
+    operator_content: str,
+    operator_memory: AgentMemorySummary,
+) -> AgentPlanningResult | None:
+    """Plan workspace creation deterministically when the operator intent is explicit."""
+
+    is_create_request = _is_workspace_creation_request(operator_content)
+    is_name_follow_up = _memory_indicates_pending_workspace_creation(
+        operator_memory=operator_memory,
+    )
+    if not is_create_request and not is_name_follow_up:
+        return None
+
+    pending_workspace_name = _resolve_pending_workspace_name_from_memory(
+        operator_memory=operator_memory,
+    )
+    workspace_name = (
+        _extract_workspace_name_from_creation_text(operator_content)
+        or pending_workspace_name
+    )
+    if workspace_name is None:
+        return AgentPlanningResult(
+            mode="read_only",
+            assistant_response="What would you like to name the new workspace?",
+            reasoning=(
+                "The operator clearly asked to create a workspace, but the required "
+                "workspace name is not present."
+            ),
+            tool_name=None,
+            tool_arguments={},
+        )
+
+    if _workspace_name_exists_in_snapshot(snapshot=snapshot, workspace_name=workspace_name):
+        return AgentPlanningResult(
+            mode="read_only",
+            assistant_response=(
+                f"A workspace named {workspace_name} already exists. Give me a distinct "
+                "workspace name for the new entity."
+            ),
+            reasoning=(
+                "The requested workspace display name already exists in the operator's "
+                "accessible workspace list."
+            ),
+            tool_name=None,
+            tool_arguments={},
+        )
+
+    legal_name = _extract_workspace_legal_name_from_creation_text(operator_content)
+    if legal_name is None and pending_workspace_name is not None and not is_create_request:
+        legal_name = _clean_extracted_workspace_name(operator_content)
+    if legal_name is None:
+        return AgentPlanningResult(
+            mode="read_only",
+            assistant_response=(
+                f"What is the legal entity name for {workspace_name}? I'll use the current "
+                "workspace defaults for currency, country, timezone, and approval routing unless "
+                "you specify different values."
+            ),
+            reasoning=(
+                "The operator supplied the display name, but chat-created workspaces require "
+                "a legal entity name before mutation."
+            ),
+            tool_name=None,
+            tool_arguments={},
+        )
+
+    tool_arguments = _hydrate_create_workspace_arguments(
+        tool_arguments={"name": workspace_name, "legal_name": legal_name},
+        snapshot=snapshot,
+    )
+    return AgentPlanningResult(
+        mode="tool",
+        assistant_response=(
+            f"I'll create the {workspace_name} workspace now using the current workspace defaults."
+        ),
+        reasoning=(
+            "The operator supplied the required workspace name; optional settings can use "
+            "the canonical current-scope defaults."
+        ),
+        tool_name="create_workspace",
+        tool_arguments=tool_arguments,
+    )
+
+
+def _is_workspace_creation_request(value: str) -> bool:
+    """Return whether the operator is asking to create an entity workspace."""
+
+    normalized = _searchable_text(value)
+    if not normalized:
+        return False
+    if "close run" in normalized or "close-run" in normalized:
+        return False
+    if "workspace" not in normalized and "entity" not in normalized:
+        return False
+    creation_tokens = ("create", "add", "new", "another", "fresh")
+    return any(token in normalized for token in creation_tokens)
+
+
+def _memory_indicates_pending_workspace_creation(
+    *,
+    operator_memory: AgentMemorySummary,
+) -> bool:
+    """Return whether recent turns show an unfinished create-workspace request."""
+
+    candidates = [
+        operator_memory.last_operator_message,
+        operator_memory.last_assistant_response,
+        operator_memory.working_subtask,
+        operator_memory.approved_objective,
+        operator_memory.pending_branch,
+        *operator_memory.recent_objectives,
+    ]
+    for value in candidates:
+        normalized = _searchable_text(value)
+        if not normalized:
+            continue
+        if "workspace" not in normalized and "entity" not in normalized:
+            continue
+        if any(token in normalized for token in ("create", "add", "new")):
+            return True
+        if "what would you like to name" in normalized or "workspace name" in normalized:
+            return True
+        if "legal entity name" in normalized:
+            return True
+    return False
+
+
+def _resolve_pending_workspace_name_from_memory(
+    *,
+    operator_memory: AgentMemorySummary,
+) -> str | None:
+    """Return the workspace display name from a recent unfinished creation turn."""
+
+    candidates = [
+        operator_memory.last_operator_message,
+        *reversed(operator_memory.recent_objectives),
+    ]
+    for value in candidates:
+        if not isinstance(value, str):
+            continue
+        workspace_name = _extract_workspace_name_from_creation_text(value)
+        if workspace_name is not None:
+            return workspace_name
+    return None
+
+
+def _extract_workspace_name_from_creation_text(value: str) -> str | None:
+    """Extract a workspace display name from common create-workspace phrasing."""
+
+    raw_value = value.strip()
+    if not raw_value:
+        return None
+
+    patterns = (
+        r"\b(?:called|named)\s+(?P<name>.+)$",
+        r"\b(?:the\s+)?(?:workspace|entity)?\s*name\s+(?:is|as|to|would\s+be|will\s+be|should\s+be)\s+(?P<name>.+)$",
+        r"^\s*(?P<name>.+?)\s+(?:would|will|should)\s+be\s+the\s+name\b",
+        r"\b(?:create|add|open|start)\s+(?:a\s+|an\s+|another\s+|new\s+|fresh\s+|the\s+)*workspace\s+(?P<name>.+)$",
+        r"\bnew\s+workspace\s+(?P<name>.+)$",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, raw_value, flags=re.IGNORECASE)
+        if match is None:
+            continue
+        cleaned = _clean_extracted_workspace_name(match.group("name"))
+        if cleaned is not None:
+            return cleaned
+    return None
+
+
+def _extract_workspace_legal_name_from_creation_text(value: str) -> str | None:
+    """Extract an optional legal entity name from create-workspace phrasing."""
+
+    patterns = (
+        r"\blegal\s+(?:entity\s+)?name\s+(?:is|as|to|would\s+be|will\s+be|should\s+be)\s+(?P<name>.+)$",
+        r"\blegal\s+(?:entity\s+)?name[:\s]+(?P<name>.+)$",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, value.strip(), flags=re.IGNORECASE)
+        if match is None:
+            continue
+        cleaned = _clean_extracted_workspace_name(match.group("name"))
+        if cleaned is not None:
+            return cleaned
+    return None
+
+
+def _workspace_name_exists_in_snapshot(
+    *,
+    snapshot: dict[str, Any],
+    workspace_name: str,
+) -> bool:
+    """Return whether the operator already has an accessible workspace with this name."""
+
+    normalized_name = _searchable_text(workspace_name)
+    if not normalized_name:
+        return False
+    workspaces = snapshot.get("accessible_workspaces")
+    records = (
+        [record for record in workspaces if isinstance(record, dict)]
+        if isinstance(workspaces, list)
+        else []
+    )
+    current_workspace = snapshot.get("workspace")
+    if isinstance(current_workspace, dict):
+        records.append(current_workspace)
+    for record in records:
+        name = record.get("name")
+        if isinstance(name, str) and _searchable_text(name) == normalized_name:
+            return True
+    return False
+
+
+def _clean_extracted_workspace_name(value: str) -> str | None:
+    """Return one safe workspace display name extracted from operator text."""
+
+    cleaned = value.strip()
+    cleaned = re.split(
+        (
+            r"\b(?:with\s+legal\s+(?:entity\s+)?name|legal\s+(?:entity\s+)?name|"
+            r"any\s+other\s+details|anything\s+else|"
+            r"do\s+you\s+need|should\s+i\s+provide)\b"
+        ),
+        cleaned,
+        maxsplit=1,
+        flags=re.IGNORECASE,
+    )[0]
+    cleaned = re.sub(r"\b(?:please|thanks|thank\s+you)\b\.?$", "", cleaned, flags=re.IGNORECASE)
+    cleaned = cleaned.strip(" \t\r\n\"'`.,;:!?")
+    if not cleaned:
+        return None
+    normalized = _searchable_text(cleaned)
+    if normalized in {
+        "a workspace",
+        "new workspace",
+        "a new workspace",
+        "the workspace",
+        "workspace",
+        "entity",
+    }:
+        return None
+    if len(cleaned) > 200:
+        return None
+    return cleaned
 
 
 def _build_create_close_run_intent_planning(
@@ -7887,8 +8597,110 @@ def _format_next_step(snapshot: dict[str, Any] | None) -> str | None:
         cleaned = action.strip()
         if not cleaned or cleaned.startswith("Ask the agent"):
             continue
+        if _readiness_action_requires_operator_input(cleaned):
+            return f"Next, {_lowercase_leading_character(cleaned)}"
         return f"Next, I can {_lowercase_leading_character(cleaned)}"
     return None
+
+
+def _readiness_action_requires_operator_input(action: str) -> bool:
+    """Return whether a suggested action depends on operator-supplied data or files."""
+
+    normalized = _searchable_text(action)
+    if not normalized:
+        return False
+    if any(
+        phrase in normalized
+        for phrase in (
+            "upload a production chart of accounts",
+            "upload a production coa",
+            "upload source documents",
+            "upload a gl",
+            "upload gl",
+            "upload a cashbook",
+            "upload cashbook",
+            "upload a trial balance",
+            "upload trial balance",
+            "attach a file",
+            "provide a file",
+        )
+    ):
+        return True
+    return normalized.startswith(("upload ", "provide ", "attach ", "import "))
+
+
+def _should_suppress_generic_next_step(
+    *,
+    operator_content: str,
+    last_tool_name: str | None,
+) -> bool:
+    """Return whether a readiness next-step would distract from the current turn."""
+
+    if last_tool_name in {
+        "create_workspace",
+        "switch_workspace",
+        "update_workspace",
+        "delete_workspace",
+    }:
+        return True
+    normalized_content = _searchable_text(operator_content)
+    if not normalized_content:
+        return False
+    if "workspace" not in normalized_content and "entity" not in normalized_content:
+        return _is_capability_boundary_follow_up(normalized_content)
+    return any(
+        token in normalized_content
+        for token in (
+            "create",
+            "add",
+            "open",
+            "start",
+            "new",
+            "another",
+            "delete",
+            "remove",
+            "switch",
+            "rename",
+            "update",
+        )
+    ) or _is_capability_boundary_follow_up(normalized_content)
+
+
+def _is_capability_boundary_follow_up(normalized_content: str) -> bool:
+    """Return whether the operator is challenging an asserted capability boundary."""
+
+    if not any(
+        token in normalized_content
+        for token in ("coa", "chart of accounts", "charts of accounts", "file", "upload")
+    ):
+        return False
+    return any(
+        phrase in normalized_content
+        for phrase in (
+            "where will you get",
+            "where would you get",
+            "where do you get",
+            "where can you get",
+            "how will you",
+            "how would you",
+            "can you actually",
+            "can you upload",
+            "will you upload",
+            "you said",
+            "you claimed",
+        )
+    )
+
+
+def _is_terminal_workspace_admin_tool(tool_name: str | None) -> bool:
+    """Return whether one workspace-admin mutation should end the current turn."""
+
+    return tool_name in {
+        "create_workspace",
+        "switch_workspace",
+        "update_workspace",
+        "delete_workspace",
+    }
 
 
 def _build_operator_failure_message(
@@ -8043,7 +8855,9 @@ def _build_resume_operator_prompt(
     return (
         f"{cleaned_objective}\n\n"
         f"{continuation_note} Continue the same operator request using the updated workspace "
-        "state. Do not ask the operator to repeat the request."
+        "state. Do not ask the operator to repeat the request. If the original objective was "
+        "autonomous or end-to-end close processing, continue to the next available workflow "
+        "step and report any completed, skipped, failed, or blocked work."
     )
 
 
@@ -8098,6 +8912,59 @@ def _json_safe_payload(value: Any) -> Any:
     """Return a JSON-serializable copy of tool payloads and execution results."""
 
     return json.loads(json.dumps(value, default=str))
+
+
+def _build_turn_metadata(
+    *,
+    metadata: dict[str, Any] | None,
+    client_turn_id: str | None,
+    turn_status: str,
+) -> dict[str, Any] | None:
+    """Attach stable retry metadata to one persisted chat message."""
+
+    if client_turn_id is None:
+        return metadata
+    return {
+        **dict(metadata or {}),
+        "chat_turn_id": client_turn_id,
+        "turn_status": turn_status,
+    }
+
+
+def _build_recovered_turn_summary(*, action: ChatActionPlanRecord) -> str:
+    """Build a truthful response from the durable action ledger after a retry."""
+
+    if action.status == "pending":
+        return (
+            "I already prepared that action and it is waiting for confirmation before "
+            "anything is applied."
+        )
+    if action.applied_result is not None:
+        return (
+            _summarize_applied_result(action.applied_result)
+            or "I already completed that action."
+        )
+    return "I already staged that action, but the stored result is not available."
+
+
+def _with_thread_approval_policy(
+    *,
+    context_payload: dict[str, Any],
+    mode: str,
+    actor_user_id: UUID,
+    reason: str | None,
+) -> dict[str, Any]:
+    """Return context payload with an explicit scoped approval policy."""
+
+    payload = dict(context_payload)
+    payload[_THREAD_APPROVAL_POLICY_KEY] = {
+        "mode": mode,
+        "actor_user_id": str(actor_user_id),
+        "reason": reason,
+        "updated_at": utc_now().isoformat(),
+        "never_auto_approve_tools": sorted(_NEVER_AUTO_APPROVE_TOOLS),
+    }
+    return payload
 
 
 def _resolve_preferred_explanation_depth(

@@ -738,9 +738,10 @@ class AccountingWorkspaceContextBuilder(WorkspaceContextBuilder):
             status = "fallback"
             summary = (
                 f"Fallback chart of accounts version {active_set.version_no} is active with "
-                f"{len(active_accounts)} active accounts. You can continue collection and "
-                "document review now; upload a production COA later if you want to replace "
-                "the fallback before sign-off."
+                f"{len(active_accounts)} active accounts. It is usable for collection, "
+                "document review, recommendations, journals, reconciliation, reports, and "
+                "exports. A production COA is optional if the operator wants entity-specific "
+                "mapping or policy requires it before sign-off."
             )
         else:
             status = "active"
@@ -1040,7 +1041,7 @@ def _build_readiness_summary(
             "blockers": [],
             "warnings": [],
             "next_actions": [
-            "Create or open a close run to let the agent execute close-run workflows."
+                "Create or open a close run to let the agent execute close-run workflows."
             ],
             "document_count": 0,
             "has_source_documents": False,
@@ -1055,16 +1056,13 @@ def _build_readiness_summary(
     if not coa_summary.get("is_available", False):
         blockers.append("No active chart of accounts is configured for this entity.")
         next_actions.append(
-            "Upload a production chart of accounts from the workbench or Chart of Accounts page."
+            "Upload a production chart of accounts file from the workbench or "
+            "Chart of Accounts page."
         )
     elif coa_summary.get("requires_operator_upload", False):
         warnings.append(
-            "A fallback chart of accounts is active. You can continue intake work now, but "
-            "upload a production COA before sign-off if you need entity-specific mapping."
-        )
-        next_actions.append(
-            "Upload a production chart of accounts from the workbench or Chart of Accounts page "
-            "if you want to replace the fallback before sign-off."
+            "A fallback chart of accounts is active and usable for this close. A production "
+            "COA is optional if you want entity-specific mapping or policy requires it."
         )
 
     document_count = sum(document_summary.values())

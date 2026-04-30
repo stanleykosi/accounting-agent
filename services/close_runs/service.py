@@ -475,6 +475,36 @@ class CloseRunService:
     ) -> CloseRunRewindResponse:
         """Reopen an earlier workflow phase on a mutable close run."""
 
+        try:
+            response = self.stage_close_run_rewind(
+                actor_user=actor_user,
+                entity_id=entity_id,
+                close_run_id=close_run_id,
+                target_phase=target_phase,
+                reason=reason,
+                source_surface=source_surface,
+                trace_id=trace_id,
+            )
+            self._repository.commit()
+        except Exception:
+            self._repository.rollback()
+            raise
+
+        return response
+
+    def stage_close_run_rewind(
+        self,
+        *,
+        actor_user: EntityUserRecord,
+        entity_id: UUID,
+        close_run_id: UUID,
+        target_phase: WorkflowPhase,
+        reason: str | None,
+        source_surface: AuditSourceSurface,
+        trace_id: str | None,
+    ) -> CloseRunRewindResponse:
+        """Stage a close-run rewind inside the caller-owned transaction."""
+
         access_record = self._require_close_run_access(
             entity_id=entity_id,
             close_run_id=close_run_id,
@@ -495,38 +525,33 @@ class CloseRunService:
                 message=str(error),
             ) from error
 
-        try:
-            self._repository.replace_phase_states(
-                close_run_id=close_run_id,
-                phase_states=rewind.phase_states,
-            )
-            reset_summary = self._repository.clear_state_after_phase_rewind(
-                close_run_id=close_run_id,
-                target_phase=target_phase,
-                canceled_by_user_id=actor_user.id,
-            )
-            self._repository.create_activity_event(
-                entity_id=entity_id,
-                close_run_id=close_run_id,
-                actor_user_id=actor_user.id,
-                event_type="close_run.phase_rewound",
-                source_surface=source_surface,
-                payload={
-                    "summary": (
-                        f"{actor_user.full_name} moved the close run from "
-                        f"{rewind.previous_active_phase.label} back to {rewind.active_phase.label}."
-                    ),
-                    "previous_active_phase": rewind.previous_active_phase.value,
-                    "active_phase": rewind.active_phase.value,
-                    "reset_summary": _build_reset_summary_payload(reset_summary),
-                    "reason": reason,
-                },
-                trace_id=trace_id,
-            )
-            self._repository.commit()
-        except Exception:
-            self._repository.rollback()
-            raise
+        self._repository.replace_phase_states(
+            close_run_id=close_run_id,
+            phase_states=rewind.phase_states,
+        )
+        reset_summary = self._repository.clear_state_after_phase_rewind(
+            close_run_id=close_run_id,
+            target_phase=target_phase,
+            canceled_by_user_id=actor_user.id,
+        )
+        self._repository.create_activity_event(
+            entity_id=entity_id,
+            close_run_id=close_run_id,
+            actor_user_id=actor_user.id,
+            event_type="close_run.phase_rewound",
+            source_surface=source_surface,
+            payload={
+                "summary": (
+                    f"{actor_user.full_name} moved the close run from "
+                    f"{rewind.previous_active_phase.label} back to {rewind.active_phase.label}."
+                ),
+                "previous_active_phase": rewind.previous_active_phase.value,
+                "active_phase": rewind.active_phase.value,
+                "reset_summary": _build_reset_summary_payload(reset_summary),
+                "reason": reason,
+            },
+            trace_id=trace_id,
+        )
 
         return CloseRunRewindResponse(
             close_run=self._build_close_run_summary(access_record.close_run),

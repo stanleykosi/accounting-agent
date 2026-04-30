@@ -9,6 +9,7 @@ from services.model_gateway.client import (
     ModelGatewayConfig,
     ModelGatewayError,
     ModelGatewayRateLimitError,
+    ModelGatewayToolCall,
     ModelResponseValidationError,
     get_gateway,
 )
@@ -32,6 +33,7 @@ __all__ = [
     "ModelGatewayConfig",
     "ModelGatewayError",
     "ModelGatewayRateLimitError",
+    "ModelGatewayToolCall",
     "ModelResponseValidationError",
     "PromptRegistryError",
     "PromptTemplate",

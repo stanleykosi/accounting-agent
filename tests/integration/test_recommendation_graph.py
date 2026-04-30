@@ -45,6 +45,7 @@ from services.contracts.recommendation_models import (
 from services.model_gateway.client import (
     ModelGateway,
     ModelGatewayConfig,
+    ModelGatewayToolCall,
     _strip_markdown_fences,
 )
 from services.model_gateway.prompts import (
@@ -624,6 +625,82 @@ class TestModelGatewayHelpers:
         assert request_body_overrides["response_format"]["type"] == "json_schema"
         assert request_body_overrides["response_format"]["json_schema"]["strict"] is True
         assert request_body_overrides["response_format"]["json_schema"]["name"] == "StructuredReply"
+
+    def test_complete_tool_call_requires_native_tool_choice(self, monkeypatch) -> None:
+        """Native planning should force exactly one provider-level tool call."""
+
+        class FakeResponse:
+            def json(self) -> dict[str, object]:
+                return {
+                    "choices": [
+                        {
+                            "message": {
+                                "tool_calls": [
+                                    {
+                                        "type": "function",
+                                        "function": {
+                                            "name": "create_workspace",
+                                            "arguments": '{"name":"Stanley"}',
+                                        },
+                                    }
+                                ]
+                            }
+                        }
+                    ]
+                }
+
+        monkeypatch.setenv("MODEL_GATEWAY_API_KEY", "test-key")
+        reset_settings_cache()
+        captured: dict[str, object] = {}
+
+        try:
+            gateway = ModelGateway()
+
+            def fake_post_completion_request(
+                *,
+                messages: list[dict[str, str]],
+                request_body_overrides: dict[str, Any] | None = None,
+            ) -> FakeResponse:
+                captured["messages"] = messages
+                captured["request_body_overrides"] = request_body_overrides
+                return FakeResponse()
+
+            monkeypatch.setattr(
+                gateway,
+                "_post_completion_request",
+                fake_post_completion_request,
+            )
+
+            result = gateway.complete_tool_call(
+                messages=[{"role": "system", "content": "Plan with tools."}],
+                tools=[
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": "create_workspace",
+                            "description": "Create a workspace.",
+                            "parameters": {
+                                "type": "object",
+                                "properties": {"name": {"type": "string"}},
+                                "required": ["name"],
+                            },
+                        },
+                    }
+                ],
+            )
+        finally:
+            reset_settings_cache()
+
+        assert result == ModelGatewayToolCall(
+            name="create_workspace",
+            arguments={"name": "Stanley"},
+            content="",
+        )
+        request_body_overrides = captured["request_body_overrides"]
+        assert isinstance(request_body_overrides, dict)
+        assert request_body_overrides["provider"]["require_parameters"] is True
+        assert request_body_overrides["tool_choice"] == "required"
+        assert isinstance(request_body_overrides["tools"], list)
 
 
 # ---------------------------------------------------------------------------

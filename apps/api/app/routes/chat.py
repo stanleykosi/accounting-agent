@@ -29,7 +29,6 @@ from apps.api.app.routes.request_auth import (
     AuthenticatedRequestContext,
     RequestAuthDependency,
 )
-from apps.api.app.routes.workflow_phase import require_active_close_run_phase
 from fastapi import (
     APIRouter,
     Depends,
@@ -71,7 +70,7 @@ from services.chat.grounding import ChatGroundingService
 from services.chat.proposed_changes import ProposedChangesService
 from services.chat.service import ChatService, ChatServiceError
 from services.close_runs.delete_service import CloseRunDeleteService
-from services.close_runs.service import CloseRunService
+from services.close_runs.service import CloseRunService, CloseRunServiceError
 from services.coa.service import CoaRepository, CoaService, CoaServiceError
 from services.common.enums import WorkflowPhase
 from services.common.settings import AppSettings, get_settings
@@ -122,6 +121,15 @@ MessageLimitQuery = Annotated[int, Query(ge=1, le=500, description="Maximum mess
 ActionPlanIdPath = Annotated[UUID, Path(description="Action plan UUID to approve or reject.")]
 ThreadAccessQuery = Annotated[UUID, Query(description="Thread UUID for access verification.")]
 INLINE_ATTACHMENT_INTENTS = ("source_documents",)
+
+
+def get_close_run_service(db_session: DatabaseSessionDependency) -> CloseRunService:
+    """Construct the canonical close-run service for chat attachment scope repair."""
+
+    return CloseRunService(repository=CloseRunRepository(db_session=db_session))
+
+
+CloseRunServiceDependency = Annotated[CloseRunService, Depends(get_close_run_service)]
 
 
 def get_chat_service(
@@ -358,11 +366,61 @@ def _error_payload(*, code: str, message: str) -> dict[str, str]:
     return {"code": code, "message": message}
 
 
+def _ensure_chat_attachment_collection_scope(
+    *,
+    actor_user: EntityUserRecord,
+    close_run_id: UUID,
+    close_run_service: CloseRunService,
+    entity_id: UUID,
+    trace_id: str | None,
+) -> str | None:
+    """Move a mutable close run back to Collection before chat source-document upload."""
+
+    close_run = close_run_service.get_close_run(
+        actor_user=actor_user,
+        entity_id=entity_id,
+        close_run_id=close_run_id,
+    )
+    active_phase = close_run.workflow_state.active_phase
+    if active_phase is WorkflowPhase.COLLECTION:
+        return None
+    if active_phase is None:
+        raise HTTPException(
+            status_code=409,
+            detail=_error_payload(
+                code="close_run_not_mutable",
+                message=(
+                    "This close run is not in a mutable workflow phase. Reopen it before "
+                    "uploading new source documents."
+                ),
+            ),
+        )
+
+    rewind = close_run_service.stage_close_run_rewind(
+        actor_user=actor_user,
+        entity_id=entity_id,
+        close_run_id=close_run_id,
+        target_phase=WorkflowPhase.COLLECTION,
+        reason=(
+            "New source documents were uploaded through chat after intake had already "
+            "moved forward."
+        ),
+        source_surface=AuditSourceSurface.DESKTOP,
+        trace_id=trace_id,
+    )
+    return (
+        f"The close run was moved from {rewind.previous_active_phase.label} back to "
+        "Collection before upload so the new documents can be processed canonically. "
+        "Later-phase outputs may need to be regenerated."
+    )
+
+
 async def _ingest_chat_attachments(
     *,
     actor_user: EntityUserRecord,
     attachment_intent: str,
     chat_thread,
+    close_run_service: CloseRunService,
     coa_service: CoaService,
     content: str | None,
     db_session: DatabaseSessionDependency,
@@ -404,13 +462,12 @@ async def _ingest_chat_attachments(
                     ),
                 ),
             )
-        require_active_close_run_phase(
+        workflow_adjustment_note = _ensure_chat_attachment_collection_scope(
             actor_user=actor_user,
-            entity_id=entity_id,
             close_run_id=chat_thread.close_run_id,
-            required_phase=WorkflowPhase.COLLECTION,
-            action_label="Chat document upload",
-            db_session=db_session,
+            close_run_service=close_run_service,
+            entity_id=entity_id,
+            trace_id=trace_id,
         )
         upload_payloads_list: list[UploadFilePayload] = []
         for file in files:
@@ -422,57 +479,66 @@ async def _ingest_chat_attachments(
                 )
             )
         upload_payloads = tuple(upload_payloads_list)
-        result = document_upload_service.upload_documents(
-            actor_user=actor_user,
-            entity_id=entity_id,
-            close_run_id=chat_thread.close_run_id,
-            files=upload_payloads,
-            source_surface=AuditSourceSurface.DESKTOP,
-            trace_id=trace_id,
-        )
-        attachments = tuple(
-            {
-                "filename": uploaded.document.original_filename,
-                "file_size_bytes": uploaded.document.file_size_bytes,
-                "mime_type": uploaded.document.mime_type,
-                "document_id": uploaded.document.id,
-                "intent": normalized_intent,
-                "status": uploaded.document.status,
-            }
-            for uploaded in result.uploaded_documents
-        )
-        summary = (
-            f"{len(attachments)} source document"
-            f"{'' if len(attachments) == 1 else 's'} uploaded and parsing started."
-        )
-        operator_prompt = _build_inline_attachment_prompt(
-            attachment_intent=normalized_intent,
-            content=content,
-            filenames=tuple(
-                str(item["filename"]) for item in attachments if isinstance(item["filename"], str)
-            ),
-            summary=summary,
-        )
-        continuation = new_chat_operator_continuation(
-            thread_id=chat_thread.id,
-            entity_id=entity_id,
-            actor_user_id=actor_user.id,
-            objective=operator_prompt,
-            originating_tool="upload_source_documents",
-            source_surface=AuditSourceSurface.DESKTOP.value,
-        )
-        document_upload_service.queue_specific_uploaded_documents_for_parse(
-            actor_user=actor_user,
-            entity_id=entity_id,
-            close_run_id=chat_thread.close_run_id,
-            document_ids=tuple(uploaded.document.id for uploaded in result.uploaded_documents),
-            source_surface=AuditSourceSurface.DESKTOP,
-            trace_id=trace_id,
-            checkpoint_payload=embed_continuation_in_checkpoint(
-                checkpoint_payload=None,
-                continuation=continuation,
-            ),
-        )
+        try:
+            result = document_upload_service.stage_upload_documents(
+                actor_user=actor_user,
+                entity_id=entity_id,
+                close_run_id=chat_thread.close_run_id,
+                files=upload_payloads,
+                source_surface=AuditSourceSurface.DESKTOP,
+                trace_id=trace_id,
+            )
+            attachments = tuple(
+                {
+                    "filename": uploaded.document.original_filename,
+                    "file_size_bytes": uploaded.document.file_size_bytes,
+                    "mime_type": uploaded.document.mime_type,
+                    "document_id": uploaded.document.id,
+                    "intent": normalized_intent,
+                    "status": uploaded.document.status,
+                }
+                for uploaded in result.uploaded_documents
+            )
+            summary = (
+                f"{len(attachments)} source document"
+                f"{'' if len(attachments) == 1 else 's'} uploaded and parsing started."
+            )
+            if workflow_adjustment_note is not None:
+                summary = f"{workflow_adjustment_note} {summary}"
+            operator_prompt = _build_inline_attachment_prompt(
+                attachment_intent=normalized_intent,
+                content=content,
+                filenames=tuple(
+                    str(item["filename"])
+                    for item in attachments
+                    if isinstance(item["filename"], str)
+                ),
+                summary=summary,
+            )
+            continuation = new_chat_operator_continuation(
+                thread_id=chat_thread.id,
+                entity_id=entity_id,
+                actor_user_id=actor_user.id,
+                objective=operator_prompt,
+                originating_tool="upload_source_documents",
+                source_surface=AuditSourceSurface.DESKTOP.value,
+            )
+            document_upload_service.stage_queue_specific_uploaded_documents_for_parse(
+                actor_user=actor_user,
+                entity_id=entity_id,
+                close_run_id=chat_thread.close_run_id,
+                document_ids=tuple(uploaded.document.id for uploaded in result.uploaded_documents),
+                source_surface=AuditSourceSurface.DESKTOP,
+                trace_id=trace_id,
+                checkpoint_payload=embed_continuation_in_checkpoint(
+                    checkpoint_payload=None,
+                    continuation=continuation,
+                ),
+            )
+            db_session.commit()
+        except Exception:
+            db_session.rollback()
+            raise
         return ChatInlineAttachmentResult(
             attachment_intent=normalized_intent,
             files=attachments,
@@ -505,7 +571,10 @@ def _build_inline_attachment_prompt(
     attachment_label = attachment_intent.replace("_", " ")
     preamble = (
         f"Inline {attachment_label} uploaded through chat: {file_list}. {summary} "
-        "Acknowledge the upload result and continue using the updated workspace state."
+        "Acknowledge the upload result and continue using the updated workspace state. "
+        "If the operator asked for autonomous or end-to-end close processing, keep driving "
+        "the close after parsing finishes and summarize completed, skipped, failed, and "
+        "blocked work."
     )
     if cleaned_content:
         return f"{cleaned_content}\n\n{preamble}"
@@ -881,6 +950,7 @@ def send_chat_action(
             entity_id=entity_id,
             actor_user=_to_entity_user(session_result),
             content=payload.content,
+            client_turn_id=payload.client_turn_id,
             source_surface=AuditSourceSurface.DESKTOP,
             trace_id=trace_id,
         )
@@ -942,9 +1012,11 @@ async def send_chat_action_with_attachments(
     chat_repository: ChatRepositoryDependency,
     db_session: DatabaseSessionDependency,
     document_upload_service: DocumentUploadServiceDependency,
+    close_run_service: CloseRunServiceDependency,
     coa_service: CoaServiceDependency,
     files: Annotated[tuple[UploadFile, ...], File(description="Inline chat attachments.")] = (),
     content: Annotated[str | None, Form()] = None,
+    client_turn_id: Annotated[str | None, Form()] = None,
     attachment_intent: Annotated[str, Form()] = "source_documents",
 ) -> ChatActionResponse:
     """Accept inline chat attachments and route them through canonical upload services."""
@@ -973,6 +1045,7 @@ async def send_chat_action_with_attachments(
             actor_user=_to_entity_user(session_result),
             attachment_intent=attachment_intent,
             chat_thread=thread,
+            close_run_service=close_run_service,
             coa_service=coa_service,
             content=content,
             db_session=db_session,
@@ -997,6 +1070,7 @@ async def send_chat_action_with_attachments(
             entity_id=entity_id,
             actor_user=_to_entity_user(session_result),
             content=inline_result.operator_prompt,
+            client_turn_id=client_turn_id,
             message_grounding_payload={
                 "attachment_intent": inline_result.attachment_intent,
                 "attachments": list(inline_result.files),
@@ -1023,7 +1097,7 @@ async def send_chat_action_with_attachments(
             thread_close_run_id=thread.close_run_id,
             trace_id=trace_id,
         )
-    except (CoaServiceError, DocumentUploadServiceError) as error:
+    except (CloseRunServiceError, CoaServiceError, DocumentUploadServiceError) as error:
         raise HTTPException(
             status_code=error.status_code,
             detail=_error_payload(code=str(error.code), message=error.message),
@@ -1326,6 +1400,8 @@ def list_thread_actions(
             id=str(p.id),
             thread_id=str(p.thread_id),
             intent=p.intent,
+            tool_name=_action_summary_payload_text(p, "tool_name"),
+            assistant_response=_action_summary_payload_text(p, "assistant_response"),
             target_type=p.target_type,
             target_id=str(p.target_id) if p.target_id else None,
             status=p.status,
@@ -1369,6 +1445,7 @@ def approve_chat_action(
             entity_id=entity_id,
             actor_user=_to_entity_user(session_result),
             reason=payload.reason if payload else None,
+            approval_policy=payload.approval_policy if payload else None,
             source_surface=AuditSourceSurface.DESKTOP,
             trace_id=trace_id,
         )
@@ -1441,12 +1518,24 @@ def _to_chat_action_summary(record: object | None) -> ChatActionSummary | None:
         id=str(record.id),  # type: ignore[attr-defined]
         thread_id=str(record.thread_id),  # type: ignore[attr-defined]
         intent=record.intent,  # type: ignore[attr-defined]
+        tool_name=_action_summary_payload_text(record, "tool_name"),
+        assistant_response=_action_summary_payload_text(record, "assistant_response"),
         target_type=record.target_type,  # type: ignore[attr-defined]
         target_id=str(record.target_id) if record.target_id else None,  # type: ignore[attr-defined]
         status=record.status,  # type: ignore[attr-defined]
         requires_human_approval=record.requires_human_approval,  # type: ignore[attr-defined]
         created_at=str(record.created_at),  # type: ignore[attr-defined]
     )
+
+
+def _action_summary_payload_text(record: object, key: str) -> str | None:
+    """Read one string field from an action-plan payload for review UI summaries."""
+
+    payload = getattr(record, "payload", None)
+    if not isinstance(payload, dict):
+        return None
+    value = payload.get(key)
+    return value.strip() if isinstance(value, str) and value.strip() else None
 
 
 def _to_entity_user(session_result: object) -> EntityUserRecord:

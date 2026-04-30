@@ -12,7 +12,7 @@ import {
 } from "../../../../lib/backend-proxy";
 
 export const runtime = "nodejs";
-export const maxDuration = 60;
+export const maxDuration = 300;
 
 type ChatProxyRouteContext = {
   params: Promise<{

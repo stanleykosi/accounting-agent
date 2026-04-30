@@ -56,6 +56,81 @@ def test_create_entity_seeds_owner_membership_and_activity_event() -> None:
     assert workspace.activity_events[0].event_type == "entity.created"
 
 
+def test_create_entity_rejects_duplicate_accessible_workspace_name() -> None:
+    """Workspace creation should fail fast when the caller already has that display name."""
+
+    repository = InMemoryEntityRepository()
+    actor = repository.add_user(email="finance@example.com", full_name="Finance Lead")
+    service = EntityService(repository=repository)
+    service.create_entity(
+        actor_user=actor,
+        name="Stanley",
+        legal_name="Stanley Holdings Limited",
+        base_currency="NGN",
+        country_code="NG",
+        timezone="Africa/Lagos",
+        accounting_standard=None,
+        autonomy_mode=AutonomyMode.HUMAN_REVIEW,
+        source_surface=AuditSourceSurface.DESKTOP,
+        trace_id="req-123",
+    )
+
+    with pytest.raises(EntityServiceError) as error:
+        service.create_entity(
+            actor_user=actor,
+            name="  stanley  ",
+            legal_name="Stanley Trading Limited",
+            base_currency="NGN",
+            country_code="NG",
+            timezone="Africa/Lagos",
+            accounting_standard=None,
+            autonomy_mode=AutonomyMode.HUMAN_REVIEW,
+            source_surface=AuditSourceSurface.DESKTOP,
+            trace_id="req-124",
+        )
+
+    assert error.value.status_code == 409
+    assert error.value.code is EntityServiceErrorCode.DUPLICATE_ENTITY
+    assert len(repository.entities) == 1
+
+
+def test_create_entity_rejects_duplicate_accessible_legal_name() -> None:
+    """Workspace creation should fail fast when legal identity already exists."""
+
+    repository = InMemoryEntityRepository()
+    actor = repository.add_user(email="finance@example.com", full_name="Finance Lead")
+    service = EntityService(repository=repository)
+    service.create_entity(
+        actor_user=actor,
+        name="Stanley",
+        legal_name="Stanley Holdings Limited",
+        base_currency="NGN",
+        country_code="NG",
+        timezone="Africa/Lagos",
+        accounting_standard=None,
+        autonomy_mode=AutonomyMode.HUMAN_REVIEW,
+        source_surface=AuditSourceSurface.DESKTOP,
+        trace_id="req-123",
+    )
+
+    with pytest.raises(EntityServiceError) as error:
+        service.create_entity(
+            actor_user=actor,
+            name="Stanley Trading",
+            legal_name=" stanley holdings limited ",
+            base_currency="NGN",
+            country_code="NG",
+            timezone="Africa/Lagos",
+            accounting_standard=None,
+            autonomy_mode=AutonomyMode.HUMAN_REVIEW,
+            source_surface=AuditSourceSurface.DESKTOP,
+            trace_id="req-124",
+        )
+
+    assert error.value.code is EntityServiceErrorCode.DUPLICATE_ENTITY
+    assert len(repository.entities) == 1
+
+
 def test_add_membership_can_switch_default_actor() -> None:
     """Ensure adding a member as the new default actor clears the previous default assignment."""
 

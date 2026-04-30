@@ -168,6 +168,34 @@ class ChatActionRepository:
         plans = self._db_session.execute(statement).scalars().all()
         return tuple(_map_action_plan(plan) for plan in plans)
 
+    def list_actions_for_thread_turn(
+        self,
+        *,
+        thread_id: UUID,
+        entity_id: UUID,
+        client_turn_id: str,
+        limit: int = 20,
+    ) -> tuple[ChatActionPlanRecord, ...]:
+        """Return recent action plans already staged for one idempotent chat turn."""
+
+        statement = (
+            select(ChatActionPlan)
+            .where(
+                ChatActionPlan.thread_id == thread_id,
+                ChatActionPlan.entity_id == entity_id,
+            )
+            .order_by(desc(ChatActionPlan.created_at))
+            .limit(max(limit * 3, limit))
+        )
+        plans = self._db_session.execute(statement).scalars().all()
+        matching = [
+            _map_action_plan(plan)
+            for plan in plans
+            if isinstance(plan.payload, dict)
+            and plan.payload.get("chat_turn_id") == client_turn_id
+        ]
+        return tuple(matching[:limit])
+
     def list_actions_for_target(
         self,
         *,

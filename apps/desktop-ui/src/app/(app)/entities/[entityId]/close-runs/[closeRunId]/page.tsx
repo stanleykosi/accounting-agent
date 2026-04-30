@@ -287,9 +287,23 @@ export default function CloseRunOverviewPage(): ReactElement {
                       </span>
                     </td>
                     <td className="quartz-table-center">
-                      <Link className="quartz-action-link" href={row.href}>
-                        {resolvePrimaryWorkbenchLabel(row.phase)}
-                      </Link>
+                      {row.phase === "reconciliation" ? (
+                        <div className="quartz-inline-action-row">
+                          <Link className="quartz-action-link" href={row.href}>
+                            Open Reconciliation
+                          </Link>
+                          <Link
+                            className="quartz-action-link"
+                            href={`/entities/${entityId}/close-runs/${closeRun.id}/schedules`}
+                          >
+                            Open Schedules
+                          </Link>
+                        </div>
+                      ) : (
+                        <Link className="quartz-action-link" href={row.href}>
+                          {resolvePrimaryWorkbenchLabel(row.phase)}
+                        </Link>
+                      )}
                     </td>
                   </tr>
                 ))}

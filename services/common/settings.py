@@ -252,7 +252,7 @@ class ModelGatewaySettings(BaseModel):
     provider: str = Field(default="openrouter", min_length=1)
     base_url: str = Field(default="https://openrouter.ai/api/v1", min_length=1)
     api_key: SecretStr | None = Field(default=None, repr=False)
-    default_model: str = Field(default="openai/gpt-4.1-mini", min_length=1)
+    default_model: str = Field(default="anthropic/claude-opus-4.7", min_length=1)
     timeout_seconds: PositiveInteger = Field(default=60)
 
 

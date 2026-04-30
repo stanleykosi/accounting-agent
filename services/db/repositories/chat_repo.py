@@ -95,6 +95,15 @@ class ChatRepository:
 
         return _map_thread(thread)
 
+    def lock_thread_for_turn(self, *, thread_id: UUID) -> ChatThreadRecord | None:
+        """Lock one thread row for a chat turn so retries cannot apply concurrently."""
+
+        statement = select(ChatThread).where(ChatThread.id == thread_id).with_for_update()
+        thread = self._db_session.execute(statement).scalar_one_or_none()
+        if thread is None:
+            return None
+        return _map_thread(thread)
+
     def get_thread_for_entity(
         self,
         *,
@@ -314,6 +323,12 @@ class ChatRepository:
                 .where(ChatMessage.thread_id == thread.id)
             ).scalar_one()
         )
+        model_metadata = _inherit_turn_metadata(
+            db_session=self._db_session,
+            thread_id=thread_id,
+            role=role,
+            model_metadata=model_metadata,
+        )
         message = ChatMessage(
             thread_id=thread_id,
             message_order=next_message_order,
@@ -390,6 +405,62 @@ def _map_thread(model: ChatThread) -> ChatThreadRecord:
         created_at=model.created_at,
         updated_at=model.updated_at,
     )
+
+
+def _inherit_turn_metadata(
+    *,
+    db_session: Session,
+    thread_id: UUID,
+    role: str,
+    model_metadata: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    """Attach the active client turn key to the assistant reply that closes it."""
+
+    if role == "user" or not isinstance(model_metadata, dict):
+        return model_metadata
+    if model_metadata.get("chat_turn_id") is not None:
+        return model_metadata
+
+    latest_message = db_session.execute(
+        select(ChatMessage)
+        .where(ChatMessage.thread_id == thread_id)
+        .order_by(desc(ChatMessage.message_order))
+        .limit(1)
+    ).scalar_one_or_none()
+    latest_metadata = (
+        latest_message.model_metadata
+        if latest_message is not None and isinstance(latest_message.model_metadata, dict)
+        else {}
+    )
+    client_turn_id = latest_metadata.get("chat_turn_id")
+    if (
+        latest_message is None
+        or latest_message.role != "user"
+        or not isinstance(client_turn_id, str)
+    ):
+        return model_metadata
+
+    return {
+        **model_metadata,
+        "chat_turn_id": client_turn_id,
+        "turn_status": _turn_status_from_action_status(
+            model_metadata.get("action_status"),
+        ),
+    }
+
+
+def _turn_status_from_action_status(action_status: object) -> str:
+    """Map internal action state to a durable idempotent-turn state."""
+
+    if action_status == "pending":
+        return "pending"
+    if action_status == "waiting_async":
+        return "waiting_async"
+    if action_status == "partial":
+        return "partial"
+    if action_status == "failed":
+        return "failed"
+    return "completed"
 
 
 def _map_message(model: ChatMessage) -> ChatMessageRecord:

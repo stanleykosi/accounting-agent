@@ -40,6 +40,7 @@ class EntityServiceErrorCode(StrEnum):
     """Enumerate the stable error codes surfaced by entity workspace workflows."""
 
     DEFAULT_ACTOR_REQUIRED = "default_actor_required"
+    DUPLICATE_ENTITY = "duplicate_entity"
     DUPLICATE_MEMBERSHIP = "duplicate_membership"
     ENTITY_NOT_FOUND = "entity_not_found"
     MEMBERSHIP_NOT_FOUND = "membership_not_found"
@@ -223,6 +224,12 @@ class EntityService:
     ) -> EntityWorkspace:
         """Create a workspace, seed the owner membership, and emit the root activity event."""
 
+        self._reject_duplicate_accessible_entity(
+            actor_user_id=actor_user.id,
+            name=name,
+            legal_name=legal_name,
+        )
+
         try:
             entity = self._repository.create_entity(
                 name=name,
@@ -258,6 +265,46 @@ class EntityService:
             raise
 
         return self.get_entity_workspace(user_id=actor_user.id, entity_id=entity.id)
+
+    def _reject_duplicate_accessible_entity(
+        self,
+        *,
+        actor_user_id: UUID,
+        name: str,
+        legal_name: str | None,
+    ) -> None:
+        """Fail fast when the operator already has an active matching workspace."""
+
+        normalized_name = _normalize_entity_identity_text(name)
+        normalized_legal_name = _normalize_entity_identity_text(legal_name)
+        for access_record in self._repository.list_entities_for_user(user_id=actor_user_id):
+            entity = access_record.entity
+            if entity.status.value != "active":
+                continue
+            existing_name = _normalize_entity_identity_text(entity.name)
+            existing_legal_name = _normalize_entity_identity_text(entity.legal_name)
+            if normalized_name and normalized_name == existing_name:
+                raise EntityServiceError(
+                    status_code=409,
+                    code=EntityServiceErrorCode.DUPLICATE_ENTITY,
+                    message=(
+                        f"A workspace named '{entity.name}' already exists. Use a distinct "
+                        "workspace name for the new entity."
+                    ),
+                )
+            if (
+                normalized_legal_name
+                and existing_legal_name
+                and normalized_legal_name == existing_legal_name
+            ):
+                raise EntityServiceError(
+                    status_code=409,
+                    code=EntityServiceErrorCode.DUPLICATE_ENTITY,
+                    message=(
+                        f"A workspace for legal entity '{entity.legal_name}' already exists. "
+                        "Open that workspace or use a distinct legal entity name."
+                    ),
+                )
 
     def get_entity_workspace(self, *, user_id: UUID, entity_id: UUID) -> EntityWorkspace:
         """Return one accessible entity workspace with memberships and activity history."""
@@ -635,6 +682,14 @@ def _collect_changed_fields(
             changed_fields.add(field_name)
 
     return changed_fields
+
+
+def _normalize_entity_identity_text(value: str | None) -> str:
+    """Normalize entity identity text for duplicate checks."""
+
+    if value is None:
+        return ""
+    return " ".join(value.casefold().split())
 
 
 __all__ = ["EntityService", "EntityServiceError", "EntityServiceErrorCode"]

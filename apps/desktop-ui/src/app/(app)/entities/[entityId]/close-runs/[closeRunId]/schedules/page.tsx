@@ -8,7 +8,6 @@ Dependencies: Supporting-schedule API helpers and shared surface primitives.
 "use client";
 
 import Link from "next/link";
-import { SurfaceCard } from "@accounting-ai-agent/ui";
 import { useParams } from "next/navigation";
 import { useEffect, useMemo, useState, type ChangeEvent, type ReactElement } from "react";
 import {
@@ -346,344 +345,338 @@ export default function CloseRunSchedulesPage(): ReactElement {
 
   if (isLoading) {
     return (
-      <div className="app-shell">
-        <SurfaceCard title="Loading Supporting Schedules" subtitle="Step 06 workspace">
-          <p className="form-helper">
-            Loading standalone supporting schedules for fixed assets, loans, accruals, and budget
-            workpapers...
-          </p>
-        </SurfaceCard>
+      <div className="quartz-page quartz-workspace-layout">
+        <section className="quartz-main-panel">
+          <div className="quartz-empty-state">Loading supporting schedules...</div>
+        </section>
       </div>
     );
   }
 
   return (
-    <div className="app-shell">
-      <section className="hero-grid close-run-hero-grid">
-        <div className="hero-copy">
-          <p className="eyebrow">Supporting Schedules</p>
-          <h1>Step 06 standalone workpapers</h1>
-          <p className="lede">
-            Maintain the workpapers that support Reconciliation and Reporting. These schedules now
-            feed the Step 6 control gate and the reconciliation engine directly.
-          </p>
-          <div className="close-run-action-row">
+    <div className="quartz-page quartz-workspace-layout">
+      <section className="quartz-main-panel">
+        <header className="quartz-page-header">
+          <div>
+            <p className="quartz-kpi-label">Step 06 Workspace</p>
+            <h1>Supporting Schedules</h1>
+            <p className="quartz-page-subtitle">
+              Maintain the workpapers that support Reconciliation and Reporting.
+            </p>
+          </div>
+
+          <div className="quartz-page-toolbar">
             <Link
-              className="secondary-button"
+              className="secondary-button quartz-toolbar-button"
               href={`/entities/${entityId}/close-runs/${closeRunId}`}
             >
               Close-run overview
             </Link>
             <Link
-              className="secondary-button"
+              className="secondary-button quartz-toolbar-button"
               href={`/entities/${entityId}/close-runs/${closeRunId}/reconciliation`}
             >
               Reconciliation
             </Link>
           </div>
-        </div>
+        </header>
 
-        <SurfaceCard title="Step 06 Coverage" subtitle="Operational workspace">
-          <dl className="entity-meta-grid close-run-summary-grid">
-            <div>
-              <dt>Schedules</dt>
-              <dd>{workspace.length}</dd>
-            </div>
-            <div>
-              <dt>Approved</dt>
-              <dd>{summaryMetrics.approved}</dd>
-            </div>
-            <div>
-              <dt>Not applicable</dt>
-              <dd>{summaryMetrics.notApplicable}</dd>
-            </div>
-            <div>
-              <dt>Total rows</dt>
-              <dd>{summaryMetrics.totalRows}</dd>
-            </div>
-          </dl>
-          <p className="form-helper">
-            Reporting stays blocked until these Step 06 schedules are either reviewed and approved
-            or explicitly marked not applicable with a note.
-          </p>
-        </SurfaceCard>
-      </section>
+        {statusMessage ? (
+          <div className="status-banner success quartz-section" role="status">
+            {statusMessage}
+          </div>
+        ) : null}
 
-      {statusMessage ? (
-        <div className="status-banner success" role="status">
-          {statusMessage}
-        </div>
-      ) : null}
+        {errorMessage ? (
+          <div className="status-banner warning quartz-section" role="status">
+            {errorMessage}
+          </div>
+        ) : null}
 
-      {errorMessage ? (
-        <div className="status-banner warning" role="status">
-          {errorMessage}
-        </div>
-      ) : null}
+        <section className="quartz-section">
+          <div className="quartz-kpi-grid">
+            <article className="quartz-kpi-tile">
+              <p className="quartz-kpi-label">Schedules</p>
+              <p className="quartz-kpi-value">{workspace.length}</p>
+              <p className="quartz-kpi-meta">Fixed assets, loans, accruals, budget</p>
+            </article>
+            <article className="quartz-kpi-tile highlight">
+              <p className="quartz-kpi-label">Approved</p>
+              <p className="quartz-kpi-value">{summaryMetrics.approved}</p>
+              <p className="quartz-kpi-meta">Ready for reporting controls</p>
+            </article>
+            <article className="quartz-kpi-tile">
+              <p className="quartz-kpi-label">Not Applicable</p>
+              <p className="quartz-kpi-value">{summaryMetrics.notApplicable}</p>
+              <p className="quartz-kpi-meta">Explicitly cleared with notes</p>
+            </article>
+            <article className="quartz-kpi-tile">
+              <p className="quartz-kpi-label">Rows</p>
+              <p className="quartz-kpi-value">{summaryMetrics.totalRows}</p>
+              <p className="quartz-kpi-meta">Total supporting workpaper lines</p>
+            </article>
+          </div>
+        </section>
 
-      <SurfaceCard title="Workflow Fit" subtitle="Client PDF Step 06 alignment">
-        <div className="dashboard-row-list">
-          <article className="dashboard-row">
-            <strong className="close-run-row-title">Fixed asset register</strong>
-            <p className="form-helper">
-              Track cost, accumulated depreciation, NBV, and disposal timing.
-            </p>
-          </article>
-          <article className="dashboard-row">
-            <strong className="close-run-row-title">Loan amortisation</strong>
-            <p className="form-helper">
-              Track payment schedules, principal, interest, and outstanding balances.
-            </p>
-          </article>
-          <article className="dashboard-row">
-            <strong className="close-run-row-title">Accrual tracker</strong>
-            <p className="form-helper">
-              Track expected accruals, reversals, and the ledger accounts they reconcile to.
-            </p>
-          </article>
-          <article className="dashboard-row">
-            <strong className="close-run-row-title">Budget vs actual</strong>
-            <p className="form-helper">
-              Track budget workpaper lines and optional dimension ownership for variance reporting.
-            </p>
-          </article>
-        </div>
-      </SurfaceCard>
+        <section className="quartz-section">
+          <div className="quartz-section-header">
+            <h2 className="quartz-section-title">Schedule Editors</h2>
+            <span className="quartz-queue-meta">
+              Approve each schedule or mark it not applicable before reporting.
+            </span>
+          </div>
+          <div className="quartz-split-grid quartz-split-grid-halves">
+            <article className="quartz-card">
+              <p className="quartz-kpi-label">Fixed Asset Register</p>
+              <p className="form-helper">
+                Track cost, accumulated depreciation, NBV, and disposal timing.
+              </p>
+            </article>
+            <article className="quartz-card">
+              <p className="quartz-kpi-label">Loan Amortisation</p>
+              <p className="form-helper">
+                Track payment schedules, principal, interest, and outstanding balances.
+              </p>
+            </article>
+            <article className="quartz-card">
+              <p className="quartz-kpi-label">Accrual Tracker</p>
+              <p className="form-helper">
+                Track expected accruals, reversals, and the ledger accounts they reconcile to.
+              </p>
+            </article>
+            <article className="quartz-card">
+              <p className="quartz-kpi-label">Budget vs Actual</p>
+              <p className="form-helper">
+                Track budget workpaper lines and optional dimension ownership for variance
+                reporting.
+              </p>
+            </article>
+          </div>
+        </section>
 
-      <section className="entity-activity-section">
-        {workspace.map((detail) => {
-          const definition = SCHEDULE_DEFINITIONS[detail.schedule.scheduleType];
-          const scheduleType = detail.schedule.scheduleType;
-          const draft = drafts[scheduleType] ?? buildEmptyDraft(scheduleType);
-          const isMutating = mutatingScheduleTypes[scheduleType] === true;
-          const isEditing = editingRowIds[scheduleType] !== undefined;
-          const noteDraft = statusNotes[scheduleType] ?? detail.schedule.note ?? "";
+        <section className="quartz-section quartz-review-main-stack">
+          {workspace.map((detail) => {
+            const definition = SCHEDULE_DEFINITIONS[detail.schedule.scheduleType];
+            const scheduleType = detail.schedule.scheduleType;
+            const draft = drafts[scheduleType] ?? buildEmptyDraft(scheduleType);
+            const isMutating = mutatingScheduleTypes[scheduleType] === true;
+            const isEditing = editingRowIds[scheduleType] !== undefined;
+            const noteDraft = statusNotes[scheduleType] ?? detail.schedule.note ?? "";
 
-          return (
-            <SurfaceCard
-              key={detail.schedule.scheduleType}
-              title={detail.schedule.label}
-              subtitle={formatScheduleStatus(detail.schedule.status)}
-            >
-              <div className="dashboard-row-list">
-                <article className="dashboard-row">
-                  <div className="close-run-row-header">
-                    <div>
-                      <strong className="close-run-row-title">{detail.schedule.label}</strong>
-                      <p className="close-run-row-meta">
-                        {detail.schedule.rowCount} row(s) • last updated{" "}
-                        {formatTimestamp(detail.schedule.updatedAt)}
-                      </p>
-                    </div>
-                    <span className="entity-status-chip">
-                      {formatScheduleStatus(detail.schedule.status)}
-                    </span>
+            return (
+              <article className="quartz-card quartz-card-table-shell" key={scheduleType}>
+                <div className="quartz-section-header">
+                  <div>
+                    <h2 className="quartz-section-title">{detail.schedule.label}</h2>
+                    <p className="quartz-table-secondary">
+                      {detail.schedule.rowCount} row(s) • last updated{" "}
+                      {formatTimestamp(detail.schedule.updatedAt)}
+                    </p>
                   </div>
-                  <p className="form-helper">{definition.description}</p>
-                </article>
-              </div>
-
-              <div className="integration-action-stack" style={{ marginTop: "16px" }}>
-                <label className="field-stack">
-                  <span className="field-label">Review note</span>
-                  <textarea
-                    className="workspace-textarea"
-                    onChange={(event) => {
-                      setStatusNotes((previous) => ({
-                        ...previous,
-                        [scheduleType]: event.target.value,
-                      }));
-                    }}
-                    rows={3}
-                    value={noteDraft}
-                  />
-                </label>
-                <div className="close-run-action-row">
-                  <button
-                    className="secondary-button"
-                    disabled={isMutating}
-                    onClick={() => {
-                      void handleUpdateStatus(scheduleType, "in_review");
-                    }}
-                    type="button"
-                  >
-                    Mark in review
-                  </button>
-                  <button
-                    className="secondary-button"
-                    disabled={isMutating}
-                    onClick={() => {
-                      void handleUpdateStatus(scheduleType, "approved");
-                    }}
-                    type="button"
-                  >
-                    Approve schedule
-                  </button>
-                  <button
-                    className="secondary-button"
-                    disabled={isMutating}
-                    onClick={() => {
-                      void handleUpdateStatus(scheduleType, "not_applicable");
-                    }}
-                    type="button"
-                  >
-                    Mark not applicable
-                  </button>
+                  <span className="quartz-status-badge warning">
+                    {formatScheduleStatus(detail.schedule.status)}
+                  </span>
                 </div>
-              </div>
 
-              <div style={{ marginTop: "20px", overflowX: "auto" }}>
-                <table style={tableStyle}>
-                  <thead>
-                    <tr>
-                      {definition.tableColumns.map((column) => (
-                        <th key={column.key} style={tableHeadCellStyle}>
-                          {column.label}
-                        </th>
-                      ))}
-                      <th style={tableHeadCellStyle}>Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {detail.rows.length === 0 ? (
+                <div className="quartz-card-form-area">
+                  <p className="form-helper">{definition.description}</p>
+                  <label>
+                    <span className="quartz-kpi-label">Review note</span>
+                    <textarea
+                      className="text-input"
+                      onChange={(event) => {
+                        setStatusNotes((previous) => ({
+                          ...previous,
+                          [scheduleType]: event.target.value,
+                        }));
+                      }}
+                      rows={3}
+                      value={noteDraft}
+                    />
+                  </label>
+
+                  <div className="quartz-inline-action-row">
+                    <button
+                      className="secondary-button"
+                      disabled={isMutating}
+                      onClick={() => {
+                        void handleUpdateStatus(scheduleType, "in_review");
+                      }}
+                      type="button"
+                    >
+                      Mark in review
+                    </button>
+                    <button
+                      className="primary-button"
+                      disabled={isMutating}
+                      onClick={() => {
+                        void handleUpdateStatus(scheduleType, "approved");
+                      }}
+                      type="button"
+                    >
+                      Approve schedule
+                    </button>
+                    <button
+                      className="secondary-button"
+                      disabled={isMutating}
+                      onClick={() => {
+                        void handleUpdateStatus(scheduleType, "not_applicable");
+                      }}
+                      type="button"
+                    >
+                      Mark not applicable
+                    </button>
+                  </div>
+                </div>
+
+                <div className="quartz-table-shell">
+                  <table className="quartz-table">
+                    <thead>
                       <tr>
-                        <td
-                          colSpan={definition.tableColumns.length + 1}
-                          style={emptyTableCellStyle}
-                        >
-                          No rows have been added yet.
-                        </td>
+                        {definition.tableColumns.map((column) => (
+                          <th key={column.key}>{column.label}</th>
+                        ))}
+                        <th>Actions</th>
                       </tr>
-                    ) : (
-                      detail.rows.map((row) => (
-                        <tr key={row.id}>
-                          {definition.tableColumns.map((column) => (
-                            <td key={`${row.id}:${column.key}`} style={tableBodyCellStyle}>
-                              {formatPayloadValue(row.payload[column.key])}
-                            </td>
-                          ))}
-                          <td style={tableBodyCellStyle}>
-                            <div className="close-run-link-row">
-                              <button
-                                className="workspace-link-inline"
-                                onClick={() => {
-                                  beginDraft(scheduleType, row);
-                                }}
-                                type="button"
-                              >
-                                Edit
-                              </button>
-                              <button
-                                className="workspace-link-inline"
-                                disabled={isMutating}
-                                onClick={() => {
-                                  void handleDeleteRow(scheduleType, row.id);
-                                }}
-                                type="button"
-                              >
-                                Delete
-                              </button>
-                            </div>
+                    </thead>
+                    <tbody>
+                      {detail.rows.length === 0 ? (
+                        <tr>
+                          <td colSpan={definition.tableColumns.length + 1}>
+                            <div className="quartz-empty-state">No rows have been added yet.</div>
                           </td>
                         </tr>
-                      ))
-                    )}
-                  </tbody>
-                </table>
-              </div>
-
-              <div className="integration-action-stack" style={{ marginTop: "20px" }}>
-                <div className="close-run-action-row">
-                  <button
-                    className="primary-button"
-                    disabled={isMutating}
-                    onClick={() => {
-                      beginDraft(scheduleType);
-                    }}
-                    type="button"
-                  >
-                    Add row
-                  </button>
+                      ) : (
+                        detail.rows.map((row) => (
+                          <tr key={row.id}>
+                            {definition.tableColumns.map((column) => (
+                              <td key={`${row.id}:${column.key}`}>
+                                {formatPayloadValue(row.payload[column.key])}
+                              </td>
+                            ))}
+                            <td>
+                              <div className="quartz-inline-action-row">
+                                <button
+                                  className="secondary-button"
+                                  onClick={() => {
+                                    beginDraft(scheduleType, row);
+                                  }}
+                                  type="button"
+                                >
+                                  Edit
+                                </button>
+                                <button
+                                  className="secondary-button"
+                                  disabled={isMutating}
+                                  onClick={() => {
+                                    void handleDeleteRow(scheduleType, row.id);
+                                  }}
+                                  type="button"
+                                >
+                                  Delete
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
                 </div>
 
-                {isEditing ? (
-                  <div style={editorShellStyle}>
-                    <div className="close-run-row-header">
-                      <div>
-                        <strong className="close-run-row-title">
-                          {editingRowIds[scheduleType] ? "Edit row" : "New row"}
-                        </strong>
-                        <p className="close-run-row-meta">
-                          Changes return the schedule to in-review status.
-                        </p>
+                <div className="quartz-card-form-area">
+                  <div className="quartz-inline-action-row">
+                    <button
+                      className="primary-button"
+                      disabled={isMutating}
+                      onClick={() => {
+                        beginDraft(scheduleType);
+                      }}
+                      type="button"
+                    >
+                      Add row
+                    </button>
+                  </div>
+
+                  {isEditing ? (
+                    <div className="quartz-card-form-area">
+                      <div className="quartz-section-header quartz-section-header-tight">
+                        <div>
+                          <h3 className="quartz-section-title">
+                            {editingRowIds[scheduleType] ? "Edit row" : "New row"}
+                          </h3>
+                          <p className="quartz-table-secondary">
+                            Changes return the schedule to in-review status.
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="quartz-form-grid">
+                        {definition.fields.map((field) => (
+                          <label
+                            className="quartz-form-label"
+                            key={`${scheduleType}:${field.key}`}
+                            style={field.type === "textarea" ? textareaFieldShellStyle : undefined}
+                          >
+                            <span>
+                              {field.label}
+                              {field.required ? " *" : ""}
+                            </span>
+                            {field.type === "textarea" ? (
+                              <textarea
+                                className="text-input"
+                                onChange={(event) =>
+                                  updateDraft(scheduleType, field.key, event.target.value)
+                                }
+                                placeholder={field.placeholder}
+                                rows={3}
+                                value={draft[field.key] ?? ""}
+                              />
+                            ) : (
+                              <input
+                                className="text-input"
+                                onChange={(event: ChangeEvent<HTMLInputElement>) =>
+                                  updateDraft(scheduleType, field.key, event.target.value)
+                                }
+                                placeholder={field.placeholder}
+                                step={field.type === "number" ? "0.01" : undefined}
+                                type={field.type}
+                                value={draft[field.key] ?? ""}
+                              />
+                            )}
+                          </label>
+                        ))}
+                      </div>
+
+                      <div className="quartz-inline-action-row">
+                        <button
+                          className="primary-button"
+                          disabled={isMutating}
+                          onClick={() => {
+                            void handleSaveRow(scheduleType);
+                          }}
+                          type="button"
+                        >
+                          {isMutating ? "Saving..." : "Save row"}
+                        </button>
+                        <button
+                          className="secondary-button"
+                          disabled={isMutating}
+                          onClick={() => {
+                            clearDraft(scheduleType);
+                          }}
+                          type="button"
+                        >
+                          Cancel
+                        </button>
                       </div>
                     </div>
-
-                    <div style={fieldGridStyle}>
-                      {definition.fields.map((field) => (
-                        <label
-                          key={`${scheduleType}:${field.key}`}
-                          className="field-stack"
-                          style={field.type === "textarea" ? textareaFieldShellStyle : undefined}
-                        >
-                          <span className="field-label">
-                            {field.label}
-                            {field.required ? " *" : ""}
-                          </span>
-                          {field.type === "textarea" ? (
-                            <textarea
-                              className="workspace-textarea"
-                              onChange={(event) =>
-                                updateDraft(scheduleType, field.key, event.target.value)
-                              }
-                              placeholder={field.placeholder}
-                              rows={3}
-                              value={draft[field.key] ?? ""}
-                            />
-                          ) : (
-                            <input
-                              className="workspace-input"
-                              onChange={(event: ChangeEvent<HTMLInputElement>) =>
-                                updateDraft(scheduleType, field.key, event.target.value)
-                              }
-                              placeholder={field.placeholder}
-                              step={field.type === "number" ? "0.01" : undefined}
-                              type={field.type}
-                              value={draft[field.key] ?? ""}
-                            />
-                          )}
-                        </label>
-                      ))}
-                    </div>
-
-                    <div className="close-run-action-row">
-                      <button
-                        className="primary-button"
-                        disabled={isMutating}
-                        onClick={() => {
-                          void handleSaveRow(scheduleType);
-                        }}
-                        type="button"
-                      >
-                        {isMutating ? "Saving..." : "Save row"}
-                      </button>
-                      <button
-                        className="secondary-button"
-                        disabled={isMutating}
-                        onClick={() => {
-                          clearDraft(scheduleType);
-                        }}
-                        type="button"
-                      >
-                        Cancel
-                      </button>
-                    </div>
-                  </div>
-                ) : null}
-              </div>
-            </SurfaceCard>
-          );
-        })}
+                  ) : null}
+                </div>
+              </article>
+            );
+          })}
+        </section>
       </section>
     </div>
   );
@@ -783,46 +776,6 @@ function resolveScheduleErrorMessage(error: unknown): string {
   }
   return "The supporting schedule request failed.";
 }
-
-const tableStyle: Readonly<Record<string, string | number>> = {
-  borderCollapse: "collapse",
-  width: "100%",
-};
-
-const tableHeadCellStyle: Readonly<Record<string, string | number>> = {
-  borderBottom: "1px solid rgba(15, 23, 42, 0.12)",
-  color: "rgba(15, 23, 42, 0.78)",
-  fontSize: "0.82rem",
-  fontWeight: 700,
-  padding: "10px 12px",
-  textAlign: "left",
-};
-
-const tableBodyCellStyle: Readonly<Record<string, string | number>> = {
-  borderBottom: "1px solid rgba(15, 23, 42, 0.08)",
-  fontSize: "0.92rem",
-  padding: "12px",
-  verticalAlign: "top",
-};
-
-const emptyTableCellStyle: Readonly<Record<string, string | number>> = {
-  color: "rgba(15, 23, 42, 0.7)",
-  padding: "16px 12px",
-};
-
-const editorShellStyle: Readonly<Record<string, string | number>> = {
-  border: "1px solid rgba(15, 23, 42, 0.12)",
-  borderRadius: "20px",
-  marginTop: "4px",
-  padding: "18px",
-};
-
-const fieldGridStyle: Readonly<Record<string, string | number>> = {
-  display: "grid",
-  gap: "14px",
-  gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
-  marginTop: "18px",
-};
 
 const textareaFieldShellStyle: Readonly<Record<string, string | number>> = {
   gridColumn: "1 / -1",

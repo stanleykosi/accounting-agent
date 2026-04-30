@@ -426,6 +426,12 @@ export default function CloseRunReconciliationPage(): ReactElement {
               <QuartzIcon className="quartz-inline-icon" name="assistant" />
               Open Assistant
             </Link>
+            <Link
+              className="secondary-button quartz-toolbar-button"
+              href={`/entities/${entityId}/close-runs/${closeRunId}/schedules`}
+            >
+              Supporting Schedules
+            </Link>
             <button
               className="secondary-button"
               disabled={isRefreshing}

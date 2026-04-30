@@ -381,6 +381,15 @@ class SendChatActionRequest(ContractModel):
         max_length=10_000,
         description="User message text that may contain action intent.",
     )
+    client_turn_id: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=120,
+        description=(
+            "Client-generated stable retry key for this operator turn. Reusing the same "
+            "value must replay the completed turn instead of applying tools again."
+        ),
+    )
     force_action_mode: bool = Field(
         default=False,
         description="When true, skip read-only analysis and attempt action routing.",
@@ -436,6 +445,13 @@ class ApproveChatActionRequest(ContractModel):
         max_length=500,
         description="Optional reviewer note for the audit trail.",
     )
+    approval_policy: Literal["auto_release_for_thread"] | None = Field(
+        default=None,
+        description=(
+            "Optional scoped approval policy. auto_release_for_thread allows future "
+            "non-destructive release controls in this thread to run without another prompt."
+        ),
+    )
 
 
 class RejectChatActionRequest(ContractModel):
@@ -454,6 +470,11 @@ class ChatActionSummary(ContractModel):
     id: str = Field(description="Action plan UUID.")
     thread_id: str = Field(description="Source chat thread.")
     intent: str = Field(description="Classified action intent.")
+    tool_name: str | None = Field(default=None, description="Deterministic tool waiting to run.")
+    assistant_response: str | None = Field(
+        default=None,
+        description="Brief assistant-facing rationale captured when the action was staged.",
+    )
     target_type: str | None = Field(default=None, description="Target business object type.")
     target_id: str | None = Field(default=None, description="Target business object UUID.")
     status: str = Field(description="Current review status.")

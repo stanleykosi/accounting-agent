@@ -59,6 +59,12 @@ def test_readiness_summary_treats_fallback_coa_as_warning_and_prompts_phase_adva
     assert readiness["status"] == "attention_required"
     assert readiness["blockers"] == []
     assert any("fallback chart of accounts" in warning.lower() for warning in readiness["warnings"])
+    assert any("usable for this close" in warning.lower() for warning in readiness["warnings"])
+    assert any("optional" in warning.lower() for warning in readiness["warnings"])
+    assert not any(
+        "production chart of accounts" in action.lower()
+        for action in readiness["next_actions"]
+    )
     assert any(
         "Advance the close run to Processing" in action
         for action in readiness["next_actions"]

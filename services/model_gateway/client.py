@@ -13,6 +13,7 @@ Design notes:
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from typing import Any, TypeVar
 
 import httpx
@@ -60,6 +61,15 @@ class ModelGatewayRateLimitError(ModelGatewayError):
         if retry_after_seconds is not None:
             message += f" Retry after {retry_after_seconds}s."
         super().__init__(message)
+
+
+@dataclass(frozen=True, slots=True)
+class ModelGatewayToolCall:
+    """Capture one native model tool call returned by the provider."""
+
+    name: str
+    arguments: dict[str, Any]
+    content: str
 
 
 class ModelGatewayConfig:
@@ -329,6 +339,93 @@ class ModelGateway:
                 raw_response=raw_content,
             ) from error
 
+    def complete_tool_call(
+        self,
+        *,
+        messages: list[dict[str, str]],
+        tools: list[dict[str, Any]],
+    ) -> ModelGatewayToolCall:
+        """Send a native OpenRouter/OpenAI-compatible tool-call planning request.
+
+        Agent planning uses this path so the provider-level model interface is
+        aligned with the platform's deterministic tool registry. Downstream
+        code still validates every selected tool and argument payload before
+        mutating state.
+        """
+
+        try:
+            response = self._post_completion_request(
+                messages=messages,
+                request_body_overrides={
+                    "provider": {
+                        "require_parameters": True,
+                    },
+                    "tool_choice": "required",
+                    "tools": tools,
+                },
+            )
+        except httpx.ConnectError as error:
+            raise ModelGatewayError(
+                f"Failed to connect to model provider at {self.base_url}. "
+                "Check network connectivity and the provider endpoint."
+            ) from error
+        except httpx.HTTPStatusError as error:
+            raise ModelGatewayError(
+                f"Model provider returned HTTP {error.response.status_code}. "
+                f"Response body: {error.response.text[:300]}"
+            ) from error
+
+        payload = response.json()
+        choices = payload.get("choices", [])
+        if not choices:
+            raise ModelGatewayError(
+                "Model provider returned no choices in the tool-call response."
+            )
+
+        message = choices[0].get("message", {})
+        if not isinstance(message, dict):
+            raise ModelGatewayError("Model provider returned an invalid assistant message.")
+        tool_calls = message.get("tool_calls", [])
+        if not isinstance(tool_calls, list) or len(tool_calls) != 1:
+            raise ModelGatewayError(
+                "Model provider must return exactly one tool call for agent planning."
+            )
+
+        tool_call = tool_calls[0]
+        if not isinstance(tool_call, dict):
+            raise ModelGatewayError("Model provider returned an invalid tool call.")
+        function_call = tool_call.get("function")
+        if not isinstance(function_call, dict):
+            raise ModelGatewayError("Model provider returned a non-function tool call.")
+        name = function_call.get("name")
+        if not isinstance(name, str) or not name:
+            raise ModelGatewayError("Model provider returned a tool call without a name.")
+        raw_arguments = function_call.get("arguments", "{}")
+        if isinstance(raw_arguments, str):
+            try:
+                arguments = json.loads(raw_arguments)
+            except json.JSONDecodeError as error:
+                raise ModelGatewayError(
+                    f"Model tool-call arguments were not valid JSON for '{name}'."
+                ) from error
+        elif isinstance(raw_arguments, dict):
+            arguments = raw_arguments
+        else:
+            raise ModelGatewayError(
+                f"Model tool-call arguments for '{name}' must be an object."
+            )
+        if not isinstance(arguments, dict):
+            raise ModelGatewayError(
+                f"Model tool-call arguments for '{name}' must be a JSON object."
+            )
+
+        content = message.get("content")
+        return ModelGatewayToolCall(
+            name=name,
+            arguments=arguments,
+            content=content if isinstance(content, str) else "",
+        )
+
 
 def _build_structured_output_request(response_model: type[BaseModel]) -> dict[str, Any]:
     """Build the canonical request overrides for schema-enforced completions.
@@ -395,6 +492,7 @@ __all__ = [
     "ModelGatewayConfig",
     "ModelGatewayError",
     "ModelGatewayRateLimitError",
+    "ModelGatewayToolCall",
     "ModelResponseValidationError",
     "get_gateway",
 ]

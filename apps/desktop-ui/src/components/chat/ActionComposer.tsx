@@ -21,6 +21,7 @@ import {
   sendChatAction,
   sendChatActionWithAttachments,
 } from "../../lib/chat";
+import { QuartzIcon } from "../layout/QuartzIcons";
 
 export type ComposerDraft = {
   attachmentNames: readonly string[];
@@ -51,6 +52,16 @@ const ACTION_INTENT_LABELS: Record<string, string> = {
   workflow_action: "Workflow",
 };
 
+const PENDING_TOOL_LABELS: Record<string, string> = {
+  approve_close_run: "Approve close",
+  archive_close_run: "Archive close",
+  delete_close_run: "Delete close",
+  delete_workspace: "Delete workspace",
+  distribute_export: "Distribute export",
+};
+
+const AUTO_RELEASE_TOOLS = new Set(["approve_close_run", "archive_close_run", "distribute_export"]);
+
 export function ActionComposer({
   assistantMode,
   closeRunId,
@@ -67,6 +78,7 @@ export function ActionComposer({
   const [attachments, setAttachments] = useState<readonly File[]>([]);
   const [pendingActions, setPendingActions] = useState<ChatActionSummary[]>([]);
   const [loadingActions, setLoadingActions] = useState<Set<string>>(new Set());
+  const [autoApproveRelease, setAutoApproveRelease] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -135,6 +147,7 @@ export function ActionComposer({
       setIsLoading(true);
       setError(null);
       onSubmissionStart?.(draft);
+      const clientTurnId = buildClientTurnId();
 
       try {
         const actionResponse =
@@ -145,20 +158,37 @@ export function ActionComposer({
                 trimmed.length > 0
                   ? {
                       attachmentIntent: "source_documents",
+                      clientTurnId,
                       content: trimmed,
                       files: attachments,
                     }
                   : {
                       attachmentIntent: "source_documents",
+                      clientTurnId,
                       files: attachments,
                     },
               )
-            : await sendChatAction(threadId, entityId, trimmed);
+            : await sendChatAction(threadId, entityId, trimmed, clientTurnId);
 
         resetComposer();
         onMessageSent(actionResponse, draft);
         await loadPendingActions();
       } catch (caughtError: unknown) {
+        if (
+          caughtError instanceof ChatApiError &&
+          caughtError.status === 504 &&
+          !(allowAttachments && attachments.length > 0)
+        ) {
+          try {
+            const replayedResponse = await sendChatAction(threadId, entityId, trimmed, clientTurnId);
+            resetComposer();
+            onMessageSent(replayedResponse, draft);
+            await loadPendingActions();
+            return;
+          } catch (retryError: unknown) {
+            caughtError = retryError;
+          }
+        }
         const failureMessage = buildSubmissionFailureMessage(caughtError);
         if (onSubmissionError) {
           setError(null);
@@ -187,16 +217,45 @@ export function ActionComposer({
   );
 
   const handleActionApproval = useCallback(
-    async (actionId: string) => {
+    async (action: ChatActionSummary, continueAfterApproval: boolean) => {
+      const actionId = action.id;
       if (loadingActions.has(actionId) || threadId.trim().length === 0) {
         return;
       }
 
       setLoadingActions((current) => new Set(current).add(actionId));
       try {
-        const updated = await approveChatAction(actionId, threadId, entityId);
+        const shouldAutoApproveRelease =
+          autoApproveRelease && isAutoReleaseEligibleAction(action);
+        const updated = await approveChatAction(
+          actionId,
+          threadId,
+          entityId,
+          shouldAutoApproveRelease
+            ? {
+                approvalPolicy: "auto_release_for_thread",
+                reason: "Approved from chat; auto-approve release controls for this thread.",
+              }
+            : {
+                reason: "Approved from chat.",
+              },
+        );
         setPendingActions((current) => current.filter((action) => action.id !== actionId));
         onActionStateChange?.(updated);
+        if (continueAfterApproval) {
+          const prompt = buildApprovalContinuationPrompt({
+            action,
+            autoApproveRelease,
+            wasApproved: true,
+          });
+          const response = await sendChatAction(threadId, entityId, prompt, buildClientTurnId());
+          onMessageSent(response, {
+            attachmentNames: [],
+            content: prompt,
+            hasAttachments: false,
+          });
+          await loadPendingActions();
+        }
       } catch (caughtError: unknown) {
         setError(
           caughtError instanceof ChatApiError
@@ -211,11 +270,20 @@ export function ActionComposer({
         });
       }
     },
-    [entityId, loadingActions, onActionStateChange, threadId],
+    [
+      autoApproveRelease,
+      entityId,
+      loadPendingActions,
+      loadingActions,
+      onActionStateChange,
+      onMessageSent,
+      threadId,
+    ],
   );
 
   const handleActionRejection = useCallback(
-    async (actionId: string) => {
+    async (action: ChatActionSummary, continueAfterSkip: boolean) => {
+      const actionId = action.id;
       if (loadingActions.has(actionId) || threadId.trim().length === 0) {
         return;
       }
@@ -226,10 +294,26 @@ export function ActionComposer({
           actionId,
           threadId,
           entityId,
-          "Rejected from the assistant workspace.",
+          continueAfterSkip
+            ? "Skipped from the chat approval prompt; continue the remaining workflow."
+            : "Skipped from the chat approval prompt.",
         );
         setPendingActions((current) => current.filter((action) => action.id !== actionId));
         onActionStateChange?.(updated);
+        if (continueAfterSkip) {
+          const prompt = buildApprovalContinuationPrompt({
+            action,
+            autoApproveRelease: false,
+            wasApproved: false,
+          });
+          const response = await sendChatAction(threadId, entityId, prompt, buildClientTurnId());
+          onMessageSent(response, {
+            attachmentNames: [],
+            content: prompt,
+            hasAttachments: false,
+          });
+          await loadPendingActions();
+        }
       } catch (caughtError: unknown) {
         setError(
           caughtError instanceof ChatApiError
@@ -244,7 +328,7 @@ export function ActionComposer({
         });
       }
     },
-    [entityId, loadingActions, onActionStateChange, threadId],
+    [entityId, loadPendingActions, loadingActions, onActionStateChange, onMessageSent, threadId],
   );
 
   const hasInput = inputValue.trim().length > 0 || attachments.length > 0;
@@ -261,20 +345,38 @@ export function ActionComposer({
         <div style={pendingActionListStyle}>
           {pendingActions.map((action) => {
             const isBusy = loadingActions.has(action.id);
+            const title = formatPendingActionTitle(action);
+            const showAutoRelease = isAutoReleaseEligibleAction(action);
             return (
               <div key={action.id} style={pendingActionCardStyle}>
                 <div style={pendingActionHeaderStyle}>
-                  <span style={pendingActionLabelStyle}>
-                    {ACTION_INTENT_LABELS[action.intent] ?? action.intent.replaceAll("_", " ")}
-                  </span>
+                  <span style={pendingActionLabelStyle}>{title}</span>
                   <span style={pendingActionBadgeStyle}>Review</span>
                 </div>
+
+                {action.assistant_response ? (
+                  <p style={pendingActionDescriptionStyle}>{action.assistant_response}</p>
+                ) : null}
+
+                {showAutoRelease ? (
+                  <label style={pendingActionToggleStyle}>
+                    <input
+                      checked={autoApproveRelease}
+                      disabled={isBusy}
+                      onChange={(event) => {
+                        setAutoApproveRelease(event.currentTarget.checked);
+                      }}
+                      type="checkbox"
+                    />
+                    <span>Auto-release (no deletes)</span>
+                  </label>
+                ) : null}
 
                 <div style={pendingActionButtonRowStyle}>
                   <button
                     disabled={isBusy}
                     onClick={() => {
-                      void handleActionApproval(action.id);
+                      void handleActionApproval(action, false);
                     }}
                     style={pendingApproveButtonStyle(isBusy)}
                     type="button"
@@ -284,12 +386,32 @@ export function ActionComposer({
                   <button
                     disabled={isBusy}
                     onClick={() => {
-                      void handleActionRejection(action.id);
+                      void handleActionApproval(action, true);
+                    }}
+                    style={pendingPrimaryButtonStyle(isBusy)}
+                    type="button"
+                  >
+                    {isBusy ? "Saving..." : "Approve & continue"}
+                  </button>
+                  <button
+                    disabled={isBusy}
+                    onClick={() => {
+                      void handleActionRejection(action, false);
                     }}
                     style={pendingRejectButtonStyle(isBusy)}
                     type="button"
                   >
-                    {isBusy ? "Saving..." : "Reject"}
+                    {isBusy ? "Saving..." : "Skip"}
+                  </button>
+                  <button
+                    disabled={isBusy}
+                    onClick={() => {
+                      void handleActionRejection(action, true);
+                    }}
+                    style={pendingSecondaryButtonStyle(isBusy)}
+                    type="button"
+                  >
+                    {isBusy ? "Saving..." : "Skip & continue"}
                   </button>
                 </div>
               </div>
@@ -367,6 +489,9 @@ export function ActionComposer({
 
           <div style={composerFooterStyle}>
             <div style={composerUtilityRowStyle}>
+              <button aria-label="Open action shortcuts" style={slashButtonStyle} type="button">
+                /
+              </button>
               {allowAttachments ? (
                 <>
                   <button
@@ -374,7 +499,8 @@ export function ActionComposer({
                     style={attachmentButtonStyle}
                     type="button"
                   >
-                    Upload documents
+                    <QuartzIcon name="upload" style={composerButtonIconStyle} />
+                    Add source
                   </button>
                   <input
                     accept=".pdf,.csv,.xlsx,.xls,.xlsm"
@@ -407,18 +533,72 @@ export function ActionComposer({
               ) : null}
             </div>
 
-            <button
-              disabled={!hasInput || isSubmitting}
-              style={sendButtonStyle(!hasInput || isSubmitting)}
-              type="submit"
-            >
-              {isSubmitting ? "Sending..." : "Send"}
-            </button>
+            <div style={composerSubmitClusterStyle}>
+              <span style={composerHelperTextStyle}>Enter to send / Shift + Enter for newline</span>
+              <button
+                aria-label={isSubmitting ? "Sending message" : "Send message"}
+                disabled={!hasInput || isSubmitting}
+                style={sendButtonStyle(!hasInput || isSubmitting)}
+                title={isSubmitting ? "Sending" : "Send"}
+                type="submit"
+              >
+                {isSubmitting ? (
+                  <span style={sendButtonTextStyle}>Sending</span>
+                ) : (
+                  <QuartzIcon name="send" style={sendIconStyle} />
+                )}
+              </button>
+            </div>
           </div>
         </div>
       </form>
     </div>
   );
+}
+
+function buildClientTurnId(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+}
+
+function buildApprovalContinuationPrompt(input: {
+  action: ChatActionSummary;
+  autoApproveRelease: boolean;
+  wasApproved: boolean;
+}): string {
+  const targetLabel =
+    input.action.tool_name !== null
+      ? formatPendingActionTitle(input.action)
+      : input.action.target_type !== null
+      ? `${input.action.target_type}${input.action.target_id ? ` ${input.action.target_id}` : ""}`
+      : input.action.intent.replaceAll("_", " ");
+  if (input.wasApproved) {
+    return input.autoApproveRelease
+      ? `I approved the pending ${targetLabel}. Continue the same workflow, and apply the thread's auto-release approval policy to future non-destructive release steps.`
+      : `I approved the pending ${targetLabel}. Continue the same workflow from the updated state.`;
+  }
+  return `I skipped the pending ${targetLabel}. Continue the same workflow without applying that skipped step, and summarize anything that is now blocked or not applicable.`;
+}
+
+function formatPendingActionTitle(action: ChatActionSummary): string {
+  if (action.tool_name !== null) {
+    return PENDING_TOOL_LABELS[action.tool_name] ?? titleCase(action.tool_name.replaceAll("_", " "));
+  }
+  return ACTION_INTENT_LABELS[action.intent] ?? titleCase(action.intent.replaceAll("_", " "));
+}
+
+function isAutoReleaseEligibleAction(action: ChatActionSummary): boolean {
+  return action.tool_name !== null && AUTO_RELEASE_TOOLS.has(action.tool_name);
+}
+
+function titleCase(value: string): string {
+  return value
+    .split(" ")
+    .filter(Boolean)
+    .map((word) => `${word.slice(0, 1).toUpperCase()}${word.slice(1)}`)
+    .join(" ");
 }
 
 function formatByteSize(value: number): string {
@@ -443,7 +623,7 @@ function buildSubmissionFailureMessage(caughtError: unknown): string {
       return `I couldn't find the selected chat or workspace context. ${caughtError.message}`;
     }
     if (caughtError.status === 504) {
-      return "The chat backend timed out before it could return the tool state. I do not have a confirmed result for that turn, so I will not assume changes were made. Refresh the thread before retrying so I can read the latest workspace state.";
+      return "The chat request took too long to return its final state. I retried the same turn key, so refresh the thread and I will continue from the latest confirmed workspace state.";
     }
     if (caughtError.status >= 500) {
       return `I hit a backend system error while handling that turn. I did not apply further changes. ${caughtError.message}`;
@@ -506,24 +686,28 @@ const composerContainerStyle = {
   borderTop: "1px solid var(--quartz-border)",
   background: "linear-gradient(180deg, rgba(247, 243, 242, 0.9) 0%, rgba(253, 248, 248, 1) 100%)",
   display: "grid",
-  gap: 14,
-  padding: "18px 28px 24px",
+  gap: 12,
+  padding: "16px 32px 22px",
 } satisfies React.CSSProperties;
 
 const pendingActionListStyle = {
-  display: "flex",
+  display: "grid",
   gap: 10,
-  overflowX: "auto",
+  margin: "0 auto",
+  maxWidth: 1220,
   paddingBottom: 2,
+  width: "100%",
 } satisfies React.CSSProperties;
 
 const pendingActionCardStyle = {
-  border: "1px solid rgba(142, 115, 75, 0.2)",
-  background: "rgba(255, 251, 235, 0.82)",
-  borderRadius: 16,
+  alignItems: "center",
+  border: "1px solid rgba(142, 115, 75, 0.36)",
+  background: "linear-gradient(90deg, rgba(255, 251, 235, 0.9) 0%, rgba(255, 255, 255, 0.86) 100%)",
+  borderRadius: 10,
   display: "grid",
-  gap: 10,
-  minWidth: 228,
+  gap: 14,
+  gridTemplateColumns: "minmax(0, 1fr) auto",
+  minWidth: 0,
   padding: "12px 14px",
 } satisfies React.CSSProperties;
 
@@ -551,11 +735,42 @@ const pendingActionBadgeStyle = {
   padding: "4px 8px",
 } satisfies React.CSSProperties;
 
+const pendingActionDescriptionStyle = {
+  color: "var(--quartz-muted)",
+  fontSize: 12,
+  lineHeight: "17px",
+  margin: 0,
+} satisfies React.CSSProperties;
+
+const pendingActionToggleStyle = {
+  alignItems: "center",
+  color: "var(--quartz-muted)",
+  display: "flex",
+  fontSize: 12,
+  gap: 8,
+  lineHeight: "16px",
+} satisfies React.CSSProperties;
+
 const pendingActionButtonRowStyle = {
   display: "grid",
   gap: 8,
   gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+  minWidth: 220,
 } satisfies React.CSSProperties;
+
+function pendingPrimaryButtonStyle(disabled: boolean) {
+  return {
+    border: "1px solid rgba(27, 67, 50, 0.2)",
+    borderRadius: 10,
+    background: disabled ? "rgba(27, 67, 50, 0.08)" : "var(--quartz-success)",
+    color: disabled ? "var(--quartz-success)" : "white",
+    cursor: disabled ? "not-allowed" : "pointer",
+    fontSize: 12,
+    fontWeight: 700,
+    minHeight: 34,
+    opacity: disabled ? 0.6 : 1,
+  } satisfies React.CSSProperties;
+}
 
 function pendingApproveButtonStyle(disabled: boolean) {
   return {
@@ -563,6 +778,20 @@ function pendingApproveButtonStyle(disabled: boolean) {
     borderRadius: 10,
     background: "rgba(27, 67, 50, 0.08)",
     color: "var(--quartz-success)",
+    cursor: disabled ? "not-allowed" : "pointer",
+    fontSize: 12,
+    fontWeight: 600,
+    minHeight: 34,
+    opacity: disabled ? 0.6 : 1,
+  } satisfies React.CSSProperties;
+}
+
+function pendingSecondaryButtonStyle(disabled: boolean) {
+  return {
+    border: "1px solid rgba(142, 115, 75, 0.22)",
+    borderRadius: 10,
+    background: "rgba(255, 251, 235, 0.92)",
+    color: "var(--quartz-gold)",
     cursor: disabled ? "not-allowed" : "pointer",
     fontSize: 12,
     fontWeight: 600,
@@ -601,14 +830,14 @@ const composerFormStyle = {
 
 const composerShellStyle = {
   border: "1px solid var(--quartz-border)",
-  borderRadius: 24,
+  borderRadius: 12,
   background: "rgba(255, 255, 255, 0.92)",
-  boxShadow: "0 14px 34px rgba(17, 24, 39, 0.06)",
+  boxShadow: "0 14px 34px rgba(28, 27, 27, 0.08)",
   display: "grid",
-  gap: 14,
+  gap: 12,
   margin: "0 auto",
-  maxWidth: 960,
-  padding: "14px 16px 16px",
+  maxWidth: 1220,
+  padding: "12px 14px 14px",
   width: "100%",
 } satisfies React.CSSProperties;
 
@@ -620,27 +849,28 @@ const suggestionRowStyle = {
 
 const suggestionChipStyle = {
   border: "1px solid var(--quartz-border)",
-  borderRadius: 999,
-  background: "rgba(247, 243, 242, 0.94)",
+  borderRadius: 8,
+  background: "rgba(252, 252, 250, 0.94)",
   color: "var(--quartz-muted)",
   cursor: "pointer",
   fontSize: 12,
   lineHeight: "18px",
-  padding: "8px 12px",
+  padding: "7px 12px",
 } satisfies React.CSSProperties;
 
 const composerTextareaStyle = {
   width: "100%",
-  minHeight: 56,
+  minHeight: 58,
   maxHeight: 180,
-  border: "none",
-  background: "transparent",
+  border: "1px solid var(--quartz-border)",
+  borderRadius: 10,
+  background: "rgba(252, 252, 250, 0.74)",
   color: "var(--quartz-ink)",
   fontFamily: "inherit",
   fontSize: 15,
   lineHeight: "24px",
   outline: "none",
-  padding: 0,
+  padding: "14px 16px",
   resize: "vertical",
 } satisfies React.CSSProperties;
 
@@ -690,14 +920,35 @@ const composerUtilityRowStyle = {
 
 const attachmentButtonStyle = {
   border: "1px solid rgba(69, 97, 123, 0.2)",
-  borderRadius: 999,
-  background: "rgba(69, 97, 123, 0.08)",
+  borderRadius: 8,
+  background: "rgba(247, 243, 242, 0.88)",
   color: "var(--quartz-secondary)",
   cursor: "pointer",
+  display: "inline-flex",
+  alignItems: "center",
+  gap: 8,
   fontSize: 12,
   fontWeight: 600,
   minHeight: 36,
   padding: "0 14px",
+} satisfies React.CSSProperties;
+
+const slashButtonStyle = {
+  border: "1px solid var(--quartz-border)",
+  borderRadius: 8,
+  background: "rgba(252, 252, 250, 0.9)",
+  color: "var(--quartz-ink)",
+  cursor: "pointer",
+  fontSize: 18,
+  fontWeight: 600,
+  height: 36,
+  lineHeight: 1,
+  width: 36,
+} satisfies React.CSSProperties;
+
+const composerButtonIconStyle = {
+  height: 14,
+  width: 14,
 } satisfies React.CSSProperties;
 
 const clearButtonStyle = {
@@ -710,17 +961,41 @@ const clearButtonStyle = {
   padding: 0,
 } satisfies React.CSSProperties;
 
+const composerSubmitClusterStyle = {
+  alignItems: "center",
+  display: "flex",
+  gap: 12,
+} satisfies React.CSSProperties;
+
+const composerHelperTextStyle = {
+  color: "var(--quartz-muted)",
+  fontSize: 11,
+  whiteSpace: "nowrap",
+} satisfies React.CSSProperties;
+
 function sendButtonStyle(disabled: boolean) {
   return {
     border: "none",
-    borderRadius: 999,
+    borderRadius: 8,
     background: disabled ? "var(--quartz-surface-high)" : "var(--quartz-primary)",
     color: disabled ? "var(--quartz-muted)" : "var(--quartz-primary-contrast)",
     cursor: disabled ? "not-allowed" : "pointer",
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
     fontSize: 12,
     fontWeight: 700,
-    minHeight: 40,
-    minWidth: 82,
-    padding: "0 18px",
+    height: 40,
+    minWidth: disabled ? 76 : 44,
+    padding: disabled ? "0 14px" : 0,
   } satisfies React.CSSProperties;
 }
+
+const sendIconStyle = {
+  height: 17,
+  width: 17,
+} satisfies React.CSSProperties;
+
+const sendButtonTextStyle = {
+  fontSize: 12,
+} satisfies React.CSSProperties;

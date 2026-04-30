@@ -15,6 +15,8 @@ export type QuartzIconName =
   | "help"
   | "portfolio"
   | "refresh"
+  | "search"
+  | "send"
   | "settings"
   | "sparkle"
   | "trash"
@@ -180,6 +182,30 @@ export function QuartzIcon({ name, ...props }: Readonly<QuartzIconProps>): React
           />
           <path
             d="M18 11a7 7 0 00-12-2M6 13a7 7 0 0012 2"
+            stroke="currentColor"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth="1.8"
+          />
+        </svg>
+      );
+    case "search":
+      return (
+        <svg fill="none" viewBox="0 0 24 24" {...props}>
+          <path
+            d="M10.5 18a7.5 7.5 0 100-15 7.5 7.5 0 000 15zM16 16l5 5"
+            stroke="currentColor"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth="1.8"
+          />
+        </svg>
+      );
+    case "send":
+      return (
+        <svg fill="none" viewBox="0 0 24 24" {...props}>
+          <path
+            d="M21 3L10 14M21 3l-7 18-4-7-7-4 18-7z"
             stroke="currentColor"
             strokeLinecap="round"
             strokeLinejoin="round"
