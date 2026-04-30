@@ -54,8 +54,6 @@ const THREAD_SCOPE_FILTERS: ReadonlyArray<{ label: string; value: ThreadScopeFil
   { label: "Close", value: "close" },
 ];
 
-const CONVERSATION_CONTEXT_ACTIONS = ["Evidence used", "View context", "Sources"] as const;
-
 export function ChatRail({
   assistantMode,
   closeRunId,
@@ -386,7 +384,7 @@ export function ChatRail({
             ? workbenchShellStyle
             : {
                 ...workbenchShellStyle,
-                gridTemplateColumns: "minmax(240px, 280px) minmax(0, 1fr)",
+                gridTemplateColumns: "minmax(180px, 220px) minmax(0, 1fr)",
               }
         }
       >
@@ -423,7 +421,6 @@ export function ChatRail({
             isLoading={isBusy}
             messages={renderableMessages}
             pendingTurn={pendingTurn}
-            workspace={workspace}
           />
 
           <ActionComposer
@@ -530,21 +527,6 @@ function ThreadSidebar({
   return (
     <aside style={threadSidebarStyle}>
       <div style={threadSidebarHeaderStyle}>
-        <div style={sidebarHeadingBlockStyle}>
-          <p style={sidebarEyebrowStyle}>Assistant</p>
-          <h2 style={sidebarTitleStyle}>Threads</h2>
-        </div>
-
-        <button
-          disabled={isCreatingThread}
-          onClick={onCreateThread}
-          style={newChatButtonStyle(isCreatingThread)}
-          type="button"
-        >
-          <QuartzIcon name="sparkle" style={buttonIconStyle} />
-          <span>{isCreatingThread ? "Creating..." : "New chat"}</span>
-        </button>
-
         <div style={threadToolbarStyle}>
           <label style={threadSearchShellStyle}>
             <span style={visuallyHiddenStyle}>Search threads</span>
@@ -557,9 +539,15 @@ function ThreadSidebar({
               value={searchQuery}
             />
           </label>
-          <button style={threadFilterButtonStyle} type="button">
-            <QuartzIcon name="filter" style={threadFilterIconStyle} />
-            <span>Filter</span>
+          <button
+            aria-label={isCreatingThread ? "Creating chat" : "New chat"}
+            disabled={isCreatingThread}
+            onClick={onCreateThread}
+            style={newChatButtonStyle(isCreatingThread)}
+            title={isCreatingThread ? "Creating chat" : "New chat"}
+            type="button"
+          >
+            <QuartzIcon name="sparkle" style={buttonIconStyle} />
           </button>
         </div>
 
@@ -592,7 +580,7 @@ function ThreadSidebar({
       ) : visibleThreads.length === 0 ? (
         <div style={emptySidebarCardStyle}>
           <p style={emptySidebarTitleStyle}>No matching threads</p>
-          <p style={emptySidebarBodyStyle}>Adjust the search or scope filter to find a chat.</p>
+          <p style={emptySidebarBodyStyle}>Adjust the search to find a chat.</p>
         </div>
       ) : (
         <ul style={threadListStyle}>
@@ -607,25 +595,7 @@ function ThreadSidebar({
                     style={threadCardStyle(isActive)}
                     type="button"
                   >
-                    <span style={threadCardHeaderStyle}>
-                      <span style={threadTitleStyle}>{formatThreadTitle(thread)}</span>
-                      <span
-                        aria-label={formatThreadStatus(thread)}
-                        style={threadStatusDotStyle(thread)}
-                      />
-                    </span>
-                    <span style={threadDetailGridStyle}>
-                      <span style={threadMetaStyle}>{thread.grounding.entity_name}</span>
-                      <span style={threadMetaDividerStyle} />
-                      <span style={threadMetaStyle}>
-                        {thread.grounding.period_label ?? "Workspace"}
-                      </span>
-                    </span>
-                    <span style={threadDetailGridStyle}>
-                      <span style={threadMetaStyle}>Updated {formatThreadTime(thread.updated_at)}</span>
-                      <span style={threadMetaDividerStyle} />
-                      <span style={threadMetaStyle}>{formatThreadMessageCount(thread)}</span>
-                    </span>
+                    <span style={threadTitleStyle}>{formatThreadTitle(thread)}</span>
                   </button>
 
                   <button
@@ -665,55 +635,28 @@ function ConversationHeader({
   thread,
   workspace,
 }: Readonly<ConversationHeaderProps>): ReactElement {
-  const assistantLabel =
-    assistantMode === "global"
-      ? "Global Assistant"
-      : assistantMode === "close_run"
-        ? "Close Assistant"
-        : "Entity Assistant";
   const scopeLabel =
     assistantMode === "global"
-      ? "All workspaces"
+      ? buildWorkspaceLabel(workspace, "All workspaces")
       : assistantMode === "close_run"
-        ? (thread?.grounding.period_label ?? "Close scope")
-        : (thread?.grounding.entity_name ?? "Entity scope");
-  const activeWorkspaceLabel =
-    assistantMode === "global" ? (workspace?.grounding.entity_name ?? null) : null;
-  const activePeriodLabel =
-    assistantMode === "global" ? (workspace?.grounding.period_label ?? null) : null;
-  const recoveryActions = workspace?.memory.recovery_actions ?? [];
-  const recoveryState = workspace?.memory.recovery_state ?? null;
-  const recoverySummary = workspace?.memory.recovery_summary ?? null;
-  const statusChips = buildConversationStatusChips(workspace);
+        ? buildThreadScopeLabel(thread, "Close scope")
+        : buildThreadScopeLabel(thread, "Entity scope");
   const toolsAvailable = workspace?.tools.length ?? workspace?.mcp_manifest.tools.length ?? 0;
 
   return (
     <header style={conversationHeaderStyle}>
       <div style={conversationHeaderTopRowStyle}>
         <div style={conversationTitleBlockStyle}>
-          <div style={conversationHeaderMetaStyle}>
-            <p style={conversationEyebrowStyle}>{assistantLabel}</p>
-            <span style={conversationScopePillStyle}>{scopeLabel}</span>
-          </div>
           <h2 style={conversationTitleStyle}>
             {thread === null ? "New chat" : formatThreadTitle(thread)}
           </h2>
-          {activeWorkspaceLabel ? (
-            <p style={conversationAnchorStyle}>
-              Current workspace: {activeWorkspaceLabel}
-              {activePeriodLabel ? ` / ${activePeriodLabel}` : ""}
-            </p>
-          ) : null}
         </div>
 
         <div style={conversationStatusRowStyle}>
+          <span style={conversationScopePillStyle}>{scopeLabel}</span>
           <span style={conversationToolbarPillStyle}>
             <QuartzIcon name="settings" style={conversationToolbarIconStyle} />
             {toolsAvailable > 0 ? `${toolsAvailable} tools available` : "Tools available"}
-          </span>
-          <span style={conversationGroundedPillStyle}>
-            <QuartzIcon name="check" style={conversationToolbarIconStyle} />
-            Grounded
           </span>
           {isCreatingThread ? <span style={conversationStatusPillStyle}>Starting chat</span> : null}
           {isLoading ? <span style={conversationMutedPillStyle}>Syncing</span> : null}
@@ -724,36 +667,6 @@ function ConversationHeader({
           ) : null}
         </div>
       </div>
-
-      <div style={conversationChipGridStyle}>
-        {statusChips.map((chip) => (
-          <span key={chip.label} style={conversationMetricChipStyle(chip.tone)}>
-            {chip.label}
-          </span>
-        ))}
-      </div>
-
-      <div style={conversationContextActionsStyle}>
-        {CONVERSATION_CONTEXT_ACTIONS.map((action) => (
-          <button key={action} style={conversationContextActionButtonStyle} type="button">
-            {action}
-          </button>
-        ))}
-      </div>
-
-      {recoverySummary ? (
-        <div style={conversationRecoveryCardStyle(recoveryState)}>
-          <div style={conversationRecoveryHeaderStyle}>
-            <span style={conversationRecoveryStateStyle(recoveryState)}>
-              {formatRecoveryState(recoveryState)}
-            </span>
-          </div>
-          <p style={conversationRecoverySummaryStyle}>{recoverySummary}</p>
-          {recoveryActions.length > 0 ? (
-            <p style={conversationRecoveryActionsStyle}>{recoveryActions.slice(0, 2).join(" ")}</p>
-          ) : null}
-        </div>
-      ) : null}
     </header>
   );
 }
@@ -764,7 +677,6 @@ type MessageListProps = {
   isLoading: boolean;
   messages: readonly RenderableMessage[];
   pendingTurn: PendingTurn | null;
-  workspace: ChatThreadWorkspace | null;
 };
 
 function MessageList({
@@ -773,10 +685,8 @@ function MessageList({
   isLoading,
   messages,
   pendingTurn,
-  workspace,
 }: Readonly<MessageListProps>): ReactElement {
   const hasMessages = messages.length > 0 || pendingTurn !== null;
-  const assistantArtifact = buildAssistantArtifact(workspace);
 
   return (
     <div style={messageListStyle}>
@@ -881,62 +791,13 @@ function MessageList({
                     <span>Working through the request</span>
                   </div>
                 ) : (
-                  <>
-                    <p style={messageContentStyle}>{pendingTurn.assistantContent}</p>
-                    <AssistantWorkArtifact artifact={assistantArtifact} />
-                  </>
+                  <p style={messageContentStyle}>{pendingTurn.assistantContent}</p>
                 )}
               </div>
             </article>
           </>
         ) : null}
       </div>
-    </div>
-  );
-}
-
-type AssistantArtifact = {
-  evidence: readonly string[];
-  nextActions: readonly string[];
-  risks: readonly string[];
-};
-
-function AssistantWorkArtifact({
-  artifact,
-}: Readonly<{ artifact: AssistantArtifact }>): ReactElement {
-  return (
-    <div style={assistantArtifactStyle}>
-      <section style={assistantArtifactPanelStyle}>
-        <p style={assistantArtifactHeadingStyle}>Key risks</p>
-        <ul style={assistantArtifactListStyle}>
-          {artifact.risks.map((risk) => (
-            <li key={risk}>{risk}</li>
-          ))}
-        </ul>
-      </section>
-
-      <section style={assistantArtifactPanelStyle}>
-        <p style={assistantArtifactHeadingStyle}>Evidence used</p>
-        <div style={assistantArtifactChipRowStyle}>
-          {artifact.evidence.map((item) => (
-            <span key={item} style={assistantArtifactChipStyle}>
-              {item}
-            </span>
-          ))}
-        </div>
-      </section>
-
-      <section style={assistantArtifactPanelStyle}>
-        <p style={assistantArtifactHeadingStyle}>Recommended next actions</p>
-        <ul style={assistantActionListStyle}>
-          {artifact.nextActions.map((action) => (
-            <li key={action} style={assistantActionItemStyle}>
-              <span style={assistantActionCheckboxStyle} />
-              <span>{action}</span>
-            </li>
-          ))}
-        </ul>
-      </section>
     </div>
   );
 }
@@ -1037,7 +898,6 @@ function filterThreads(options: {
       formatThreadTitle(thread),
       thread.grounding.entity_name,
       thread.grounding.period_label ?? "",
-      formatThreadMessageCount(thread),
     ]
       .join(" ")
       .toLowerCase();
@@ -1045,135 +905,34 @@ function filterThreads(options: {
   });
 }
 
-function buildConversationStatusChips(
-  workspace: ChatThreadWorkspace | null,
-): Array<{ label: string; tone: "neutral" | "success" | "warning" | "danger" }> {
-  const workspaceCount = getGroundedWorkspaceCount(workspace);
-  const blockers = workspace?.readiness.blockers.length ?? 0;
-  const approvals = workspace?.memory.pending_action_count ?? 0;
-  const readiness = formatReadinessLabel(workspace);
-  const lastSynced = formatLastSynced(workspace);
-
-  return [
-    {
-      label:
-        workspace === null
-          ? "Grounding context loading"
-          : workspaceCount === 1
-            ? "Grounded in this workspace"
-            : `Grounded in ${workspaceCount} workspaces`,
-      tone: "success",
-    },
-    {
-      label: blockers === 1 ? "1 blocker" : `${blockers} blockers`,
-      tone: blockers > 0 ? "danger" : "success",
-    },
-    {
-      label: approvals === 1 ? "1 approval" : `${approvals} approvals`,
-      tone: approvals > 0 ? "warning" : "neutral",
-    },
-    {
-      label: readiness,
-      tone: readiness.startsWith("100%") ? "success" : "neutral",
-    },
-    {
-      label: lastSynced,
-      tone: "neutral",
-    },
-  ];
+function buildThreadScopeLabel(thread: ChatThreadSummary | null, fallback: string): string {
+  if (thread === null) {
+    return fallback;
+  }
+  const entityName = thread.grounding.entity_name.trim();
+  const periodLabel = thread.grounding.period_label?.trim();
+  if (entityName && periodLabel) {
+    return `${entityName} / ${periodLabel}`;
+  }
+  if (entityName) {
+    return entityName;
+  }
+  return periodLabel || fallback;
 }
 
-function getGroundedWorkspaceCount(workspace: ChatThreadWorkspace | null): number {
+function buildWorkspaceLabel(workspace: ChatThreadWorkspace | null, fallback: string): string {
   if (workspace === null) {
-    return 1;
+    return fallback;
   }
-  const names = new Set<string>();
-  names.add(workspace.grounding.entity_name);
-  for (const name of workspace.memory.recent_entity_names) {
-    if (name.trim().length > 0) {
-      names.add(name.trim());
-    }
+  const entityName = workspace.grounding.entity_name.trim();
+  const periodLabel = workspace.grounding.period_label?.trim();
+  if (entityName && periodLabel) {
+    return `${entityName} / ${periodLabel}`;
   }
-  return Math.max(1, names.size);
-}
-
-function formatReadinessLabel(workspace: ChatThreadWorkspace | null): string {
-  const phaseStates = workspace?.readiness.phase_states ?? [];
-  if (phaseStates.length > 0) {
-    const completed = phaseStates.filter((phase) => phase.status === "completed").length;
-    return `${Math.round((completed / phaseStates.length) * 100)}% close readiness`;
+  if (entityName) {
+    return entityName;
   }
-  if (workspace?.readiness.status) {
-    return `${formatCompactLabel(workspace.readiness.status)} readiness`;
-  }
-  return "Readiness pending";
-}
-
-function formatLastSynced(workspace: ChatThreadWorkspace | null): string {
-  const sourceTime =
-    workspace?.memory.updated_at ??
-    workspace?.recent_traces[0]?.created_at ??
-    null;
-  if (sourceTime === null) {
-    return "Last synced recently";
-  }
-  const parsed = new Date(sourceTime);
-  if (Number.isNaN(parsed.valueOf())) {
-    return "Last synced recently";
-  }
-  return `Last synced ${formatMessageTime(parsed.toISOString())}`;
-}
-
-function buildAssistantArtifact(workspace: ChatThreadWorkspace | null): AssistantArtifact {
-  const risks = firstNonEmpty([
-    workspace?.readiness.blockers,
-    workspace?.readiness.warnings,
-    workspace?.memory.recovery_actions,
-  ]).slice(0, 3);
-  const nextActions = firstNonEmpty([
-    workspace?.readiness.next_actions,
-    workspace?.memory.recent_objectives,
-    workspace?.operator_controls
-      .filter((control) => control.enabled)
-      .map((control) => control.label),
-  ]).slice(0, 4);
-  const evidence = [
-    ...(workspace?.recent_traces.map((trace) => trace.tool_name ?? trace.summary ?? "") ?? []),
-    ...(workspace?.memory.recent_tool_names ?? []),
-    workspace?.coa.source ?? "",
-  ]
-    .map(formatCompactLabel)
-    .filter((value, index, values) => value.length > 0 && values.indexOf(value) === index)
-    .slice(0, 5);
-
-  return {
-    evidence: evidence.length > 0 ? evidence : ["Workspace memory", "Close readiness"],
-    nextActions:
-      nextActions.length > 0
-        ? nextActions
-        : ["Review current close posture", "Ask for a scoped action plan"],
-    risks: risks.length > 0 ? risks : ["No blockers reported in current context."],
-  };
-}
-
-function firstNonEmpty(
-  candidates: ReadonlyArray<readonly string[] | undefined>,
-): readonly string[] {
-  for (const candidate of candidates) {
-    const normalized = (candidate ?? []).filter((item) => item.trim().length > 0);
-    if (normalized.length > 0) {
-      return normalized;
-    }
-  }
-  return [];
-}
-
-function formatCompactLabel(value: string): string {
-  const normalized = value.trim().replaceAll("_", " ");
-  if (!normalized) {
-    return "";
-  }
-  return normalized.replace(/\b\w/gu, (match) => match.toUpperCase());
+  return periodLabel || fallback;
 }
 
 function buildLocalTurnMessages(options: {
@@ -1304,50 +1063,6 @@ function formatThreadTitle(thread: ChatThreadSummary): string {
   return title;
 }
 
-function formatThreadMessageCount(thread: ChatThreadSummary): string {
-  return thread.message_count === 1 ? "1 message" : `${thread.message_count} messages`;
-}
-
-function formatThreadStatus(thread: ChatThreadSummary): string {
-  const minutes = getThreadAgeInMinutes(thread.updated_at);
-  if (minutes < 60) {
-    return "Recently active";
-  }
-  if (thread.close_run_id !== null) {
-    return "Close scoped";
-  }
-  return "Workspace scoped";
-}
-
-function getThreadAgeInMinutes(value: string): number {
-  const parsed = Date.parse(value);
-  if (Number.isNaN(parsed)) {
-    return Number.POSITIVE_INFINITY;
-  }
-  return Math.max(0, Math.round((Date.now() - parsed) / 60000));
-}
-
-function formatThreadTime(value: string): string {
-  const parsed = Date.parse(value);
-  if (Number.isNaN(parsed)) {
-    return "Updated recently";
-  }
-
-  const differenceInMinutes = Math.max(0, Math.round((Date.now() - parsed) / 60000));
-  if (differenceInMinutes < 1) {
-    return "Just now";
-  }
-  if (differenceInMinutes < 60) {
-    return `${differenceInMinutes}m ago`;
-  }
-  const differenceInHours = Math.round(differenceInMinutes / 60);
-  if (differenceInHours < 24) {
-    return `${differenceInHours}h ago`;
-  }
-  const differenceInDays = Math.round(differenceInHours / 24);
-  return `${differenceInDays}d ago`;
-}
-
 function formatMessageTime(value: string): string {
   const parsed = new Date(value);
   if (Number.isNaN(parsed.valueOf())) {
@@ -1358,22 +1073,6 @@ function formatMessageTime(value: string): string {
     hour: "numeric",
     minute: "2-digit",
   }).format(parsed);
-}
-
-function formatRecoveryState(value: string | null): string {
-  if (value === "attention_required") {
-    return "Attention required";
-  }
-  if (value === "resuming") {
-    return "Resuming";
-  }
-  if (value === "working") {
-    return "Working";
-  }
-  if (value === "paused") {
-    return "Paused";
-  }
-  return "Recovery";
 }
 
 function buildNewThreadTitle(options: {
@@ -1396,7 +1095,7 @@ function buildNewThreadTitle(options: {
 
 const workbenchShellStyle = {
   display: "grid",
-  gridTemplateColumns: "minmax(340px, 420px) minmax(0, 1fr)",
+  gridTemplateColumns: "minmax(220px, 280px) minmax(0, 1fr)",
   height: "100%",
   minHeight: 0,
   overflow: "hidden",
@@ -1407,55 +1106,30 @@ const threadSidebarStyle = {
     "linear-gradient(180deg, rgba(247, 243, 242, 0.94) 0%, rgba(241, 237, 236, 0.98) 100%)",
   borderRight: "1px solid var(--quartz-border)",
   display: "grid",
-  gap: 18,
+  gap: 12,
   minHeight: 0,
-  padding: 20,
+  padding: "12px 10px",
 } satisfies CSSProperties;
 
 const threadSidebarHeaderStyle = {
   display: "grid",
-  gap: 14,
-} satisfies CSSProperties;
-
-const sidebarHeadingBlockStyle = {
-  display: "grid",
-  gap: 4,
-} satisfies CSSProperties;
-
-const sidebarEyebrowStyle = {
-  color: "var(--quartz-secondary)",
-  fontSize: 11,
-  fontWeight: 700,
-  letterSpacing: "0.08em",
-  margin: 0,
-  textTransform: "uppercase",
-} satisfies CSSProperties;
-
-const sidebarTitleStyle = {
-  color: "var(--quartz-ink)",
-  fontFamily: "var(--font-display)",
-  fontSize: 26,
-  fontWeight: 600,
-  letterSpacing: "-0.05em",
-  lineHeight: 1.05,
-  margin: 0,
+  gap: 10,
 } satisfies CSSProperties;
 
 function newChatButtonStyle(disabled: boolean) {
   return {
     alignItems: "center",
     border: "1px solid var(--quartz-primary)",
-    borderRadius: 999,
+    borderRadius: 10,
     background: "var(--quartz-primary)",
     color: "var(--quartz-primary-contrast)",
     cursor: disabled ? "not-allowed" : "pointer",
     display: "inline-flex",
-    gap: 8,
     justifyContent: "center",
-    minHeight: 40,
+    minHeight: 38,
     opacity: disabled ? 0.72 : 1,
-    padding: "0 16px",
-    width: "100%",
+    padding: 0,
+    width: 38,
   } satisfies CSSProperties;
 }
 
@@ -1466,8 +1140,8 @@ const buttonIconStyle = {
 
 const threadToolbarStyle = {
   display: "grid",
-  gap: 8,
-  gridTemplateColumns: "minmax(0, 1fr) auto",
+  gap: 6,
+  gridTemplateColumns: "minmax(0, 1fr) 38px",
 } satisfies CSSProperties;
 
 const threadSearchShellStyle = {
@@ -1477,8 +1151,8 @@ const threadSearchShellStyle = {
   borderRadius: 10,
   display: "flex",
   gap: 8,
-  minHeight: 40,
-  padding: "0 12px",
+  minHeight: 38,
+  padding: "0 10px",
 } satisfies CSSProperties;
 
 const threadSearchIconStyle = {
@@ -1498,26 +1172,6 @@ const threadSearchInputStyle = {
   width: "100%",
 } satisfies CSSProperties;
 
-const threadFilterButtonStyle = {
-  alignItems: "center",
-  background: "rgba(255, 255, 255, 0.86)",
-  border: "1px solid var(--quartz-border)",
-  borderRadius: 10,
-  color: "var(--quartz-muted)",
-  cursor: "pointer",
-  display: "inline-flex",
-  fontSize: 13,
-  fontWeight: 600,
-  gap: 8,
-  minHeight: 40,
-  padding: "0 12px",
-} satisfies CSSProperties;
-
-const threadFilterIconStyle = {
-  height: 14,
-  width: 14,
-} satisfies CSSProperties;
-
 const threadScopeTabsStyle = {
   borderBottom: "1px solid var(--quartz-border)",
   display: "grid",
@@ -1531,9 +1185,9 @@ function threadScopeTabStyle(active: boolean) {
     borderBottom: active ? "2px solid var(--quartz-secondary)" : "2px solid transparent",
     color: active ? "var(--quartz-secondary)" : "var(--quartz-muted)",
     cursor: "pointer",
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: active ? 700 : 500,
-    minHeight: 42,
+    minHeight: 34,
     padding: 0,
   } satisfies CSSProperties;
 }
@@ -1563,7 +1217,7 @@ const emptySidebarBodyStyle = {
 
 const threadListStyle = {
   display: "grid",
-  gap: 10,
+  gap: 6,
   listStyle: "none",
   margin: 0,
   minHeight: 0,
@@ -1580,7 +1234,7 @@ const threadRowStyle = {
 function threadCardStyle(active: boolean) {
   return {
     border: active ? "1px solid rgba(142, 115, 75, 0.42)" : "1px solid var(--quartz-border)",
-    borderRadius: 12,
+    borderRadius: 10,
     background: active ? "rgba(255, 251, 235, 0.78)" : "rgba(255, 255, 255, 0.82)",
     boxShadow: active
       ? "inset 3px 0 0 var(--quartz-gold), 0 10px 24px rgba(28, 27, 27, 0.04)"
@@ -1588,71 +1242,23 @@ function threadCardStyle(active: boolean) {
     color: "var(--quartz-ink)",
     cursor: "pointer",
     display: "grid",
-    gap: 10,
-    minHeight: 108,
-    padding: "14px 16px",
+    minHeight: 50,
+    padding: "10px 42px 10px 12px",
     textAlign: "left",
     width: "100%",
   } satisfies CSSProperties;
 }
 
-const threadCardHeaderStyle = {
-  alignItems: "center",
-  display: "flex",
-  gap: 10,
-  justifyContent: "space-between",
-  minWidth: 0,
-} satisfies CSSProperties;
-
 const threadTitleStyle = {
   color: "var(--quartz-ink)",
-  fontSize: 14,
+  display: "-webkit-box",
+  fontSize: 13,
   fontWeight: 700,
-  lineHeight: "20px",
-  overflow: "hidden",
-  textOverflow: "ellipsis",
-  whiteSpace: "nowrap",
-} satisfies CSSProperties;
-
-function threadStatusDotStyle(thread: ChatThreadSummary) {
-  const minutes = getThreadAgeInMinutes(thread.updated_at);
-  const background =
-    minutes < 60
-      ? "var(--quartz-gold)"
-      : thread.close_run_id !== null
-        ? "var(--quartz-secondary)"
-        : "var(--quartz-neutral)";
-
-  return {
-    background,
-    borderRadius: 999,
-    flex: "0 0 auto",
-    height: 9,
-    width: 9,
-  } satisfies CSSProperties;
-}
-
-const threadDetailGridStyle = {
-  alignItems: "center",
-  display: "flex",
-  gap: 8,
-  minWidth: 0,
-} satisfies CSSProperties;
-
-const threadMetaStyle = {
-  color: "var(--quartz-muted)",
-  fontSize: 12,
   lineHeight: "18px",
   overflow: "hidden",
   textOverflow: "ellipsis",
-  whiteSpace: "nowrap",
-} satisfies CSSProperties;
-
-const threadMetaDividerStyle = {
-  background: "var(--quartz-border)",
-  flex: "0 0 auto",
-  height: 15,
-  width: 1,
+  WebkitBoxOrient: "vertical",
+  WebkitLineClamp: 2,
 } satisfies CSSProperties;
 
 function threadDeleteButtonStyle(disabled: boolean) {
@@ -1668,8 +1274,8 @@ function threadDeleteButtonStyle(disabled: boolean) {
     justifyContent: "center",
     opacity: disabled ? 0.6 : 1,
     position: "absolute",
-    right: 10,
-    top: 42,
+    right: 8,
+    top: 10,
     width: 30,
   } satisfies CSSProperties;
 }
@@ -1689,12 +1295,12 @@ const conversationPaneStyle = {
 const conversationHeaderStyle = {
   borderBottom: "1px solid var(--quartz-border)",
   display: "grid",
-  gap: 12,
-  padding: "22px 32px 16px",
+  gap: 8,
+  padding: "12px 24px",
 } satisfies CSSProperties;
 
 const conversationHeaderTopRowStyle = {
-  alignItems: "flex-start",
+  alignItems: "center",
   display: "flex",
   gap: 16,
   justifyContent: "space-between",
@@ -1702,53 +1308,33 @@ const conversationHeaderTopRowStyle = {
 
 const conversationTitleBlockStyle = {
   display: "grid",
-  gap: 8,
   minWidth: 0,
-} satisfies CSSProperties;
-
-const conversationHeaderMetaStyle = {
-  alignItems: "center",
-  display: "flex",
-  flexWrap: "wrap",
-  gap: 10,
-} satisfies CSSProperties;
-
-const conversationEyebrowStyle = {
-  color: "var(--quartz-secondary)",
-  fontSize: 11,
-  fontWeight: 700,
-  letterSpacing: "0.08em",
-  margin: 0,
-  textTransform: "uppercase",
 } satisfies CSSProperties;
 
 const conversationScopePillStyle = {
   border: "1px solid var(--quartz-border)",
-  borderRadius: 999,
+  borderRadius: 8,
   color: "var(--quartz-muted)",
   fontSize: 12,
   fontWeight: 600,
-  padding: "5px 10px",
+  maxWidth: 320,
+  overflow: "hidden",
+  padding: "8px 10px",
+  textOverflow: "ellipsis",
+  whiteSpace: "nowrap",
 } satisfies CSSProperties;
 
 const conversationTitleStyle = {
   color: "var(--quartz-ink)",
   fontFamily: "var(--font-display)",
-  fontSize: 34,
+  fontSize: 24,
   fontWeight: 600,
-  letterSpacing: "-0.06em",
-  lineHeight: 1.02,
+  letterSpacing: "-0.03em",
+  lineHeight: 1.1,
   margin: 0,
   overflow: "hidden",
   textOverflow: "ellipsis",
   whiteSpace: "nowrap",
-} satisfies CSSProperties;
-
-const conversationAnchorStyle = {
-  color: "var(--quartz-muted)",
-  fontSize: 12,
-  lineHeight: "18px",
-  margin: 0,
 } satisfies CSSProperties;
 
 const conversationStatusRowStyle = {
@@ -1773,124 +1359,9 @@ const conversationToolbarPillStyle = {
   padding: "0 12px",
 } satisfies CSSProperties;
 
-const conversationGroundedPillStyle = {
-  ...conversationToolbarPillStyle,
-  color: "var(--quartz-success)",
-} satisfies CSSProperties;
-
 const conversationToolbarIconStyle = {
   height: 14,
   width: 14,
-} satisfies CSSProperties;
-
-const conversationChipGridStyle = {
-  alignItems: "center",
-  display: "flex",
-  flexWrap: "wrap",
-  gap: 0,
-} satisfies CSSProperties;
-
-function conversationMetricChipStyle(tone: "neutral" | "success" | "warning" | "danger") {
-  const color =
-    tone === "success"
-      ? "var(--quartz-success)"
-      : tone === "warning"
-        ? "var(--quartz-gold)"
-        : tone === "danger"
-          ? "var(--quartz-error)"
-          : "var(--quartz-muted)";
-
-  return {
-    background: "rgba(255, 255, 255, 0.74)",
-    border: "1px solid var(--quartz-border)",
-    color,
-    fontSize: 12,
-    fontWeight: 600,
-    lineHeight: "18px",
-    marginLeft: -1,
-    padding: "8px 12px",
-  } satisfies CSSProperties;
-}
-
-const conversationContextActionsStyle = {
-  display: "flex",
-  flexWrap: "wrap",
-  gap: 8,
-} satisfies CSSProperties;
-
-const conversationContextActionButtonStyle = {
-  background: "rgba(255, 255, 255, 0.8)",
-  border: "1px solid var(--quartz-border)",
-  borderRadius: 8,
-  color: "var(--quartz-ink)",
-  cursor: "pointer",
-  fontSize: 12,
-  fontWeight: 600,
-  minHeight: 34,
-  padding: "0 12px",
-} satisfies CSSProperties;
-
-function conversationRecoveryCardStyle(recoveryState: string | null) {
-  const accentColor =
-    recoveryState === "attention_required"
-      ? "rgba(123, 45, 38, 0.24)"
-      : recoveryState === "paused"
-        ? "rgba(142, 115, 75, 0.24)"
-        : "rgba(69, 97, 123, 0.18)";
-  const backgroundColor =
-    recoveryState === "attention_required"
-      ? "rgba(255, 245, 243, 0.94)"
-      : recoveryState === "paused"
-        ? "rgba(255, 250, 244, 0.94)"
-        : "rgba(244, 248, 252, 0.92)";
-
-  return {
-    background: backgroundColor,
-    border: `1px solid ${accentColor}`,
-    borderRadius: 16,
-    display: "grid",
-    gap: 6,
-    marginTop: 14,
-    padding: "12px 14px",
-  } satisfies CSSProperties;
-}
-
-const conversationRecoveryHeaderStyle = {
-  alignItems: "center",
-  display: "flex",
-  gap: 10,
-  justifyContent: "space-between",
-} satisfies CSSProperties;
-
-function conversationRecoveryStateStyle(recoveryState: string | null) {
-  const color =
-    recoveryState === "attention_required"
-      ? "var(--quartz-danger)"
-      : recoveryState === "paused"
-        ? "var(--quartz-accent)"
-        : "var(--quartz-secondary)";
-
-  return {
-    color,
-    fontSize: 11,
-    fontWeight: 700,
-    letterSpacing: "0.08em",
-    textTransform: "uppercase",
-  } satisfies CSSProperties;
-}
-
-const conversationRecoverySummaryStyle = {
-  color: "var(--quartz-ink)",
-  fontSize: 13,
-  lineHeight: "20px",
-  margin: 0,
-} satisfies CSSProperties;
-
-const conversationRecoveryActionsStyle = {
-  color: "var(--quartz-muted)",
-  fontSize: 12,
-  lineHeight: "18px",
-  margin: 0,
 } satisfies CSSProperties;
 
 const conversationStatusPillStyle = {
@@ -2054,85 +1525,6 @@ const messageContentStyle = {
   margin: 0,
   overflowWrap: "anywhere",
   whiteSpace: "pre-wrap",
-} satisfies CSSProperties;
-
-const assistantArtifactStyle = {
-  borderTop: "1px solid var(--quartz-border)",
-  display: "grid",
-  gap: 0,
-  gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
-  marginTop: 2,
-} satisfies CSSProperties;
-
-const assistantArtifactPanelStyle = {
-  borderRight: "1px solid var(--quartz-border)",
-  display: "grid",
-  gap: 10,
-  minWidth: 0,
-  padding: "14px 16px 0",
-} satisfies CSSProperties;
-
-const assistantArtifactHeadingStyle = {
-  color: "var(--quartz-ink)",
-  fontSize: 12,
-  fontWeight: 800,
-  letterSpacing: "0.01em",
-  margin: 0,
-} satisfies CSSProperties;
-
-const assistantArtifactListStyle = {
-  color: "var(--quartz-ink)",
-  display: "grid",
-  fontSize: 12,
-  gap: 8,
-  lineHeight: "18px",
-  margin: 0,
-  paddingLeft: 16,
-} satisfies CSSProperties;
-
-const assistantArtifactChipRowStyle = {
-  alignContent: "start",
-  display: "flex",
-  flexWrap: "wrap",
-  gap: 7,
-} satisfies CSSProperties;
-
-const assistantArtifactChipStyle = {
-  background: "var(--quartz-surface-low)",
-  border: "1px solid var(--quartz-border)",
-  borderRadius: 999,
-  color: "var(--quartz-muted)",
-  fontSize: 11,
-  fontWeight: 600,
-  lineHeight: "16px",
-  padding: "5px 9px",
-} satisfies CSSProperties;
-
-const assistantActionListStyle = {
-  color: "var(--quartz-ink)",
-  display: "grid",
-  fontSize: 12,
-  gap: 9,
-  lineHeight: "18px",
-  listStyle: "none",
-  margin: 0,
-  padding: 0,
-} satisfies CSSProperties;
-
-const assistantActionItemStyle = {
-  alignItems: "flex-start",
-  display: "flex",
-  gap: 8,
-} satisfies CSSProperties;
-
-const assistantActionCheckboxStyle = {
-  border: "1px solid var(--quartz-border-strong)",
-  borderRadius: 3,
-  display: "inline-block",
-  flex: "0 0 auto",
-  height: 13,
-  marginTop: 2,
-  width: 13,
 } satisfies CSSProperties;
 
 const inlineAttachmentRowStyle = {

@@ -82,12 +82,23 @@ export function ActionComposer({
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const resolvedAssistantMode = assistantMode ?? (closeRunId ? "close_run" : "entity");
   const allowAttachments = resolvedAssistantMode === "close_run";
 
   const starterPrompts = useMemo(
     () => buildStarterPrompts({ assistantMode: resolvedAssistantMode, closeRunId, workspace }),
     [closeRunId, resolvedAssistantMode, workspace],
+  );
+  const composerPlaceholder = useMemo(
+    () =>
+      buildComposerPlaceholder({
+        allowAttachments,
+        attachmentCount: attachments.length,
+        assistantMode: resolvedAssistantMode,
+        starterPrompts,
+      }),
+    [allowAttachments, attachments.length, resolvedAssistantMode, starterPrompts],
   );
 
   const resetComposer = useCallback(() => {
@@ -120,6 +131,15 @@ export function ActionComposer({
     resetComposer();
     void loadPendingActions();
   }, [loadPendingActions, resetComposer, threadId]);
+
+  useEffect(() => {
+    const textarea = textareaRef.current;
+    if (textarea === null) {
+      return;
+    }
+    textarea.style.height = "auto";
+    textarea.style.height = `${Math.min(textarea.scrollHeight, 156)}px`;
+  }, [inputValue]);
 
   const handleSubmit = useCallback(
     async (event: FormEvent) => {
@@ -333,11 +353,6 @@ export function ActionComposer({
 
   const hasInput = inputValue.trim().length > 0 || attachments.length > 0;
   const isSubmitting = isLoading || disabled;
-  const showSuggestions =
-    !disabled &&
-    inputValue.trim().length === 0 &&
-    attachments.length === 0 &&
-    starterPrompts.length > 0;
 
   return (
     <div style={composerContainerStyle}>
@@ -433,74 +448,18 @@ export function ActionComposer({
         style={composerFormStyle}
       >
         <div style={composerShellStyle}>
-          {showSuggestions ? (
-            <div style={suggestionRowStyle}>
-              {starterPrompts.map((prompt) => (
-                <button
-                  key={prompt}
-                  onClick={() => {
-                    setInputValue(prompt);
-                    setError(null);
-                  }}
-                  style={suggestionChipStyle}
-                  type="button"
-                >
-                  {prompt}
-                </button>
-              ))}
-            </div>
-          ) : null}
-
-          <textarea
-            disabled={isSubmitting}
-            onChange={(event) => setInputValue(event.target.value)}
-            onKeyDown={(event: KeyboardEvent<HTMLTextAreaElement>) => {
-              if (event.key === "Enter" && !event.shiftKey && !event.metaKey && !event.ctrlKey) {
-                event.preventDefault();
-                if (hasInput && !isSubmitting) {
-                  void handleSubmit(event);
-                }
-              }
-            }}
-            placeholder={
-              attachments.length > 0 && allowAttachments
-                ? "Tell the assistant what to do with these documents..."
-                : resolvedAssistantMode === "global"
-                  ? "Ask across workspaces, choose where to work next, or request a new workspace..."
-                  : resolvedAssistantMode === "entity"
-                    ? "Ask about this workspace, its close runs, or what to do next..."
-                    : "Ask about the close, request the next step, or upload documents..."
-            }
-            rows={2}
-            style={composerTextareaStyle}
-            value={inputValue}
-          />
-
-          {attachments.length > 0 ? (
-            <div style={attachmentListStyle}>
-              {attachments.map((file) => (
-                <span key={`${file.name}:${file.size}`} style={attachmentTokenStyle}>
-                  <span style={attachmentTokenNameStyle}>{file.name}</span>
-                  <span style={attachmentTokenMetaStyle}>{formatByteSize(file.size)}</span>
-                </span>
-              ))}
-            </div>
-          ) : null}
-
-          <div style={composerFooterStyle}>
+          <div style={composerInputRowStyle}>
             <div style={composerUtilityRowStyle}>
-              <button aria-label="Open action shortcuts" style={slashButtonStyle} type="button">
-                /
-              </button>
               {allowAttachments ? (
                 <>
                   <button
+                    aria-label="Add source"
                     onClick={() => fileInputRef.current?.click()}
                     style={attachmentButtonStyle}
+                    title="Add source"
                     type="button"
                   >
                     <QuartzIcon name="upload" style={composerButtonIconStyle} />
-                    Add source
                   </button>
                   <input
                     accept=".pdf,.csv,.xlsx,.xls,.xlsm"
@@ -533,23 +492,49 @@ export function ActionComposer({
               ) : null}
             </div>
 
-            <div style={composerSubmitClusterStyle}>
-              <span style={composerHelperTextStyle}>Enter to send / Shift + Enter for newline</span>
-              <button
-                aria-label={isSubmitting ? "Sending message" : "Send message"}
-                disabled={!hasInput || isSubmitting}
-                style={sendButtonStyle(!hasInput || isSubmitting)}
-                title={isSubmitting ? "Sending" : "Send"}
-                type="submit"
-              >
-                {isSubmitting ? (
-                  <span style={sendButtonTextStyle}>Sending</span>
-                ) : (
-                  <QuartzIcon name="send" style={sendIconStyle} />
-                )}
-              </button>
-            </div>
+            <textarea
+              disabled={isSubmitting}
+              onChange={(event) => setInputValue(event.target.value)}
+              onKeyDown={(event: KeyboardEvent<HTMLTextAreaElement>) => {
+                if (event.key === "Enter" && !event.shiftKey && !event.metaKey && !event.ctrlKey) {
+                  event.preventDefault();
+                  if (hasInput && !isSubmitting) {
+                    void handleSubmit(event);
+                  }
+                }
+              }}
+              placeholder={composerPlaceholder}
+              ref={textareaRef}
+              rows={1}
+              style={composerTextareaStyle}
+              value={inputValue}
+            />
+
+            <button
+              aria-label={isSubmitting ? "Sending message" : "Send message"}
+              disabled={!hasInput || isSubmitting}
+              style={sendButtonStyle(!hasInput || isSubmitting)}
+              title={isSubmitting ? "Sending" : "Send"}
+              type="submit"
+            >
+              {isSubmitting ? (
+                <span style={sendButtonTextStyle}>Sending</span>
+              ) : (
+                <QuartzIcon name="send" style={sendIconStyle} />
+              )}
+            </button>
           </div>
+
+          {attachments.length > 0 ? (
+            <div style={attachmentListStyle}>
+              {attachments.map((file) => (
+                <span key={`${file.name}:${file.size}`} style={attachmentTokenStyle}>
+                  <span style={attachmentTokenNameStyle}>{file.name}</span>
+                  <span style={attachmentTokenMetaStyle}>{formatByteSize(file.size)}</span>
+                </span>
+              ))}
+            </div>
+          ) : null}
         </div>
       </form>
     </div>
@@ -682,12 +667,33 @@ function buildStarterPrompts(options: {
   return Array.from(new Set(prompts)).slice(0, 5);
 }
 
+function buildComposerPlaceholder(options: {
+  allowAttachments: boolean;
+  assistantMode: "close_run" | "entity" | "global";
+  attachmentCount: number;
+  starterPrompts: readonly string[];
+}): string {
+  if (options.attachmentCount > 0 && options.allowAttachments) {
+    return "Tell the assistant what to do with these documents...";
+  }
+  if (options.starterPrompts[0]) {
+    return options.starterPrompts[0];
+  }
+  if (options.assistantMode === "global") {
+    return "Ask across workspaces or choose where to work next...";
+  }
+  if (options.assistantMode === "entity") {
+    return "Ask about this workspace or what to do next...";
+  }
+  return "Ask about the close or request the next step...";
+}
+
 const composerContainerStyle = {
   borderTop: "1px solid var(--quartz-border)",
   background: "linear-gradient(180deg, rgba(247, 243, 242, 0.9) 0%, rgba(253, 248, 248, 1) 100%)",
   display: "grid",
-  gap: 12,
-  padding: "16px 32px 22px",
+  gap: 10,
+  padding: "10px 24px 14px",
 } satisfies React.CSSProperties;
 
 const pendingActionListStyle = {
@@ -830,48 +836,39 @@ const composerFormStyle = {
 
 const composerShellStyle = {
   border: "1px solid var(--quartz-border)",
-  borderRadius: 12,
+  borderRadius: 14,
   background: "rgba(255, 255, 255, 0.92)",
-  boxShadow: "0 14px 34px rgba(28, 27, 27, 0.08)",
+  boxShadow: "0 10px 28px rgba(28, 27, 27, 0.07)",
   display: "grid",
-  gap: 12,
+  gap: 8,
   margin: "0 auto",
   maxWidth: 1220,
-  padding: "12px 14px 14px",
+  padding: "9px 10px",
   width: "100%",
 } satisfies React.CSSProperties;
 
-const suggestionRowStyle = {
-  display: "flex",
-  flexWrap: "wrap",
+const composerInputRowStyle = {
+  alignItems: "end",
+  display: "grid",
   gap: 8,
-} satisfies React.CSSProperties;
-
-const suggestionChipStyle = {
-  border: "1px solid var(--quartz-border)",
-  borderRadius: 8,
-  background: "rgba(252, 252, 250, 0.94)",
-  color: "var(--quartz-muted)",
-  cursor: "pointer",
-  fontSize: 12,
-  lineHeight: "18px",
-  padding: "7px 12px",
+  gridTemplateColumns: "auto minmax(0, 1fr) auto",
 } satisfies React.CSSProperties;
 
 const composerTextareaStyle = {
   width: "100%",
-  minHeight: 58,
-  maxHeight: 180,
-  border: "1px solid var(--quartz-border)",
+  minHeight: 36,
+  maxHeight: 156,
+  border: "none",
   borderRadius: 10,
-  background: "rgba(252, 252, 250, 0.74)",
+  background: "rgba(252, 252, 250, 0.72)",
   color: "var(--quartz-ink)",
   fontFamily: "inherit",
   fontSize: 15,
-  lineHeight: "24px",
+  lineHeight: "22px",
   outline: "none",
-  padding: "14px 16px",
-  resize: "vertical",
+  overflowY: "auto",
+  padding: "7px 10px",
+  resize: "none",
 } satisfies React.CSSProperties;
 
 const attachmentListStyle = {
@@ -904,18 +901,11 @@ const attachmentTokenMetaStyle = {
   fontSize: 11,
 } satisfies React.CSSProperties;
 
-const composerFooterStyle = {
-  alignItems: "center",
-  display: "flex",
-  gap: 12,
-  justifyContent: "space-between",
-} satisfies React.CSSProperties;
-
 const composerUtilityRowStyle = {
   alignItems: "center",
   display: "flex",
   flexWrap: "wrap",
-  gap: 10,
+  gap: 8,
 } satisfies React.CSSProperties;
 
 const attachmentButtonStyle = {
@@ -926,23 +916,11 @@ const attachmentButtonStyle = {
   cursor: "pointer",
   display: "inline-flex",
   alignItems: "center",
-  gap: 8,
   fontSize: 12,
   fontWeight: 600,
-  minHeight: 36,
-  padding: "0 14px",
-} satisfies React.CSSProperties;
-
-const slashButtonStyle = {
-  border: "1px solid var(--quartz-border)",
-  borderRadius: 8,
-  background: "rgba(252, 252, 250, 0.9)",
-  color: "var(--quartz-ink)",
-  cursor: "pointer",
-  fontSize: 18,
-  fontWeight: 600,
   height: 36,
-  lineHeight: 1,
+  justifyContent: "center",
+  padding: 0,
   width: 36,
 } satisfies React.CSSProperties;
 
@@ -961,22 +939,10 @@ const clearButtonStyle = {
   padding: 0,
 } satisfies React.CSSProperties;
 
-const composerSubmitClusterStyle = {
-  alignItems: "center",
-  display: "flex",
-  gap: 12,
-} satisfies React.CSSProperties;
-
-const composerHelperTextStyle = {
-  color: "var(--quartz-muted)",
-  fontSize: 11,
-  whiteSpace: "nowrap",
-} satisfies React.CSSProperties;
-
 function sendButtonStyle(disabled: boolean) {
   return {
     border: "none",
-    borderRadius: 8,
+    borderRadius: 10,
     background: disabled ? "var(--quartz-surface-high)" : "var(--quartz-primary)",
     color: disabled ? "var(--quartz-muted)" : "var(--quartz-primary-contrast)",
     cursor: disabled ? "not-allowed" : "pointer",
@@ -985,9 +951,9 @@ function sendButtonStyle(disabled: boolean) {
     justifyContent: "center",
     fontSize: 12,
     fontWeight: 700,
-    height: 40,
-    minWidth: disabled ? 76 : 44,
-    padding: disabled ? "0 14px" : 0,
+    height: 36,
+    minWidth: disabled ? 70 : 40,
+    padding: disabled ? "0 12px" : 0,
   } satisfies React.CSSProperties;
 }
 
