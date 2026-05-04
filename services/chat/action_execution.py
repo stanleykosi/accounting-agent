@@ -15,7 +15,7 @@ from calendar import monthrange
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from services.accounting.recommendation_apply import (
     RecommendationApplyError,
@@ -210,6 +210,7 @@ class ChatActionExecutor:
         self._entity_delete_service = entity_delete_service
         self._close_run_service = close_run_service
         self._coa_service = CoaService(repository=CoaRepository(db_session=db_session))
+        self._document_repository = document_repository
 
         self._workspace_builder = AccountingWorkspaceContextBuilder(
             action_repository=action_repository,
@@ -469,22 +470,17 @@ class ChatActionExecutor:
         source_surface: AuditSourceSurface,
         trace_id: str | None,
     ) -> ChatExecutionOutcome | None:
-        """Persist an immediate deterministic read-only reply when one is available."""
+        """Return an immediate deterministic read-only reply when one is available."""
 
-        del source_surface
-        visible_user_content = user_message_content if user_message_content is not None else content
-        grounding, thread = self._load_thread_context(
+        del message_grounding_payload, source_surface, trace_id, user_message_content
+        _, thread = self._load_thread_context(
             thread_id=thread_id,
             entity_id=entity_id,
             user_id=actor_user.id,
         )
         active_entity_id = thread.entity_id
-        self._ensure_entity_coa_available(actor_user=actor_user, entity_id=active_entity_id)
-        turn_lock_acquired = False
 
         try:
-            self._lock_thread_for_turn(thread_id=thread_id)
-            turn_lock_acquired = True
             replayed_outcome = self._replay_completed_turn_if_present(
                 thread_id=thread_id,
                 actor_user=actor_user,
@@ -493,7 +489,7 @@ class ChatActionExecutor:
             if replayed_outcome is not None:
                 return replayed_outcome
 
-            grounding, thread = self._load_thread_context(
+            _, thread = self._load_thread_context(
                 thread_id=thread_id,
                 entity_id=active_entity_id,
                 user_id=actor_user.id,
@@ -505,69 +501,57 @@ class ChatActionExecutor:
                 actor_user_id=actor_user.id,
                 context_payload=thread.context_payload,
             )
-            snapshot = self._snapshot_for_thread(
-                actor_user=actor_user,
-                entity_id=active_entity_id,
-                close_run_id=thread.close_run_id,
-                thread_id=thread_id,
-            )
-            assistant_content = _build_direct_operator_status_response(
-                snapshot=snapshot,
-                operator_content=content,
-                operator_memory=operator_memory,
-            )
+            snapshot: dict[str, Any] | None = None
+            assistant_content = None
+            document_repository = getattr(self, "_document_repository", None)
+            if (
+                thread.close_run_id is not None
+                and document_repository is not None
+                and _is_document_skip_follow_up_request(
+                    operator_content=content,
+                    operator_memory=operator_memory,
+                )
+            ):
+                documents = document_repository.list_documents_for_close_run(
+                    close_run_id=thread.close_run_id,
+                )
+                snapshot = {
+                    "documents": [
+                        {
+                            "filename": document.original_filename,
+                            "status": (
+                                document.status.value
+                                if hasattr(document.status, "value")
+                                else str(document.status)
+                            ),
+                        }
+                        for document in documents
+                    ]
+                }
+                assistant_content = _build_document_skip_follow_up_response(
+                    snapshot=snapshot,
+                    operator_content=content,
+                    operator_memory=operator_memory,
+                )
+
+            if assistant_content is None:
+                snapshot = self._snapshot_for_thread(
+                    actor_user=actor_user,
+                    entity_id=active_entity_id,
+                    close_run_id=thread.close_run_id,
+                    thread_id=thread_id,
+                )
+                assistant_content = _build_direct_operator_status_response(
+                    snapshot=snapshot,
+                    operator_content=content,
+                    operator_memory=operator_memory,
+                )
             if assistant_content is None:
                 return None
 
-            self._chat_repo.create_message(
-                thread_id=thread_id,
-                role="user",
-                content=visible_user_content,
-                message_type="action",
-                linked_action_id=None,
-                grounding_payload=dict(message_grounding_payload or {}),
-                model_metadata=_build_turn_metadata(
-                    metadata=None,
-                    client_turn_id=client_turn_id,
-                    turn_status="received",
-                ),
-            )
-            assistant_message = self._chat_repo.create_message(
-                thread_id=thread_id,
-                role="assistant",
-                content=assistant_content,
-                message_type="analysis",
-                linked_action_id=None,
-                grounding_payload=self._build_grounding_payload(grounding),
-                model_metadata=_build_turn_metadata(
-                    metadata=self._build_trace_metadata(
-                        trace_id=trace_id,
-                        mode="planner",
-                        tool_name=None,
-                        action_status="read_only",
-                        summary=snapshot.get("progress_summary")
-                        if isinstance(snapshot.get("progress_summary"), str)
-                        else None,
-                    ),
-                    client_turn_id=client_turn_id,
-                    turn_status="completed",
-                ),
-            )
-            self._update_thread_memory(
-                thread_id=thread_id,
-                existing_payload=thread.context_payload,
-                operator_message=visible_user_content,
-                assistant_response=assistant_content,
-                tool_name=None,
-                tool_arguments={},
-                action_status="read_only",
-                trace_id=trace_id,
-                snapshot=snapshot,
-            )
-            self._db_session.commit()
             return self._build_execution_outcome(
-                assistant_message_id=serialize_uuid(assistant_message.id),
-                assistant_content=assistant_message.content,
+                assistant_message_id=f"direct:{uuid4()}",
+                assistant_content=assistant_content,
                 action_plan=None,
                 is_read_only=True,
                 thread=thread,
@@ -582,9 +566,6 @@ class ChatActionExecutor:
                 code=ChatActionExecutionErrorCode.EXECUTION_FAILED,
                 message=_build_unexpected_operator_failure_message(error=error),
             ) from error
-        finally:
-            if turn_lock_acquired:
-                self._release_thread_turn_lock(thread_id=thread_id)
 
     def resume_operator_turn(
         self,

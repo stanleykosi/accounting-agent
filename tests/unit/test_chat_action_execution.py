@@ -885,6 +885,72 @@ def test_hydrate_planning_result_answers_skipped_document_follow_up() -> None:
     assert "awaiting review" in hydrated.assistant_response
 
 
+def test_direct_status_message_does_not_lock_or_persist() -> None:
+    """Immediate read-only answers should not wait behind a long-running chat turn."""
+
+    actor_user = EntityUserRecord(id=uuid4(), email="ops@example.com", full_name="Finance Ops")
+    thread_id = uuid4()
+    entity_id = uuid4()
+    thread = SimpleNamespace(
+        id=thread_id,
+        entity_id=entity_id,
+        close_run_id=uuid4(),
+        context_payload={},
+    )
+    db_session = _FakeLoopDbSession()
+
+    class NonBlockingChatRepository:
+        def get_thread_by_id(self, *, thread_id: UUID):
+            return thread
+
+        def list_messages_for_thread(self, **kwargs):
+            return ()
+
+        def lock_thread_for_turn(self, **kwargs):
+            raise AssertionError("Direct status answers must not take the thread turn lock.")
+
+        def create_message(self, **kwargs):
+            raise AssertionError("Direct status answers must not append through chat_threads.")
+
+    executor = ChatActionExecutor.__new__(ChatActionExecutor)
+    executor._db_session = db_session
+    executor._chat_repo = NonBlockingChatRepository()
+    executor._action_repo = SimpleNamespace(list_actions_for_thread_turn=lambda **kwargs: ())
+    executor._entity_repo = SimpleNamespace(get_entity_for_user=lambda **kwargs: object())
+    executor._document_repository = SimpleNamespace(
+        list_documents_for_close_run=lambda **kwargs: (
+            SimpleNamespace(
+                original_filename="invoice-april-generator-overhaul-2026-04.pdf",
+                status="needs_review",
+            ),
+        )
+    )
+    executor._load_thread_context = lambda **kwargs: (SimpleNamespace(), thread)  # type: ignore[method-assign]
+    executor._memory_for_thread = lambda **kwargs: AgentMemorySummary(  # type: ignore[method-assign]
+        last_assistant_response="I marked 2 documents as approved; skipped 1.",
+        last_tool_name="review_documents",
+    )
+    executor._snapshot_for_thread = lambda **kwargs: (_ for _ in ()).throw(  # type: ignore[method-assign]
+        AssertionError("Skipped-document follow-ups should use the lightweight document query.")
+    )
+
+    outcome = executor.send_direct_status_message_if_supported(
+        thread_id=thread_id,
+        entity_id=entity_id,
+        actor_user=actor_user,
+        content="which one did you skip?",
+        client_turn_id="turn-skip-follow-up",
+        source_surface="desktop",
+        trace_id="trace-direct",
+    )
+
+    assert outcome is not None
+    assert outcome.assistant_message_id.startswith("direct:")
+    assert "invoice-april-generator-overhaul-2026-04.pdf" in outcome.assistant_content
+    assert db_session.commit_calls == 0
+    assert db_session.rollback_calls == 0
+
+
 def test_hydrate_planning_result_answers_upload_status_before_stale_workspace_prompt() -> None:
     """Document upload questions should beat old create-workspace clarification memory."""
 

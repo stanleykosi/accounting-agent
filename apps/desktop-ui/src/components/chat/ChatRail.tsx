@@ -199,27 +199,37 @@ export function ChatRail({
       const resolvedEntityId = options?.entityIdOverride ?? thread.entity_id;
       const showLoader = options?.showLoader ?? true;
       setSelectedThread(thread);
+      setWorkspace(readChatThreadWorkspaceSnapshot(thread.id, resolvedEntityId));
       if (showLoader) {
         setIsLoadingThread(true);
       }
       setError(null);
 
       try {
-        const [threadDetail, threadWorkspace] = await Promise.all([
-          getChatThread(thread.id, resolvedEntityId),
-          getChatThreadWorkspace(thread.id, resolvedEntityId),
-        ]);
+        const threadDetail = await getChatThread(thread.id, resolvedEntityId);
         if (requestId !== threadLoadRequestIdRef.current) {
           return;
         }
         activeEntityIdRef.current = threadDetail.thread.entity_id;
         setActiveEntityId(threadDetail.thread.entity_id);
         setMessages(threadDetail.messages);
-        setWorkspace(threadWorkspace);
         if (pendingTurnVersionRef.current === pendingTurnVersionAtStart) {
           setPendingTurn(null);
         }
         setSelectedThread(threadDetail.thread);
+        if (showLoader) {
+          setIsLoadingThread(false);
+        }
+
+        void getChatThreadWorkspace(threadDetail.thread.id, threadDetail.thread.entity_id)
+          .then((threadWorkspace) => {
+            if (requestId === threadLoadRequestIdRef.current) {
+              setWorkspace(threadWorkspace);
+            }
+          })
+          .catch((caughtError: unknown) => {
+            void caughtError;
+          });
       } catch (caughtError: unknown) {
         if (requestId !== threadLoadRequestIdRef.current) {
           return;
@@ -353,6 +363,7 @@ export function ChatRail({
     : scopedCloseRunId
       ? "close_run"
       : "entity";
+  const currentThreadEntityId = selectedThread?.entity_id ?? activeEntityId;
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({
@@ -490,7 +501,7 @@ export function ChatRail({
             assistantMode={conversationAssistantMode}
             closeRunId={scopedCloseRunId}
             disabled={isBusy || selectedThread === null}
-            entityId={activeEntityId}
+            entityId={currentThreadEntityId}
             onActionStateChange={() => {
               void refreshSelectedThread();
             }}
@@ -498,6 +509,12 @@ export function ChatRail({
               const threadId = selectedThread?.id;
               const isAcceptedAsyncTurn =
                 response.turn_status === "accepted" && response.turn_job_id !== null;
+              const isImmediateReadOnlyTurn =
+                response.turn_status === "completed" &&
+                response.turn_job_id === null &&
+                response.stream_after_message_order === null &&
+                response.is_read_only &&
+                response.action_plan === null;
               if (threadId) {
                 setSelectedThread((current) =>
                   current === null ? current : reconcileThreadFromActionResponse(current, response),
@@ -580,6 +597,9 @@ export function ChatRail({
                     },
                   },
                 );
+                return;
+              }
+              if (isImmediateReadOnlyTurn) {
                 return;
               }
               void refreshSelectedThread({
