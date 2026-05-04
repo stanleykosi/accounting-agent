@@ -41,6 +41,7 @@ export type ChatRailProps = {
 type PendingTurn = {
   assistantContent: string | null;
   draft: ComposerDraft;
+  isAwaitingFinalReply: boolean;
 };
 
 type RenderableMessage = ChatMessageRecord & {
@@ -432,7 +433,9 @@ export function ChatRail({
     threads,
   ]);
 
-  const isAwaitingReply = pendingTurn !== null && pendingTurn.assistantContent === null;
+  const isAwaitingReply =
+    pendingTurn !== null &&
+    (pendingTurn.assistantContent === null || pendingTurn.isAwaitingFinalReply);
   const isBusy = isBootstrapping || isLoadingThread;
 
   return (
@@ -493,6 +496,8 @@ export function ChatRail({
             }}
             onMessageSent={(response: ChatActionResponse, draft: ComposerDraft) => {
               const threadId = selectedThread?.id;
+              const isAcceptedAsyncTurn =
+                response.turn_status === "accepted" && response.turn_job_id !== null;
               if (threadId) {
                 setSelectedThread((current) =>
                   current === null ? current : reconcileThreadFromActionResponse(current, response),
@@ -502,24 +507,34 @@ export function ChatRail({
                     thread.id === threadId ? reconcileThreadFromActionResponse(thread, response) : thread,
                   ),
                 );
-                setMessages((current) =>
-                  mergeMessages(
-                    current,
-                    buildLocalTurnMessages({
-                      baseMessageOrder: getHighestMessageOrder(current),
-                      draft,
-                      response,
-                      threadId,
-                    }),
-                  ),
-                );
+                if (!isAcceptedAsyncTurn) {
+                  setMessages((current) =>
+                    mergeMessages(
+                      current,
+                      buildLocalTurnMessages({
+                        baseMessageOrder: getHighestMessageOrder(current),
+                        draft,
+                        response,
+                        threadId,
+                      }),
+                    ),
+                  );
+                }
               }
-              setPendingTurn(null);
+              setPendingTurn(
+                isAcceptedAsyncTurn
+                  ? {
+                    assistantContent: response.content,
+                    draft,
+                    isAwaitingFinalReply: true,
+                  }
+                  : null,
+              );
               activeEntityIdRef.current = response.thread_entity_id;
               setActiveEntityId(response.thread_entity_id);
               if (
                 threadId &&
-                response.turn_status === "accepted" &&
+                isAcceptedAsyncTurn &&
                 typeof response.stream_after_message_order === "number"
               ) {
                 activeEventStreamCleanupRef.current?.();
@@ -539,10 +554,28 @@ export function ChatRail({
                     },
                     onError: (message) => {
                       activeEventStreamCleanupRef.current = null;
+                      setPendingTurn((current) =>
+                        current === null
+                          ? current
+                          : {
+                            ...current,
+                            assistantContent: message,
+                            isAwaitingFinalReply: false,
+                          },
+                      );
                       setError(message);
                     },
                     onTimeout: (message) => {
                       activeEventStreamCleanupRef.current = null;
+                      setPendingTurn((current) =>
+                        current === null
+                          ? current
+                          : {
+                            ...current,
+                            assistantContent: message,
+                            isAwaitingFinalReply: false,
+                          },
+                      );
                       setError(message);
                     },
                   },
@@ -560,6 +593,7 @@ export function ChatRail({
                   : {
                     ...current,
                     assistantContent: message,
+                    isAwaitingFinalReply: false,
                   },
               );
             }}
@@ -568,6 +602,7 @@ export function ChatRail({
               setPendingTurn({
                 assistantContent: null,
                 draft,
+                isAwaitingFinalReply: false,
               });
             }}
             threadId={selectedThread?.id ?? ""}
@@ -852,7 +887,9 @@ function MessageList({
               <div style={userMessageBubbleStyle}>
                 <div style={messageHeaderStyle}>
                   <span style={messageRoleStyle("user")}>You</span>
-                  <span style={messageTimeStyle}>Sending...</span>
+                  <span style={messageTimeStyle}>
+                    {pendingTurn.isAwaitingFinalReply ? "Sent" : "Sending..."}
+                  </span>
                 </div>
 
                 {pendingTurn.draft.attachmentNames.length > 0 ? (
@@ -877,7 +914,11 @@ function MessageList({
                 <div style={messageHeaderStyle}>
                   <span style={messageRoleStyle("assistant")}>Assistant</span>
                   <span style={messageTimeStyle}>
-                    {isAwaitingReply ? "Thinking..." : "Reply ready"}
+                    {isAwaitingReply
+                      ? pendingTurn.isAwaitingFinalReply
+                        ? "Working..."
+                        : "Thinking..."
+                      : "Reply ready"}
                   </span>
                 </div>
 
@@ -889,6 +930,15 @@ function MessageList({
                       <span />
                     </span>
                     <span>Working through the request</span>
+                  </div>
+                ) : pendingTurn.isAwaitingFinalReply ? (
+                  <div style={thinkingBubbleStyle}>
+                    <span className="quartz-chat-thinking-dots" aria-hidden="true">
+                      <span />
+                      <span />
+                      <span />
+                    </span>
+                    <span>{pendingTurn.assistantContent}</span>
                   </div>
                 ) : (
                   <p style={messageContentStyle}>{pendingTurn.assistantContent}</p>

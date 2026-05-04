@@ -41,8 +41,8 @@ from fastapi import (
     Query,
     Request,
     Response,
-    status,
     UploadFile,
+    status,
 )
 from fastapi.responses import StreamingResponse
 from services.accounting.recommendation_apply import RecommendationApplyService
@@ -97,6 +97,8 @@ from services.db.models.audit import AuditSourceSurface
 from services.db.repositories.chat_action_repo import ChatActionRepository
 from services.db.repositories.chat_repo import (
     ChatMessageRecord as ChatRepositoryMessageRecord,
+)
+from services.db.repositories.chat_repo import (
     ChatRepository,
 )
 from services.db.repositories.close_run_repo import CloseRunRepository
@@ -1323,6 +1325,7 @@ def send_chat_action(
     response: Response = None,  # type: ignore[assignment]
     settings: SettingsDependency = None,  # type: ignore[assignment]
     auth_service: AuthServiceDependency = None,  # type: ignore[assignment]
+    action_executor: ChatActionExecutorDependency = None,  # type: ignore[assignment]
     chat_repository: ChatRepositoryDependency = None,  # type: ignore[assignment]
     db_session: DatabaseSessionDependency = None,  # type: ignore[assignment]
     task_dispatcher: TaskDispatcherDependency = None,  # type: ignore[assignment]
@@ -1351,6 +1354,38 @@ def send_chat_action(
                 message="That chat thread does not exist in this workspace.",
             ),
         )
+    direct_status_sender = getattr(action_executor, "send_direct_status_message_if_supported", None)
+    if callable(direct_status_sender):
+        try:
+            direct_outcome = direct_status_sender(
+                thread_id=thread_id,
+                entity_id=entity_id,
+                actor_user=_to_entity_user(session_result),
+                content=payload.content,
+                client_turn_id=payload.client_turn_id,
+                source_surface=AuditSourceSurface.DESKTOP,
+                trace_id=trace_id,
+            )
+        except ChatActionExecutionError as error:
+            raise HTTPException(
+                status_code=error.status_code,
+                detail=_error_payload(code=error.code.value, message=error.message),
+            ) from error
+        if direct_outcome is not None:
+            return ChatActionResponse(
+                message_id=direct_outcome.assistant_message_id,
+                content=direct_outcome.assistant_content,
+                action_plan=_to_chat_action_summary(direct_outcome.action_plan),
+                is_read_only=direct_outcome.is_read_only,
+                thread_entity_id=direct_outcome.thread_entity_id,
+                thread_close_run_id=direct_outcome.thread_close_run_id,
+                operator_controls=(),
+                turn_status="completed",
+                turn_job_id=None,
+                client_turn_id=payload.client_turn_id,
+                stream_after_message_order=None,
+            )
+
     stream_after_order = _latest_message_order(
         chat_repository=chat_repository,
         thread_id=thread_id,

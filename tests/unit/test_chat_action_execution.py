@@ -11,7 +11,6 @@ from types import SimpleNamespace
 from uuid import UUID, uuid4
 
 import pytest
-
 from services.agents.models import AgentPlanningResult
 from services.chat.action_execution import (
     ChatActionExecutionError,
@@ -26,6 +25,7 @@ from services.chat.continuation_state import (
     new_chat_operator_continuation,
 )
 from services.chat.operator_memory import seed_context_payload_with_operator_memory
+from services.contracts.chat_models import AgentMemorySummary
 from services.db.repositories.chat_action_repo import ChatActionPlanRecord
 from services.db.repositories.entity_repo import EntityUserRecord
 
@@ -845,6 +845,44 @@ def test_hydrate_planning_result_answers_next_step_read_only() -> None:
             "for the parsed document set"
         )
     )
+
+
+def test_hydrate_planning_result_answers_skipped_document_follow_up() -> None:
+    """A short skipped-items follow-up should name documents still awaiting review."""
+
+    executor = ChatActionExecutor.__new__(ChatActionExecutor)
+
+    hydrated = executor._hydrate_planning_result(
+        planning=AgentPlanningResult(
+            mode="tool",
+            assistant_response="I'll check that.",
+            reasoning="The operator asked a follow-up question.",
+            tool_name="review_documents",
+            tool_arguments={},
+        ),
+        snapshot={
+            "documents": [
+                {
+                    "filename": "invoice-cloud-erp-subscription-2026-03.pdf",
+                    "status": "approved",
+                },
+                {
+                    "filename": "invoice-april-generator-overhaul-2026-04.pdf",
+                    "status": "needs_review",
+                },
+            ],
+        },
+        operator_content="which ones did you skip?",
+        operator_memory=AgentMemorySummary(
+            last_assistant_response="I marked 2 documents as approved; skipped 1.",
+            last_tool_name="review_documents",
+        ),
+    )
+
+    assert hydrated.mode == "read_only"
+    assert hydrated.tool_name is None
+    assert "invoice-april-generator-overhaul-2026-04.pdf" in hydrated.assistant_response
+    assert "awaiting review" in hydrated.assistant_response
 
 
 def test_hydrate_planning_result_answers_upload_status_before_stale_workspace_prompt() -> None:

@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from io import BytesIO
 from types import ModuleType, SimpleNamespace
+from typing import ClassVar
 from uuid import uuid4
 
 from apps.api.app.routes.request_auth import AuthenticatedRequestContext
@@ -700,7 +701,7 @@ class FakeDatabaseSession:
 
 
 class FakeJobService:
-    calls: list[dict[str, object]] = []
+    calls: ClassVar[list[dict[str, object]]] = []
 
     def __init__(self, *, db_session) -> None:
         self.db_session = db_session
@@ -753,6 +754,27 @@ class FailingChatActionExecutor(FakeChatActionExecutor):
             status_code=422,
             code="planning_failed",
             message="Unable to plan the attachment follow-up.",
+        )
+
+
+class DirectStatusChatActionExecutor(FakeChatActionExecutor):
+    """Return an immediate read-only status answer without queuing a worker turn."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.direct_status_call: dict[str, object] | None = None
+
+    def send_direct_status_message_if_supported(self, **kwargs):
+        self.direct_status_call = kwargs
+        return SimpleNamespace(
+            assistant_message_id=str(uuid4()),
+            assistant_content=(
+                "The skipped document is invoice-april-generator-overhaul-2026-04.pdf."
+            ),
+            action_plan=None,
+            is_read_only=True,
+            thread_entity_id=str(kwargs["entity_id"]),
+            thread_close_run_id=None,
         )
 
 
@@ -1249,6 +1271,52 @@ def test_chat_action_route_uses_shared_agent_lane_for_plain_conversation(monkeyp
     assert job_calls[0]["payload"]["content"] == "hello"
     assert job_calls[0]["payload"]["process_existing_user_turn"] is True
     assert result.operator_controls == ()
+
+
+def test_chat_action_route_returns_direct_status_without_queueing(monkeypatch) -> None:
+    """Deterministic read-only follow-ups should answer immediately from the request lane."""
+
+    _install_browser_auth_stub(monkeypatch)
+    job_calls = _install_job_service_stub(monkeypatch)
+    repository = FakeChatRepository(close_run_id=None)
+    executor = DirectStatusChatActionExecutor()
+    db_session = FakeDatabaseSession()
+    thread_id = uuid4()
+    entity_id = uuid4()
+    request = Request(
+        {
+            "type": "http",
+            "app": SimpleNamespace(version="0.1.0"),
+            "method": "POST",
+            "path": f"/api/chat/threads/{thread_id}/actions",
+            "headers": [],
+        }
+    )
+
+    result = chat_routes.send_chat_action(
+        thread_id=thread_id,
+        payload=chat_routes.SendChatActionRequest(
+            client_turn_id="turn-skipped-documents",
+            content="which ones did you skip?",
+        ),
+        entity_id=entity_id,
+        request=request,
+        response=Response(),
+        settings=SimpleNamespace(),
+        auth_service=SimpleNamespace(),
+        action_executor=executor,
+        chat_repository=repository,
+        db_session=db_session,
+        task_dispatcher=SimpleNamespace(),
+    )
+
+    assert result.turn_status == "completed"
+    assert result.turn_job_id is None
+    assert result.stream_after_message_order is None
+    assert "invoice-april-generator-overhaul-2026-04.pdf" in result.content
+    assert executor.direct_status_call is not None
+    assert executor.direct_status_call["client_turn_id"] == "turn-skipped-documents"
+    assert job_calls == []
 
 
 def test_chat_action_route_rejects_non_member_before_dispatch(monkeypatch) -> None:

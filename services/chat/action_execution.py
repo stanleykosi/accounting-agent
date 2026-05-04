@@ -456,6 +456,136 @@ class ChatActionExecutor:
             trace_id=trace_id,
         )
 
+    def send_direct_status_message_if_supported(
+        self,
+        *,
+        thread_id: UUID,
+        entity_id: UUID,
+        actor_user: EntityUserRecord,
+        content: str,
+        client_turn_id: str | None = None,
+        message_grounding_payload: dict[str, Any] | None = None,
+        user_message_content: str | None = None,
+        source_surface: AuditSourceSurface,
+        trace_id: str | None,
+    ) -> ChatExecutionOutcome | None:
+        """Persist an immediate deterministic read-only reply when one is available."""
+
+        del source_surface
+        visible_user_content = user_message_content if user_message_content is not None else content
+        grounding, thread = self._load_thread_context(
+            thread_id=thread_id,
+            entity_id=entity_id,
+            user_id=actor_user.id,
+        )
+        active_entity_id = thread.entity_id
+        self._ensure_entity_coa_available(actor_user=actor_user, entity_id=active_entity_id)
+        turn_lock_acquired = False
+
+        try:
+            self._lock_thread_for_turn(thread_id=thread_id)
+            turn_lock_acquired = True
+            replayed_outcome = self._replay_completed_turn_if_present(
+                thread_id=thread_id,
+                actor_user=actor_user,
+                client_turn_id=client_turn_id,
+            )
+            if replayed_outcome is not None:
+                return replayed_outcome
+
+            grounding, thread = self._load_thread_context(
+                thread_id=thread_id,
+                entity_id=active_entity_id,
+                user_id=actor_user.id,
+            )
+            active_entity_id = thread.entity_id
+            operator_memory = self._memory_for_thread(
+                thread_id=thread_id,
+                entity_id=active_entity_id,
+                actor_user_id=actor_user.id,
+                context_payload=thread.context_payload,
+            )
+            snapshot = self._snapshot_for_thread(
+                actor_user=actor_user,
+                entity_id=active_entity_id,
+                close_run_id=thread.close_run_id,
+                thread_id=thread_id,
+            )
+            assistant_content = _build_direct_operator_status_response(
+                snapshot=snapshot,
+                operator_content=content,
+                operator_memory=operator_memory,
+            )
+            if assistant_content is None:
+                return None
+
+            self._chat_repo.create_message(
+                thread_id=thread_id,
+                role="user",
+                content=visible_user_content,
+                message_type="action",
+                linked_action_id=None,
+                grounding_payload=dict(message_grounding_payload or {}),
+                model_metadata=_build_turn_metadata(
+                    metadata=None,
+                    client_turn_id=client_turn_id,
+                    turn_status="received",
+                ),
+            )
+            assistant_message = self._chat_repo.create_message(
+                thread_id=thread_id,
+                role="assistant",
+                content=assistant_content,
+                message_type="analysis",
+                linked_action_id=None,
+                grounding_payload=self._build_grounding_payload(grounding),
+                model_metadata=_build_turn_metadata(
+                    metadata=self._build_trace_metadata(
+                        trace_id=trace_id,
+                        mode="planner",
+                        tool_name=None,
+                        action_status="read_only",
+                        summary=snapshot.get("progress_summary")
+                        if isinstance(snapshot.get("progress_summary"), str)
+                        else None,
+                    ),
+                    client_turn_id=client_turn_id,
+                    turn_status="completed",
+                ),
+            )
+            self._update_thread_memory(
+                thread_id=thread_id,
+                existing_payload=thread.context_payload,
+                operator_message=visible_user_content,
+                assistant_response=assistant_content,
+                tool_name=None,
+                tool_arguments={},
+                action_status="read_only",
+                trace_id=trace_id,
+                snapshot=snapshot,
+            )
+            self._db_session.commit()
+            return self._build_execution_outcome(
+                assistant_message_id=serialize_uuid(assistant_message.id),
+                assistant_content=assistant_message.content,
+                action_plan=None,
+                is_read_only=True,
+                thread=thread,
+            )
+        except ChatActionExecutionError:
+            self._db_session.rollback()
+            raise
+        except Exception as error:
+            self._db_session.rollback()
+            raise ChatActionExecutionError(
+                status_code=500,
+                code=ChatActionExecutionErrorCode.EXECUTION_FAILED,
+                message=_build_unexpected_operator_failure_message(error=error),
+            ) from error
+        finally:
+            if turn_lock_acquired:
+                self._release_thread_turn_lock(thread_id=thread_id)
+
     def resume_operator_turn(
         self,
         *,
@@ -3243,6 +3373,7 @@ class ChatActionExecutor:
         direct_status_response = _build_direct_operator_status_response(
             snapshot=snapshot,
             operator_content=content,
+            operator_memory=operator_memory,
         )
         if direct_status_response is not None:
             return AgentPlanningResult(
@@ -3743,6 +3874,7 @@ class ChatActionExecutor:
         direct_status_response = _build_direct_operator_status_response(
             snapshot=snapshot,
             operator_content=operator_content,
+            operator_memory=operator_memory,
         )
         if direct_status_response is not None:
             return planning.model_copy(
@@ -5397,6 +5529,7 @@ def _build_direct_operator_status_response(
     *,
     snapshot: dict[str, Any],
     operator_content: str,
+    operator_memory: AgentMemorySummary | None = None,
 ) -> str | None:
     """Return a deterministic grounded answer for common read-only operator questions."""
 
@@ -5406,6 +5539,7 @@ def _build_direct_operator_status_response(
     for builder in (
         _build_workspace_scope_status_response,
         _build_close_run_scope_status_response,
+        _build_document_skip_follow_up_response,
         _build_document_upload_status_response,
         _build_close_blocker_status_response,
         _build_next_step_status_response,
@@ -5414,7 +5548,11 @@ def _build_direct_operator_status_response(
         _build_all_workspace_close_run_directory_response,
         _build_close_run_directory_response,
     ):
-        response = builder(snapshot=snapshot, operator_content=operator_content)
+        response = builder(
+            snapshot=snapshot,
+            operator_content=operator_content,
+            operator_memory=operator_memory,
+        )
         if response is not None:
             return response
     return None
@@ -5424,9 +5562,11 @@ def _build_close_run_scope_status_response(
     *,
     snapshot: dict[str, Any],
     operator_content: str,
+    operator_memory: AgentMemorySummary | None = None,
 ) -> str | None:
     """Answer direct current-close-scope questions without invoking the planner."""
 
+    del operator_memory
     normalized_content = _searchable_text(operator_content)
     if not any(
         phrase in normalized_content
@@ -5472,9 +5612,11 @@ def _build_close_blocker_status_response(
     *,
     snapshot: dict[str, Any],
     operator_content: str,
+    operator_memory: AgentMemorySummary | None = None,
 ) -> str | None:
     """Answer common blocker questions directly from the readiness snapshot."""
 
+    del operator_memory
     normalized_content = _searchable_text(operator_content)
     if not any(
         phrase in normalized_content
@@ -5557,9 +5699,11 @@ def _build_next_step_status_response(
     *,
     snapshot: dict[str, Any],
     operator_content: str,
+    operator_memory: AgentMemorySummary | None = None,
 ) -> str | None:
     """Answer direct next-step questions from readiness without a planner turn."""
 
+    del operator_memory
     normalized_content = _searchable_text(operator_content)
     if not any(
         phrase in normalized_content
@@ -5589,13 +5733,120 @@ def _build_next_step_status_response(
     return f"The next best move is to { _lowercase_leading_character(next_action) }"
 
 
+def _build_document_skip_follow_up_response(
+    *,
+    snapshot: dict[str, Any],
+    operator_content: str,
+    operator_memory: AgentMemorySummary | None = None,
+) -> str | None:
+    """Answer follow-ups asking which source documents were skipped or held."""
+
+    if not _is_document_skip_follow_up_request(
+        operator_content=operator_content,
+        operator_memory=operator_memory,
+    ):
+        return None
+
+    pending_documents = _pending_document_records(snapshot=snapshot)
+    if not pending_documents:
+        return "I do not see any source documents still awaiting review in this close run."
+
+    labels = [
+        label
+        for record in pending_documents
+        if (label := _format_skipped_document_label(record=record)) is not None
+    ]
+    if not labels:
+        return (
+            "I can see skipped source documents, but they do not have filenames in "
+            "the current snapshot."
+        )
+    if len(labels) == 1:
+        return f"The skipped document is {labels[0]}."
+    if len(labels) <= 3:
+        return f"The skipped documents are {_join_choice_labels(labels)}."
+    return (
+        "The skipped documents are "
+        f"{', '.join(labels[:3])}, and {len(labels) - 3} more."
+    )
+
+
+def _is_document_skip_follow_up_request(
+    *,
+    operator_content: str,
+    operator_memory: AgentMemorySummary | None,
+) -> bool:
+    """Return whether a short follow-up is asking about skipped document review targets."""
+
+    normalized = _searchable_text(operator_content)
+    if not normalized:
+        return False
+    asks_about_skips = any(token in normalized for token in ("skip", "skipped", "hold", "held"))
+    asks_for_identity = any(
+        phrase in normalized
+        for phrase in (
+            "which",
+            "what",
+            "show",
+            "tell me",
+            "list",
+            "name",
+        )
+    )
+    if not asks_about_skips or not asks_for_identity:
+        return False
+
+    if any(token in normalized for token in ("document", "documents", "invoice", "file", "files")):
+        return True
+
+    if operator_memory is None:
+        return False
+    memory_text = _searchable_text(
+        " ".join(
+            value
+            for value in (
+                operator_memory.last_operator_message,
+                operator_memory.last_assistant_response,
+                operator_memory.working_subtask,
+                operator_memory.approved_objective,
+            )
+            if isinstance(value, str)
+        )
+    )
+    return (
+        operator_memory.last_tool_name in {"review_document", "review_documents"}
+        or "document" in memory_text
+        or "documents" in memory_text
+        or "invoice" in memory_text
+    )
+
+
+def _format_skipped_document_label(*, record: dict[str, Any]) -> str | None:
+    """Return a compact label for one document left out of a review batch."""
+
+    filename = record.get("filename")
+    if not isinstance(filename, str) or not filename.strip():
+        return None
+    status = _format_document_status_label(str(record.get("status") or "unknown"))
+    open_issues = record.get("open_issues")
+    issue_count = len(open_issues) if isinstance(open_issues, list) else 0
+    if issue_count > 0:
+        return (
+            f"{filename.strip()} ({status}, {issue_count} open issue"
+            f"{'' if issue_count == 1 else 's'})"
+        )
+    return f"{filename.strip()} ({status})"
+
+
 def _build_document_upload_status_response(
     *,
     snapshot: dict[str, Any],
     operator_content: str,
+    operator_memory: AgentMemorySummary | None = None,
 ) -> str | None:
     """Answer document/upload follow-ups from the live close-run snapshot."""
 
+    del operator_memory
     if not _is_document_upload_status_request(operator_content):
         return None
     if snapshot.get("close_run_id") is None:
@@ -5792,9 +6043,11 @@ def _build_financial_report_analysis_response(
     *,
     snapshot: dict[str, Any],
     operator_content: str,
+    operator_memory: AgentMemorySummary | None = None,
 ) -> str | None:
     """Answer management-analysis questions from the latest grounded report state."""
 
+    del operator_memory
     normalized_content = _searchable_text(operator_content)
     if not _is_financial_report_analysis_request(normalized_content):
         return None
@@ -5973,9 +6226,11 @@ def _build_close_run_detail_status_response(
     *,
     snapshot: dict[str, Any],
     operator_content: str,
+    operator_memory: AgentMemorySummary | None = None,
 ) -> str | None:
     """Answer close-run detail and report questions from the grounded snapshot."""
 
+    del operator_memory
     normalized_content = _searchable_text(operator_content)
     if not _is_close_run_detail_request(normalized_content):
         return None
@@ -6193,9 +6448,11 @@ def _build_all_workspace_close_run_directory_response(
     *,
     snapshot: dict[str, Any],
     operator_content: str,
+    operator_memory: AgentMemorySummary | None = None,
 ) -> str | None:
     """Answer cross-workspace close-run listing questions from the grounded snapshot."""
 
+    del operator_memory
     normalized_content = _searchable_text(operator_content)
     if "close run" not in normalized_content and "close runs" not in normalized_content:
         return None
@@ -6293,9 +6550,11 @@ def _build_close_run_directory_response(
     *,
     snapshot: dict[str, Any],
     operator_content: str,
+    operator_memory: AgentMemorySummary | None = None,
 ) -> str | None:
     """Answer direct close-run listing questions from the entity snapshot."""
 
+    del operator_memory
     normalized_content = _searchable_text(operator_content)
     if not any(
         phrase in normalized_content
@@ -6344,9 +6603,11 @@ def _build_workspace_scope_status_response(
     *,
     snapshot: dict[str, Any],
     operator_content: str,
+    operator_memory: AgentMemorySummary | None = None,
 ) -> str | None:
     """Answer direct current-workspace questions without routing through a mutation tool."""
 
+    del operator_memory
     normalized_content = _searchable_text(operator_content)
     if not any(
         phrase in normalized_content
