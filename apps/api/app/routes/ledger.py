@@ -136,7 +136,10 @@ async def upload_general_ledger(
     ledger_service: LedgerImportServiceDependency,
     period_start: Annotated[date, Form(description="First day covered by the imported ledger.")],
     period_end: Annotated[date, Form(description="Last day covered by the imported ledger.")],
-    file: Annotated[UploadFile, File(description="CSV or XLSX general-ledger file.")],
+    file: Annotated[
+        UploadFile,
+        File(description="CSV, XLSX, or searchable PDF general-ledger file."),
+    ],
 ) -> GeneralLedgerImportUploadResponse:
     """Import one general-ledger baseline and auto-bind safe matching close runs."""
 
@@ -181,7 +184,10 @@ async def upload_trial_balance(
         date,
         Form(description="Last day covered by the imported trial balance."),
     ],
-    file: Annotated[UploadFile, File(description="CSV or XLSX trial-balance file.")],
+    file: Annotated[
+        UploadFile,
+        File(description="CSV, XLSX, or searchable PDF trial-balance file."),
+    ],
 ) -> TrialBalanceImportUploadResponse:
     """Import one trial-balance baseline and auto-bind safe matching close runs."""
 

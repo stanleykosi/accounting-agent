@@ -254,7 +254,7 @@ def load_imported_gl_line_candidates(
             posting_date=row.posting_date,
             amount=_resolve_line_amount(row.debit_amount, row.credit_amount),
             account_code=row.account_code,
-            account_name=row.account_name,
+            account_name=row.account_name or "",
             reference=row.reference,
             external_ref=row.external_ref,
             description=row.description,

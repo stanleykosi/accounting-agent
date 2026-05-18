@@ -1,6 +1,6 @@
 """
 Purpose: Parse and validate chart-of-accounts upload files.
-Scope: CSV/XLSX decoding, header normalization, account row validation,
+Scope: CSV/XLSX/searchable-PDF decoding, header normalization, account row validation,
 duplicate detection, parent-link validation, and import metadata generation.
 Dependencies: Python CSV/io helpers, openpyxl, and shared JSON type aliases.
 """
@@ -16,6 +16,8 @@ from pathlib import Path
 from typing import Final
 
 from openpyxl import load_workbook  # type: ignore[import-untyped]
+from pypdf import PdfReader
+from pypdf.errors import PdfReadError
 from services.common.types import JsonObject
 
 
@@ -67,6 +69,7 @@ _HEADER_ALIASES: Final[dict[str, str]] = {
     "account": "account_name",
     "account_code": "account_code",
     "account_name": "account_name",
+    "account_title": "account_name",
     "account_number": "account_code",
     "account_type": "account_type",
     "active": "is_active",
@@ -81,10 +84,15 @@ _HEADER_ALIASES: Final[dict[str, str]] = {
     "department": "department",
     "external_ref": "external_ref",
     "external_reference": "external_ref",
+    "financial_statement": "financial_statement",
+    "fs": "financial_statement",
     "gl_code": "account_code",
+    "group": "account_group",
     "is_active": "is_active",
     "is_postable": "is_postable",
     "name": "account_name",
+    "normal_balance": "normal_balance",
+    "normally": "normal_balance",
     "parent": "parent_account_code",
     "parent_account": "parent_account_code",
     "parent_account_code": "parent_account_code",
@@ -93,6 +101,9 @@ _HEADER_ALIASES: Final[dict[str, str]] = {
     "project": "project",
     "qbo_id": "external_ref",
     "quickbooks_id": "external_ref",
+    "statement": "financial_statement",
+    "sub_group": "account_sub_group",
+    "subgroup": "account_sub_group",
     "type": "account_type",
 }
 
@@ -101,7 +112,7 @@ _FALSE_LITERALS: Final[frozenset[str]] = frozenset({"0", "f", "false", "n", "no"
 
 
 def import_coa_file(*, filename: str, payload: bytes) -> ImportedCoaFile:
-    """Parse a CSV/XLSX COA payload, validate it, and return canonical account seeds."""
+    """Parse a CSV/XLSX/searchable-PDF COA payload into canonical account seeds."""
 
     if not payload:
         raise CoaImportError(
@@ -116,10 +127,13 @@ def import_coa_file(*, filename: str, payload: bytes) -> ImportedCoaFile:
     elif suffix in {".xlsx", ".xlsm"}:
         rows, detected_columns = _read_workbook_rows(payload=payload)
         source_format = "xlsx"
+    elif suffix == ".pdf":
+        rows, detected_columns = _read_pdf_rows(payload=payload)
+        source_format = "pdf"
     else:
         raise CoaImportError(
             code=CoaImportErrorCode.UNSUPPORTED_FILE_TYPE,
-            message="Upload a CSV or XLSX chart-of-accounts file.",
+            message="Upload a CSV, XLSX, or searchable PDF chart-of-accounts file.",
         )
 
     if not rows:
@@ -153,19 +167,15 @@ def _read_csv_rows(*, payload: bytes) -> tuple[tuple[dict[str, str], ...], froze
             message="CSV files must be UTF-8 encoded.",
         ) from error
 
-    reader = csv.DictReader(StringIO(decoded_payload))
-    if reader.fieldnames is None:
+    reader = csv.reader(StringIO(decoded_payload))
+    raw_rows = tuple(tuple(cell.strip() for cell in row) for row in reader)
+    if not raw_rows:
         raise CoaImportError(
             code=CoaImportErrorCode.INVALID_FILE,
             message="CSV files must include a header row.",
         )
 
-    canonical_header_map = _build_header_map(reader.fieldnames)
-    rows: list[dict[str, str]] = []
-    for raw_row in reader:
-        rows.append(_canonicalize_row(raw_row=raw_row, header_map=canonical_header_map))
-
-    return tuple(rows), frozenset(canonical_header_map.values())
+    return _read_matrix_rows(raw_rows=raw_rows)
 
 
 def _read_workbook_rows(*, payload: bytes) -> tuple[tuple[dict[str, str], ...], frozenset[str]]:
@@ -180,62 +190,159 @@ def _read_workbook_rows(*, payload: bytes) -> tuple[tuple[dict[str, str], ...], 
         ) from error
 
     worksheet = workbook.active
-    row_iter = worksheet.iter_rows(values_only=True)
-    try:
-        header_row = next(row_iter)
-    except StopIteration as error:
+    raw_rows = tuple(
+        tuple("" if cell is None else str(cell).strip() for cell in row)
+        for row in worksheet.iter_rows(values_only=True)
+    )
+    if not raw_rows:
         raise CoaImportError(
             code=CoaImportErrorCode.INVALID_FILE,
             message="The workbook does not contain a header row.",
+        )
+
+    return _read_matrix_rows(raw_rows=raw_rows)
+
+
+def _read_pdf_rows(*, payload: bytes) -> tuple[tuple[dict[str, str], ...], frozenset[str]]:
+    """Read searchable PDF text when the table structure is preserved by extraction."""
+
+    try:
+        reader = PdfReader(BytesIO(payload))
+    except PdfReadError as error:
+        raise CoaImportError(
+            code=CoaImportErrorCode.INVALID_FILE,
+            message="The PDF could not be opened. Upload a valid searchable PDF.",
         ) from error
 
-    header_cells = ["" if cell is None else str(cell) for cell in header_row]
-    canonical_header_map = _build_header_map(header_cells)
+    raw_rows = tuple(
+        tuple(cell.strip() for cell in line.split("|"))
+        for page in reader.pages
+        for line in (page.extract_text() or "").splitlines()
+        if "|" in line
+    )
+    if not raw_rows:
+        raise CoaImportError(
+            code=CoaImportErrorCode.INVALID_FILE,
+            message=(
+                "The PDF text did not preserve a chart-of-accounts table. Upload the source "
+                "spreadsheet as XLSX/CSV, or a searchable PDF whose table columns extract cleanly."
+            ),
+        )
 
+    return _read_matrix_rows(raw_rows=raw_rows)
+
+
+def _read_matrix_rows(
+    *,
+    raw_rows: Sequence[Sequence[str]],
+) -> tuple[tuple[dict[str, str], ...], frozenset[str]]:
+    """Find the header row in a worksheet/CSV matrix and normalize following rows."""
+
+    non_empty_rows = tuple(row for row in raw_rows if any(cell.strip() for cell in row))
+    if not non_empty_rows:
+        raise CoaImportError(
+            code=CoaImportErrorCode.INVALID_FILE,
+            message="The COA file does not contain any account rows.",
+        )
+
+    best_header: tuple[int, dict[int, str]] | None = None
+    best_score = -1
+    for index, row in enumerate(non_empty_rows[:25]):
+        header_map = _build_header_map(row, validate=False)
+        score = _score_header_map(header_map)
+        if score > best_score:
+            best_header = (index, header_map)
+            best_score = score
+
+    if best_header is None:
+        _raise_missing_header_error(())
+    assert best_header is not None
+
+    header_index, canonical_header_map = best_header
+    _validate_header_map(tuple(canonical_header_map.values()))
+    headers = tuple(non_empty_rows[header_index])
     rows: list[dict[str, str]] = []
-    for raw_row in row_iter:
-        raw_mapping = {
-            str(index): "" if value is None else str(value)
-            for index, value in enumerate(raw_row)
-            if index < len(header_cells)
-        }
-        row_by_header = {
-            str(header_cells[index]): raw_mapping.get(str(index), "")
-            for index in range(len(header_cells))
-        }
-        rows.append(_canonicalize_row(raw_row=row_by_header, header_map=canonical_header_map))
+    for raw_row in non_empty_rows[header_index + 1 :]:
+        canonical = _canonicalize_matrix_row(
+            raw_row=raw_row,
+            headers=headers,
+            header_map=canonical_header_map,
+        )
+        if canonical:
+            rows.append(canonical)
 
     return tuple(rows), frozenset(canonical_header_map.values())
 
 
-def _build_header_map(headers: Sequence[str]) -> dict[str, str]:
+def _build_header_map(headers: Sequence[str], *, validate: bool = True) -> dict[int, str]:
     """Map source header names to canonical COA field names and validate required columns."""
 
-    header_map: dict[str, str] = {}
-    for header in headers:
+    header_map: dict[int, str] = {}
+    for index, header in enumerate(headers):
         normalized = _normalize_header_name(header)
         canonical_name = _HEADER_ALIASES.get(normalized)
         if canonical_name is None:
             continue
-        header_map[header] = canonical_name
+        header_map[index] = canonical_name
 
-    missing = sorted(_REQUIRED_COLUMNS.difference(header_map.values()))
-    if missing:
-        missing_columns = ", ".join(missing)
-        raise CoaImportError(
-            code=CoaImportErrorCode.INVALID_FILE,
-            message=f"The COA file is missing required columns: {missing_columns}.",
-        )
+    if validate:
+        _validate_header_map(tuple(header_map.values()))
 
     return header_map
 
 
-def _canonicalize_row(*, raw_row: dict[str, str], header_map: dict[str, str]) -> dict[str, str]:
+def _validate_header_map(detected_columns: Sequence[str]) -> None:
+    """Ensure headers include enough account identity and type evidence."""
+
+    detected = set(detected_columns)
+    missing = sorted({"account_code", "account_name"}.difference(detected))
+    has_type_evidence = bool(
+        {"account_type", "financial_statement", "account_group", "account_sub_group"}.intersection(
+            detected
+        )
+    )
+    if "account_type" not in detected and not has_type_evidence:
+        missing.append("account_type")
+    if missing:
+        _raise_missing_header_error(missing)
+
+
+def _raise_missing_header_error(missing: Sequence[str]) -> None:
+    """Raise the canonical missing-header import error."""
+
+    missing_columns = ", ".join(missing) if missing else ", ".join(sorted(_REQUIRED_COLUMNS))
+    raise CoaImportError(
+        code=CoaImportErrorCode.INVALID_FILE,
+        message=f"The COA file is missing required columns: {missing_columns}.",
+    )
+
+
+def _score_header_map(header_map: dict[int, str]) -> int:
+    """Rank a candidate header row by how much COA evidence it contains."""
+
+    detected = set(header_map.values())
+    score = 0
+    for column_name in ("account_code", "account_name", "account_type"):
+        if column_name in detected:
+            score += 4
+    for column_name in ("financial_statement", "account_group", "account_sub_group"):
+        if column_name in detected:
+            score += 2
+    return score
+
+
+def _canonicalize_matrix_row(
+    *,
+    raw_row: Sequence[str],
+    headers: Sequence[str],
+    header_map: dict[int, str],
+) -> dict[str, str]:
     """Project one source row into canonical field names with raw string values."""
 
     canonical_row: dict[str, str] = {}
-    for source_header, value in raw_row.items():
-        canonical_name = header_map.get(source_header)
+    del headers
+    for index, value in enumerate(raw_row):
+        canonical_name = header_map.get(index)
         if canonical_name is None:
             continue
         canonical_row[canonical_name] = value
@@ -252,8 +359,11 @@ def _parse_account_row(*, row: dict[str, str], row_number: int) -> ImportedCoaAc
     account_name = _require_text(
         row.get("account_name"), field_name="account_name", row_number=row_number
     )
-    account_type = _normalize_account_type(
-        _require_text(row.get("account_type"), field_name="account_type", row_number=row_number)
+    raw_account_type = _normalize_optional_text(row.get("account_type"))
+    account_type = (
+        _normalize_account_type(raw_account_type)
+        if raw_account_type is not None
+        else _infer_account_type(row=row, row_number=row_number)
     )
     parent_account_code = _normalize_optional_text(row.get("parent_account_code"))
     external_ref = _normalize_optional_text(row.get("external_ref"))
@@ -357,7 +467,91 @@ def _normalize_optional_text(value: str | None) -> str | None:
 def _normalize_account_type(value: str) -> str:
     """Normalize account-type labels to lower snake_case values."""
 
-    return value.strip().lower().replace(" ", "_")
+    normalized = _normalize_accounting_label(value)
+    aliases = {
+        "assets": "asset",
+        "asset": "asset",
+        "current_assets": "asset",
+        "fixed_assets": "asset",
+        "long_term_assets": "asset",
+        "non_current_assets": "asset",
+        "liabilities": "liability",
+        "liability": "liability",
+        "current_liabilities": "liability",
+        "long_term_liabilities": "liability",
+        "non_current_liabilities": "liability",
+        "equity": "equity",
+        "owners_equity": "equity",
+        "owner_s_equity": "equity",
+        "capital": "equity",
+        "income": "revenue",
+        "revenue": "revenue",
+        "sales": "revenue",
+        "other_income": "other_income",
+        "cost_of_sales": "cost_of_sales",
+        "cost_of_goods_sold": "cost_of_sales",
+        "cogs": "cost_of_sales",
+        "expenses": "expense",
+        "expense": "expense",
+        "operating_expenses": "expense",
+        "other_expenses": "other_expense",
+        "other_expense": "other_expense",
+    }
+    return aliases.get(normalized, normalized)
+
+
+def _infer_account_type(*, row: dict[str, str], row_number: int) -> str:
+    """Infer account type from real-world COA grouping columns."""
+
+    signals = " ".join(
+        value
+        for key in ("account_group", "account_sub_group", "financial_statement", "account_name")
+        if (value := _normalize_optional_text(row.get(key))) is not None
+    )
+    normalized = _normalize_accounting_label(signals)
+    if not normalized:
+        raise CoaImportError(
+            code=CoaImportErrorCode.INVALID_FILE,
+            message=(
+                f"Row {row_number} is missing account_type and does not include enough "
+                "financial statement/group evidence to infer it."
+            ),
+        )
+
+    if any(token in normalized for token in ("asset", "cash", "receivable", "inventory")):
+        return "asset"
+    if any(token in normalized for token in ("liabil", "payable", "creditor", "loan")):
+        return "liability"
+    if any(token in normalized for token in ("equity", "capital", "retained_earning")):
+        return "equity"
+    if any(token in normalized for token in ("cost_of_sales", "cost_of_goods", "cogs")):
+        return "cost_of_sales"
+    if any(token in normalized for token in ("expense", "wage", "salary", "rent", "utility")):
+        return "expense"
+    if any(token in normalized for token in ("revenue", "income", "sales", "service")):
+        return "revenue"
+
+    raise CoaImportError(
+        code=CoaImportErrorCode.INVALID_FILE,
+        message=(
+            f"Row {row_number} is missing account_type and the importer could not infer one "
+            "from the financial statement/group columns."
+        ),
+    )
+
+
+def _normalize_accounting_label(value: str) -> str:
+    """Normalize account labels into the comparison surface used by format inference."""
+
+    return (
+        value.strip()
+        .lower()
+        .replace("&", " and ")
+        .replace("/", " ")
+        .replace("-", " ")
+        .replace("'", " ")
+        .replace(" ", "_")
+    )
 
 
 def _parse_boolean(

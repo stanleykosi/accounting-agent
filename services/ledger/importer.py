@@ -1,6 +1,6 @@
 """
 Purpose: Parse and validate imported general-ledger and trial-balance upload files.
-Scope: CSV/XLSX decoding, canonical header normalization, amount/date validation,
+Scope: CSV/XLSX/searchable-PDF decoding, canonical header normalization, amount/date validation,
 and conversion into typed import seeds for service-layer persistence.
 Dependencies: Python CSV/io helpers, Decimal/date parsing, and openpyxl workbook reads.
 """
@@ -9,7 +9,8 @@ from __future__ import annotations
 
 import csv
 import hashlib
-from collections.abc import Sequence
+import re
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
@@ -18,6 +19,8 @@ from io import BytesIO, StringIO
 from pathlib import Path
 
 from openpyxl import load_workbook  # type: ignore[import-untyped]
+from pypdf import PdfReader
+from pypdf.errors import PdfReadError
 from services.common.types import JsonObject
 
 
@@ -83,14 +86,16 @@ class ImportedTrialBalanceFile:
     import_metadata: JsonObject
 
 
-_GL_REQUIRED_COLUMNS = frozenset({"posting_date", "account_code"})
-_TB_REQUIRED_COLUMNS = frozenset({"account_code"})
+_GL_REQUIRED_COLUMNS = frozenset({"posting_date"})
+_TB_REQUIRED_COLUMNS = frozenset[str]()
 
 _GL_HEADER_ALIASES = {
     "account": "account_name",
     "account_code": "account_code",
+    "account_description": "account_name",
     "account_name": "account_name",
     "account_number": "account_code",
+    "account_title": "account_name",
     "amount": "amount",
     "cost_centre": "cost_centre",
     "cost_center": "cost_centre",
@@ -117,6 +122,7 @@ _GL_HEADER_ALIASES = {
     "journal_number": "transaction_group_key",
     "line_type": "line_type",
     "memo": "description",
+    "name": "account_name",
     "posting_date": "posting_date",
     "project": "project",
     "ref": "reference",
@@ -140,8 +146,10 @@ _GL_HEADER_ALIASES = {
 _TB_HEADER_ALIASES = {
     "account": "account_name",
     "account_code": "account_code",
+    "account_description": "account_name",
     "account_name": "account_name",
     "account_number": "account_code",
+    "account_title": "account_name",
     "account_type": "account_type",
     "active": "is_active",
     "balance": "balance",
@@ -164,21 +172,38 @@ _FALSE_LITERALS = frozenset({"0", "f", "false", "inactive", "n", "no"})
 _DATE_FORMATS = ("%Y-%m-%d", "%d/%m/%Y", "%m/%d/%Y", "%d-%m-%Y", "%Y/%m/%d")
 
 
-def import_general_ledger_file(*, filename: str, payload: bytes) -> ImportedGeneralLedgerFile:
-    """Parse a CSV/XLSX general-ledger payload and return validated line seeds."""
+def import_general_ledger_file(
+    *,
+    filename: str,
+    payload: bytes,
+    account_code_lookup: Mapping[str, str] | None = None,
+) -> ImportedGeneralLedgerFile:
+    """Parse a CSV/XLSX/searchable-PDF general-ledger payload into line seeds."""
 
     rows, detected_columns, source_format = _read_rows(
         filename=filename,
         payload=payload,
         header_aliases=_GL_HEADER_ALIASES,
         required_columns=_GL_REQUIRED_COLUMNS,
+        required_any_column_groups=(frozenset({"account_code", "account_name"}),),
         noun="general ledger",
     )
-    lines = tuple(_parse_gl_row(row=row, row_number=index + 2) for index, row in enumerate(rows))
+    normalized_account_lookup = _normalize_account_code_lookup(account_code_lookup)
+    lines = tuple(
+        _parse_gl_row(
+            row=row,
+            row_number=index + 2,
+            account_code_lookup=normalized_account_lookup,
+        )
+        for index, row in enumerate(rows)
+    )
     metadata: JsonObject = {
         "detected_columns": ", ".join(sorted(detected_columns)),
         "format": source_format,
         "row_count": len(lines),
+        "account_identity_strategy": (
+            "explicit_account_code" if "account_code" in detected_columns else "resolved_by_name"
+        ),
         "transaction_grouping_strategy": (
             "explicit_column"
             if "transaction_group_key" in detected_columns
@@ -189,21 +214,44 @@ def import_general_ledger_file(*, filename: str, payload: bytes) -> ImportedGene
     return ImportedGeneralLedgerFile(lines=lines, import_metadata=metadata)
 
 
-def import_trial_balance_file(*, filename: str, payload: bytes) -> ImportedTrialBalanceFile:
-    """Parse a CSV/XLSX trial-balance payload and return validated account seeds."""
+def import_trial_balance_file(
+    *,
+    filename: str,
+    payload: bytes,
+    account_code_lookup: Mapping[str, str] | None = None,
+) -> ImportedTrialBalanceFile:
+    """Parse a CSV/XLSX/searchable-PDF trial-balance payload into account seeds."""
 
     rows, detected_columns, source_format = _read_rows(
         filename=filename,
         payload=payload,
         header_aliases=_TB_HEADER_ALIASES,
         required_columns=_TB_REQUIRED_COLUMNS,
+        required_any_column_groups=(frozenset({"account_code", "account_name"}),),
         noun="trial balance",
     )
-    lines = tuple(_parse_tb_row(row=row, row_number=index + 2) for index, row in enumerate(rows))
+    normalized_account_lookup = _normalize_account_code_lookup(account_code_lookup)
+    data_rows = tuple(row for row in rows if not _is_trial_balance_summary_row(row=row))
+    lines = tuple(
+        _parse_tb_row(
+            row=row,
+            row_number=index + 2,
+            account_code_lookup=normalized_account_lookup,
+        )
+        for index, row in enumerate(data_rows)
+    )
+    if not lines:
+        raise LedgerImportError(
+            code=LedgerImportErrorCode.INVALID_FILE,
+            message="The trial balance file does not contain any account rows.",
+        )
     metadata: JsonObject = {
         "detected_columns": ", ".join(sorted(detected_columns)),
         "format": source_format,
         "row_count": len(lines),
+        "account_identity_strategy": (
+            "explicit_account_code" if "account_code" in detected_columns else "resolved_by_name"
+        ),
         "uploaded_filename": filename,
     }
     return ImportedTrialBalanceFile(lines=lines, import_metadata=metadata)
@@ -215,9 +263,10 @@ def _read_rows(
     payload: bytes,
     header_aliases: dict[str, str],
     required_columns: frozenset[str],
+    required_any_column_groups: tuple[frozenset[str], ...] = (),
     noun: str,
 ) -> tuple[tuple[dict[str, str], ...], frozenset[str], str]:
-    """Read canonicalized rows from a CSV or XLSX payload."""
+    """Read canonicalized rows from a CSV, XLSX, or searchable PDF payload."""
 
     if not payload:
         raise LedgerImportError(
@@ -231,6 +280,7 @@ def _read_rows(
             payload=payload,
             header_aliases=header_aliases,
             required_columns=required_columns,
+            required_any_column_groups=required_any_column_groups,
             noun=noun,
         )
         return rows, detected_columns, "csv"
@@ -239,13 +289,23 @@ def _read_rows(
             payload=payload,
             header_aliases=header_aliases,
             required_columns=required_columns,
+            required_any_column_groups=required_any_column_groups,
             noun=noun,
         )
         return rows, detected_columns, "xlsx"
+    if suffix == ".pdf":
+        rows, detected_columns = _read_pdf_rows(
+            payload=payload,
+            header_aliases=header_aliases,
+            required_columns=required_columns,
+            required_any_column_groups=required_any_column_groups,
+            noun=noun,
+        )
+        return rows, detected_columns, "pdf"
 
     raise LedgerImportError(
         code=LedgerImportErrorCode.UNSUPPORTED_FILE_TYPE,
-        message=f"Upload a CSV or XLSX {noun} file.",
+        message=f"Upload a CSV, XLSX, or searchable PDF {noun} file.",
     )
 
 
@@ -254,6 +314,7 @@ def _read_csv_rows(
     payload: bytes,
     header_aliases: dict[str, str],
     required_columns: frozenset[str],
+    required_any_column_groups: tuple[frozenset[str], ...],
     noun: str,
 ) -> tuple[tuple[dict[str, str], ...], frozenset[str]]:
     """Read CSV rows and normalize headers into canonical column names."""
@@ -266,29 +327,26 @@ def _read_csv_rows(
             message="CSV files must be UTF-8 encoded.",
         ) from error
 
-    reader = csv.DictReader(StringIO(decoded_payload))
-    if reader.fieldnames is None:
+    try:
+        dialect = csv.Sniffer().sniff(decoded_payload[:4096], delimiters=",;\t|")
+    except csv.Error:
+        dialect = csv.excel
+    reader = csv.reader(StringIO(decoded_payload), dialect=dialect)
+    raw_rows = tuple(tuple(cell.strip() for cell in row) for row in reader)
+    if not raw_rows:
         raise LedgerImportError(
             code=LedgerImportErrorCode.INVALID_FILE,
             message=f"The {noun} CSV file must include a header row.",
         )
 
-    header_map = _build_header_map(
-        headers=reader.fieldnames,
+    rows, detected_columns = _read_matrix_rows(
+        raw_rows=raw_rows,
         header_aliases=header_aliases,
         required_columns=required_columns,
+        required_any_column_groups=required_any_column_groups,
         noun=noun,
     )
-    rows = [
-        _canonicalize_row(raw_row=raw_row, header_map=header_map)
-        for raw_row in reader
-    ]
-    if not rows:
-        raise LedgerImportError(
-            code=LedgerImportErrorCode.INVALID_FILE,
-            message=f"The {noun} file does not contain any data rows.",
-        )
-    return tuple(rows), frozenset(header_map.values())
+    return rows, detected_columns
 
 
 def _read_workbook_rows(
@@ -296,6 +354,7 @@ def _read_workbook_rows(
     payload: bytes,
     header_aliases: dict[str, str],
     required_columns: frozenset[str],
+    required_any_column_groups: tuple[frozenset[str], ...],
     noun: str,
 ) -> tuple[tuple[dict[str, str], ...], frozenset[str]]:
     """Read the first worksheet in an XLSX payload and normalize headers."""
@@ -309,38 +368,65 @@ def _read_workbook_rows(
         ) from error
 
     worksheet = workbook.active
-    row_iter = worksheet.iter_rows(values_only=True)
-    try:
-        header_row = next(row_iter)
-    except StopIteration as error:
+    raw_rows = tuple(
+        tuple("" if cell is None else str(cell).strip() for cell in row)
+        for row in worksheet.iter_rows(values_only=True)
+    )
+    if not raw_rows:
         raise LedgerImportError(
             code=LedgerImportErrorCode.INVALID_FILE,
             message=f"The {noun} workbook does not contain a header row.",
-        ) from error
+        )
 
-    headers = ["" if cell is None else str(cell) for cell in header_row]
-    header_map = _build_header_map(
-        headers=headers,
+    return _read_matrix_rows(
+        raw_rows=raw_rows,
         header_aliases=header_aliases,
         required_columns=required_columns,
+        required_any_column_groups=required_any_column_groups,
         noun=noun,
     )
 
-    rows: list[dict[str, str]] = []
-    for raw_row in row_iter:
-        row_values = {
-            str(headers[index]): "" if value is None else str(value)
-            for index, value in enumerate(raw_row)
-            if index < len(headers)
-        }
-        rows.append(_canonicalize_row(raw_row=row_values, header_map=header_map))
 
-    if not rows:
+def _read_pdf_rows(
+    *,
+    payload: bytes,
+    header_aliases: dict[str, str],
+    required_columns: frozenset[str],
+    required_any_column_groups: tuple[frozenset[str], ...],
+    noun: str,
+) -> tuple[tuple[dict[str, str], ...], frozenset[str]]:
+    """Read searchable PDF text when the table structure is preserved by extraction."""
+
+    try:
+        reader = PdfReader(BytesIO(payload))
+    except PdfReadError as error:
         raise LedgerImportError(
             code=LedgerImportErrorCode.INVALID_FILE,
-            message=f"The {noun} file does not contain any data rows.",
+            message="The PDF could not be opened. Upload a valid searchable PDF.",
+        ) from error
+
+    raw_rows = tuple(
+        tuple(cell.strip() for cell in line.split("|"))
+        for page in reader.pages
+        for line in (page.extract_text() or "").splitlines()
+        if "|" in line
+    )
+    if not raw_rows:
+        raise LedgerImportError(
+            code=LedgerImportErrorCode.INVALID_FILE,
+            message=(
+                f"The PDF text did not preserve a {noun} table. Upload the source spreadsheet "
+                "as XLSX/CSV, or a searchable PDF whose table columns extract cleanly."
+            ),
         )
-    return tuple(rows), frozenset(header_map.values())
+
+    return _read_matrix_rows(
+        raw_rows=raw_rows,
+        header_aliases=header_aliases,
+        required_columns=required_columns,
+        required_any_column_groups=required_any_column_groups,
+        noun=noun,
+    )
 
 
 def _build_header_map(
@@ -348,17 +434,18 @@ def _build_header_map(
     headers: Sequence[str],
     header_aliases: dict[str, str],
     required_columns: frozenset[str],
+    required_any_column_groups: tuple[frozenset[str], ...],
     noun: str,
-) -> dict[str, str]:
+) -> dict[int, str]:
     """Map source headers to canonical field names and validate required columns."""
 
-    header_map: dict[str, str] = {}
-    for header in headers:
+    header_map: dict[int, str] = {}
+    for index, header in enumerate(headers):
         normalized = _normalize_header_name(header)
         canonical_name = header_aliases.get(normalized)
         if canonical_name is None:
             continue
-        header_map[header] = canonical_name
+        header_map[index] = canonical_name
 
     missing = sorted(required_columns.difference(header_map.values()))
     if missing:
@@ -367,23 +454,122 @@ def _build_header_map(
             code=LedgerImportErrorCode.INVALID_FILE,
             message=f"The {noun} file is missing required columns: {missing_columns}.",
         )
+    detected_columns = set(header_map.values())
+    for required_group in required_any_column_groups:
+        if detected_columns.isdisjoint(required_group):
+            options = " or ".join(sorted(required_group))
+            raise LedgerImportError(
+                code=LedgerImportErrorCode.INVALID_FILE,
+                message=f"The {noun} file must include {options}.",
+            )
 
     return header_map
 
 
-def _canonicalize_row(*, raw_row: dict[str, str], header_map: dict[str, str]) -> dict[str, str]:
+def _read_matrix_rows(
+    *,
+    raw_rows: Sequence[Sequence[str]],
+    header_aliases: dict[str, str],
+    required_columns: frozenset[str],
+    required_any_column_groups: tuple[frozenset[str], ...],
+    noun: str,
+) -> tuple[tuple[dict[str, str], ...], frozenset[str]]:
+    """Find the most likely header row and canonicalize rows below it."""
+
+    non_empty_rows = tuple(row for row in raw_rows if any(cell.strip() for cell in row))
+    if not non_empty_rows:
+        raise LedgerImportError(
+            code=LedgerImportErrorCode.INVALID_FILE,
+            message=f"The {noun} file does not contain any data rows.",
+        )
+
+    best_header: tuple[int, dict[int, str]] | None = None
+    best_score = -1
+    for index, row in enumerate(non_empty_rows[:25]):
+        header_map = {
+            column_index: header_aliases[normalized]
+            for column_index, header in enumerate(row)
+            if (normalized := _normalize_header_name(header)) in header_aliases
+        }
+        score = _score_header_map(header_map)
+        if score > best_score:
+            best_header = (index, header_map)
+            best_score = score
+
+    if best_header is None:
+        _build_header_map(
+            headers=(),
+            header_aliases=header_aliases,
+            required_columns=required_columns,
+            required_any_column_groups=required_any_column_groups,
+            noun=noun,
+        )
+    assert best_header is not None
+
+    header_index, header_map = best_header
+    header_map = _build_header_map(
+        headers=non_empty_rows[header_index],
+        header_aliases=header_aliases,
+        required_columns=required_columns,
+        required_any_column_groups=required_any_column_groups,
+        noun=noun,
+    )
+    rows = [
+        _canonicalize_matrix_row(raw_row=raw_row, header_map=header_map)
+        for raw_row in non_empty_rows[header_index + 1 :]
+    ]
+    rows = [row for row in rows if row]
+    if not rows:
+        raise LedgerImportError(
+            code=LedgerImportErrorCode.INVALID_FILE,
+            message=f"The {noun} file does not contain any data rows.",
+        )
+    return tuple(rows), frozenset(header_map.values())
+
+
+def _score_header_map(header_map: dict[int, str]) -> int:
+    """Rank possible header rows by their ledger import signal."""
+
+    detected = set(header_map.values())
+    score = 0
+    for column_name in (
+        "posting_date",
+        "account_code",
+        "account_name",
+        "debit_amount",
+        "credit_amount",
+        "debit_balance",
+        "credit_balance",
+        "balance",
+        "balance_side",
+    ):
+        if column_name in detected:
+            score += 3
+    return score
+
+
+def _canonicalize_matrix_row(
+    *,
+    raw_row: Sequence[str],
+    header_map: dict[int, str],
+) -> dict[str, str]:
     """Project one source row into canonical field names with trimmed string values."""
 
     canonical_row: dict[str, str] = {}
-    for source_header, raw_value in raw_row.items():
-        canonical_name = header_map.get(source_header)
+    for index, raw_value in enumerate(raw_row):
+        canonical_name = header_map.get(index)
         if canonical_name is None:
             continue
         canonical_row[canonical_name] = raw_value.strip()
     return canonical_row
 
 
-def _parse_gl_row(*, row: dict[str, str], row_number: int) -> ImportedGeneralLedgerLineSeed:
+def _parse_gl_row(
+    *,
+    row: dict[str, str],
+    row_number: int,
+    account_code_lookup: Mapping[str, str],
+) -> ImportedGeneralLedgerLineSeed:
     """Validate one canonical general-ledger row."""
 
     posting_date = _parse_required_date(
@@ -391,9 +577,12 @@ def _parse_gl_row(*, row: dict[str, str], row_number: int) -> ImportedGeneralLed
         field_name="posting_date",
         row_number=row_number,
     )
-    account_code = _require_text(
+    account_name = _optional_text(row.get("account_name"))
+    account_code = _resolve_account_code(
         row.get("account_code"),
-        field_name="account_code",
+        account_name=account_name,
+        account_code_lookup=account_code_lookup,
+        noun="general ledger",
         row_number=row_number,
     )
     explicit_transaction_group_value = _optional_text(row.get("transaction_group_key"))
@@ -402,7 +591,7 @@ def _parse_gl_row(*, row: dict[str, str], row_number: int) -> ImportedGeneralLed
         line_no=row_number - 1,
         posting_date=posting_date,
         account_code=account_code,
-        account_name=_optional_text(row.get("account_name")),
+        account_name=account_name,
         reference=_optional_text(row.get("reference")) or explicit_transaction_group_value,
         description=_optional_text(row.get("description")),
         debit_amount=debit_amount,
@@ -417,19 +606,27 @@ def _parse_gl_row(*, row: dict[str, str], row_number: int) -> ImportedGeneralLed
     )
 
 
-def _parse_tb_row(*, row: dict[str, str], row_number: int) -> ImportedTrialBalanceLineSeed:
+def _parse_tb_row(
+    *,
+    row: dict[str, str],
+    row_number: int,
+    account_code_lookup: Mapping[str, str],
+) -> ImportedTrialBalanceLineSeed:
     """Validate one canonical trial-balance row."""
 
-    account_code = _require_text(
+    account_name = _optional_text(row.get("account_name"))
+    account_code = _resolve_account_code(
         row.get("account_code"),
-        field_name="account_code",
+        account_name=account_name,
+        account_code_lookup=account_code_lookup,
+        noun="trial balance",
         row_number=row_number,
     )
     debit_balance, credit_balance = _resolve_balance_amounts(row=row, row_number=row_number)
     return ImportedTrialBalanceLineSeed(
         line_no=row_number - 1,
         account_code=account_code,
-        account_name=_optional_text(row.get("account_name")),
+        account_name=account_name,
         account_type=_optional_text(row.get("account_type")),
         debit_balance=debit_balance,
         credit_balance=credit_balance,
@@ -588,6 +785,35 @@ def _require_text(value: str | None, *, field_name: str, row_number: int) -> str
     return normalized
 
 
+def _resolve_account_code(
+    value: str | None,
+    *,
+    account_name: str | None,
+    account_code_lookup: Mapping[str, str],
+    noun: str,
+    row_number: int,
+) -> str:
+    """Resolve account identity from an explicit code or active-COA account name."""
+
+    account_code = _optional_text(value)
+    if account_code is not None:
+        return account_code
+
+    if account_name is not None:
+        resolved_code = account_code_lookup.get(_normalize_account_lookup_key(account_name))
+        if resolved_code is not None:
+            return resolved_code
+
+    raise LedgerImportError(
+        code=LedgerImportErrorCode.INVALID_FILE,
+        message=(
+            f"Row {row_number} in the {noun} file is missing account_code. "
+            "Upload a file with account codes, or upload/sync a COA first so account names "
+            "can be resolved safely."
+        ),
+    )
+
+
 def _optional_text(value: str | None) -> str | None:
     """Normalize optional text values and collapse blanks to null."""
 
@@ -603,9 +829,20 @@ def _optional_decimal(value: str | None) -> Decimal | None:
     normalized = _optional_text(value)
     if normalized is None:
         return None
-    sanitized = normalized.replace(",", "")
+    is_parenthesized_negative = normalized.startswith("(") and normalized.endswith(")")
+    sanitized = (
+        normalized.strip("()")
+        .translate(
+            {0x2013: "-", 0x2014: "-", 0x20A6: "", 0x24: "", 0xA3: "", 0x20AC: ""}
+        )
+        .replace(",", "")
+        .strip()
+    )
+    if sanitized == "-":
+        return None
     try:
-        return Decimal(sanitized)
+        amount = Decimal(sanitized)
+        return -amount if is_parenthesized_negative else amount
     except InvalidOperation as error:
         raise LedgerImportError(
             code=LedgerImportErrorCode.INVALID_FILE,
@@ -660,6 +897,36 @@ def _build_dimensions(*, row: dict[str, str]) -> JsonObject:
         if value is not None:
             dimensions[key] = value
     return dimensions
+
+
+def _is_trial_balance_summary_row(*, row: dict[str, str]) -> bool:
+    """Return whether one TB row is a grand total/subtotal row rather than an account."""
+
+    label = _optional_text(row.get("account_code")) or _optional_text(row.get("account_name"))
+    if label is None:
+        return True
+    normalized = _normalize_account_lookup_key(label)
+    return normalized in {"total", "totals", "grand_total", "grand_totals"}
+
+
+def _normalize_account_code_lookup(
+    account_code_lookup: Mapping[str, str] | None,
+) -> dict[str, str]:
+    """Normalize active-COA account name lookup keys for import resolution."""
+
+    if account_code_lookup is None:
+        return {}
+    return {
+        _normalize_account_lookup_key(name): str(code).strip()
+        for name, code in account_code_lookup.items()
+        if str(name).strip() and str(code).strip()
+    }
+
+
+def _normalize_account_lookup_key(value: str) -> str:
+    """Normalize account names for exact-but-format-tolerant lookup."""
+
+    return re.sub(r"[^a-z0-9]+", "_", value.strip().lower()).strip("_")
 
 
 def _build_transaction_group_key(

@@ -59,7 +59,7 @@ require_file \
   "Backup is incomplete. Missing MinIO manifest for the derivative bucket."
 
 log "Starting infrastructure services required for restore."
-docker_compose up -d postgres redis minio otel-collector
+docker_compose up -d postgres redis minio
 wait_for_service_health postgres
 wait_for_service_health redis
 wait_for_http_ok "http://127.0.0.1:9000/minio/health/live"

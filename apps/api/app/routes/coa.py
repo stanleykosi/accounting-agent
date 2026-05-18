@@ -90,7 +90,10 @@ async def upload_manual_coa(
     settings: SettingsDependency,
     auth_service: AuthServiceDependency,
     coa_service: CoaServiceDependency,
-    file: Annotated[UploadFile, File(description="CSV or XLSX chart-of-accounts file.")],
+    file: Annotated[
+        UploadFile,
+        File(description="CSV, XLSX, or searchable PDF chart-of-accounts file."),
+    ],
 ) -> CoaWorkspaceResponse:
     """Import one manual COA file as a new active versioned set."""
 

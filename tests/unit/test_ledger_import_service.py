@@ -18,6 +18,7 @@ from services.ledger.service import (
     CloseRunLedgerBindingRecord,
     GeneralLedgerImportBatchRecord,
     LedgerCloseRunRecord,
+    LedgerCoaAccountRecord,
     LedgerEntityRecord,
     LedgerImportService,
     TrialBalanceImportBatchRecord,
@@ -37,7 +38,9 @@ class _FakeLedgerRepository:
         self.created_gl_line_counts: list[int] = []
         self.created_gl_lines: list[tuple] = []
         self.created_tb_line_counts: list[int] = []
+        self.created_tb_lines: list[tuple] = []
         self.activity_events: list[dict[str, object]] = []
+        self.active_coa_accounts: tuple[LedgerCoaAccountRecord, ...] = ()
         self.superseded_imported_gl_close_run_ids: list[UUID] = []
 
     def get_entity_for_user(self, *, entity_id: UUID, user_id: UUID) -> LedgerEntityRecord | None:
@@ -70,6 +73,15 @@ class _FakeLedgerRepository:
         if entity_id != self.entity.id:
             return ()
         return tuple(self.bindings_by_close_run_id.values())
+
+    def list_active_coa_accounts(
+        self,
+        *,
+        entity_id: UUID,
+    ) -> tuple[LedgerCoaAccountRecord, ...]:
+        if entity_id != self.entity.id:
+            return ()
+        return self.active_coa_accounts
 
     def create_general_ledger_import_batch(self, **kwargs) -> GeneralLedgerImportBatchRecord:
         created_at = datetime(2026, 4, 18, 10, 0, tzinfo=UTC)
@@ -116,6 +128,7 @@ class _FakeLedgerRepository:
     def create_trial_balance_import_lines(self, *, batch_id: UUID, lines: tuple) -> int:
         del batch_id
         self.created_tb_line_counts.append(len(lines))
+        self.created_tb_lines.append(lines)
         return len(lines)
 
     def list_open_close_runs_for_period(
@@ -239,3 +252,36 @@ def test_upload_general_ledger_auto_binds_safe_close_runs_and_skips_started_runs
     )
     assert repository.superseded_imported_gl_close_run_ids == [safe_close_run.id]
     assert repository.activity_events
+
+
+def test_upload_trial_balance_resolves_account_names_from_active_coa() -> None:
+    """Account-name-only TB uploads should resolve through the active COA before persistence."""
+
+    repository = _FakeLedgerRepository()
+    repository.active_coa_accounts = (
+        LedgerCoaAccountRecord(account_code="100", account_name="Current Account"),
+        LedgerCoaAccountRecord(account_code="1000", account_name="Creditors"),
+    )
+    actor_user = EntityUserRecord(id=uuid4(), email="ops@example.com", full_name="Finance Ops")
+
+    service = LedgerImportService(repository=repository)
+    service.upload_trial_balance(
+        actor_user=actor_user,
+        entity_id=repository.entity.id,
+        period_start=date(2026, 3, 1),
+        period_end=date(2026, 3, 31),
+        filename="trial-balance.csv",
+        payload=(
+            b"Company Name,,\n"
+            b"Trial Balance as at 2026-03-31,,\n"
+            b"Account,Debit,Credit\n"
+            b"Current Account,37860.47,\n"
+            b"Creditors,,11523.54\n"
+            b"TOTAL,49384.01,49384.01\n"
+        ),
+        source_surface=AuditSourceSurface.DESKTOP,
+        trace_id="trace-tb",
+    )
+
+    lines = repository.created_tb_lines[0]
+    assert [line.account_code for line in lines] == ["100", "1000"]

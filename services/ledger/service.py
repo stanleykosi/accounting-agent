@@ -10,7 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date, datetime
 from enum import StrEnum
-from typing import Protocol
+from typing import Protocol, cast
 from uuid import UUID
 
 from services.audit.service import AuditService
@@ -27,6 +27,7 @@ from services.contracts.ledger_models import (
 )
 from services.db.models.audit import AuditSourceSurface
 from services.db.models.close_run import CloseRun
+from services.db.models.coa import CoaAccount, CoaSet
 from services.db.models.documents import Document
 from services.db.models.entity import Entity, EntityMembership, EntityStatus
 from services.db.models.journals import JournalEntry
@@ -124,6 +125,14 @@ class CloseRunLedgerBindingRecord:
     updated_at: datetime
 
 
+@dataclass(frozen=True, slots=True)
+class LedgerCoaAccountRecord:
+    """Describe one active COA account used to resolve account-name-only imports."""
+
+    account_code: str
+    account_name: str
+
+
 class LedgerImportServiceErrorCode(StrEnum):
     """Enumerate stable error codes surfaced by ledger-import workflows."""
 
@@ -177,6 +186,13 @@ class LedgerRepositoryProtocol(Protocol):
         entity_id: UUID,
     ) -> tuple[CloseRunLedgerBindingRecord, ...]:
         """Return close-run ledger bindings for one entity."""
+
+    def list_active_coa_accounts(
+        self,
+        *,
+        entity_id: UUID,
+    ) -> tuple[LedgerCoaAccountRecord, ...]:
+        """Return active COA accounts for account-name import resolution."""
 
     def create_general_ledger_import_batch(
         self,
@@ -325,6 +341,26 @@ class LedgerRepository:
             .order_by(desc(CloseRunLedgerBinding.updated_at), desc(CloseRunLedgerBinding.id))
         )
         return tuple(_map_binding(row) for row in self._db_session.scalars(statement))
+
+    def list_active_coa_accounts(
+        self,
+        *,
+        entity_id: UUID,
+    ) -> tuple[LedgerCoaAccountRecord, ...]:
+        statement = (
+            select(CoaAccount.account_code, CoaAccount.account_name)
+            .join(CoaSet, CoaSet.id == CoaAccount.coa_set_id)
+            .where(
+                CoaSet.entity_id == entity_id,
+                CoaSet.is_active.is_(True),
+                CoaAccount.is_active.is_(True),
+            )
+            .order_by(CoaAccount.account_code.asc())
+        )
+        return tuple(
+            LedgerCoaAccountRecord(account_code=code, account_name=name)
+            for code, name in self._db_session.execute(statement).all()
+        )
 
     def create_general_ledger_import_batch(
         self,
@@ -659,7 +695,12 @@ class LedgerImportService:
     ) -> GeneralLedgerImportUploadResponse:
         entity = self._require_active_entity(entity_id=entity_id, user_id=actor_user.id)
         try:
-            imported_file = import_general_ledger_file(filename=filename, payload=payload)
+            account_code_lookup = self._build_account_code_lookup(entity_id=entity_id)
+            imported_file = import_general_ledger_file(
+                filename=filename,
+                payload=payload,
+                account_code_lookup=account_code_lookup,
+            )
             batch = self._repository.create_general_ledger_import_batch(
                 entity_id=entity_id,
                 period_start=period_start,
@@ -749,7 +790,12 @@ class LedgerImportService:
     ) -> TrialBalanceImportUploadResponse:
         entity = self._require_active_entity(entity_id=entity_id, user_id=actor_user.id)
         try:
-            imported_file = import_trial_balance_file(filename=filename, payload=payload)
+            account_code_lookup = self._build_account_code_lookup(entity_id=entity_id)
+            imported_file = import_trial_balance_file(
+                filename=filename,
+                payload=payload,
+                account_code_lookup=account_code_lookup,
+            )
             batch = self._repository.create_trial_balance_import_batch(
                 entity_id=entity_id,
                 period_start=period_start,
@@ -861,6 +907,14 @@ class LedgerImportService:
             auto_bound.append(close_run.id)
         return tuple(auto_bound), tuple(skipped)
 
+    def _build_account_code_lookup(self, *, entity_id: UUID) -> dict[str, str]:
+        """Build an active-COA account-name lookup for real-world account-name files."""
+
+        return {
+            account.account_name: account.account_code
+            for account in self._repository.list_active_coa_accounts(entity_id=entity_id)
+        }
+
     def _build_workspace(self, *, entity_id: UUID) -> LedgerWorkspaceResponse:
         return LedgerWorkspaceResponse(
             general_ledger_imports=tuple(
@@ -946,7 +1000,7 @@ def _map_gl_batch(batch: GeneralLedgerImportBatch) -> GeneralLedgerImportBatchRe
         uploaded_filename=batch.uploaded_filename,
         row_count=batch.row_count,
         imported_by_user_id=batch.imported_by_user_id,
-        import_metadata=dict(batch.import_metadata or {}),
+        import_metadata=cast(JsonObject, dict(batch.import_metadata or {})),
         created_at=batch.created_at,
         updated_at=batch.updated_at,
     )
@@ -964,7 +1018,7 @@ def _map_tb_batch(batch: TrialBalanceImportBatch) -> TrialBalanceImportBatchReco
         uploaded_filename=batch.uploaded_filename,
         row_count=batch.row_count,
         imported_by_user_id=batch.imported_by_user_id,
-        import_metadata=dict(batch.import_metadata or {}),
+        import_metadata=cast(JsonObject, dict(batch.import_metadata or {})),
         created_at=batch.created_at,
         updated_at=batch.updated_at,
     )
@@ -1027,7 +1081,7 @@ def _build_gl_summary(batch: GeneralLedgerImportBatchRecord) -> GeneralLedgerImp
             if batch.imported_by_user_id is not None
             else None
         ),
-        import_metadata=batch.import_metadata,
+        import_metadata=cast(dict[str, object], batch.import_metadata),
         created_at=batch.created_at,
         updated_at=batch.updated_at,
     )
@@ -1049,7 +1103,7 @@ def _build_tb_summary(batch: TrialBalanceImportBatchRecord) -> TrialBalanceImpor
             if batch.imported_by_user_id is not None
             else None
         ),
-        import_metadata=batch.import_metadata,
+        import_metadata=cast(dict[str, object], batch.import_metadata),
         created_at=batch.created_at,
         updated_at=batch.updated_at,
     )

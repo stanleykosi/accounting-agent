@@ -16,7 +16,7 @@ Usage: infra/scripts/start-demo.sh
 
 Start the canonical backend demo stack by:
   1. validating bootstrap output and migration assets
-  2. starting PostgreSQL, Redis, MinIO, and OpenTelemetry
+  2. starting PostgreSQL, Redis, and MinIO
   3. initializing MinIO buckets
   4. applying Alembic migrations
   5. starting the API and worker services
@@ -36,7 +36,7 @@ load_env_file
 require_migration_assets
 
 log "Starting infrastructure services."
-docker_compose up -d postgres redis minio otel-collector
+docker_compose up -d postgres redis minio
 wait_for_service_health postgres
 wait_for_service_health redis
 wait_for_http_ok "http://127.0.0.1:9000/minio/health/live"

@@ -1,5 +1,5 @@
 # Purpose: Define the canonical local demo runtime stack for the Accounting AI Agent.
-# Scope: PostgreSQL with pgvector, Redis, MinIO, MinIO bucket initialization, OpenTelemetry collector, API, and worker services.
+# Scope: PostgreSQL with pgvector, Redis, MinIO, MinIO bucket initialization, API, and worker services.
 # Dependencies: Dockerfiles and init assets under infra/docker, the OTEL collector config under infra/otel, and backend settings declared in .env.example.
 
 x-backend-environment: &backend-environment
@@ -49,9 +49,10 @@ x-backend-environment: &backend-environment
   quickbooks_redirect_uri: ${quickbooks_redirect_uri:-http://127.0.0.1:8000/api/integrations/quickbooks/callback}
   quickbooks_sandbox_company_id: ${quickbooks_sandbox_company_id:-}
   quickbooks_use_sandbox: ${quickbooks_use_sandbox:-true}
-  observability_enabled: ${observability_enabled:-true}
   observability_service_namespace: ${observability_service_namespace:-accounting-agent}
-  observability_otlp_endpoint: http://otel-collector:4317
+  observability_otlp_endpoint: ${observability_otlp_endpoint:-}
+  observability_otlp_protocol: ${observability_otlp_protocol:-auto}
+  observability_otlp_headers: ${observability_otlp_headers:-}
   observability_sample_ratio: ${observability_sample_ratio:-1.0}
   security_session_secret: ${security_session_secret:-change-me-before-demo-auth}
   security_token_signing_secret: ${security_token_signing_secret:-change-me-before-cli-auth}
@@ -130,18 +131,6 @@ services:
     volumes:
       - ./minio/init.sh:/init/init.sh:ro
 
-  otel-collector:
-    image: otel/opentelemetry-collector-contrib:latest
-    restart: unless-stopped
-    command:
-      - --config=/etc/otelcol-contrib/config.yaml
-    ports:
-      - "4317:4317"
-      - "4318:4318"
-      - "13133:13133"
-    volumes:
-      - ../otel/otel-collector.yaml:/etc/otelcol-contrib/config.yaml:ro
-
   api:
     build:
       context: ../..
@@ -154,8 +143,6 @@ services:
         condition: service_healthy
       minio-init:
         condition: service_completed_successfully
-      otel-collector:
-        condition: service_started
     environment:
       <<: *backend-environment
       runtime_service_name: accounting-ai-agent-api
@@ -180,8 +167,6 @@ services:
         condition: service_healthy
       minio-init:
         condition: service_completed_successfully
-      otel-collector:
-        condition: service_started
     environment:
       <<: *backend-environment
       runtime_service_name: accounting-ai-agent-worker
