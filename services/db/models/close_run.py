@@ -41,6 +41,13 @@ class CloseRun(Base, UUIDPrimaryKeyMixin, TimestampedModel):
             "period_start",
             "period_end",
         ),
+        Index(
+            "ix_close_runs_entity_period_version",
+            "entity_id",
+            "period_start",
+            "current_version_no",
+            "id",
+        ),
     )
 
     entity_id: Mapped[UUID] = mapped_column(

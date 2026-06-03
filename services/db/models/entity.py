@@ -110,6 +110,7 @@ class EntityMembership(Base, UUIDPrimaryKeyMixin, TimestampedModel):
     __tablename__ = "entity_memberships"
     __table_args__ = (
         UniqueConstraint("entity_id", "user_id", name="uq_entity_memberships_entity_user"),
+        Index("ix_entity_memberships_user_entity", "user_id", "entity_id"),
     )
 
     entity_id: Mapped[UUID] = mapped_column(ForeignKey("entities.id"), nullable=False)

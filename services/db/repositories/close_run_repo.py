@@ -215,17 +215,22 @@ class CloseRunRepository:
         *,
         entity_id: UUID,
         user_id: UUID,
+        limit: int | None = None,
     ) -> tuple[CloseRunRecord, ...]:
-        """Return close runs for an accessible entity in newest period/version order."""
+        """Return close runs for an already-accessible entity in newest period/version order."""
 
-        if self.get_entity_for_user(entity_id=entity_id, user_id=user_id) is None:
-            return ()
-
+        del user_id
         statement = (
             select(CloseRun)
             .where(CloseRun.entity_id == entity_id)
-            .order_by(desc(CloseRun.period_start), desc(CloseRun.current_version_no))
+            .order_by(
+                desc(CloseRun.period_start),
+                desc(CloseRun.current_version_no),
+                desc(CloseRun.id),
+            )
         )
+        if limit is not None:
+            statement = statement.limit(limit)
         return tuple(_map_close_run(close_run) for close_run in self._db_session.scalars(statement))
 
     def get_close_run_for_user(
@@ -553,7 +558,7 @@ class CloseRunRepository:
 
         cloned_documents_by_source_id: dict[UUID, Document] = {}
         for source_document in source_documents:
-            clone = Document(
+            document_clone = Document(
                 close_run_id=target_close_run_id,
                 parent_document_id=None,
                 document_type=source_document.document_type,
@@ -571,8 +576,8 @@ class CloseRunRepository:
                 owner_user_id=source_document.owner_user_id,
                 last_touched_by_user_id=source_document.last_touched_by_user_id,
             )
-            self._db_session.add(clone)
-            cloned_documents_by_source_id[source_document.id] = clone
+            self._db_session.add(document_clone)
+            cloned_documents_by_source_id[source_document.id] = document_clone
         self._db_session.flush()
 
         for source_document in source_documents:
@@ -612,7 +617,7 @@ class CloseRunRepository:
         ).all()
         cloned_extractions_by_source_id: dict[UUID, DocumentExtraction] = {}
         for source_extraction in source_extractions:
-            clone = DocumentExtraction(
+            extraction_clone = DocumentExtraction(
                 document_id=cloned_documents_by_source_id[source_extraction.document_id].id,
                 version_no=source_extraction.version_no,
                 schema_name=source_extraction.schema_name,
@@ -622,8 +627,8 @@ class CloseRunRepository:
                 needs_review=source_extraction.needs_review,
                 approved_version=source_extraction.approved_version,
             )
-            self._db_session.add(clone)
-            cloned_extractions_by_source_id[source_extraction.id] = clone
+            self._db_session.add(extraction_clone)
+            cloned_extractions_by_source_id[source_extraction.id] = extraction_clone
         self._db_session.flush()
 
         source_extraction_ids = tuple(
@@ -710,7 +715,7 @@ class CloseRunRepository:
         ).all()
         cloned_recommendations_by_source_id: dict[UUID, Recommendation] = {}
         for source_recommendation in source_recommendations:
-            clone = Recommendation(
+            recommendation_clone = Recommendation(
                 close_run_id=target_close_run_id,
                 document_id=(
                     cloned_documents_by_source_id[source_recommendation.document_id].id
@@ -730,8 +735,8 @@ class CloseRunRepository:
                 autonomy_mode=source_recommendation.autonomy_mode,
                 superseded_by_id=None,
             )
-            self._db_session.add(clone)
-            cloned_recommendations_by_source_id[source_recommendation.id] = clone
+            self._db_session.add(recommendation_clone)
+            cloned_recommendations_by_source_id[source_recommendation.id] = recommendation_clone
         self._db_session.flush()
 
         source_journals = self._db_session.scalars(
@@ -745,7 +750,7 @@ class CloseRunRepository:
         ).all()
         cloned_journals_by_source_id: dict[UUID, JournalEntry] = {}
         for source_journal in source_journals:
-            clone = JournalEntry(
+            journal_clone = JournalEntry(
                 entity_id=source_journal.entity_id,
                 close_run_id=target_close_run_id,
                 recommendation_id=(
@@ -771,8 +776,8 @@ class CloseRunRepository:
                 applied_by_user_id=source_journal.applied_by_user_id,
                 superseded_by_id=None,
             )
-            self._db_session.add(clone)
-            cloned_journals_by_source_id[source_journal.id] = clone
+            self._db_session.add(journal_clone)
+            cloned_journals_by_source_id[source_journal.id] = journal_clone
         self._db_session.flush()
 
         source_journal_ids = tuple(source_journal.id for source_journal in source_journals)
@@ -873,7 +878,7 @@ class CloseRunRepository:
         ).all()
         cloned_reconciliations_by_source_id: dict[UUID, Reconciliation] = {}
         for source_reconciliation in source_reconciliations:
-            clone = Reconciliation(
+            reconciliation_clone = Reconciliation(
                 close_run_id=target_close_run_id,
                 reconciliation_type=source_reconciliation.reconciliation_type,
                 status=source_reconciliation.status,
@@ -882,8 +887,8 @@ class CloseRunRepository:
                 approved_by_user_id=source_reconciliation.approved_by_user_id,
                 created_by_user_id=source_reconciliation.created_by_user_id,
             )
-            self._db_session.add(clone)
-            cloned_reconciliations_by_source_id[source_reconciliation.id] = clone
+            self._db_session.add(reconciliation_clone)
+            cloned_reconciliations_by_source_id[source_reconciliation.id] = reconciliation_clone
         self._db_session.flush()
 
         source_trial_balance_snapshots = self._db_session.scalars(
@@ -893,7 +898,7 @@ class CloseRunRepository:
         ).all()
         cloned_trial_balance_snapshots_by_source_id: dict[UUID, TrialBalanceSnapshot] = {}
         for source_snapshot in source_trial_balance_snapshots:
-            clone = TrialBalanceSnapshot(
+            trial_balance_snapshot_clone = TrialBalanceSnapshot(
                 close_run_id=target_close_run_id,
                 snapshot_no=source_snapshot.snapshot_no,
                 total_debits=source_snapshot.total_debits,
@@ -903,8 +908,10 @@ class CloseRunRepository:
                 generated_by_user_id=source_snapshot.generated_by_user_id,
                 metadata_payload=_clone_json_value(source_snapshot.metadata_payload),
             )
-            self._db_session.add(clone)
-            cloned_trial_balance_snapshots_by_source_id[source_snapshot.id] = clone
+            self._db_session.add(trial_balance_snapshot_clone)
+            cloned_trial_balance_snapshots_by_source_id[source_snapshot.id] = (
+                trial_balance_snapshot_clone
+            )
         self._db_session.flush()
 
         source_reconciliation_ids = tuple(
@@ -977,7 +984,7 @@ class CloseRunRepository:
         ).all()
         cloned_supporting_schedules_by_source_id: dict[UUID, SupportingSchedule] = {}
         for source_schedule in source_supporting_schedules:
-            clone = SupportingSchedule(
+            supporting_schedule_clone = SupportingSchedule(
                 close_run_id=target_close_run_id,
                 schedule_type=source_schedule.schedule_type,
                 status=source_schedule.status,
@@ -985,8 +992,8 @@ class CloseRunRepository:
                 reviewed_by_user_id=source_schedule.reviewed_by_user_id,
                 reviewed_at=source_schedule.reviewed_at,
             )
-            self._db_session.add(clone)
-            cloned_supporting_schedules_by_source_id[source_schedule.id] = clone
+            self._db_session.add(supporting_schedule_clone)
+            cloned_supporting_schedules_by_source_id[source_schedule.id] = supporting_schedule_clone
         self._db_session.flush()
 
         source_supporting_schedule_ids = tuple(
@@ -1023,7 +1030,7 @@ class CloseRunRepository:
         ).all()
         cloned_report_runs_by_source_id: dict[UUID, ReportRun] = {}
         for source_report_run in source_report_runs:
-            clone = ReportRun(
+            report_run_clone = ReportRun(
                 close_run_id=target_close_run_id,
                 template_id=source_report_run.template_id,
                 version_no=source_report_run.version_no,
@@ -1034,8 +1041,8 @@ class CloseRunRepository:
                 generated_by_user_id=source_report_run.generated_by_user_id,
                 completed_at=source_report_run.completed_at,
             )
-            self._db_session.add(clone)
-            cloned_report_runs_by_source_id[source_report_run.id] = clone
+            self._db_session.add(report_run_clone)
+            cloned_report_runs_by_source_id[source_report_run.id] = report_run_clone
         self._db_session.flush()
 
         source_report_run_ids = tuple(
@@ -1049,7 +1056,7 @@ class CloseRunRepository:
             ).all()
             cloned_commentary_by_source_id: dict[UUID, ReportCommentary] = {}
             for source_commentary_row in source_commentary:
-                clone = ReportCommentary(
+                commentary_clone = ReportCommentary(
                     report_run_id=cloned_report_runs_by_source_id[
                         source_commentary_row.report_run_id
                     ].id,
@@ -1059,8 +1066,8 @@ class CloseRunRepository:
                     authored_by_user_id=source_commentary_row.authored_by_user_id,
                     superseded_by_id=None,
                 )
-                self._db_session.add(clone)
-                cloned_commentary_by_source_id[source_commentary_row.id] = clone
+                self._db_session.add(commentary_clone)
+                cloned_commentary_by_source_id[source_commentary_row.id] = commentary_clone
             self._db_session.flush()
 
             for source_commentary_row in source_commentary:
@@ -1471,7 +1478,7 @@ class CloseRunRepository:
                     DocumentIssue.document_id,
                     DocumentIssue.issue_type,
                 ).where(
-                    DocumentIssue.document_id.in_(document_ids) if document_ids else False,
+                    DocumentIssue.document_id.in_(document_ids),
                     DocumentIssue.status == "open",
                 )
             ).all()
@@ -1655,9 +1662,7 @@ class CloseRunRepository:
                 )
             ).scalar_one()
             pending_reconciliation_approval_count += sum(
-                1
-                for row in reconciliation_rows
-                if row.status in {"draft", "in_review", "blocked"}
+                1 for row in reconciliation_rows if row.status in {"draft", "in_review", "blocked"}
             )
 
         latest_completed_report_run = (

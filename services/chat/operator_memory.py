@@ -195,14 +195,16 @@ def extract_operator_memory_snapshot(
 ) -> dict[str, Any]:
     """Return the operator-memory snapshot encoded in one thread context payload."""
 
+    raw_memory = context_payload.get("agent_memory")
     memory = (
-        dict(context_payload.get("agent_memory"))
-        if isinstance(context_payload.get("agent_memory"), dict)
+        dict(raw_memory)
+        if isinstance(raw_memory, dict)
         else {}
     )
+    raw_last_async_turn = context_payload.get("agent_last_async_turn")
     last_async_turn = (
-        dict(context_payload.get("agent_last_async_turn"))
-        if isinstance(context_payload.get("agent_last_async_turn"), dict)
+        dict(raw_last_async_turn)
+        if isinstance(raw_last_async_turn, dict)
         else None
     )
     return {
@@ -416,10 +418,11 @@ def seed_context_payload_with_operator_memory(
         limit=5,
     )
     updated_payload = dict(context_payload)
+    raw_agent_memory = updated_payload.get("agent_memory")
     updated_payload["agent_memory"] = {
         **(
-            dict(updated_payload.get("agent_memory"))
-            if isinstance(updated_payload.get("agent_memory"), dict)
+            dict(raw_agent_memory)
+            if isinstance(raw_agent_memory, dict)
             else {}
         ),
         **seed,
@@ -448,10 +451,11 @@ def merge_context_payload_with_cross_thread_memory(
         recent_context_payloads=cross_workspace_recent_context_payloads
     )
     updated_payload = dict(context_payload)
+    raw_agent_memory = updated_payload.get("agent_memory")
     updated_payload["agent_memory"] = {
         **(
-            dict(updated_payload.get("agent_memory"))
-            if isinstance(updated_payload.get("agent_memory"), dict)
+            dict(raw_agent_memory)
+            if isinstance(raw_agent_memory, dict)
             else {}
         ),
         "preferred_explanation_depth": (

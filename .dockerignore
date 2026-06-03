@@ -15,12 +15,22 @@ __pycache__
 .DS_Store
 
 node_modules
+apps/cli
+apps/desktop-shell
+apps/desktop-ui
 apps/desktop-ui/node_modules
 apps/desktop-ui/.next
 packages/**/node_modules
 packages/**/dist
+packages
+product-studio
+screenshot
+stitch-export
+tests
+target
 
 dist
 build
 coverage
 htmlcov
+*.Zone.Identifier

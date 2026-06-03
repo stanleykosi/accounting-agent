@@ -66,9 +66,11 @@ class _FakeCloseRunRepository:
         *,
         entity_id: UUID,
         user_id: UUID,
+        limit: int | None = None,
     ) -> tuple[CloseRunRecord, ...]:
         del entity_id, user_id
-        return (self.access_record.close_run,)
+        records = (self.access_record.close_run,)
+        return records[:limit] if limit is not None else records
 
     def get_close_run_for_user(
         self,
@@ -145,8 +147,7 @@ class _FakeCloseRunRepository:
         phase_states: tuple,
     ) -> tuple[CloseRunPhaseStateRecord, ...]:
         records = tuple(
-            _to_phase_state_record(close_run_id=close_run_id, state=state)
-            for state in phase_states
+            _to_phase_state_record(close_run_id=close_run_id, state=state) for state in phase_states
         )
         self.phase_states_by_close_run_id[close_run_id] = records
         return records
@@ -190,8 +191,7 @@ class _FakeCloseRunRepository:
         phase_states: tuple,
     ) -> tuple[CloseRunPhaseStateRecord, ...]:
         records = tuple(
-            _to_phase_state_record(close_run_id=close_run_id, state=state)
-            for state in phase_states
+            _to_phase_state_record(close_run_id=close_run_id, state=state) for state in phase_states
         )
         self.phase_states_by_close_run_id[close_run_id] = records
         return records
@@ -407,9 +407,7 @@ def _build_access_record(*, status: CloseRunStatus) -> CloseRunAccessRecord:
         opened_by_user_id=uuid4(),
         approved_by_user_id=uuid4() if status is CloseRunStatus.APPROVED else None,
         approved_at=(
-            datetime(2026, 4, 10, 9, 0, tzinfo=UTC)
-            if status is CloseRunStatus.APPROVED
-            else None
+            datetime(2026, 4, 10, 9, 0, tzinfo=UTC) if status is CloseRunStatus.APPROVED else None
         ),
         archived_at=None,
         reopened_from_close_run_id=None,

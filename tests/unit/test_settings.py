@@ -163,7 +163,7 @@ def test_app_settings_accepts_observability_otlp_headers_csv(
 def test_app_settings_treats_blank_observability_otlp_endpoint_as_unset(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Ensure blank OTLP endpoint values disable export instead of targeting localhost by default."""
+    """Ensure blank OTLP endpoint values disable export instead of targeting localhost."""
 
     monkeypatch.setenv("observability_otlp_endpoint", "   ")
     monkeypatch.setitem(AppSettings.model_config, "env_file", None)

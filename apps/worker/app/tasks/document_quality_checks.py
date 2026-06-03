@@ -9,6 +9,8 @@ transaction matching.
 from __future__ import annotations
 
 import logging
+from datetime import date
+from typing import Any
 from uuid import UUID
 
 from services.common.enums import DocumentIssueSeverity, DocumentType
@@ -18,12 +20,13 @@ from services.db.repositories.document_repo import DocumentRepository
 from services.db.repositories.entity_repo import EntityRepository
 from services.documents.completeness import CompletenessCheckService
 from services.documents.duplicate_detection import DuplicateDetectionService
-from services.documents.issues import DocumentIssueService
+from services.documents.issues import DocumentIssueRecord, DocumentIssueService
 from services.documents.period_validation import PeriodValidationService
 from services.documents.transaction_matching import (
     TransactionMatchingService,
 )
 from services.storage.repository import StorageRepository
+from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
 
@@ -35,16 +38,16 @@ def run_document_quality_checks(
     document_id: UUID,
     document_hash: str,
     document_file_size: int,
-    document_period_start,
-    document_period_end,
-    close_run_period_start,
-    close_run_period_end,
+    document_period_start: date | None,
+    document_period_end: date | None,
+    close_run_period_start: date,
+    close_run_period_end: date,
     actor_user_id: UUID,
     document_repo: DocumentRepository,
     entity_repo: EntityRepository,
     storage_repo: StorageRepository,
-    db_session,
-) -> dict:
+    db_session: Session,
+) -> dict[str, Any]:
     """
     Run all document quality checks for an uploaded document.
 
@@ -85,7 +88,7 @@ def run_document_quality_checks(
     )
     transaction_matcher = TransactionMatchingService(db_session=db_session)
 
-    results = {
+    results: dict[str, Any] = {
         "document_id": str(document_id),
         "checks_performed": [],
         "issues_created": [],
@@ -295,7 +298,7 @@ def run_document_quality_checks(
     return results
 
 
-def _duplicate_result_payload(duplicate_result) -> dict[str, object]:
+def _duplicate_result_payload(duplicate_result: Any) -> dict[str, object]:
     """Serialize one duplicate-detection result without depending on a mutable __dict__."""
 
     return {
@@ -313,8 +316,8 @@ def _synchronize_duplicate_document_issue(
     issue_service: DocumentIssueService,
     document_id: UUID,
     actor_user_id: UUID,
-    duplicate_result,
-):
+    duplicate_result: Any,
+) -> DocumentIssueRecord | None:
     """Create, keep, or resolve duplicate-document issues for canonical batch state."""
 
     open_duplicate_issues = [

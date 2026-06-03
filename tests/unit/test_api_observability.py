@@ -48,5 +48,5 @@ def test_health_request_emits_operational_event_with_trace_id(monkeypatch) -> No
     assert response.status_code == 200
     assert receipts, "Expected at least one operational event receipt."
     request_receipt = receipts[-1]
-    assert getattr(request_receipt, "event_name") == "api.request"
-    assert getattr(request_receipt, "trace_id") is not None
+    assert request_receipt.event_name == "api.request"
+    assert request_receipt.trace_id is not None

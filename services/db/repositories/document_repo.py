@@ -886,7 +886,7 @@ class DocumentRepository:
 
         documents = [root_document]
         seen_document_ids = {root_document.id}
-        frontier_ids = (root_document.id,)
+        frontier_ids: tuple[UUID, ...] = (root_document.id,)
         while frontier_ids:
             child_rows = self._db_session.scalars(
                 select(Document)

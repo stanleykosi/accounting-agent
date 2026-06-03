@@ -4,12 +4,15 @@
 
 FROM python:3.12-slim
 
+ARG DEBIAN_FRONTEND=noninteractive
+
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONPATH=/workspace
 ENV PATH=/workspace/.venv/bin:${PATH}
 ENV UV_LINK_MODE=copy
 ENV UV_COMPILE_BYTECODE=1
+ENV UV_CACHE_DIR=/home/appuser/.cache/uv
 ENV HOME=/home/appuser
 
 WORKDIR /workspace
@@ -22,21 +25,20 @@ RUN python -m ensurepip --upgrade \
     && python -m pip install --no-cache-dir --upgrade pip uv
 
 RUN groupadd --system appuser \
-    && useradd --system --gid appuser --create-home --home-dir /home/appuser appuser
-
-COPY pyproject.toml uv.lock ./
-RUN uv sync --frozen --no-dev --no-install-project \
-    && /workspace/.venv/bin/python -m uvicorn --version
-
-COPY apps/api ./apps/api
-COPY services ./services
-COPY infra/alembic ./infra/alembic
-COPY infra/alembic.ini ./infra/alembic.ini
-COPY .env.example ./.env.example
-
-RUN chown -R appuser:appuser /workspace /home/appuser
+    && useradd --system --gid appuser --create-home --home-dir /home/appuser appuser \
+    && chown appuser:appuser /workspace
 
 USER appuser
+
+COPY --chown=appuser:appuser pyproject.toml uv.lock ./
+RUN uv sync --frozen --no-dev --no-install-project \
+    && python -m uvicorn --version
+
+COPY --chown=appuser:appuser apps/api ./apps/api
+COPY --chown=appuser:appuser services ./services
+COPY --chown=appuser:appuser infra/alembic ./infra/alembic
+COPY --chown=appuser:appuser infra/alembic.ini ./infra/alembic.ini
+COPY --chown=appuser:appuser .env.example ./.env.example
 
 EXPOSE 8000
 

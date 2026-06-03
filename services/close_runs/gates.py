@@ -347,22 +347,26 @@ def _build_blocking_reason(*, phase: WorkflowPhase, signals: PhaseGateSignals) -
     """Build the deterministic recovery message for the supplied phase when blockers exist."""
 
     if phase is WorkflowPhase.COLLECTION:
-        blockers: list[str] = []
+        collection_blockers: list[str] = []
         if signals.approved_document_count <= 0:
-            blockers.append("no approved source documents yet")
+            collection_blockers.append("no approved source documents yet")
         if signals.missing_required_documents:
-            blockers.append(
+            collection_blockers.append(
                 "missing required documents: " + ", ".join(signals.missing_required_documents)
             )
         if signals.pending_document_review_count > 0:
-            blockers.append(
+            collection_blockers.append(
                 f"{signals.pending_document_review_count} document(s) still awaiting verification"
             )
         if signals.unauthorized_document_count > 0:
-            blockers.append(f"{signals.unauthorized_document_count} unauthorized document(s)")
+            collection_blockers.append(
+                f"{signals.unauthorized_document_count} unauthorized document(s)"
+            )
         if signals.wrong_period_document_count > 0:
-            blockers.append(f"{signals.wrong_period_document_count} wrong-period document(s)")
-        return _join_blockers(phase=phase, blockers=tuple(blockers))
+            collection_blockers.append(
+                f"{signals.wrong_period_document_count} wrong-period document(s)"
+            )
+        return _join_blockers(phase=phase, blockers=tuple(collection_blockers))
 
     if (
         phase is WorkflowPhase.PROCESSING
@@ -383,32 +387,32 @@ def _build_blocking_reason(*, phase: WorkflowPhase, signals: PhaseGateSignals) -
             or bool(signals.missing_supporting_schedules)
         )
     ):
-        blockers: list[str] = []
+        reconciliation_blockers: list[str] = []
         if signals.unresolved_reconciliation_exception_count > 0:
-            blockers.append(
+            reconciliation_blockers.append(
                 f"{signals.unresolved_reconciliation_exception_count} unresolved exception(s)"
             )
         if signals.pending_reconciliation_approval_count > 0:
-            blockers.append(
+            reconciliation_blockers.append(
                 f"{signals.pending_reconciliation_approval_count} "
                 "reconciliation run(s) awaiting approval"
             )
         if signals.missing_reconciliation_types:
-            blockers.append(
+            reconciliation_blockers.append(
                 "pending reconciliation runs: "
                 + ", ".join(signals.missing_reconciliation_types)
             )
         if signals.missing_supporting_schedules:
-            blockers.append(
+            reconciliation_blockers.append(
                 "missing supporting schedules: "
                 + ", ".join(signals.missing_supporting_schedules)
             )
         if signals.pending_supporting_schedule_review_count > 0:
-            blockers.append(
+            reconciliation_blockers.append(
                 f"{signals.pending_supporting_schedule_review_count} "
                 "supporting schedule(s) awaiting review"
             )
-        return _join_blockers(phase=phase, blockers=tuple(blockers))
+        return _join_blockers(phase=phase, blockers=tuple(reconciliation_blockers))
 
     if phase is WorkflowPhase.REPORTING and signals.missing_required_reports:
         missing_reports = ", ".join(signals.missing_required_reports)

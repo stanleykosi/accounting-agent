@@ -43,9 +43,7 @@ def test_configure_observability_passes_optional_otlp_headers(monkeypatch) -> No
 
     class FakeLoggingInstrumentor:
         def instrument(self, *, set_logging_format: bool) -> None:
-            captured_arguments["logging_instrumentor"] = {
-                "set_logging_format": set_logging_format
-            }
+            captured_arguments["logging_instrumentor"] = {"set_logging_format": set_logging_format}
 
     def fake_http_span_exporter(**kwargs: object) -> object:
         captured_arguments["http_span_exporter"] = dict(kwargs)
@@ -144,9 +142,7 @@ def test_configure_observability_uses_grpc_for_collector_style_endpoint(monkeypa
 
     class FakeLoggingInstrumentor:
         def instrument(self, *, set_logging_format: bool) -> None:
-            captured_arguments["logging_instrumentor"] = {
-                "set_logging_format": set_logging_format
-            }
+            captured_arguments["logging_instrumentor"] = {"set_logging_format": set_logging_format}
 
     def fake_grpc_span_exporter(**kwargs: object) -> object:
         captured_arguments["grpc_span_exporter"] = dict(kwargs)
@@ -170,7 +166,9 @@ def test_configure_observability_uses_grpc_for_collector_style_endpoint(monkeypa
         otel_module,
         "HttpOTLPMetricExporter",
         lambda **kwargs: (_ for _ in ()).throw(
-            AssertionError("HTTP metric exporter should not be created for collector-style endpoints")
+            AssertionError(
+                "HTTP metric exporter should not be created for collector-style endpoints"
+            )
         ),
     )
     monkeypatch.setattr(otel_module, "BatchSpanProcessor", FakeBatchSpanProcessor)
@@ -237,7 +235,9 @@ def test_configure_observability_skips_otlp_exporters_without_endpoint(monkeypat
     monkeypatch.setattr(
         otel_module,
         "GrpcOTLPSpanExporter",
-        lambda **kwargs: (_ for _ in ()).throw(AssertionError("span exporter should not be created")),
+        lambda **kwargs: (_ for _ in ()).throw(
+            AssertionError("span exporter should not be created")
+        ),
     )
     monkeypatch.setattr(
         otel_module,

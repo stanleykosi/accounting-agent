@@ -9,6 +9,7 @@ from __future__ import annotations
 from decimal import Decimal
 from pathlib import Path
 
+from services.imports.intelligence import IMPORT_INTELLIGENCE_METADATA_KEY
 from services.ledger.importer import import_general_ledger_file, import_trial_balance_file
 
 
@@ -27,6 +28,11 @@ def test_import_general_ledger_file_uses_explicit_transaction_group_column() -> 
     first_line, second_line = imported_file.lines
 
     assert imported_file.import_metadata["transaction_grouping_strategy"] == "explicit_column"
+    report = imported_file.import_metadata[IMPORT_INTELLIGENCE_METADATA_KEY]
+    assert isinstance(report, dict)
+    assert report["document_kind"] == "general_ledger"
+    assert report["header_row_number"] == 1
+    assert report["transaction_grouping_strategy"] == "explicit_column"
     assert first_line.reference == "JE-1001"
     assert second_line.reference == "JE-1001"
     assert first_line.transaction_group_key == second_line.transaction_group_key
@@ -76,6 +82,13 @@ def test_import_trial_balance_file_accepts_title_rows_and_account_name_layout() 
     )
 
     assert imported_file.import_metadata["account_identity_strategy"] == "resolved_by_name"
+    report = imported_file.import_metadata[IMPORT_INTELLIGENCE_METADATA_KEY]
+    assert isinstance(report, dict)
+    assert report["document_kind"] == "trial_balance"
+    assert report["header_row_number"] == 3
+    assert report["account_identity_strategy"] == "resolved_by_name"
+    assert report["account_name_resolution_count"] == 2
+    assert report["skipped_summary_row_count"] == 1
     assert len(imported_file.lines) == 2
     assert imported_file.lines[0].account_code == "100"
     assert imported_file.lines[0].debit_balance == Decimal("37860.47")

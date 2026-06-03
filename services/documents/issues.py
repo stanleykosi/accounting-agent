@@ -16,6 +16,7 @@ from services.common.enums import (
     DocumentIssueSeverity,
     DocumentIssueStatus,
 )
+from services.common.types import JsonObject
 from services.db.models.audit import AuditSourceSurface
 from services.db.models.close_run import CloseRun
 from services.db.models.documents import Document, DocumentIssue
@@ -33,7 +34,7 @@ class DocumentIssueRecord:
     issue_type: str
     severity: DocumentIssueSeverity
     status: DocumentIssueStatus
-    details: dict
+    details: JsonObject
     assigned_to_user_id: UUID | None
     resolved_by_user_id: UUID | None
     resolved_at: datetime | None
@@ -50,7 +51,7 @@ class DocumentIssueServiceProtocol(Protocol):
         document_id: UUID,
         issue_type: str,
         severity: DocumentIssueSeverity,
-        details: dict,
+        details: JsonObject,
         actor_user_id: UUID | None = None,
         source_surface: AuditSourceSurface,
     ) -> DocumentIssueRecord:
@@ -61,7 +62,7 @@ class DocumentIssueServiceProtocol(Protocol):
         self,
         *,
         issue_id: UUID,
-        resolution_details: dict,
+        resolution_details: JsonObject,
         actor_user_id: UUID,
         source_surface: AuditSourceSurface,
     ) -> DocumentIssueRecord:
@@ -98,7 +99,7 @@ class DocumentIssueService:
         document_id: UUID,
         issue_type: str,
         severity: DocumentIssueSeverity,
-        details: dict,
+        details: JsonObject,
         actor_user_id: UUID | None = None,
         source_surface: AuditSourceSurface,
     ) -> DocumentIssueRecord:
@@ -165,7 +166,7 @@ class DocumentIssueService:
         self,
         *,
         issue_id: UUID,
-        resolution_details: dict,
+        resolution_details: JsonObject,
         actor_user_id: UUID,
         source_surface: AuditSourceSurface,
     ) -> DocumentIssueRecord:

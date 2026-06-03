@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any
+from typing import Any, cast
 from uuid import UUID
 
 from services.db.models.chat_action_plans import ChatActionPlan
@@ -368,7 +368,7 @@ def _map_action_plan(model: ChatActionPlan) -> ChatActionPlanRecord:
 def _json_safe_payload(value: dict[str, Any]) -> dict[str, Any]:
     """Return a JSON-serializable copy for JSONB chat action fields."""
 
-    return json.loads(json.dumps(value, default=str))
+    return cast(dict[str, Any], json.loads(json.dumps(value, default=str)))
 
 
 __all__ = [

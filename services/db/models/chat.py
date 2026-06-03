@@ -33,6 +33,14 @@ class ChatThread(Base, UUIDPrimaryKeyMixin, TimestampedModel):
     __tablename__ = "chat_threads"
     __table_args__ = (
         Index("ix_chat_threads_entity_close_run", "entity_id", "close_run_id"),
+        Index(
+            "ix_chat_threads_entity_close_run_created",
+            "entity_id",
+            "close_run_id",
+            "created_at",
+            "id",
+        ),
+        Index("ix_chat_threads_entity_updated", "entity_id", "updated_at", "id"),
     )
 
     id: Mapped[UUID] = mapped_column(
@@ -107,8 +115,7 @@ class ChatMessage(Base, UUIDPrimaryKeyMixin, TimestampedModel):
         Integer,
         nullable=False,
         comment=(
-            "Canonical per-thread message sequence used for deterministic "
-            "conversation ordering."
+            "Canonical per-thread message sequence used for deterministic conversation ordering."
         ),
     )
     role: Mapped[str] = mapped_column(

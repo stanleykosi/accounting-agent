@@ -158,7 +158,10 @@ class ReconciliationItem(Base, UUIDPrimaryKeyMixin, TimestampedModel):
     source_type: Mapped[str] = mapped_column(
         String(30),
         nullable=False,
-        comment="What kind of source produced this item (bank_statement_line, ledger_transaction, etc.).",
+        comment=(
+            "What kind of source produced this item "
+            "(bank_statement_line, ledger_transaction, etc.)."
+        ),
     )
     source_ref: Mapped[str] = mapped_column(
         String(200),

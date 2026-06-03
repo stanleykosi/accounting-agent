@@ -297,12 +297,13 @@ DOCUMENT_PARSE_ASSIST_PROMPT = PromptTemplate(
         "Parsed text excerpt:\n{text_excerpt}\n\n"
         "Parsed table preview:\n{table_preview}\n\n"
         "Return a JSON object with:\n"
-        "- 'predicted_type': one available document type\n"
+        "- 'predicted_type': exactly one canonical value from Available document types\n"
         "- 'classification_confidence': float 0.0-1.0\n"
         "- 'classification_reasoning': brief explanation grounded in the evidence\n"
         "- 'field_candidates': list of field candidates with canonical field_name, value, "
         "confidence, and evidence_quote\n\n"
-        "Only include field candidates that are directly supported by the evidence."
+        "Only include field candidates that are directly supported by the evidence. Do not "
+        "invent document types, field names, or free-form classification labels."
     ),
     description=(
         "Assist document parsing by improving classification confidence and recovering "

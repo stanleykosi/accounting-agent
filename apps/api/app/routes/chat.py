@@ -299,8 +299,7 @@ def _latest_message_order(
 ) -> int:
     """Return the current high-water message order for SSE resume."""
 
-    messages = chat_repository.list_messages_for_thread(thread_id=thread_id)
-    return max((message.message_order for message in messages), default=0)
+    return chat_repository.get_latest_message_order_for_thread(thread_id=thread_id)
 
 
 def _dispatch_chat_operator_turn(
@@ -506,11 +505,12 @@ def _read_thread_messages_after_order(
                 "code": "thread_not_found",
                 "message": "That chat thread does not exist in this workspace.",
             }
-        return [
-            message
-            for message in chat_repository.list_messages_for_thread(thread_id=thread_id)
-            if message.message_order > after_message_order
-        ], None
+        messages = chat_repository.list_messages_for_thread_after_order(
+            thread_id=thread_id,
+            after_message_order=after_message_order,
+            limit=50,
+        )
+        return list(messages), None
 
 
 def _message_matches_stream_turn(
@@ -1526,9 +1526,7 @@ async def send_chat_action_with_attachments(
             "attachment_intent": inline_result.attachment_intent,
             "attachments": list(inline_result.files),
             "ingestion_summary": inline_result.summary,
-            "original_operator_content": (
-                content.strip() if isinstance(content, str) else None
-            ),
+            "original_operator_content": (content.strip() if isinstance(content, str) else None),
         }
         user_message = _persist_accepted_chat_user_turn(
             chat_repository=chat_repository,
@@ -1765,7 +1763,7 @@ async def handle_chat_mcp_request(
                         },
                     }
                     for tool in registered_tools
-                ]
+                ],
             },
         )
     if method == "tools/call":

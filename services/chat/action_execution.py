@@ -14,7 +14,7 @@ import re
 from calendar import monthrange
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Any
+from typing import Any, TypedDict, cast
 from uuid import UUID, uuid4
 
 from services.accounting.recommendation_apply import (
@@ -53,6 +53,7 @@ from services.common.enums import CloseRunStatus, ReportSectionKey, WorkflowPhas
 from services.common.types import utc_now
 from services.contracts.chat_models import (
     AgentCoaSummary,
+    AgentImportWorkspaceSummary,
     AgentMemorySummary,
     AgentOperatorControl,
     AgentRunReadiness,
@@ -84,6 +85,7 @@ from services.entity.delete_service import EntityDeleteService, EntityDeleteServ
 from services.entity.service import EntityService, EntityServiceError
 from services.exports.service import ExportService, ExportServiceError
 from services.jobs.service import JobRecord, JobService, JobServiceError
+from services.ledger.service import LedgerRepository
 from services.model_gateway.client import ModelGateway
 from services.reconciliation.service import ReconciliationService
 from services.reporting.service import ReportService, ReportServiceError
@@ -172,6 +174,11 @@ class _OperatorLoopContext:
     completed_summaries: tuple[str, ...]
 
 
+class _AsyncJobGroup(TypedDict):
+    continuation_group_id: str
+    job_count: int
+
+
 class ChatActionExecutor:
     """Plan and execute tool-aware chat actions through the reusable agent runtime."""
 
@@ -220,6 +227,7 @@ class ChatActionExecutor:
             entity_repository=entity_repository,
             export_service=export_service,
             job_service=job_service,
+            ledger_repository=LedgerRepository(db_session=db_session),
             reconciliation_repository=reconciliation_repository,
             recommendation_repository=recommendation_repository,
             report_repository=report_repository,
@@ -1291,6 +1299,7 @@ class ChatActionExecutor:
         finally:
             if turn_lock_acquired:
                 self._release_thread_turn_lock(thread_id=thread_id)
+        raise RuntimeError("Operator loop exited without producing a response.")
 
     def _surface_operator_error_in_thread(
         self,
@@ -1700,6 +1709,12 @@ class ChatActionExecutor:
         objective = payload.get("turn_objective")
         if not isinstance(objective, str) or not objective.strip():
             return None
+        if grounding is None:
+            grounding = self._grounding.resolve_context(
+                entity_id=entity_id,
+                close_run_id=thread.close_run_id,
+                user_id=actor_user.id,
+            )
 
         snapshot = self._snapshot_for_thread(
             actor_user=actor_user,
@@ -1858,11 +1873,7 @@ class ChatActionExecutor:
                     if isinstance(plan.payload.get("tool_name"), str)
                     else None
                 ),
-                tool_arguments=(
-                    dict(plan.payload.get("tool_arguments"))
-                    if isinstance(plan.payload.get("tool_arguments"), dict)
-                    else None
-                ),
+                tool_arguments=_optional_dict_payload(plan.payload.get("tool_arguments")),
                 action_status="rejected",
                 trace_id=None,
                 snapshot=snapshot,
@@ -1919,6 +1930,7 @@ class ChatActionExecutor:
             grounding=GroundingContext(**grounding_payload),
             progress_summary=snapshot.get("progress_summary"),
             coa=AgentCoaSummary(**snapshot.get("coa", {})),
+            imports=AgentImportWorkspaceSummary(**snapshot.get("imports", {})),
             readiness=AgentRunReadiness(**snapshot.get("readiness", {})),
             memory=operator_memory,
             tools=self._build_tool_manifest_items(),
@@ -2568,6 +2580,13 @@ class ChatActionExecutor:
             handoff_message = _build_scope_handoff_message(applied_result=applied_result)
             return entity_grounding, updated_thread or thread, handoff_message
 
+        if target_close_run_id is None:
+            raise ChatActionExecutionError(
+                status_code=500,
+                code=ChatActionExecutionErrorCode.EXECUTION_FAILED,
+                message="Close-run handoff did not include a target close run.",
+            )
+
         reopened_grounding = self._grounding.resolve_context(
             entity_id=target_entity_id,
             close_run_id=target_close_run_id,
@@ -2629,11 +2648,7 @@ class ChatActionExecutor:
     ) -> None:
         """Persist compact working memory for the thread in its context payload."""
 
-        existing_memory = (
-            existing_payload.get("agent_memory")
-            if isinstance(existing_payload.get("agent_memory"), dict)
-            else {}
-        )
+        existing_memory = _optional_dict_payload(existing_payload.get("agent_memory")) or {}
         recent_tool_names = list(existing_payload.get("agent_recent_tool_names", []))
         recent_tool_namespaces = list(existing_payload.get("agent_recent_tool_namespaces", []))
         recent_objectives = list(existing_payload.get("agent_recent_objectives", []))
@@ -2667,11 +2682,7 @@ class ChatActionExecutor:
         compact_recent_periods = compact_recent_values(recent_period_labels, limit=4)
         compact_recent_targets = compact_recent_values(recent_target_labels, limit=5)
         active_async_turn = get_active_async_turn(context_payload=existing_payload)
-        last_async_turn = (
-            dict(existing_payload.get("agent_last_async_turn"))
-            if isinstance(existing_payload.get("agent_last_async_turn"), dict)
-            else None
-        )
+        last_async_turn = _optional_dict_payload(existing_payload.get("agent_last_async_turn"))
         approved_objective = _resolve_approved_objective(
             existing_memory=existing_memory,
             operator_message=operator_message,
@@ -2803,11 +2814,7 @@ class ChatActionExecutor:
         )
 
         active_async_turn = get_active_async_turn(context_payload=context_payload)
-        last_async_turn = (
-            dict(context_payload.get("agent_last_async_turn"))
-            if isinstance(context_payload.get("agent_last_async_turn"), dict)
-            else None
-        )
+        last_async_turn = _optional_dict_payload(context_payload.get("agent_last_async_turn"))
         payload["active_async_status"] = optional_memory_text(active_async_turn, "status")
         payload["active_async_objective"] = optional_memory_text(active_async_turn, "objective")
         payload["active_async_originating_tool"] = optional_memory_text(
@@ -3164,11 +3171,7 @@ class ChatActionExecutor:
             pending_action = pending_actions[0]
             payload = pending_action.payload if isinstance(pending_action.payload, dict) else {}
             tool_name = str(payload.get("tool_name") or "")
-            tool_arguments = (
-                payload.get("tool_arguments")
-                if isinstance(payload.get("tool_arguments"), dict)
-                else {}
-            )
+            tool_arguments = _optional_dict_payload(payload.get("tool_arguments")) or {}
             description = _build_pending_confirmation_message(
                 tool_name=tool_name,
                 tool_arguments=tool_arguments,
@@ -3220,11 +3223,10 @@ class ChatActionExecutor:
             )
 
         readiness = snapshot.get("readiness")
-        next_actions = (
-            readiness.get("next_actions")
-            if isinstance(readiness, dict) and isinstance(readiness.get("next_actions"), list)
-            else []
+        raw_next_actions = (
+            readiness.get("next_actions") if isinstance(readiness, dict) else None
         )
+        next_actions: list[Any] = raw_next_actions if isinstance(raw_next_actions, list) else []
         for index, action in enumerate(next_actions[:3], start=1):
             if not isinstance(action, str):
                 continue
@@ -3293,11 +3295,11 @@ class ChatActionExecutor:
             entity_id = relocated_thread.entity_id
             thread = relocated_thread
         else:
-            thread = self._chat_repo.get_thread_for_entity(
+            scoped_thread = self._chat_repo.get_thread_for_entity(
                 thread_id=thread_id,
                 entity_id=entity_id,
             )
-            if thread is None:
+            if scoped_thread is None:
                 relocated_thread = self._chat_repo.get_thread_by_id(thread_id=thread_id)
                 if relocated_thread is None:
                     raise ChatActionExecutionError(
@@ -3317,6 +3319,8 @@ class ChatActionExecutor:
                     )
                 thread = relocated_thread
                 entity_id = relocated_thread.entity_id
+            else:
+                thread = scoped_thread
 
         grounding = self._grounding.resolve_context(
             entity_id=entity_id,
@@ -4173,7 +4177,7 @@ class ChatActionExecutor:
     def _build_grounding_payload(self, grounding: GroundingContextRecord) -> dict[str, Any]:
         """Build the evidence snapshot attached to action-mode assistant messages."""
 
-        payload = {
+        payload: dict[str, Any] = {
             "entity_id": grounding.context.entity_id,
             "entity_name": grounding.context.entity_name,
             "autonomy_mode": grounding.context.autonomy_mode,
@@ -4256,18 +4260,16 @@ def _build_pending_action_selection_message(
     """Ask the operator to pick one pending governed action when several are waiting."""
 
     action_word = "confirm" if decision == "approve" else "cancel"
-    described_actions = [
-        _describe_pending_action(
-            tool_name=str(record.payload.get("tool_name") or ""),
-            tool_arguments=(
-                record.payload.get("tool_arguments")
-                if isinstance(record.payload.get("tool_arguments"), dict)
-                else {}
-            ),
-            snapshot=snapshot,
+    described_actions = []
+    for record in pending_actions[:3]:
+        described_actions.append(
+            _describe_pending_action(
+                tool_name=str(record.payload.get("tool_name") or ""),
+                tool_arguments=_optional_dict_payload(record.payload.get("tool_arguments"))
+                or {},
+                snapshot=snapshot,
+            )
         )
-        for record in pending_actions[:3]
-    ]
     joined_actions = _join_choice_labels(described_actions)
     return (
         f"I have more than one governed action waiting. Tell me which one to {action_word}: "
@@ -9671,9 +9673,13 @@ def _humanize_applied_result(applied_result: dict[str, Any]) -> str:
             return f"I resolved the reconciliation anomaly: {description}."
         return "I resolved that reconciliation anomaly."
 
-    summary = _summarize_applied_result(applied_result)
-    if summary is not None:
-        return summary[:1].upper() + summary[1:] + ("." if not summary.endswith(".") else "")
+    fallback_summary = _summarize_applied_result(applied_result)
+    if fallback_summary is not None:
+        return (
+            fallback_summary[:1].upper()
+            + fallback_summary[1:]
+            + ("." if not fallback_summary.endswith(".") else "")
+        )
     return f"I completed the {tool_name.replace('_', ' ')} step."
 
 
@@ -9931,7 +9937,7 @@ def _build_failure_next_step(snapshot: dict[str, Any] | None) -> str | None:
     return None
 
 
-def _extract_async_job_group(*, applied_result: dict[str, Any]) -> dict[str, str | int] | None:
+def _extract_async_job_group(*, applied_result: dict[str, Any]) -> _AsyncJobGroup | None:
     """Return normalized async-group metadata from one applied tool result when present."""
 
     raw_group = applied_result.get("async_job_group")
@@ -10063,6 +10069,14 @@ def _json_safe_payload(value: Any) -> Any:
     """Return a JSON-serializable copy of tool payloads and execution results."""
 
     return json.loads(json.dumps(value, default=str))
+
+
+def _optional_dict_payload(value: Any) -> dict[str, Any] | None:
+    """Return a shallow dict copy when a JSON payload field is object-shaped."""
+
+    if not isinstance(value, dict):
+        return None
+    return dict(cast(dict[str, Any], value))
 
 
 def _build_turn_metadata(

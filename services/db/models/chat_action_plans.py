@@ -18,7 +18,8 @@ from uuid import UUID, uuid4
 
 from services.db.base import Base, TimestampedModel, UUIDPrimaryKeyMixin
 from sqlalchemy import CheckConstraint, ForeignKey, Index, Numeric, String
-from sqlalchemy.dialects.postgresql import JSONB, UUID as PG_UUID
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 

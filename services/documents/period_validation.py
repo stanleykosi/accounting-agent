@@ -99,4 +99,4 @@ class PeriodValidationService:
         )
 
 
-__all__ = ["PeriodValidationResult", "PeriodValidationProtocol", "PeriodValidationService"]
+__all__ = ["PeriodValidationProtocol", "PeriodValidationResult", "PeriodValidationService"]

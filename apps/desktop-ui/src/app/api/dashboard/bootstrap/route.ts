@@ -23,6 +23,8 @@ type DashboardBootstrapEntry = Readonly<{
 
 class BackendWarmupError extends Error {}
 
+const DASHBOARD_CLOSE_RUN_LIMIT = 8;
+
 export async function GET(request: Request): Promise<Response> {
   const proxyHeaders = buildEntityProxyHeaders(request);
   let entityResponse: Response;
@@ -93,7 +95,10 @@ async function readCloseRunsForEntity(
   let response: Response;
   try {
     response = await fetchBackendWithAvailabilityRetry(
-      buildBackendEntitiesUrl(`/${encodeURIComponent(entity.id)}/close-runs`),
+      buildBackendEntitiesUrl(
+        `/${encodeURIComponent(entity.id)}/close-runs`,
+        `limit=${DASHBOARD_CLOSE_RUN_LIMIT}`,
+      ),
       {
         cache: "no-store",
         headers: proxyHeaders,

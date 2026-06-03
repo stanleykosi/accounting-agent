@@ -36,6 +36,7 @@ from services.db.repositories.chat_repo import (
     ChatMessageRecord as RepoChatMessage,
 )
 from services.db.repositories.chat_repo import (
+    ChatThreadMessageStatsRecord,
     ChatThreadRecord,
     ChatThreadWithCountRecord,
 )
@@ -159,11 +160,8 @@ class ChatRepositoryProtocol(Protocol):
     ) -> tuple[RepoChatMessage, ...]:
         """Return messages for a thread ordered oldest-first."""
 
-    def get_message_count_for_thread(self, *, thread_id: UUID) -> int:
-        """Return the total number of messages in a thread."""
-
-    def get_last_message_time_for_thread(self, *, thread_id: UUID) -> Any:
-        """Return the timestamp of the most recent message in a thread."""
+    def get_message_stats_for_thread(self, *, thread_id: UUID) -> ChatThreadMessageStatsRecord:
+        """Return aggregate message stats in one query."""
 
     def delete_thread(
         self,
@@ -250,9 +248,7 @@ class ChatService:
             )
             context_payload = seed_context_payload_with_operator_memory(
                 context_payload=context_payload,
-                recent_context_payloads=tuple(
-                    thread.context_payload for thread in recent_threads
-                ),
+                recent_context_payloads=tuple(thread.context_payload for thread in recent_threads),
                 cross_workspace_recent_context_payloads=tuple(
                     thread.context_payload for thread in cross_workspace_recent_threads
                 ),
@@ -393,17 +389,14 @@ class ChatService:
             thread_id=thread_id,
             limit=message_limit,
         )
-        message_count = self._repository.get_message_count_for_thread(thread_id=thread_id)
-        last_message_at = self._repository.get_last_message_time_for_thread(thread_id=thread_id)
+        message_stats = self._repository.get_message_stats_for_thread(thread_id=thread_id)
 
         thread_summary = self._build_thread_summary(
             thread,
-            message_count=message_count,
-            last_message_at=last_message_at,
+            message_count=message_stats.message_count,
+            last_message_at=message_stats.last_message_at,
         )
-        message_records = tuple(
-            self._map_message_to_contract(message) for message in messages
-        )
+        message_records = tuple(self._map_message_to_contract(message) for message in messages)
         return ChatThreadWithMessages(
             thread=thread_summary,
             messages=message_records,
@@ -430,7 +423,9 @@ class ChatService:
                 message="That chat thread does not exist or is not in this workspace.",
             )
 
-        message_count = self._repository.get_message_count_for_thread(thread_id=thread_id)
+        message_count = self._repository.get_message_stats_for_thread(
+            thread_id=thread_id
+        ).message_count
         try:
             deleted = self._repository.delete_thread(thread_id=thread_id, entity_id=entity_id)
             if not deleted:
@@ -543,9 +538,7 @@ class ChatService:
         return ChatThreadSummary(
             id=serialize_uuid(thread.id),
             entity_id=serialize_uuid(thread.entity_id),
-            close_run_id=(
-                serialize_uuid(thread.close_run_id) if thread.close_run_id else None
-            ),
+            close_run_id=(serialize_uuid(thread.close_run_id) if thread.close_run_id else None),
             title=thread.title,
             grounding=grounding,
             message_count=message_count,
@@ -606,14 +599,16 @@ class ChatService:
                 "Answer questions using evidence from this period's documents and workflow state."
             )
 
-        context_lines.extend([
-            "Your responses must be:",
-            "- Grounded in actual workflow state, extracted values, and source documents.",
-            "- Factual and evidence-based. Do not hallucinate values or statuses.",
-            "- Read-only analysis. You cannot modify workflow state or approve changes.",
-            "- Clear about uncertainty. If confidence is low, say so explicitly.",
-            "Reference evidence sources when available.",
-        ])
+        context_lines.extend(
+            [
+                "Your responses must be:",
+                "- Grounded in actual workflow state, extracted values, and source documents.",
+                "- Factual and evidence-based. Do not hallucinate values or statuses.",
+                "- Read-only analysis. You cannot modify workflow state or approve changes.",
+                "- Clear about uncertainty. If confidence is low, say so explicitly.",
+                "Reference evidence sources when available.",
+            ]
+        )
 
         return "\n".join(context_lines)
 

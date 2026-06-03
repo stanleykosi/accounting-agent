@@ -11,7 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date
 from enum import StrEnum
-from typing import Any
+from typing import Any, cast
 from uuid import UUID
 
 from services.audit.events import ReviewActionType
@@ -22,9 +22,11 @@ from services.common.enums import (
     DocumentStatus,
     DocumentType,
 )
+from services.common.types import JsonObject
 from services.contracts.document_models import (
     AutoTransactionMatchSummary,
     DocumentExtractionSummary,
+    DocumentIntelligenceSummary,
     DocumentIssueSummary,
     DocumentReviewActionResponse,
     DocumentSummary,
@@ -40,6 +42,7 @@ from services.db.repositories.document_repo import (
     DocumentRepository,
 )
 from services.db.repositories.entity_repo import EntityUserRecord
+from services.documents.intelligence import read_document_intelligence_report
 from services.documents.period_validation import PeriodValidationService
 from services.documents.transaction_matching import (
     TransactionMatchingService,
@@ -134,6 +137,7 @@ class DocumentReviewService:
             "period": verified_period,
             "transaction_match": verified_transaction_match,
         }
+        verification_checks_payload = cast(JsonObject, dict(verification_checks))
 
         extraction_approved = False
         normalized_decision = decision.strip().lower()
@@ -214,7 +218,7 @@ class DocumentReviewService:
                 ),
                 "document_id": str(document.id),
                 "decision": normalized_decision,
-                "verification_checks": verification_checks,
+                "verification_checks": verification_checks_payload,
             },
         )
         self._repository.create_activity_event(
@@ -231,7 +235,7 @@ class DocumentReviewService:
                 "document_id": str(document.id),
                 "decision": normalized_decision,
                 "reason": reason,
-                "verification_checks": verification_checks,
+                "verification_checks": verification_checks_payload,
             },
             trace_id=trace_id,
         )
@@ -781,6 +785,7 @@ def _to_extraction_summary(latest_extraction: Any) -> DocumentExtractionSummary 
     auto_transaction_match = extract_auto_transaction_match_metadata(
         latest_extraction.extracted_payload
     )
+    document_intelligence = read_document_intelligence_report(latest_extraction.extracted_payload)
     return DocumentExtractionSummary(
         id=str(latest_extraction.id),
         version_no=latest_extraction.version_no,
@@ -793,6 +798,7 @@ def _to_extraction_summary(latest_extraction: Any) -> DocumentExtractionSummary 
             auto_review_metadata and auto_review_metadata.get("auto_approved") is True
         ),
         auto_transaction_match=_to_auto_transaction_match_summary(auto_transaction_match),
+        document_intelligence=_to_document_intelligence_summary(document_intelligence),
         fields=tuple(
             ExtractedFieldSummary(
                 id=str(field.id),
@@ -809,6 +815,84 @@ def _to_extraction_summary(latest_extraction: Any) -> DocumentExtractionSummary 
         ),
         created_at=latest_extraction.created_at,
         updated_at=latest_extraction.updated_at,
+    )
+
+
+def _to_document_intelligence_summary(metadata: Any) -> DocumentIntelligenceSummary | None:
+    """Translate persisted document-intelligence metadata into the strict API contract."""
+
+    if not isinstance(metadata, dict):
+        return None
+    deterministic = metadata.get("deterministic_classification")
+    ai_assist = metadata.get("ai_assist")
+    if not isinstance(deterministic, dict) or not isinstance(ai_assist, dict):
+        return None
+
+    field_completeness = metadata.get("field_completeness")
+    raw_missing = (
+        field_completeness.get("missing_required_groups")
+        if isinstance(field_completeness, dict)
+        else None
+    )
+    raw_applied_fields = ai_assist.get("field_candidates_applied")
+    raw_warnings = metadata.get("warnings")
+    raw_recovery_actions = metadata.get("recovery_actions")
+    return DocumentIntelligenceSummary(
+        status=str(metadata.get("status") or "classified"),
+        final_document_type=DocumentType(str(metadata.get("final_document_type") or "unknown")),
+        final_confidence=(
+            float(metadata["final_confidence"])
+            if isinstance(metadata.get("final_confidence"), (float, int))
+            else None
+        ),
+        classification_source=str(metadata.get("classification_source") or "unknown"),
+        deterministic_document_type=DocumentType(
+            str(deterministic.get("document_type") or "unknown")
+        ),
+        deterministic_confidence=(
+            float(deterministic["confidence"])
+            if isinstance(deterministic.get("confidence"), (float, int))
+            else None
+        ),
+        ai_assist_returned_output=bool(ai_assist.get("returned_output") is True),
+        ai_assist_predicted_type=(
+            DocumentType(str(ai_assist["predicted_type"]))
+            if isinstance(ai_assist.get("predicted_type"), str)
+            else None
+        ),
+        ai_assist_classification_confidence=(
+            float(ai_assist["classification_confidence"])
+            if isinstance(ai_assist.get("classification_confidence"), (float, int))
+            else None
+        ),
+        ai_assist_applied_classification=bool(
+            ai_assist.get("classification_applied") is True
+        ),
+        ai_assist_field_candidates_applied=(
+            tuple(str(item) for item in raw_applied_fields if str(item))
+            if isinstance(raw_applied_fields, list)
+            else ()
+        ),
+        missing_required_fields=(
+            tuple(str(item) for item in raw_missing if str(item))
+            if isinstance(raw_missing, list)
+            else ()
+        ),
+        warnings=(
+            tuple(str(item) for item in raw_warnings if str(item))
+            if isinstance(raw_warnings, list)
+            else ()
+        ),
+        recovery_actions=(
+            tuple(str(item) for item in raw_recovery_actions if str(item))
+            if isinstance(raw_recovery_actions, list)
+            else ()
+        ),
+        agent_summary=(
+            str(metadata["agent_summary"])
+            if isinstance(metadata.get("agent_summary"), str)
+            else None
+        ),
     )
 
 

@@ -11,11 +11,17 @@ from apps.worker.app.tasks.parse_documents import (
     _apply_document_ai_assist_to_parser_output,
     _build_extraction_parser_output,
     _derive_document_classification,
+    _derive_document_classification_decision,
 )
 from services.common.enums import DocumentType
 from services.contracts.document_ai_models import (
     DocumentFieldAssistCandidate,
     DocumentParseAssistOutput,
+)
+from services.documents.intelligence import (
+    DocumentClassificationDecision,
+    DocumentClassificationSignal,
+    build_document_intelligence_report,
 )
 from services.extraction.field_extractors import (
     compute_confidence_summary,
@@ -274,6 +280,27 @@ def test_explicit_document_type_label_boosts_classification_confidence() -> None
     assert confidence == 0.96
 
 
+def test_classification_decision_records_bounded_signal_source() -> None:
+    """The classifier should expose deterministic evidence for agent diagnostics."""
+
+    decision = _derive_document_classification_decision(
+        {
+            "text": (
+                "Payslip\n"
+                "Employee Name: Jordan Lee\n"
+                "Pay Date: 2026-03-31\n"
+                "Net Pay: 3200.00\n"
+            )
+        }
+    )
+
+    assert decision.document_type is DocumentType.PAYSLIP
+    assert decision.confidence == 0.65
+    assert decision.source == "text_keyword"
+    assert decision.signals[0].document_type is DocumentType.PAYSLIP
+    assert decision.signals[0].source == "text_keyword"
+
+
 def test_tabular_document_type_label_boosts_classification_confidence() -> None:
     """Spreadsheet summary rows with a document-type column should classify strongly."""
 
@@ -499,6 +526,70 @@ def test_contract_pdf_like_text_extracts_labeled_period_dates() -> None:
     assert parser_output["fields"]["effective_date"] == "2026-03-01"
     assert parser_output["fields"]["expiration_date"] == "2027-02-28"
     assert parser_output["fields"]["contract_value"] == "48000.00"
+
+
+def test_document_intelligence_report_records_bounded_ai_override_and_required_fields() -> None:
+    """Document intelligence should explain LLM overrides and missing required fields."""
+
+    deterministic_decision = DocumentClassificationDecision(
+        document_type=DocumentType.INVOICE,
+        confidence=0.65,
+        source="text_keyword",
+        signals=(
+            DocumentClassificationSignal(
+                source="text_keyword",
+                document_type=DocumentType.INVOICE,
+                confidence=0.65,
+                evidence="Invoice keyword found in parsed text.",
+            ),
+        ),
+    )
+    assist_output = DocumentParseAssistOutput(
+        predicted_type=DocumentType.CONTRACT,
+        classification_confidence=0.94,
+        classification_reasoning="The document names parties and contains agreement terms.",
+        field_candidates=(
+            DocumentFieldAssistCandidate(
+                field_name="party_a_name",
+                value="Northwind Traders LLC",
+                confidence=0.93,
+                evidence_quote="Party A: Northwind Traders LLC",
+            ),
+        ),
+    )
+
+    report = build_document_intelligence_report(
+        filename="agreement.pdf",
+        source_format="pdf",
+        ocr_required=False,
+        final_document_type=DocumentType.CONTRACT,
+        final_confidence=0.94,
+        deterministic_decision=deterministic_decision,
+        assist_output=assist_output,
+        ai_assist_applied_classification=True,
+        ai_assist_fields_applied=("party_a_name",),
+        ai_assist_retried_for_low_confidence=False,
+        field_values={"party_a_name": "Northwind Traders LLC"},
+    )
+
+    assert report["status"] == "classified_with_missing_fields"
+    assert report["final_document_type"] == "contract"
+    assert report["classification_source"] == "ai_assist"
+    assert report["allowed_document_types"] == list(DocumentType.values())
+    assert report["ai_assist"] == {
+        "returned_output": True,
+        "classification_applied": True,
+        "field_candidates_applied": ["party_a_name"],
+        "retried_for_low_confidence": False,
+        "predicted_type": "contract",
+        "classification_confidence": 0.94,
+        "classification_reasoning": (
+            "The document names parties and contains agreement terms."
+        ),
+        "field_candidate_count": 1,
+    }
+    assert "party_b_name" in report["field_completeness"]["missing_required_groups"]
+    assert any("LLM assist overrode" in warning for warning in report["warnings"])
 
 
 def test_document_ai_assist_can_replace_replaceable_scalar_fields() -> None:

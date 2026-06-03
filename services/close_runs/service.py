@@ -102,6 +102,7 @@ class CloseRunRepositoryProtocol(Protocol):
         *,
         entity_id: UUID,
         user_id: UUID,
+        limit: int | None = None,
     ) -> tuple[CloseRunRecord, ...]:
         """Return close runs visible to the user for an entity."""
 
@@ -269,6 +270,7 @@ class CloseRunService:
         *,
         actor_user: EntityUserRecord,
         entity_id: UUID,
+        limit: int | None = None,
     ) -> CloseRunListResponse:
         """Return accessible close runs for one entity with calculated phase states."""
 
@@ -276,6 +278,7 @@ class CloseRunService:
         close_runs = self._repository.list_close_runs_for_entity(
             entity_id=entity_id,
             user_id=actor_user.id,
+            limit=limit,
         )
         return CloseRunListResponse(
             close_runs=tuple(self._build_close_run_summary(close_run) for close_run in close_runs)

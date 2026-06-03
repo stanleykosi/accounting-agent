@@ -9,6 +9,7 @@ Dependencies: Accounting workflow services, repositories, and durable job dispat
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, cast
 from uuid import UUID
@@ -1243,7 +1244,7 @@ class AccountingToolset:
             context=context,
             current_close_run_id=close_run_id,
         )
-        reason = _optional_string(arguments, "reason")
+        reason = _optional_string(arguments, "reason") or "Approved through agent tool."
         prepared = self._prepare_phase_mutation_scope(
             actor_user=actor_user,
             entity_id=context.entity_id,
@@ -2331,6 +2332,7 @@ class AccountingToolset:
             current_close_run_id=close_run_id,
         )
         reason = _optional_string(arguments, "reason")
+        approval_reason = reason or "Approved through agent tool."
         prepared = self._prepare_phase_mutation_scope(
             actor_user=actor_user,
             entity_id=context.entity_id,
@@ -2349,7 +2351,7 @@ class AccountingToolset:
         result = self._reconciliation_service.approve_reconciliation(
             reconciliation_id=reconciliation_id,
             close_run_id=prepared.close_run_id,
-            reason=reason,
+            reason=approval_reason,
             user_id=actor_user.id,
         )
         if result is None:
@@ -2841,7 +2843,7 @@ class AccountingToolset:
                 entity_id=context.entity_id,
                 close_run_id=prepared.close_run_id,
                 actor=actor,
-                reason=reason,
+                reason=reason or "Rejected through agent tool.",
                 trace_id=context.trace_id,
                 source_surface=cast(AuditSourceSurface, context.source_surface),
             )
@@ -3854,7 +3856,11 @@ class AccountingToolset:
         )
 
 
-def _build_target_deriver(*, target_type: str, field_name: str):
+def _build_target_deriver(
+    *,
+    target_type: str,
+    field_name: str,
+) -> Callable[[dict[str, Any]], tuple[str | None, UUID | None]]:
     """Build a target-deriver function for one UUID-bearing tool argument."""
 
     def derive(arguments: dict[str, Any]) -> tuple[str | None, UUID | None]:

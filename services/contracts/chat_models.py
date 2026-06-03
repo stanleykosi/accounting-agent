@@ -451,6 +451,91 @@ class AgentCoaSummary(ContractModel):
     )
 
 
+class AgentImportDiagnosticSummary(ContractModel):
+    """Describe one parsed accounting import visible to the agent."""
+
+    document_kind: str = Field(description="Canonical import kind: COA, GL, or trial balance.")
+    source_format: str = Field(description="Detected upload format for the import.")
+    uploaded_filename: str = Field(description="Original filename supplied by the operator.")
+    status: str = Field(description="Parser status such as parsed or parsed_with_warnings.")
+    confidence: float = Field(ge=0.0, le=1.0, description="Parser confidence score.")
+    row_count: int = Field(ge=0, description="Number of source data rows considered.")
+    accepted_row_count: int = Field(ge=0, description="Number of rows accepted into the import.")
+    header_row_number: int | None = Field(
+        default=None,
+        ge=1,
+        description="1-based source row number detected as the table header.",
+    )
+    account_identity_strategy: str | None = Field(
+        default=None,
+        description="How account identity was resolved, when relevant.",
+    )
+    amount_strategy: str | None = Field(
+        default=None,
+        description="How GL debit/credit amounts were resolved, when relevant.",
+    )
+    balance_strategy: str | None = Field(
+        default=None,
+        description="How trial-balance amounts were resolved, when relevant.",
+    )
+    transaction_grouping_strategy: str | None = Field(
+        default=None,
+        description="How GL transaction grouping keys were resolved, when relevant.",
+    )
+    warnings: tuple[str, ...] = Field(
+        default=(),
+        description="Parser warnings summarized for the agent and workbench.",
+    )
+    recovery_actions: tuple[str, ...] = Field(
+        default=(),
+        description="Operator recovery actions supplied by the parser.",
+    )
+    agent_summary: str | None = Field(
+        default=None,
+        description="Compact natural-language parser summary for agent prompts.",
+    )
+    created_at: datetime | None = Field(
+        default=None,
+        description="UTC timestamp when the import record was created.",
+    )
+
+
+class AgentImportBindingSummary(ContractModel):
+    """Describe the close-run import binding visible to the agent."""
+
+    close_run_id: str = Field(description="Close run owning the baseline binding.")
+    general_ledger_import_batch_id: str | None = Field(
+        default=None,
+        description="Bound GL import batch UUID, if any.",
+    )
+    trial_balance_import_batch_id: str | None = Field(
+        default=None,
+        description="Bound trial-balance import batch UUID, if any.",
+    )
+    binding_source: str = Field(description="How the binding was created: auto or manual.")
+
+
+class AgentImportWorkspaceSummary(ContractModel):
+    """Describe latest accounting import diagnostics available to the agent."""
+
+    latest_coa: AgentImportDiagnosticSummary | None = Field(
+        default=None,
+        description="Latest active COA import diagnostics, when available.",
+    )
+    latest_general_ledger: AgentImportDiagnosticSummary | None = Field(
+        default=None,
+        description="Latest or bound GL import diagnostics, when available.",
+    )
+    latest_trial_balance: AgentImportDiagnosticSummary | None = Field(
+        default=None,
+        description="Latest or bound trial-balance import diagnostics, when available.",
+    )
+    close_run_binding: AgentImportBindingSummary | None = Field(
+        default=None,
+        description="Import binding for this close run, when the thread is close-run scoped.",
+    )
+
+
 class AgentRunPhaseState(ContractModel):
     """Describe one workflow phase shown in the agent readiness timeline."""
 
@@ -613,6 +698,10 @@ class ChatThreadWorkspaceResponse(ContractModel):
         description="Current close-run progress summary visible to the agent.",
     )
     coa: AgentCoaSummary = Field(description="Active chart-of-accounts state visible to the agent.")
+    imports: AgentImportWorkspaceSummary = Field(
+        default_factory=AgentImportWorkspaceSummary,
+        description="Accounting import parser diagnostics visible to the agent.",
+    )
     readiness: AgentRunReadiness = Field(
         description="Run readiness, workflow phases, and next-step guidance for the workbench.",
     )
@@ -643,6 +732,9 @@ __all__ = [
     "CHAT_MESSAGE_TYPES",
     "AgentCoaAccountSummary",
     "AgentCoaSummary",
+    "AgentImportBindingSummary",
+    "AgentImportDiagnosticSummary",
+    "AgentImportWorkspaceSummary",
     "AgentMemorySummary",
     "AgentOperatorControl",
     "AgentRunPhaseState",

@@ -6,7 +6,7 @@ Dependencies: accounting context helpers, chat action executor, and canonical en
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import UTC, date, datetime
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -15,6 +15,7 @@ from services.agents.accounting_context import (
     _build_readiness_summary,
 )
 from services.chat.action_execution import ChatActionExecutor
+from services.coa.importer import import_coa_file
 from services.common.enums import (
     CloseRunOperatingMode,
     CloseRunStatus,
@@ -28,6 +29,150 @@ from services.db.repositories.entity_repo import EntityUserRecord
 from services.documents.imported_ledger_representation import (
     ImportedLedgerRepresentationResult,
 )
+from services.ledger.importer import import_general_ledger_file
+
+
+def _empty_ledger_repository() -> SimpleNamespace:
+    """Return a ledger-import repository double with no imported baselines."""
+
+    return SimpleNamespace(
+        list_general_ledger_imports=lambda **kwargs: (),
+        list_trial_balance_imports=lambda **kwargs: (),
+        list_close_run_bindings_for_entity=lambda **kwargs: (),
+    )
+
+
+def test_workspace_snapshot_surfaces_import_diagnostics_for_agent_context() -> None:
+    """Parser intelligence should flow from persisted imports into the agent workspace."""
+
+    actor_user = EntityUserRecord(
+        id=uuid4(),
+        email="ops@example.com",
+        full_name="Finance Ops",
+    )
+    entity_id = uuid4()
+    now = datetime.now(tz=UTC)
+    coa_import = import_coa_file(
+        filename="coa.csv",
+        payload=(
+            b"account_code,account_name,account_type\n"
+            b"1000,Cash,asset\n"
+            b"4000,Sales,revenue\n"
+        ),
+    )
+    general_ledger_import = import_general_ledger_file(
+        filename="march-gl.csv",
+        payload=(
+            b"posting_date,account_code,reference,debit_amount,credit_amount\n"
+            b"2026-03-05,1000,DEP-001,500.00,0.00\n"
+            b"2026-03-05,4000,DEP-001,0.00,500.00\n"
+        ),
+    )
+    general_ledger_batch_id = uuid4()
+
+    builder = AccountingWorkspaceContextBuilder(
+        action_repository=SimpleNamespace(
+            list_pending_actions_for_thread=lambda **kwargs: [],
+        ),
+        close_run_service=SimpleNamespace(
+            list_close_runs_for_entity=lambda **kwargs: SimpleNamespace(close_runs=()),
+        ),
+        coa_repository=SimpleNamespace(
+            get_active_set=lambda **kwargs: SimpleNamespace(
+                id=uuid4(),
+                source=CoaSetSource.MANUAL_UPLOAD,
+                version_no=1,
+                import_metadata=coa_import.import_metadata,
+                activated_at=now,
+                created_at=now,
+            ),
+            list_accounts_for_set=lambda **kwargs: [
+                SimpleNamespace(
+                    account_code="1000",
+                    account_name="Cash",
+                    account_type="asset",
+                    is_active=True,
+                    is_postable=True,
+                ),
+                SimpleNamespace(
+                    account_code="4000",
+                    account_name="Sales",
+                    account_type="revenue",
+                    is_active=True,
+                    is_postable=True,
+                ),
+            ],
+        ),
+        document_repository=SimpleNamespace(
+            _db_session=object(),
+            list_documents_for_close_run_with_latest_extraction=lambda **kwargs: [],
+        ),
+        entity_repository=SimpleNamespace(
+            get_entity_for_user=lambda **kwargs: SimpleNamespace(
+                entity=SimpleNamespace(
+                    id=entity_id,
+                    name="Acme Workspace",
+                    legal_name="Acme Workspace",
+                    base_currency="USD",
+                    country_code="US",
+                    timezone="America/New_York",
+                    accounting_standard="IFRS",
+                    autonomy_mode=SimpleNamespace(value="human_review"),
+                    status=SimpleNamespace(value="active"),
+                )
+            ),
+            list_entities_for_user=lambda **kwargs: [],
+        ),
+        export_service=SimpleNamespace(
+            list_export_summaries=lambda **kwargs: [],
+            get_latest_evidence_pack=lambda **kwargs: None,
+        ),
+        job_service=SimpleNamespace(
+            list_jobs_for_user=lambda **kwargs: [],
+        ),
+        ledger_repository=SimpleNamespace(
+            list_general_ledger_imports=lambda **kwargs: (
+                SimpleNamespace(
+                    id=general_ledger_batch_id,
+                    import_metadata=general_ledger_import.import_metadata,
+                    created_at=now,
+                ),
+            ),
+            list_trial_balance_imports=lambda **kwargs: (),
+            list_close_run_bindings_for_entity=lambda **kwargs: (),
+        ),
+        reconciliation_repository=SimpleNamespace(
+            list_reconciliations=lambda *args, **kwargs: [],
+            list_items=lambda **kwargs: [],
+            list_anomalies=lambda **kwargs: [],
+        ),
+        recommendation_repository=SimpleNamespace(
+            list_recommendations_for_close_run=lambda **kwargs: [],
+            list_journals_for_close_run=lambda **kwargs: [],
+            list_postings_for_journal_ids=lambda **kwargs: {},
+        ),
+        report_repository=SimpleNamespace(
+            list_report_runs_for_close_run=lambda **kwargs: [],
+        ),
+        supporting_schedule_service=SimpleNamespace(
+            list_workspace=lambda **kwargs: [],
+        ),
+    )
+
+    snapshot = builder.build_snapshot(
+        actor=actor_user,
+        entity_id=entity_id,
+        close_run_id=None,
+        thread_id=None,
+    )
+
+    assert snapshot["imports"]["latest_coa"]["document_kind"] == "chart_of_accounts"
+    assert (
+        snapshot["imports"]["latest_general_ledger"]["transaction_grouping_strategy"]
+        == "derived_from_ledger_fields"
+    )
+    assert snapshot["imports"]["latest_general_ledger"]["warnings"]
+    assert "Imports=" in snapshot["progress_summary"]
 
 
 def test_readiness_summary_speaks_as_the_agent_control_surface_without_close_run() -> None:
@@ -92,6 +237,46 @@ def test_readiness_summary_treats_fallback_coa_as_warning_and_prompts_phase_adva
     assert any(
         "Advance the close run to Processing" in action
         for action in readiness["next_actions"]
+    )
+
+
+def test_readiness_summary_surfaces_import_parser_warnings() -> None:
+    """Parser warnings should stay visible in the agent readiness surface."""
+
+    readiness = _build_readiness_summary(
+        close_run={
+            "active_phase": "collection",
+            "phase_states": [],
+        },
+        coa_summary={
+            "is_available": True,
+            "requires_operator_upload": False,
+        },
+        import_summary={
+            "latest_general_ledger": {
+                "warnings": (
+                    "The general ledger did not include account codes; "
+                    "account names were resolved.",
+                ),
+            },
+        },
+        document_summary={
+            "approved": 1,
+        },
+        gl_coding_document_count=0,
+        recommendation_summary={},
+        journal_summary={},
+        reconciliation_summary={},
+        schedule_summary={},
+        report_summary={},
+        export_summary={},
+        distribution_summary={},
+        pending_action_count=0,
+    )
+
+    assert any(
+        "General ledger import parsed with warning" in warning
+        for warning in readiness["warnings"]
     )
 
 
@@ -248,6 +433,10 @@ def test_workspace_snapshot_hides_gl_coding_work_for_docs_already_in_imported_gl
     entity_id = uuid4()
     close_run_id = uuid4()
     document_id = uuid4()
+    coa_import = import_coa_file(
+        filename="coa.csv",
+        payload=b"account_code,account_name,account_type\n6100,Office Expense,expense\n",
+    )
 
     monkeypatch.setattr(
         "services.agents.accounting_context.evaluate_documents_imported_gl_representation",
@@ -296,7 +485,9 @@ def test_workspace_snapshot_hides_gl_coding_work_for_docs_already_in_imported_gl
                 id=uuid4(),
                 source=CoaSetSource.MANUAL_UPLOAD,
                 version_no=1,
+                import_metadata=coa_import.import_metadata,
                 activated_at=None,
+                created_at=None,
             ),
             list_accounts_for_set=lambda **kwargs: [
                 SimpleNamespace(
@@ -346,6 +537,7 @@ def test_workspace_snapshot_hides_gl_coding_work_for_docs_already_in_imported_gl
         job_service=SimpleNamespace(
             list_jobs_for_user=lambda **kwargs: [],
         ),
+        ledger_repository=_empty_ledger_repository(),
         reconciliation_repository=SimpleNamespace(
             list_reconciliations=lambda *args, **kwargs: [],
             list_items=lambda **kwargs: [],
@@ -442,6 +634,7 @@ def test_workspace_snapshot_derives_entity_close_run_period_labels() -> None:
         job_service=SimpleNamespace(
             list_jobs_for_user=lambda **kwargs: [],
         ),
+        ledger_repository=_empty_ledger_repository(),
         reconciliation_repository=SimpleNamespace(
             list_reconciliations=lambda *args, **kwargs: [],
             list_items=lambda **kwargs: [],
@@ -589,6 +782,7 @@ def test_workspace_snapshot_includes_accessible_close_run_report_state() -> None
         job_service=SimpleNamespace(
             list_jobs_for_user=lambda **kwargs: [],
         ),
+        ledger_repository=_empty_ledger_repository(),
         reconciliation_repository=SimpleNamespace(
             list_reconciliations=lambda *args, **kwargs: [],
             list_items=lambda **kwargs: [],

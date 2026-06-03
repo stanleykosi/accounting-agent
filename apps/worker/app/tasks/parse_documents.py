@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal, InvalidOperation
@@ -34,6 +35,12 @@ from services.db.session import get_session_factory
 from services.documents.ai_assist import run_document_parse_assist
 from services.documents.imported_ledger_representation import (
     evaluate_document_imported_gl_representation,
+)
+from services.documents.intelligence import (
+    DOCUMENT_INTELLIGENCE_METADATA_KEY,
+    DocumentClassificationDecision,
+    DocumentClassificationSignal,
+    build_document_intelligence_report,
 )
 from services.documents.recommendation_eligibility import (
     GL_CODING_RECOMMENDATION_ELIGIBLE_DOCUMENT_TYPES,
@@ -511,7 +518,27 @@ def _derive_document_classification(
 ) -> tuple[DocumentType, float | None]:
     """Infer the best-effort document type and confidence from parser output."""
 
+    decision = _derive_document_classification_decision(raw_parse_payload)
+    return decision.document_type, decision.confidence
+
+
+def _derive_document_classification_decision(
+    raw_parse_payload: JsonObject,
+) -> DocumentClassificationDecision:
+    """Infer the best-effort document type with bounded evidence diagnostics."""
+
     explicit_type = _extract_explicit_document_type_hint(raw_parse_payload=raw_parse_payload)
+    signals: list[DocumentClassificationSignal] = []
+    if explicit_type is not None:
+        signals.append(
+            DocumentClassificationSignal(
+                source="explicit_label",
+                document_type=explicit_type,
+                confidence=0.96,
+                evidence="An explicit document type label was present in the parsed payload.",
+            )
+        )
+
     split_candidates = raw_parse_payload.get("split_candidates")
     if isinstance(split_candidates, list) and split_candidates:
         ranked_candidates = sorted(
@@ -521,7 +548,7 @@ def _derive_document_classification(
                 if isinstance(candidate, dict)
                 and isinstance(candidate.get("document_type_hint"), str)
             ),
-            key=lambda candidate: float(candidate.get("confidence") or 0.0),
+            key=lambda candidate: _optional_float_value(candidate.get("confidence")) or 0.0,
             reverse=True,
         )
         candidate_types = []
@@ -531,6 +558,18 @@ def _derive_document_classification(
             except ValueError:
                 continue
             candidate_types.append(candidate_type)
+            if candidate_type is not DocumentType.UNKNOWN:
+                signals.append(
+                    DocumentClassificationSignal(
+                        source="split_candidate",
+                        document_type=candidate_type,
+                        confidence=_optional_float_value(candidate.get("confidence")) or 0.0,
+                        evidence=(
+                            str(candidate.get("reason") or candidate.get("label") or "").strip()
+                            or None
+                        ),
+                    )
+                )
 
         for candidate in ranked_candidates:
             try:
@@ -542,48 +581,123 @@ def _derive_document_classification(
                     inferred_type in {DocumentType.UNKNOWN, explicit_type}
                     for inferred_type in candidate_types
                 ):
-                    return explicit_type, 0.96
-                confidence = float(candidate.get("confidence") or 0.0)
-                return candidate_type, confidence
+                    return DocumentClassificationDecision(
+                        document_type=explicit_type,
+                        confidence=0.96,
+                        source="explicit_label",
+                        signals=tuple(signals),
+                    )
+                confidence = _optional_float_value(candidate.get("confidence")) or 0.0
+                return DocumentClassificationDecision(
+                    document_type=candidate_type,
+                    confidence=confidence,
+                    source="split_candidate",
+                    signals=tuple(signals),
+                )
 
     if explicit_type is not None:
-        return explicit_type, 0.96
+        return DocumentClassificationDecision(
+            document_type=explicit_type,
+            confidence=0.96,
+            source="explicit_label",
+            signals=tuple(signals),
+        )
 
     raw_text = raw_parse_payload.get("text")
     if isinstance(raw_text, str) and raw_text.strip():
         inferred_type = infer_document_type_from_text(raw_text)
         if inferred_type is not DocumentType.UNKNOWN:
             if inferred_type is DocumentType.BANK_STATEMENT:
-                return (
-                    inferred_type,
-                    _estimate_bank_statement_classification_confidence(
-                        raw_parse_payload=raw_parse_payload,
-                        base_confidence=0.65,
-                    ),
+                confidence = _estimate_bank_statement_classification_confidence(
+                    raw_parse_payload=raw_parse_payload,
+                    base_confidence=0.65,
                 )
-            return inferred_type, 0.65
+                signals.append(
+                    DocumentClassificationSignal(
+                        source="text_keyword",
+                        document_type=inferred_type,
+                        confidence=confidence,
+                        evidence="Document text contained bank-statement keyword evidence.",
+                    )
+                )
+                return DocumentClassificationDecision(
+                    document_type=inferred_type,
+                    confidence=confidence,
+                    source="text_keyword",
+                    signals=tuple(signals),
+                )
+            signals.append(
+                DocumentClassificationSignal(
+                    source="text_keyword",
+                    document_type=inferred_type,
+                    confidence=0.65,
+                    evidence="Document text contained a supported document-type keyword.",
+                )
+            )
+            return DocumentClassificationDecision(
+                document_type=inferred_type,
+                confidence=0.65,
+                source="text_keyword",
+                signals=tuple(signals),
+            )
 
     pages = raw_parse_payload.get("pages")
     if isinstance(pages, list):
-        page_text = " ".join(
-            page.get("text", "")
-            for page in pages
-            if isinstance(page, dict) and isinstance(page.get("text"), str)
-        ).strip()
+        page_text_fragments: list[str] = []
+        for page in pages:
+            if not isinstance(page, dict):
+                continue
+            raw_page_text = page.get("text")
+            if isinstance(raw_page_text, str):
+                page_text_fragments.append(raw_page_text)
+        page_text = " ".join(page_text_fragments).strip()
         if page_text:
             inferred_type = infer_document_type_from_text(page_text)
             if inferred_type is not DocumentType.UNKNOWN:
                 if inferred_type is DocumentType.BANK_STATEMENT:
-                    return (
-                        inferred_type,
-                        _estimate_bank_statement_classification_confidence(
-                            raw_parse_payload=raw_parse_payload,
-                            base_confidence=0.55,
-                        ),
+                    confidence = _estimate_bank_statement_classification_confidence(
+                        raw_parse_payload=raw_parse_payload,
+                        base_confidence=0.55,
                     )
-                return inferred_type, 0.55
+                    signals.append(
+                        DocumentClassificationSignal(
+                            source="page_text_keyword",
+                            document_type=inferred_type,
+                            confidence=confidence,
+                            evidence="Parsed page text contained bank-statement keyword evidence.",
+                        )
+                    )
+                    return DocumentClassificationDecision(
+                        document_type=inferred_type,
+                        confidence=confidence,
+                        source="page_text_keyword",
+                        signals=tuple(signals),
+                    )
+                signals.append(
+                    DocumentClassificationSignal(
+                        source="page_text_keyword",
+                        document_type=inferred_type,
+                        confidence=0.55,
+                        evidence="Parsed page text contained a supported document-type keyword.",
+                    )
+                )
+                return DocumentClassificationDecision(
+                    document_type=inferred_type,
+                    confidence=0.55,
+                    source="page_text_keyword",
+                    signals=tuple(signals),
+                )
 
-    return DocumentType.UNKNOWN, None
+    return DocumentClassificationDecision(
+        document_type=DocumentType.UNKNOWN,
+        confidence=None,
+        source="none",
+        signals=tuple(signals),
+        warnings=("No supported source-document type evidence was detected.",),
+        recovery_actions=(
+            "Use a clearer invoice, bank statement, payslip, receipt, or contract export.",
+        ),
+    )
 
 
 def _extract_explicit_document_type_hint(*, raw_parse_payload: JsonObject) -> DocumentType | None:
@@ -636,6 +750,24 @@ def _document_type_from_explicit_label(value: str) -> DocumentType | None:
         return DocumentType.RECEIPT
     if normalized_label == "contract":
         return DocumentType.CONTRACT
+    return None
+
+
+def _optional_float_value(value: object) -> float | None:
+    """Return a JSON scalar as float when it is safely numeric."""
+
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int | float):
+        return float(value)
+    if isinstance(value, str):
+        normalized = value.strip()
+        if not normalized:
+            return None
+        try:
+            return float(normalized)
+        except ValueError:
+            return None
     return None
 
 
@@ -806,6 +938,7 @@ def _build_raw_fields_for_document_type(
 
     text = _collect_parser_text(raw_parse_payload=raw_parse_payload)
     raw_fields: dict[str, Any] = {}
+    field_names: tuple[str, ...]
 
     if document_type is DocumentType.INVOICE:
         field_names = (
@@ -1052,12 +1185,11 @@ def _collect_parser_text(*, raw_parse_payload: JsonObject) -> str:
     pages = raw_parse_payload.get("pages")
     if isinstance(pages, list):
         for page in pages:
-            if (
-                isinstance(page, dict)
-                and isinstance(page.get("text"), str)
-                and page["text"].strip()
-            ):
-                text_fragments.append(page["text"])
+            if not isinstance(page, dict):
+                continue
+            page_text = page.get("text")
+            if isinstance(page_text, str) and page_text.strip():
+                text_fragments.append(page_text)
     return "\n".join(fragment for fragment in text_fragments if fragment).strip()
 
 
@@ -1322,9 +1454,9 @@ def _post_process_parsed_document(
 ) -> dict[str, object]:
     """Complete classification, extraction, and collection-phase quality checks."""
 
-    deterministic_document_type, deterministic_classification_confidence = (
-        _derive_document_classification(raw_parse_payload)
-    )
+    deterministic_decision = _derive_document_classification_decision(raw_parse_payload)
+    deterministic_document_type = deterministic_decision.document_type
+    deterministic_classification_confidence = deterministic_decision.confidence
     provisional_parser_output: dict[str, Any] | None = None
     if deterministic_document_type is not DocumentType.UNKNOWN:
         provisional_parser_output = _build_extraction_parser_output(
@@ -1441,10 +1573,28 @@ def _post_process_parsed_document(
                                 )
                                 confidence_summary = compute_confidence_summary(fields)
                                 needs_review = confidence_summary.low_confidence_fields > 0
+                    field_values = {field.field_name: field.field_value for field in fields}
+                    document_intelligence_report = build_document_intelligence_report(
+                        filename=parse_record.document.original_filename,
+                        source_format=_source_format_from_document(
+                            filename=parse_record.document.original_filename,
+                            mime_type=parse_record.document.mime_type,
+                        ),
+                        ocr_required=document.ocr_required,
+                        final_document_type=document_type,
+                        final_confidence=classification_confidence,
+                        deterministic_decision=deterministic_decision,
+                        assist_output=assist_output,
+                        ai_assist_applied_classification=ai_assist_applied_classification,
+                        ai_assist_fields_applied=ai_assist_fields_applied,
+                        ai_assist_retried_for_low_confidence=ai_assist_retried_for_low_confidence,
+                        field_values=field_values,
+                    )
                     extracted_payload: dict[str, Any] = {
                         "fields": [field.model_dump(mode="json") for field in fields],
                         "parser_output": parser_output,
                         "raw_parse_payload": raw_parse_payload,
+                        DOCUMENT_INTELLIGENCE_METADATA_KEY: document_intelligence_report,
                     }
                     if assist_output is not None:
                         extracted_payload["ai_assist"] = {
@@ -2059,6 +2209,22 @@ def _extract_object_key(metadata: object) -> str:
     return object_key
 
 
+def _source_format_from_document(*, filename: str, mime_type: str) -> str:
+    """Return one compact source format label for document intelligence metadata."""
+
+    normalized_mime = mime_type.strip().lower()
+    normalized_filename = filename.strip().lower()
+    if "pdf" in normalized_mime or normalized_filename.endswith(".pdf"):
+        return "pdf"
+    if "spreadsheetml" in normalized_mime or normalized_filename.endswith((".xlsx", ".xlsm")):
+        return "xlsx"
+    if "excel" in normalized_mime or normalized_filename.endswith(".xls"):
+        return "xls"
+    if "csv" in normalized_mime or normalized_filename.endswith(".csv"):
+        return "csv"
+    return normalized_mime or "unknown"
+
+
 def _raw_payload_requires_ocr(raw_parse_payload: JsonObject) -> bool:
     """Read the requires-OCR parser metadata flag from a JSON-safe payload."""
 
@@ -2101,16 +2267,22 @@ def _restore_parse_pipeline_receipt(*, job_context: JobRuntimeContext) -> ParseP
         )
 
     return ParsePipelineReceipt(
-        document_version_no=int(checkpoint_state["document_version_no"]),
+        document_version_no=_required_checkpoint_int(
+            checkpoint_state,
+            "document_version_no",
+        ),
         parser_name=str(checkpoint_state["parser_name"]),
         parser_version=str(checkpoint_state["parser_version"]),
         page_count=(
-            int(checkpoint_state["page_count"])
+            _required_checkpoint_int(checkpoint_state, "page_count")
             if checkpoint_state.get("page_count") is not None
             else None
         ),
-        table_count=int(checkpoint_state["table_count"]),
-        split_candidate_count=int(checkpoint_state["split_candidate_count"]),
+        table_count=_required_checkpoint_int(checkpoint_state, "table_count"),
+        split_candidate_count=_required_checkpoint_int(
+            checkpoint_state,
+            "split_candidate_count",
+        ),
         checksum=str(checkpoint_state["checksum"]),
         raw_parse_payload=dict(raw_parse_payload),
         derivatives=StoredParseDerivatives(
@@ -2132,7 +2304,27 @@ def _optional_string(value: object) -> str | None:
     return str(value)
 
 
-@celery_app.task(
+def _required_checkpoint_int(checkpoint_state: Mapping[str, object], key: str) -> int:
+    """Return a required integer field from checkpoint state with fail-fast diagnostics."""
+
+    value = checkpoint_state.get(key)
+    if isinstance(value, bool):
+        raise RuntimeError(f"Parse job checkpoint field {key} must be an integer.")
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    if isinstance(value, str) and value.strip():
+        try:
+            return int(value)
+        except ValueError as error:
+            raise RuntimeError(
+                f"Parse job checkpoint field {key} must be an integer."
+            ) from error
+    raise RuntimeError(f"Parse job checkpoint field {key} must be an integer.")
+
+
+@celery_app.task(  # type: ignore[untyped-decorator]
     bind=True,
     base=TrackedJobTask,
     name=TaskName.DOCUMENT_PARSE_AND_EXTRACT.value,

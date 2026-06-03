@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
+from pydantic import ValidationError
 from services.common.enums import DocumentType
 from services.contracts.document_ai_models import (
     DocumentFieldAssistCandidate,
@@ -91,6 +93,36 @@ def test_run_document_parse_assist_returns_validated_output(monkeypatch) -> None
     )
 
     assert result == expected_output
+
+
+def test_document_parse_assist_output_rejects_arbitrary_types_and_fields() -> None:
+    """Model assist output should be bounded to canonical document and field labels."""
+
+    with pytest.raises(ValidationError):
+        DocumentParseAssistOutput.model_validate(
+            {
+                "predicted_type": "purchase_order",
+                "classification_confidence": 0.88,
+                "classification_reasoning": "The document looks like a purchase order.",
+                "field_candidates": [],
+            }
+        )
+
+    with pytest.raises(ValidationError):
+        DocumentParseAssistOutput.model_validate(
+            {
+                "predicted_type": "invoice",
+                "classification_confidence": 0.88,
+                "classification_reasoning": "The document has invoice evidence.",
+                "field_candidates": [
+                    {
+                        "field_name": "random_free_form_field",
+                        "value": "ABC",
+                        "confidence": 0.9,
+                    }
+                ],
+            }
+        )
 
 
 def test_should_invoke_document_parse_assist_skips_high_confidence_non_ocr_page_documents(

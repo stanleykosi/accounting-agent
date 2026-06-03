@@ -303,9 +303,10 @@ class ReconciliationRepository:
                 ReconciliationItem.reconciliation_id.in_(reconciliation_ids)
             )
         )
-        deleted_count = self._session.execute(
+        delete_result = self._session.execute(
             delete(Reconciliation).where(Reconciliation.id.in_(reconciliation_ids))
-        ).rowcount or 0
+        )
+        deleted_count = getattr(delete_result, "rowcount", 0) or 0
         self._session.flush()
         return int(deleted_count)
 

@@ -8,6 +8,7 @@ Dependencies: Accounting workflow services and repositories only.
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from datetime import date
 from typing import Any
 from uuid import UUID
@@ -25,6 +26,7 @@ from services.db.repositories.report_repo import ReportRepository
 from services.documents.imported_ledger_representation import (
     evaluate_documents_imported_gl_representation,
 )
+from services.documents.intelligence import read_document_intelligence_report
 from services.documents.recommendation_eligibility import (
     is_gl_coding_recommendation_eligible,
 )
@@ -33,7 +35,14 @@ from services.documents.transaction_matching import (
     extract_auto_transaction_match_metadata,
 )
 from services.exports.service import ExportService
+from services.imports.intelligence import read_import_intelligence_report
 from services.jobs.service import JobService
+from services.ledger.service import (
+    CloseRunLedgerBindingRecord,
+    GeneralLedgerImportBatchRecord,
+    LedgerRepositoryProtocol,
+    TrialBalanceImportBatchRecord,
+)
 from services.supporting_schedules.service import SupportingScheduleService
 
 
@@ -50,6 +59,7 @@ class AccountingWorkspaceContextBuilder(WorkspaceContextBuilder):
         entity_repository: EntityRepository,
         export_service: ExportService,
         job_service: JobService,
+        ledger_repository: LedgerRepositoryProtocol,
         reconciliation_repository: ReconciliationRepository,
         recommendation_repository: RecommendationJournalRepository,
         report_repository: ReportRepository,
@@ -62,6 +72,7 @@ class AccountingWorkspaceContextBuilder(WorkspaceContextBuilder):
         self._entity_repo = entity_repository
         self._export_service = export_service
         self._job_service = job_service
+        self._ledger_repo = ledger_repository
         self._reconciliation_repo = reconciliation_repository
         self._recommendation_repo = recommendation_repository
         self._report_repo = report_repository
@@ -172,10 +183,15 @@ class AccountingWorkspaceContextBuilder(WorkspaceContextBuilder):
             for access in accessible_workspaces[:20]
         ]
         snapshot["coa"] = self._build_coa_snapshot(entity_id=entity_id)
+        snapshot["imports"] = self._build_import_snapshot(
+            entity_id=entity_id,
+            close_run_id=close_run_id,
+        )
         if close_run_id is None:
             snapshot["readiness"] = _build_readiness_summary(
                 close_run=None,
                 coa_summary=snapshot["coa"],
+                import_summary=snapshot["imports"],
                 document_summary={},
                 gl_coding_document_count=0,
                 recommendation_summary={},
@@ -190,6 +206,7 @@ class AccountingWorkspaceContextBuilder(WorkspaceContextBuilder):
             snapshot["progress_summary"] = _build_progress_summary(
                 close_run=None,
                 coa_summary=snapshot["coa"],
+                import_summary=snapshot["imports"],
                 document_summary={},
                 recommendation_summary={},
                 journal_summary={},
@@ -268,6 +285,16 @@ class AccountingWorkspaceContextBuilder(WorkspaceContextBuilder):
                 "filename": row.document.original_filename,
                 "status": row.document.status.value,
                 "document_type": row.document.document_type.value,
+                "classification_confidence": _read_document_classification_confidence(
+                    row.document
+                ),
+                "document_intelligence": _build_document_intelligence_snapshot(
+                    latest_extraction=row.latest_extraction,
+                    document_type=row.document.document_type.value,
+                    classification_confidence=_read_document_classification_confidence(
+                        row.document
+                    ),
+                ),
                 "auto_approved": _read_document_auto_approved(row.latest_extraction),
                 "auto_transaction_match_status": _read_document_auto_transaction_match_status(
                     row.latest_extraction
@@ -293,6 +320,9 @@ class AccountingWorkspaceContextBuilder(WorkspaceContextBuilder):
             }
             for row in documents[:20]
         ]
+        document_intelligence_warnings = _build_document_intelligence_readiness_warnings(
+            documents=snapshot["documents"],
+        )
         snapshot["document_summary"] = document_summary
         gl_coding_candidate_rows = [
             row
@@ -601,6 +631,7 @@ class AccountingWorkspaceContextBuilder(WorkspaceContextBuilder):
         snapshot["progress_summary"] = _build_progress_summary(
             close_run=snapshot["close_run"],
             coa_summary=snapshot["coa"],
+            import_summary=snapshot["imports"],
             document_summary=document_summary,
             recommendation_summary=snapshot["recommendation_summary"],
             journal_summary=snapshot["journal_summary"],
@@ -616,6 +647,8 @@ class AccountingWorkspaceContextBuilder(WorkspaceContextBuilder):
         snapshot["readiness"] = _build_readiness_summary(
             close_run=snapshot["close_run"],
             coa_summary=snapshot["coa"],
+            import_summary=snapshot["imports"],
+            document_intelligence_warnings=document_intelligence_warnings,
             document_summary=document_summary,
             gl_coding_document_count=gl_coding_document_count,
             recommendation_summary=snapshot["recommendation_summary"],
@@ -642,6 +675,9 @@ class AccountingWorkspaceContextBuilder(WorkspaceContextBuilder):
             close_run_id=close_run.id,
         )
         latest_report_run = report_runs[0] if report_runs else None
+        latest_report_version_no = (
+            latest_report_run.version_no if latest_report_run is not None else None
+        )
         commentary = (
             self._report_repo.list_commentary_for_report_run(
                 report_run_id=latest_report_run.id,
@@ -685,7 +721,7 @@ class AccountingWorkspaceContextBuilder(WorkspaceContextBuilder):
                 {
                     "id": str(record.id),
                     "report_run_id": str(record.report_run_id),
-                    "report_version_no": latest_report_run.version_no,
+                    "report_version_no": latest_report_version_no,
                     "section_key": record.section_key,
                     "status": record.status.value,
                     "body_preview": _truncate_snapshot_text(record.body, limit=500),
@@ -772,6 +808,97 @@ class AccountingWorkspaceContextBuilder(WorkspaceContextBuilder):
             ],
         }
 
+    def _build_import_snapshot(
+        self,
+        *,
+        entity_id: UUID,
+        close_run_id: UUID | None,
+    ) -> dict[str, Any]:
+        """Return import parser diagnostics exposed to the planner and workbench."""
+
+        active_set = self._coa_repo.get_active_set(entity_id=entity_id)
+        general_ledger_imports = self._ledger_repo.list_general_ledger_imports(
+            entity_id=entity_id,
+        )
+        trial_balance_imports = self._ledger_repo.list_trial_balance_imports(
+            entity_id=entity_id,
+        )
+        close_run_binding = None
+        if close_run_id is not None:
+            close_run_binding = next(
+                (
+                    binding
+                    for binding in self._ledger_repo.list_close_run_bindings_for_entity(
+                        entity_id=entity_id,
+                    )
+                    if binding.close_run_id == close_run_id
+                ),
+                None,
+            )
+
+        general_ledger_import = _select_general_ledger_import(
+            imports=general_ledger_imports,
+            binding=close_run_binding,
+        )
+        trial_balance_import = _select_trial_balance_import(
+            imports=trial_balance_imports,
+            binding=close_run_binding,
+        )
+        return {
+            "latest_coa": _build_agent_import_summary(
+                metadata=active_set.import_metadata if active_set is not None else None,
+                created_at=active_set.created_at if active_set is not None else None,
+                required=(
+                    active_set is not None
+                    and active_set.source == CoaSetSource.MANUAL_UPLOAD
+                ),
+            ),
+            "latest_general_ledger": _build_agent_import_summary(
+                metadata=(
+                    general_ledger_import.import_metadata
+                    if general_ledger_import is not None
+                    else None
+                ),
+                created_at=(
+                    general_ledger_import.created_at
+                    if general_ledger_import is not None
+                    else None
+                ),
+                required=bool(general_ledger_imports),
+            ),
+            "latest_trial_balance": _build_agent_import_summary(
+                metadata=(
+                    trial_balance_import.import_metadata
+                    if trial_balance_import is not None
+                    else None
+                ),
+                created_at=(
+                    trial_balance_import.created_at
+                    if trial_balance_import is not None
+                    else None
+                ),
+                required=bool(trial_balance_imports),
+            ),
+            "close_run_binding": (
+                {
+                    "close_run_id": str(close_run_binding.close_run_id),
+                    "general_ledger_import_batch_id": (
+                        str(close_run_binding.general_ledger_import_batch_id)
+                        if close_run_binding.general_ledger_import_batch_id is not None
+                        else None
+                    ),
+                    "trial_balance_import_batch_id": (
+                        str(close_run_binding.trial_balance_import_batch_id)
+                        if close_run_binding.trial_balance_import_batch_id is not None
+                        else None
+                    ),
+                    "binding_source": close_run_binding.binding_source,
+                }
+                if close_run_binding is not None
+                else None
+            ),
+        }
+
 
 def _format_close_run_period_label(*, period_start: date, period_end: date) -> str:
     """Return the human-readable close-run period label used across operator snapshots."""
@@ -791,6 +918,304 @@ def _count_by_key(values: Any) -> dict[str, int]:
         key = str(value)
         counts[key] = counts.get(key, 0) + 1
     return {key: counts[key] for key in sorted(counts)}
+
+
+def _select_general_ledger_import(
+    *,
+    imports: tuple[GeneralLedgerImportBatchRecord, ...],
+    binding: CloseRunLedgerBindingRecord | None,
+) -> GeneralLedgerImportBatchRecord | None:
+    """Return the bound GL import for a close run, otherwise the latest entity import."""
+
+    if binding is not None and binding.general_ledger_import_batch_id is not None:
+        for imported_batch in imports:
+            if imported_batch.id == binding.general_ledger_import_batch_id:
+                return imported_batch
+        raise ValueError("Close-run binding references a missing general-ledger import batch.")
+    return imports[0] if imports else None
+
+
+def _select_trial_balance_import(
+    *,
+    imports: tuple[TrialBalanceImportBatchRecord, ...],
+    binding: CloseRunLedgerBindingRecord | None,
+) -> TrialBalanceImportBatchRecord | None:
+    """Return the bound trial-balance import for a close run, otherwise the latest entity import."""
+
+    if binding is not None and binding.trial_balance_import_batch_id is not None:
+        for imported_batch in imports:
+            if imported_batch.id == binding.trial_balance_import_batch_id:
+                return imported_batch
+        raise ValueError("Close-run binding references a missing trial-balance import batch.")
+    return imports[0] if imports else None
+
+
+def _build_agent_import_summary(
+    *,
+    metadata: Mapping[str, object] | None,
+    created_at: Any,
+    required: bool,
+) -> dict[str, Any] | None:
+    """Convert canonical import-intelligence metadata into the agent workspace shape."""
+
+    report = read_import_intelligence_report(metadata)
+    if report is None:
+        if required:
+            raise ValueError(
+                "Import metadata is missing canonical import_intelligence diagnostics."
+            )
+        return None
+
+    return {
+        "document_kind": _required_report_text(report=report, key="document_kind"),
+        "source_format": _required_report_text(report=report, key="source_format"),
+        "uploaded_filename": _required_report_text(report=report, key="uploaded_filename"),
+        "status": _required_report_text(report=report, key="status"),
+        "confidence": _report_float(report=report, key="confidence"),
+        "row_count": _report_int(report=report, key="row_count"),
+        "accepted_row_count": _report_int(report=report, key="accepted_row_count"),
+        "header_row_number": _optional_report_int(report=report, key="header_row_number"),
+        "account_identity_strategy": _optional_report_text(
+            report=report,
+            key="account_identity_strategy",
+        ),
+        "amount_strategy": _optional_report_text(report=report, key="amount_strategy"),
+        "balance_strategy": _optional_report_text(report=report, key="balance_strategy"),
+        "transaction_grouping_strategy": _optional_report_text(
+            report=report,
+            key="transaction_grouping_strategy",
+        ),
+        "warnings": _extract_import_issue_messages(report.get("warnings")),
+        "recovery_actions": _extract_text_sequence(report.get("recovery_actions")),
+        "agent_summary": _optional_report_text(report=report, key="agent_summary"),
+        "created_at": created_at,
+    }
+
+
+def _required_report_text(*, report: dict[str, Any], key: str) -> str:
+    """Return a required text field from an import-intelligence report."""
+
+    value = _optional_report_text(report=report, key=key)
+    if value is None:
+        raise ValueError(f"Import intelligence report is missing required field {key}.")
+    return value
+
+
+def _optional_report_text(*, report: dict[str, Any], key: str) -> str | None:
+    """Return an optional text field from an import-intelligence report."""
+
+    value = report.get(key)
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip()
+    return normalized or None
+
+
+def _report_float(*, report: dict[str, Any], key: str) -> float:
+    """Return a required numeric field from an import-intelligence report."""
+
+    value = report.get(key)
+    if isinstance(value, int | float):
+        return float(value)
+    raise ValueError(f"Import intelligence report is missing numeric field {key}.")
+
+
+def _optional_report_float(*, report: dict[str, Any], key: str) -> float | None:
+    """Return an optional numeric field from parser diagnostics."""
+
+    value = report.get(key)
+    if isinstance(value, int | float):
+        return float(value)
+    return None
+
+
+def _report_int(*, report: dict[str, Any], key: str) -> int:
+    """Return a required integer field from an import-intelligence report."""
+
+    value = _optional_report_int(report=report, key=key)
+    if value is None:
+        raise ValueError(f"Import intelligence report is missing integer field {key}.")
+    return value
+
+
+def _optional_report_int(*, report: dict[str, Any], key: str) -> int | None:
+    """Return an optional integer field from an import-intelligence report."""
+
+    value = report.get(key)
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    return None
+
+
+def _extract_import_issue_messages(value: Any) -> tuple[str, ...]:
+    """Return issue messages from parser warning/blocker metadata."""
+
+    if not isinstance(value, list):
+        return ()
+    messages: list[str] = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        message = item.get("message")
+        if isinstance(message, str) and message.strip():
+            messages.append(message.strip())
+    return tuple(messages)
+
+
+def _extract_text_sequence(value: Any) -> tuple[str, ...]:
+    """Return a tuple of non-empty text values from persisted JSON metadata."""
+
+    if not isinstance(value, list):
+        return ()
+    return tuple(str(item).strip() for item in value if str(item).strip())
+
+
+def _compact_import_progress(import_summary: dict[str, Any] | None) -> dict[str, Any]:
+    """Return a JSON-serializable import status fragment for progress summaries."""
+
+    if not isinstance(import_summary, dict):
+        return {}
+    compact: dict[str, Any] = {}
+    for key in ("latest_coa", "latest_general_ledger", "latest_trial_balance"):
+        item = import_summary.get(key)
+        if not isinstance(item, dict):
+            continue
+        compact[key] = {
+            "status": item.get("status"),
+            "confidence": item.get("confidence"),
+            "warnings": len(item.get("warnings", ())),
+        }
+    return compact
+
+
+def _build_import_readiness_warnings(
+    *,
+    import_summary: dict[str, Any] | None,
+) -> tuple[str, ...]:
+    """Return parser diagnostics that should remain visible in readiness guidance."""
+
+    if not isinstance(import_summary, dict):
+        return ()
+    labels = {
+        "latest_coa": "COA",
+        "latest_general_ledger": "General ledger",
+        "latest_trial_balance": "Trial balance",
+    }
+    warnings: list[str] = []
+    for key, label in labels.items():
+        item = import_summary.get(key)
+        if not isinstance(item, dict):
+            continue
+        item_warnings = item.get("warnings")
+        if not isinstance(item_warnings, (list, tuple)) or not item_warnings:
+            continue
+        first_warning = str(item_warnings[0]).strip()
+        if first_warning:
+            warnings.append(f"{label} import parsed with warning: {first_warning}")
+    return tuple(warnings)
+
+
+def _build_document_intelligence_snapshot(
+    *,
+    latest_extraction: Any,
+    document_type: str,
+    classification_confidence: float | None,
+) -> dict[str, Any]:
+    """Return compact source-document classification diagnostics for the agent."""
+
+    report = read_document_intelligence_report(
+        latest_extraction.extracted_payload if latest_extraction is not None else None
+    )
+    if report is None:
+        status = "unclassified" if document_type == "unknown" else "classification_unreported"
+        warnings = (
+            ("Document has not been classified into a supported source-document type.",)
+            if document_type == "unknown"
+            else ()
+        )
+        return {
+            "status": status,
+            "final_document_type": document_type,
+            "final_confidence": classification_confidence,
+            "classification_source": None,
+            "ai_assist_returned_output": False,
+            "ai_assist_applied_classification": False,
+            "missing_required_fields": (),
+            "warnings": warnings,
+            "recovery_actions": (),
+            "agent_summary": None,
+        }
+
+    deterministic = report.get("deterministic_classification")
+    ai_assist = report.get("ai_assist")
+    field_completeness = report.get("field_completeness")
+    missing_required_fields: tuple[str, ...] = ()
+    if isinstance(field_completeness, dict):
+        missing_required_fields = _extract_text_sequence(
+            field_completeness.get("missing_required_groups")
+        )
+    return {
+        "status": str(report.get("status") or "classified"),
+        "final_document_type": str(report.get("final_document_type") or document_type),
+        "final_confidence": _optional_report_float(report=report, key="final_confidence"),
+        "classification_source": report.get("classification_source"),
+        "deterministic_document_type": (
+            str(deterministic.get("document_type"))
+            if isinstance(deterministic, dict) and deterministic.get("document_type") is not None
+            else None
+        ),
+        "deterministic_confidence": (
+            _optional_report_float(report=deterministic, key="confidence")
+            if isinstance(deterministic, dict)
+            else None
+        ),
+        "ai_assist_returned_output": (
+            bool(ai_assist.get("returned_output") is True) if isinstance(ai_assist, dict) else False
+        ),
+        "ai_assist_predicted_type": (
+            str(ai_assist.get("predicted_type"))
+            if isinstance(ai_assist, dict) and ai_assist.get("predicted_type") is not None
+            else None
+        ),
+        "ai_assist_applied_classification": (
+            bool(ai_assist.get("classification_applied") is True)
+            if isinstance(ai_assist, dict)
+            else False
+        ),
+        "missing_required_fields": missing_required_fields,
+        "warnings": _extract_text_sequence(report.get("warnings")),
+        "recovery_actions": _extract_text_sequence(report.get("recovery_actions")),
+        "agent_summary": (
+            str(report["agent_summary"]) if isinstance(report.get("agent_summary"), str) else None
+        ),
+    }
+
+
+def _build_document_intelligence_readiness_warnings(
+    *,
+    documents: list[dict[str, Any]],
+) -> tuple[str, ...]:
+    """Return document classification warnings that should stay visible to the agent."""
+
+    warnings: list[str] = []
+    for document in documents[:10]:
+        intelligence = document.get("document_intelligence")
+        if not isinstance(intelligence, dict):
+            continue
+        filename = str(document.get("filename") or "Document")
+        document_warnings = intelligence.get("warnings")
+        if isinstance(document_warnings, (list, tuple)) and document_warnings:
+            first_warning = str(document_warnings[0]).strip()
+            if first_warning:
+                warnings.append(f"{filename} classification warning: {first_warning}")
+                continue
+        if intelligence.get("status") in {"unclassified", "classified_with_missing_fields"}:
+            warnings.append(
+                f"{filename} classification status is {intelligence.get('status')}."
+            )
+    return tuple(warnings[:5])
 
 
 def _truncate_snapshot_text(value: str, *, limit: int) -> str:
@@ -833,6 +1258,15 @@ def _read_document_auto_transaction_match_status(latest_extraction: Any) -> str 
     metadata = extract_auto_transaction_match_metadata(latest_extraction.extracted_payload)
     status = metadata.get("status") if isinstance(metadata, dict) else None
     return str(status) if isinstance(status, str) else None
+
+
+def _read_document_classification_confidence(document: Any) -> float | None:
+    """Return row-level classification confidence when available."""
+
+    value = getattr(document, "classification_confidence", None)
+    if isinstance(value, int | float):
+        return float(value)
+    return None
 
 
 def _build_workflow_blueprint(*, close_run: dict[str, Any]) -> list[dict[str, Any]]:
@@ -937,6 +1371,7 @@ def _build_progress_summary(
     *,
     close_run: dict[str, Any] | None,
     coa_summary: dict[str, Any],
+    import_summary: dict[str, Any] | None,
     document_summary: dict[str, int],
     recommendation_summary: dict[str, int],
     journal_summary: dict[str, int],
@@ -956,6 +1391,7 @@ def _build_progress_summary(
             [
                 "Entity-scoped workspace with no close run selected.",
                 f"COA={coa_summary.get('status')} source={coa_summary.get('source') or 'none'}.",
+                f"Imports={json.dumps(_compact_import_progress(import_summary), sort_keys=True)}.",
                 coa_summary.get("summary") or "Chart-of-accounts state unavailable.",
             ]
         )
@@ -981,6 +1417,7 @@ def _build_progress_summary(
             f"COA={coa_summary.get('status')} source={coa_summary.get('source') or 'none'} "
             f"accounts={coa_summary.get('account_count', 0)}."
         ),
+        f"Imports={json.dumps(_compact_import_progress(import_summary), sort_keys=True)}.",
         f"Documents={json.dumps(document_summary, sort_keys=True)}.",
         f"Recommendations={json.dumps(recommendation_summary, sort_keys=True)}.",
         f"Journals={json.dumps(journal_summary, sort_keys=True)}.",
@@ -1031,6 +1468,8 @@ def _build_readiness_summary(
     export_summary: dict[str, int],
     distribution_summary: dict[str, Any],
     pending_action_count: int,
+    import_summary: dict[str, Any] | None = None,
+    document_intelligence_warnings: tuple[str, ...] = (),
 ) -> dict[str, Any]:
     """Build a compact readiness model for the chat workbench and planner."""
 
@@ -1064,6 +1503,12 @@ def _build_readiness_summary(
             "A fallback chart of accounts is active and usable for this close. A production "
             "COA is optional if you want entity-specific mapping or policy requires it."
         )
+    for import_warning in _build_import_readiness_warnings(import_summary=import_summary):
+        if import_warning not in warnings:
+            warnings.append(import_warning)
+    for document_warning in document_intelligence_warnings:
+        if document_warning not in warnings:
+            warnings.append(document_warning)
 
     document_count = sum(document_summary.values())
     parsed_document_count = sum(

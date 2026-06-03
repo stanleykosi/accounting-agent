@@ -96,11 +96,10 @@ def _build_budget_reference(
 
     reference_parts = [prefix, account_code, period]
     reference_parts.extend(
-        dimension
-        for dimension in (department, cost_centre, project)
-        if dimension
+        dimension for dimension in (department, cost_centre, project) if dimension
     )
     return ":".join(reference_parts)
+
 
 # ---------------------------------------------------------------------------
 # Core match result types
@@ -345,7 +344,9 @@ class BankReconciliationMatcher:
 
         # Phase 1: Exact matching
         for item in source_items:
-            result = self._try_exact_match(item, counterparts, matched_counterpart_refs, effective_config)
+            result = self._try_exact_match(
+                item, counterparts, matched_counterpart_refs, effective_config
+            )
             if result is not None:
                 results.append(result)
 
@@ -355,7 +356,9 @@ class BankReconciliationMatcher:
             item_ref = item.get("ref", "")
             if item_ref in matched_source_refs:
                 continue
-            result = self._try_fuzzy_match(item, counterparts, matched_counterpart_refs, effective_config)
+            result = self._try_fuzzy_match(
+                item, counterparts, matched_counterpart_refs, effective_config
+            )
             results.append(result)
 
         # Phase 3: Mark unmatched counterparts for investigation
@@ -371,7 +374,9 @@ class BankReconciliationMatcher:
                         counterparts=[],
                         difference_amount=_parse_amount(cp.get("amount")) or Decimal("0.00"),
                         confidence=0.0,
-                        explanation=f"Ledger transaction {cp_ref!r} has no matching bank statement line.",
+                        explanation=(
+                            f"Ledger transaction {cp_ref!r} has no matching bank statement line."
+                        ),
                         requires_disposition=True,
                         metadata={"counterpart_ref": cp_ref},
                     )
@@ -475,7 +480,10 @@ class BankReconciliationMatcher:
                         ],
                         difference_amount=amount_diff,
                         confidence=0.95,
-                        explanation=f"Matched ledger {cp_ref!r} by amount {item_amount} and date proximity ({date_diff} days).",
+                        explanation=(
+                            f"Matched ledger {cp_ref!r} by amount {item_amount} "
+                            f"and date proximity ({date_diff} days)."
+                        ),
                         requires_disposition=False,
                     )
 
@@ -535,7 +543,9 @@ class BankReconciliationMatcher:
             date_diff_days = 0
             if item_date and cp_date:
                 date_diff_days = abs((item_date - cp_date).days)
-                date_confidence = _compute_date_confidence(date_diff_days, config.date_tolerance_days)
+                date_confidence = _compute_date_confidence(
+                    date_diff_days, config.date_tolerance_days
+                )
 
             # Compute reference confidence
             cp_reference = cp.get("reference", "")
@@ -572,13 +582,17 @@ class BankReconciliationMatcher:
                         amount=cp_amount,
                         date=cp_date,
                         confidence=composite,
-                        match_reason=f"Fuzzy match: amount_diff={amount_diff}, date_diff={date_diff_days}d, ref_sim={ref_confidence:.2f}",
+                        match_reason=(
+                            f"Fuzzy match: amount_diff={amount_diff}, "
+                            f"date_diff={date_diff_days}d, ref_sim={ref_confidence:.2f}"
+                        ),
                     )
                 ],
                 difference_amount=amount_diff,
                 confidence=composite,
                 explanation=f"Fuzzy matched ledger {cp_ref!r} (confidence={composite:.2f}).",
-                requires_disposition=match_status in (MatchStatus.PARTIALLY_MATCHED, MatchStatus.EXCEPTION),
+                requires_disposition=match_status
+                in (MatchStatus.PARTIALLY_MATCHED, MatchStatus.EXCEPTION),
             )
 
         if best_result is None:
@@ -590,7 +604,10 @@ class BankReconciliationMatcher:
                 counterparts=[],
                 difference_amount=item_amount,
                 confidence=0.0,
-                explanation=f"No matching ledger transaction found for bank line {item_ref!r} ({item_amount}).",
+                explanation=(
+                    f"No matching ledger transaction found for bank line {item_ref!r} "
+                    f"({item_amount})."
+                ),
                 requires_disposition=True,
             )
 
@@ -615,7 +632,7 @@ class AgeingMatcher:
 
     reconciliation_type = ReconciliationType.AR_AGEING  # Also used for AP_AGEING
 
-    AGEING_BUCKETS = [
+    AGEING_BUCKETS: ClassVar[list[tuple[str, int]]] = [
         ("current", 0),
         ("1-30", 30),
         ("31-60", 60),
@@ -709,7 +726,10 @@ class AgeingMatcher:
                     ],
                     difference_amount=amount_diff,
                     confidence=confidence,
-                    explanation=f"Ageing item {item_ref!r} matched: bucket={bucket}, age={age_days}d, diff={amount_diff}",
+                    explanation=(
+                        f"Ageing item {item_ref!r} matched: bucket={bucket}, "
+                        f"age={age_days}d, diff={amount_diff}"
+                    ),
                     requires_disposition=match_status == MatchStatus.EXCEPTION,
                     metadata={
                         "bucket": bucket,
@@ -745,7 +765,8 @@ class IntercompanyMatcher:
         """Match intercompany balances across entities.
 
         Args:
-            source_items: Balance dicts from entity A with keys: ref, amount, account_code, counter_entity.
+            source_items: Balance dicts from entity A with keys:
+                ref, amount, account_code, counter_entity.
             counterparts: Balance dicts from entity B with matching keys.
             config: Optional matching configuration.
 
@@ -781,9 +802,15 @@ class IntercompanyMatcher:
                         source_type=ReconciliationSourceType.EXTERNAL_BALANCE,
                         source_amount=item_amount,
                         match_status=MatchStatus.UNMATCHED,
-                        explanation=f"No counter-entity balance found for {item_ref!r} ({item_account}).",
+                        explanation=(
+                            f"No counter-entity balance found for {item_ref!r} "
+                            f"({item_account})."
+                        ),
                         requires_disposition=True,
-                        metadata={"counter_entity": item_counter_entity, "account_code": item_account},
+                        metadata={
+                            "counter_entity": item_counter_entity,
+                            "account_code": item_account,
+                        },
                     )
                 )
                 continue
@@ -803,7 +830,10 @@ class IntercompanyMatcher:
             elif amount_diff <= Decimal("1.00"):
                 match_status = MatchStatus.PARTIALLY_MATCHED
                 confidence = 0.8
-                explanation = f"Intercompany balances have minor rounding difference ({amount_diff}) for {item_ref!r}."
+                explanation = (
+                    f"Intercompany balances have minor rounding difference ({amount_diff}) "
+                    f"for {item_ref!r}."
+                )
             else:
                 match_status = MatchStatus.EXCEPTION
                 confidence = _compute_amount_confidence(amount_diff, abs(item_amount))
@@ -830,7 +860,8 @@ class IntercompanyMatcher:
                     difference_amount=amount_diff,
                     confidence=confidence,
                     explanation=explanation,
-                    requires_disposition=match_status in (MatchStatus.PARTIALLY_MATCHED, MatchStatus.EXCEPTION),
+                    requires_disposition=match_status
+                    in (MatchStatus.PARTIALLY_MATCHED, MatchStatus.EXCEPTION),
                     metadata={"counter_entity": item_counter_entity, "account_code": item_account},
                 )
             )
@@ -878,7 +909,9 @@ class PayrollControlMatcher:
             cp_by_category.setdefault(cat, []).append(cp)
 
         for item in source_items:
-            item_ref = item.get("ref", f"{item.get('category', 'unknown')}:{item.get('period', '')}")
+            item_ref = item.get(
+                "ref", f"{item.get('category', 'unknown')}:{item.get('period', '')}"
+            )
             item_category = item.get("category", "")
             item_amount = _parse_amount(item.get("amount"))
 
@@ -894,7 +927,9 @@ class PayrollControlMatcher:
                         source_type=ReconciliationSourceType.EXTERNAL_BALANCE,
                         source_amount=item_amount,
                         match_status=MatchStatus.UNMATCHED,
-                        explanation=f"No ledger/payslip total found for payroll category {item_category!r}.",
+                        explanation=(
+                            f"No ledger/payslip total found for payroll category {item_category!r}."
+                        ),
                         requires_disposition=True,
                         metadata={"category": item_category},
                     )
@@ -938,7 +973,9 @@ class PayrollControlMatcher:
                             source_ref=item_ref,
                             source_type=ReconciliationSourceType.EXTERNAL_BALANCE,
                             source_amount=item_amount,
-                            match_status=MatchStatus.EXCEPTION if confidence < 0.8 else MatchStatus.PARTIALLY_MATCHED,
+                            match_status=MatchStatus.EXCEPTION
+                            if confidence < 0.8
+                            else MatchStatus.PARTIALLY_MATCHED,
                             counterparts=[
                                 MatchCounterpart(
                                     source_type=ReconciliationSourceType.LEDGER_TRANSACTION,
@@ -961,7 +998,9 @@ class PayrollControlMatcher:
                         source_type=ReconciliationSourceType.EXTERNAL_BALANCE,
                         source_amount=item_amount,
                         match_status=MatchStatus.UNMATCHED,
-                        explanation=f"No parseable ledger amount for payroll category {item_category!r}.",
+                        explanation=(
+                            f"No parseable ledger amount for payroll category {item_category!r}."
+                        ),
                         requires_disposition=True,
                         metadata={"category": item_category},
                     )
@@ -995,7 +1034,8 @@ class FixedAssetMatcher:
         """Match fixed asset register entries.
 
         Args:
-            source_items: Fixed asset register dicts with keys: asset_id, cost, accumulated_depreciation, net_book_value.
+            source_items: Fixed asset register dicts with keys:
+                asset_id, cost, accumulated_depreciation, net_book_value.
             counterparts: Ledger PPE account dicts with matching keys.
             config: Optional matching configuration.
 
@@ -1049,7 +1089,9 @@ class FixedAssetMatcher:
                 confidence = 1.0
             else:
                 confidence = _compute_amount_confidence(total_diff, cost)
-                match_status = MatchStatus.EXCEPTION if confidence < 0.7 else MatchStatus.PARTIALLY_MATCHED
+                match_status = (
+                    MatchStatus.EXCEPTION if confidence < 0.7 else MatchStatus.PARTIALLY_MATCHED
+                )
 
             results.append(
                 MatchResult(
@@ -1063,12 +1105,18 @@ class FixedAssetMatcher:
                             source_ref=matched_cp.get("ref", ""),
                             amount=cp_cost,
                             confidence=confidence,
-                            match_reason=f"Asset register vs ledger: cost_diff={cost_diff}, dep_diff={dep_diff}.",
+                            match_reason=(
+                                f"Asset register vs ledger: cost_diff={cost_diff}, "
+                                f"dep_diff={dep_diff}."
+                            ),
                         )
                     ],
                     difference_amount=total_diff,
                     confidence=confidence,
-                    explanation=f"Fixed asset {asset_id!r}: cost_diff={cost_diff}, depreciation_diff={dep_diff}.",
+                    explanation=(
+                        f"Fixed asset {asset_id!r}: cost_diff={cost_diff}, "
+                        f"depreciation_diff={dep_diff}."
+                    ),
                     requires_disposition=match_status != MatchStatus.MATCHED,
                     metadata={
                         "asset_id": asset_id,
@@ -1104,7 +1152,8 @@ class LoanAmortisationMatcher:
         """Match loan amortisation schedule entries.
 
         Args:
-            source_items: Amortisation schedule dicts with keys: payment_no, principal, interest, balance, due_date.
+            source_items: Amortisation schedule dicts with keys:
+                payment_no, principal, interest, balance, due_date.
             counterparts: Ledger loan transaction dicts with matching keys.
             config: Optional matching configuration.
 
@@ -1160,8 +1209,12 @@ class LoanAmortisationMatcher:
                 confidence = 1.0
             else:
                 baseline = schedule_principal + (schedule_interest or Decimal("0"))
-                confidence = _compute_amount_confidence(total_diff, baseline if baseline else Decimal("1"))
-                match_status = MatchStatus.EXCEPTION if confidence < 0.7 else MatchStatus.PARTIALLY_MATCHED
+                confidence = _compute_amount_confidence(
+                    total_diff, baseline if baseline else Decimal("1")
+                )
+                match_status = (
+                    MatchStatus.EXCEPTION if confidence < 0.7 else MatchStatus.PARTIALLY_MATCHED
+                )
 
             results.append(
                 MatchResult(
@@ -1175,7 +1228,10 @@ class LoanAmortisationMatcher:
                             source_ref=matched_cp.get("ref", ""),
                             amount=cp_principal,
                             confidence=confidence,
-                            match_reason=f"Loan payment match: principal_diff={principal_diff}, interest_diff={interest_diff}.",
+                            match_reason=(
+                                f"Loan payment match: principal_diff={principal_diff}, "
+                                f"interest_diff={interest_diff}."
+                            ),
                         )
                     ],
                     difference_amount=total_diff,
@@ -1245,7 +1301,10 @@ class AccrualTrackerMatcher:
                         source_type=ReconciliationSourceType.EXTERNAL_BALANCE,
                         source_amount=item_amount,
                         match_status=MatchStatus.UNMATCHED,
-                        explanation=f"No ledger accrual found for {item_account} in period {item_period}.",
+                        explanation=(
+                            f"No ledger accrual found for {item_account} "
+                            f"in period {item_period}."
+                        ),
                         requires_disposition=True,
                         metadata={"account_code": item_account, "period": item_period},
                     )
@@ -1263,7 +1322,9 @@ class AccrualTrackerMatcher:
                 confidence = 1.0
             else:
                 confidence = _compute_amount_confidence(diff, item_amount)
-                match_status = MatchStatus.EXCEPTION if confidence < 0.7 else MatchStatus.PARTIALLY_MATCHED
+                match_status = (
+                    MatchStatus.EXCEPTION if confidence < 0.7 else MatchStatus.PARTIALLY_MATCHED
+                )
 
             results.append(
                 MatchResult(
@@ -1283,7 +1344,10 @@ class AccrualTrackerMatcher:
                     ],
                     difference_amount=diff,
                     confidence=confidence,
-                    explanation=f"Accrual for {item_ref!r}: expected={item_amount}, ledger={total_cp_amount}, diff={diff}.",
+                    explanation=(
+                        f"Accrual for {item_ref!r}: expected={item_amount}, "
+                        f"ledger={total_cp_amount}, diff={diff}."
+                    ),
                     requires_disposition=match_status != MatchStatus.MATCHED,
                     metadata={"account_code": item_account, "period": item_period},
                 )
@@ -1413,12 +1477,19 @@ class BudgetVsActualMatcher:
                             ),
                             amount=actual_amount,
                             confidence=confidence,
-                            match_reason=f"Budget vs actual: variance={variance} ({variance_pct:.1f}%)",
+                            match_reason=(
+                                f"Budget vs actual: variance={variance} "
+                                f"({variance_pct:.1f}%)"
+                            ),
                         )
                     ],
                     difference_amount=variance,
                     confidence=confidence,
-                    explanation=f"Budget vs actual for {account_code}:{period}: budget={budget_amount}, actual={actual_amount}, variance={variance} ({variance_pct:.1f}%)",
+                    explanation=(
+                        f"Budget vs actual for {account_code}:{period}: "
+                        f"budget={budget_amount}, actual={actual_amount}, "
+                        f"variance={variance} ({variance_pct:.1f}%)"
+                    ),
                     requires_disposition=match_status == MatchStatus.EXCEPTION,
                     metadata={
                         "account_code": account_code,
@@ -1471,11 +1542,17 @@ class TrialBalanceChecker:
 
     # Account types that normally have debit balances
     NORMAL_DEBIT_TYPES: ClassVar[set[AccountType]] = {
-        AccountType.ASSET, AccountType.EXPENSE, AccountType.COST_OF_SALES, AccountType.OTHER_EXPENSE,
+        AccountType.ASSET,
+        AccountType.EXPENSE,
+        AccountType.COST_OF_SALES,
+        AccountType.OTHER_EXPENSE,
     }
     # Account types that normally have credit balances
     NORMAL_CREDIT_TYPES: ClassVar[set[AccountType]] = {
-        AccountType.LIABILITY, AccountType.EQUITY, AccountType.REVENUE, AccountType.OTHER_INCOME,
+        AccountType.LIABILITY,
+        AccountType.EQUITY,
+        AccountType.REVENUE,
+        AccountType.OTHER_INCOME,
     }
 
     def check_balance(
@@ -1527,7 +1604,10 @@ class TrialBalanceChecker:
                     anomaly_type=AnomalyType.DEBIT_CREDIT_IMBALANCE,
                     severity="blocking",
                     account_code=None,
-                    description=f"Trial balance is imbalanced: debits={total_debits}, credits={total_credits}, difference={imbalance}.",
+                    description=(
+                        f"Trial balance is imbalanced: debits={total_debits}, "
+                        f"credits={total_credits}, difference={imbalance}."
+                    ),
                     details={
                         "total_debits": str(total_debits),
                         "total_credits": str(total_credits),
@@ -1570,7 +1650,11 @@ class TrialBalanceChecker:
                         anomaly_type=AnomalyType.UNUSUAL_ACCOUNT_BALANCE,
                         severity="warning",
                         account_code=account_code,
-                        description=f"Account {account_code} ({acct.get('account_name', '')}) has a credit balance of {abs(net)} but is a {account_type} account (normally debit).",
+                        description=(
+                            f"Account {account_code} ({acct.get('account_name', '')}) "
+                            f"has a credit balance of {abs(net)} but is a {account_type} "
+                            "account (normally debit)."
+                        ),
                         details={
                             "account_type": account_type,
                             "net_balance": str(net),
@@ -1584,7 +1668,11 @@ class TrialBalanceChecker:
                         anomaly_type=AnomalyType.UNUSUAL_ACCOUNT_BALANCE,
                         severity="warning",
                         account_code=account_code,
-                        description=f"Account {account_code} ({acct.get('account_name', '')}) has a debit balance of {net} but is a {account_type} account (normally credit).",
+                        description=(
+                            f"Account {account_code} ({acct.get('account_name', '')}) "
+                            f"has a debit balance of {net} but is a {account_type} "
+                            "account (normally credit)."
+                        ),
                         details={
                             "account_type": account_type,
                             "net_balance": str(net),
@@ -1600,7 +1688,10 @@ class TrialBalanceChecker:
                         anomaly_type=AnomalyType.ZERO_BALANCE_ACTIVE,
                         severity="info",
                         account_code=account_code,
-                        description=f"Account {account_code} ({acct.get('account_name', '')}) has zero balance but is marked active.",
+                        description=(
+                            f"Account {account_code} ({acct.get('account_name', '')}) "
+                            "has zero balance but is marked active."
+                        ),
                         details={
                             "account_type": account_type,
                         },
@@ -1633,7 +1724,9 @@ class TrialBalanceChecker:
                         anomaly_type=AnomalyType.MISSING_ACCOUNT,
                         severity="warning",
                         account_code=expected_code,
-                        description=f"Expected account {expected_code} is missing from the trial balance.",
+                        description=(
+                            f"Expected account {expected_code} is missing from the trial balance."
+                        ),
                         details={"expected_account_code": expected_code},
                     )
                 )
@@ -1686,7 +1779,10 @@ class TrialBalanceChecker:
                             anomaly_type=AnomalyType.UNEXPLAINED_VARIANCE,
                             severity="warning",
                             account_code=code,
-                            description=f"Account {code} had zero balance last period but now has {current_net}.",
+                            description=(
+                                f"Account {code} had zero balance last period "
+                                f"but now has {current_net}."
+                            ),
                             details={
                                 "prior_balance": "0",
                                 "current_balance": str(current_net),
@@ -1705,7 +1801,10 @@ class TrialBalanceChecker:
                         anomaly_type=AnomalyType.UNEXPLAINED_VARIANCE,
                         severity="warning",
                         account_code=code,
-                        description=f"Account {code} has a {variance_pct:.1f}% MoM variance (threshold: {variance_threshold_pct}%).",
+                        description=(
+                            f"Account {code} has a {variance_pct:.1f}% MoM variance "
+                            f"(threshold: {variance_threshold_pct}%)."
+                        ),
                         details={
                             "prior_balance": str(prior_net),
                             "current_balance": str(current_net),

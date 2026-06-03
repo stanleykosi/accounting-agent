@@ -21,7 +21,11 @@ from services.contracts.chat_models import (
 )
 from services.db.models.audit import AuditSourceSurface
 from services.db.models.entity import EntityStatus
-from services.db.repositories.chat_repo import ChatThreadRecord, ChatThreadWithCountRecord
+from services.db.repositories.chat_repo import (
+    ChatThreadMessageStatsRecord,
+    ChatThreadRecord,
+    ChatThreadWithCountRecord,
+)
 from services.db.repositories.entity_repo import (
     EntityAccessRecord,
     EntityMembershipRecord,
@@ -253,7 +257,8 @@ def build_chat_service(
         repository=repository,
         grounding_service=InMemoryGroundingService(),
         model_gateway=InMemoryModelGateway(),
-        entity_repo=entity_repo or InMemoryChatEntityRepository(
+        entity_repo=entity_repo
+        or InMemoryChatEntityRepository(
             member_has_access=True,
             entity=repository.entity,
             member=repository.member,
@@ -360,6 +365,19 @@ class InMemoryChatRepository:
             return None
         return self.thread
 
+    def get_message_stats_for_thread(self, *, thread_id: UUID) -> ChatThreadMessageStatsRecord:
+        if thread_id != self.thread.id or not self.thread_exists:
+            return ChatThreadMessageStatsRecord(
+                message_count=0,
+                last_message_at=None,
+                latest_message_order=0,
+            )
+        return ChatThreadMessageStatsRecord(
+            message_count=4,
+            last_message_at=self.thread.updated_at,
+            latest_message_order=4,
+        )
+
     def get_message_count_for_thread(self, *, thread_id: UUID) -> int:
         if thread_id != self.thread.id or not self.thread_exists:
             return 0
@@ -424,8 +442,7 @@ class InMemoryChatRepository:
         return tuple(
             record
             for record in self.global_threads
-            if record.thread.entity_id == entity_id
-            and record.thread.close_run_id == close_run_id
+            if record.thread.entity_id == entity_id and record.thread.close_run_id == close_run_id
         )[:limit]
 
     def delete_thread(self, *, thread_id: UUID, entity_id: UUID) -> bool:
@@ -544,14 +561,10 @@ class InMemoryGroundingService:
             entity_id=str(payload["entity_id"]),
             entity_name=str(payload["entity_name"]),
             close_run_id=(
-                str(payload["close_run_id"])
-                if payload.get("close_run_id") is not None
-                else None
+                str(payload["close_run_id"]) if payload.get("close_run_id") is not None else None
             ),
             period_label=(
-                str(payload["period_label"])
-                if payload.get("period_label") is not None
-                else None
+                str(payload["period_label"]) if payload.get("period_label") is not None else None
             ),
             autonomy_mode=str(payload["autonomy_mode"]),
             base_currency=str(payload["base_currency"]),

@@ -21,7 +21,7 @@ from apps.api.app.routes.auth import (
     get_auth_service,
 )
 from apps.api.app.routes.request_auth import AuthenticatedUserContext, RequestAuthDependency
-from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from services.auth.service import (
     AuthenticatedSessionResult,
     AuthErrorCode,
@@ -95,6 +95,7 @@ def list_close_runs(
     auth_service: AuthServiceDependency,
     close_run_service: CloseRunServiceDependency,
     auth_context: RequestAuthDependency,
+    limit: Annotated[int | None, Query(ge=1, le=100)] = None,
 ) -> CloseRunListResponse:
     """Return the authenticated caller's close runs for one accessible workspace."""
 
@@ -103,6 +104,7 @@ def list_close_runs(
         return close_run_service.list_close_runs_for_entity(
             actor_user=_to_entity_user(session_result),
             entity_id=entity_id,
+            limit=limit,
         )
     except CloseRunServiceError as error:
         raise _build_close_run_http_exception(error) from error

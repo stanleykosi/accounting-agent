@@ -6,9 +6,9 @@ Dependencies: close_run phase guard helper and job cancellation error contract.
 
 from __future__ import annotations
 
+from apps.worker.app.tasks.close_run_phase_guard import ensure_close_run_active_phase
 from services.common.enums import WorkflowPhase
 from services.jobs.retry_policy import JobCancellationRequestedError
-from apps.worker.app.tasks.close_run_phase_guard import ensure_close_run_active_phase
 
 
 class _FakeResult:

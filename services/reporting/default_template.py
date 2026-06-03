@@ -7,6 +7,7 @@ Dependencies: Canonical report section enums and reporting guardrails.
 from __future__ import annotations
 
 from services.common.enums import ReportSectionKey
+from services.common.types import JsonObject
 from services.reporting.guardrails import DEFAULT_GUARDRAIL_CONFIG
 
 DEFAULT_GLOBAL_REPORT_TEMPLATE_NAME = "Canonical Management Pack"
@@ -38,7 +39,7 @@ def build_default_global_template_sections() -> tuple[dict[str, object], ...]:
     )
 
 
-def build_default_global_guardrail_config() -> dict[str, object]:
+def build_default_global_guardrail_config() -> JsonObject:
     """Return the canonical guardrail payload for the built-in report template."""
 
     return {

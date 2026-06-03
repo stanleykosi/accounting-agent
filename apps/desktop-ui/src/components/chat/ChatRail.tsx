@@ -67,6 +67,7 @@ const THREAD_SCOPE_FILTERS: ReadonlyArray<{ label: string; value: ThreadScopeFil
   { label: "Workspace", value: "workspace" },
   { label: "Close", value: "close" },
 ];
+const INITIAL_THREAD_MESSAGE_LIMIT = 60;
 
 export function ChatRail({
   assistantMode,
@@ -206,7 +207,11 @@ export function ChatRail({
       setError(null);
 
       try {
-        const threadDetail = await getChatThread(thread.id, resolvedEntityId);
+        const threadDetail = await getChatThread(
+          thread.id,
+          resolvedEntityId,
+          INITIAL_THREAD_MESSAGE_LIMIT,
+        );
         if (requestId !== threadLoadRequestIdRef.current) {
           return;
         }
@@ -1080,7 +1085,11 @@ function readInitialChatRailState(
     };
   }
 
-  const threadDetail = readChatThreadSnapshot(selectedThread.id, selectedThread.entity_id);
+  const threadDetail = readChatThreadSnapshot(
+    selectedThread.id,
+    selectedThread.entity_id,
+    INITIAL_THREAD_MESSAGE_LIMIT,
+  );
   const workspace = readChatThreadWorkspaceSnapshot(selectedThread.id, selectedThread.entity_id);
   return {
     hasHydratedState: threadResponse !== null || threadDetail !== null || workspace !== null,

@@ -93,6 +93,16 @@ class ChatActionRepositoryProtocol(Protocol):
     ) -> int:
         """Mark pending actions for a target as superseded."""
 
+    def list_actions_for_target(
+        self,
+        *,
+        target_type: str,
+        target_id: UUID,
+        status: str | None = None,
+        limit: int = 50,
+    ) -> tuple[ChatActionPlanRecord, ...]:
+        """Return action plans targeting a specific business object."""
+
     def commit(self) -> None:
         """Commit the current transaction."""
 

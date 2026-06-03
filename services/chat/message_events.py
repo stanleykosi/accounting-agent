@@ -84,15 +84,18 @@ class ChatMessageNotificationListener:
         """Open the LISTEN connection and subscribe to the chat message channel."""
 
         settings = get_settings()
-        connect_kwargs: dict[str, object] = {}
         preferred_hostaddr = settings.database.resolve_preferred_hostaddr()
         if preferred_hostaddr is not None:
-            connect_kwargs["hostaddr"] = preferred_hostaddr
-        connection = await psycopg.AsyncConnection.connect(
-            settings.database.connection_url,
-            autocommit=True,
-            **connect_kwargs,
-        )
+            connection = await psycopg.AsyncConnection.connect(
+                settings.database.connection_url,
+                autocommit=True,
+                hostaddr=preferred_hostaddr,
+            )
+        else:
+            connection = await psycopg.AsyncConnection.connect(
+                settings.database.connection_url,
+                autocommit=True,
+            )
         await connection.execute(
             sql.SQL("LISTEN {}").format(sql.Identifier(CHAT_MESSAGE_NOTIFY_CHANNEL))
         )

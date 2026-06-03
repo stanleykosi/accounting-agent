@@ -14,6 +14,7 @@ from services.common.enums import CloseRunStatus
 from services.db.models.audit import AuditSourceSurface
 from services.db.models.entity import EntityStatus
 from services.db.repositories.entity_repo import EntityUserRecord
+from services.imports.intelligence import IMPORT_INTELLIGENCE_METADATA_KEY
 from services.ledger.service import (
     CloseRunLedgerBindingRecord,
     GeneralLedgerImportBatchRecord,
@@ -242,6 +243,10 @@ def test_upload_general_ledger_auto_binds_safe_close_runs_and_skips_started_runs
     assert response.imported_batch.row_count == 1
     assert response.auto_bound_close_run_ids == (str(safe_close_run.id),)
     assert response.skipped_close_run_ids == (str(started_close_run.id),)
+    report = response.imported_batch.import_metadata[IMPORT_INTELLIGENCE_METADATA_KEY]
+    assert isinstance(report, dict)
+    assert report["document_kind"] == "general_ledger"
+    assert report["status"] == "parsed_with_warnings"
     assert repository.created_gl_line_counts == [1]
     assert repository.created_gl_lines[0][0].transaction_group_key.startswith("glgrp_")
     assert (
@@ -265,7 +270,7 @@ def test_upload_trial_balance_resolves_account_names_from_active_coa() -> None:
     actor_user = EntityUserRecord(id=uuid4(), email="ops@example.com", full_name="Finance Ops")
 
     service = LedgerImportService(repository=repository)
-    service.upload_trial_balance(
+    response = service.upload_trial_balance(
         actor_user=actor_user,
         entity_id=repository.entity.id,
         period_start=date(2026, 3, 1),
@@ -285,3 +290,7 @@ def test_upload_trial_balance_resolves_account_names_from_active_coa() -> None:
 
     lines = repository.created_tb_lines[0]
     assert [line.account_code for line in lines] == ["100", "1000"]
+    report = response.imported_batch.import_metadata[IMPORT_INTELLIGENCE_METADATA_KEY]
+    assert isinstance(report, dict)
+    assert report["account_identity_strategy"] == "resolved_by_name"
+    assert report["account_name_resolution_count"] == 2

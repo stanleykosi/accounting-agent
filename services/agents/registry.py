@@ -11,7 +11,11 @@ from collections.abc import Callable
 from typing import Any
 from uuid import UUID
 
-from jsonschema import Draft202012Validator, SchemaError, ValidationError
+from jsonschema import (  # type: ignore[import-untyped]
+    Draft202012Validator,
+    SchemaError,
+    ValidationError,
+)
 from services.agents.models import (
     AgentExecutionContext,
     AgentToolDefinition,

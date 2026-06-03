@@ -18,7 +18,7 @@ Design notes:
 from __future__ import annotations
 
 from enum import StrEnum
-from typing import Any, Literal, Protocol
+from typing import Any, Literal, Protocol, cast
 from uuid import UUID
 
 from pydantic import Field, ValidationError
@@ -313,9 +313,12 @@ class ChatActionRouter:
         )
 
         try:
-            classification = self._model_gateway.complete_structured(
-                messages=[{"role": "system", "content": classification_prompt}],
-                response_model=_ActionIntentClassificationResponse,
+            classification = cast(
+                _ActionIntentClassificationResponse,
+                self._model_gateway.complete_structured(
+                    messages=[{"role": "system", "content": classification_prompt}],
+                    response_model=_ActionIntentClassificationResponse,
+                ),
             )
         except (ModelResponseValidationError, ValidationError) as error:
             raise ChatActionRouterError(
@@ -373,7 +376,7 @@ class ChatActionRouter:
         """
         requires_human_approval = self._determine_approval_requirement(
             intent=intent,
-            autonomy_mode=grounding.autonomy_mode,
+            autonomy_mode=grounding.context.autonomy_mode,
             proposed_edit=proposed_edit,
         )
 
@@ -381,7 +384,7 @@ class ChatActionRouter:
             thread_id=thread_id,
             message_id=message_id,
             intent=intent,
-            autonomy_mode=AutonomyMode(grounding.autonomy_mode),
+            autonomy_mode=AutonomyMode(grounding.context.autonomy_mode),
             proposed_edit=proposed_edit,
             approval_request=approval_request,
             document_request=document_request,
@@ -615,13 +618,13 @@ class ChatActionRouter:
     ) -> list[str]:
         """Build context lines for the intent classification prompt."""
         lines = [
-            f"Entity: {grounding.entity_name}",
-            f"Autonomy mode: {grounding.autonomy_mode}",
-            f"Base currency: {grounding.base_currency}",
+            f"Entity: {grounding.context.entity_name}",
+            f"Autonomy mode: {grounding.context.autonomy_mode}",
+            f"Base currency: {grounding.context.base_currency}",
             f"Current UTC date: {utc_now().date().isoformat()}",
         ]
-        if grounding.close_run and grounding.period_label:
-            lines.append(f"Close run period: {grounding.period_label}")
+        if grounding.close_run and grounding.context.period_label:
+            lines.append(f"Close run period: {grounding.context.period_label}")
         return lines
 
     def _build_classification_prompt(

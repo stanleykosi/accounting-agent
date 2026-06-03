@@ -293,8 +293,7 @@ class FakeChatActionExecutor:
                         "packaging, evidence packs, and release records."
                     ),
                     prompt_signature=(
-                        "generate_reports(template_id?, generate_commentary?, "
-                        "use_llm_commentary?)"
+                        "generate_reports(template_id?, generate_commentary?, use_llm_commentary?)"
                     ),
                     description="Create a report run and queue report generation.",
                     intent="report_action",
@@ -532,6 +531,24 @@ class FakeChatRepository:
             for index, _message in enumerate(self.messages, start=1)
         )
 
+    def list_messages_for_thread_after_order(
+        self,
+        *,
+        thread_id,
+        after_message_order,
+        limit=None,
+    ):
+        messages = [
+            message
+            for message in self.list_messages_for_thread(thread_id=thread_id)
+            if message.message_order > after_message_order
+        ]
+        return tuple(messages[:limit] if limit is not None else messages)
+
+    def get_latest_message_order_for_thread(self, *, thread_id):
+        del thread_id
+        return len(self.messages)
+
     def create_message(
         self,
         *,
@@ -671,9 +688,7 @@ class FakeCloseRunService:
 
     def get_close_run(self, **kwargs):
         del kwargs
-        return SimpleNamespace(
-            workflow_state=SimpleNamespace(active_phase=self.active_phase)
-        )
+        return SimpleNamespace(workflow_state=SimpleNamespace(active_phase=self.active_phase))
 
     def rewind_close_run(self, **kwargs):
         self.rewind_calls.append(kwargs)
@@ -794,6 +809,7 @@ def test_chat_workspace_endpoint_returns_memory_tools_and_traces(monkeypatch) ->
 
     payload = result.model_dump(mode="json")
     assert payload["coa"]["source"] == "manual_upload"
+    assert payload["imports"]["latest_coa"] is None
     assert payload["readiness"]["status"] == "attention_required"
     assert payload["memory"]["pending_action_count"] == 2
     assert payload["tools"][0]["name"] == "generate_reports"
@@ -1470,6 +1486,7 @@ def _install_browser_auth_stub(monkeypatch) -> None:
         "_require_authenticated_browser_session",
         lambda **kwargs: type("SessionResult", (), {"user": TEST_USER})(),
     )
+
 
 def _run_mcp_call(
     *,

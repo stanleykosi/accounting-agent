@@ -9,6 +9,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from services.coa.importer import import_coa_file
+from services.imports.intelligence import IMPORT_INTELLIGENCE_METADATA_KEY
 
 
 def test_import_coa_file_accepts_title_rows_and_statement_group_layout() -> None:
@@ -33,6 +34,12 @@ def test_import_coa_file_accepts_title_rows_and_statement_group_layout() -> None
     assert imported_file.accounts[1].account_type == "liability"
     assert imported_file.accounts[2].account_type == "revenue"
     assert imported_file.accounts[3].account_type == "expense"
+    report = imported_file.import_metadata[IMPORT_INTELLIGENCE_METADATA_KEY]
+    assert isinstance(report, dict)
+    assert report["document_kind"] == "chart_of_accounts"
+    assert report["header_row_number"] == 2
+    assert report["status"] == "parsed_with_warnings"
+    assert report["account_type_strategy"] == "inferred_from_statement_group"
 
 
 def test_import_coa_file_accepts_searchable_pdf_table_fixture() -> None:
@@ -43,5 +50,8 @@ def test_import_coa_file_accepts_searchable_pdf_table_fixture() -> None:
     imported_file = import_coa_file(filename=fixture.name, payload=fixture.read_bytes())
 
     assert imported_file.import_metadata["format"] == "pdf"
+    report = imported_file.import_metadata[IMPORT_INTELLIGENCE_METADATA_KEY]
+    assert isinstance(report, dict)
+    assert report["source_format"] == "pdf"
     assert len(imported_file.accounts) == 49
     assert imported_file.accounts[0].account_code == "1000"

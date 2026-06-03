@@ -8,7 +8,7 @@ and entity membership access checks through the report repository.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, time
+from datetime import UTC, date, datetime, time
 from enum import StrEnum
 from uuid import UUID, uuid4
 
@@ -18,6 +18,7 @@ from services.contracts.export_models import (
     CreateExportRequest,
     DistributeExportRequest,
     EvidencePackBundle,
+    ExportArtifactEntry,
     ExportDetail,
     ExportDistributionRecord,
     ExportListResponse,
@@ -25,7 +26,9 @@ from services.contracts.export_models import (
     ExportSummary,
 )
 from services.db.models.audit import AuditSourceSurface
+from services.db.models.close_run import CloseRun
 from services.db.models.documents import Document
+from services.db.models.entity import Entity
 from services.db.models.exports import Artifact, ExportDistribution, ExportRun, ExportStatus
 from services.db.models.extractions import DocumentExtraction, ExtractedField
 from services.db.models.reporting import ReportRun, ReportRunStatus
@@ -467,11 +470,8 @@ class ExportService:
         *,
         entity_id: UUID,
         close_run_id: UUID,
-    ):
+    ) -> tuple[CloseRun, Entity]:
         """Load the close run and entity rows required for export assembly."""
-
-        from services.db.models.close_run import CloseRun
-        from services.db.models.entity import Entity
 
         close_run_record = (
             self._db_session.query(CloseRun)
@@ -528,7 +528,7 @@ def _load_report_output_records(
     )
     artifact_records: list[dict[str, object]] = []
     for report_run in report_runs:
-        artifact_refs = (
+        artifact_refs: list[object] = (
             report_run.artifact_refs if isinstance(report_run.artifact_refs, list) else []
         )
         for artifact_ref in artifact_refs:
@@ -566,8 +566,8 @@ def _assemble_or_get_evidence_pack(
     close_run_id: UUID,
     entity_name: str,
     close_run_version_no: int,
-    period_start,
-    period_end,
+    period_start: date,
+    period_end: date,
     report_output_records: list[dict[str, object]],
 ) -> EvidencePackBundle:
     """Return the canonical evidence-pack bundle for one close run version."""
@@ -800,11 +800,20 @@ def _build_export_detail(
         close_run_id=close_run_id,
         idempotency_key=export_run.evidence_pack_key,
     )
+    raw_artifact_manifest: list[object] = (
+        export_run.artifact_manifest
+        if isinstance(export_run.artifact_manifest, list)
+        else []
+    )
     manifest = ExportManifest(
         close_run_id=str(close_run_id),
         version_no=export_run.version_no,
         generated_at=export_run.completed_at or export_run.created_at,
-        artifacts=tuple(export_run.artifact_manifest or ()),
+        artifacts=tuple(
+            ExportArtifactEntry(**artifact)
+            for artifact in raw_artifact_manifest
+            if isinstance(artifact, dict)
+        ),
         evidence_pack_ref=evidence_pack,
     )
     summary = _to_export_summary(

@@ -22,7 +22,7 @@ from services.common.settings import get_settings
 from services.db.models.chat import ChatMessage, ChatThread
 from services.db.models.entity import EntityMembership
 from sqlalchemy import desc, func, select, text
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, aliased
 
 
 @dataclass(frozen=True, slots=True)
@@ -61,6 +61,15 @@ class ChatMessageRecord:
     grounding_payload: dict[str, Any]
     model_metadata: dict[str, Any] | None
     created_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class ChatThreadMessageStatsRecord:
+    """Describe aggregate message stats for one chat thread."""
+
+    message_count: int
+    last_message_at: datetime | None
+    latest_message_order: int
 
 
 class ChatRepository:
@@ -217,28 +226,26 @@ class ChatRepository:
     ) -> tuple[ChatThreadWithCountRecord, ...]:
         """Return threads for an entity with message counts, newest-first."""
 
-        subquery = (
-            select(
-                ChatMessage.thread_id,
-                func.count(ChatMessage.id).label("message_count"),
-                func.max(ChatMessage.created_at).label("last_message_at"),
-            )
-            .group_by(ChatMessage.thread_id)
-            .subquery()
-        )
-
-        statement = (
-            select(ChatThread, subquery.c.message_count, subquery.c.last_message_at)
-            .outerjoin(subquery, ChatThread.id == subquery.c.thread_id)
-            .where(ChatThread.entity_id == entity_id)
-        )
+        thread_statement = select(ChatThread).where(ChatThread.entity_id == entity_id)
 
         if close_run_id is not None:
-            statement = statement.where(ChatThread.close_run_id == close_run_id)
+            thread_statement = thread_statement.where(ChatThread.close_run_id == close_run_id)
         else:
-            statement = statement.where(ChatThread.close_run_id.is_(None))
+            thread_statement = thread_statement.where(ChatThread.close_run_id.is_(None))
 
-        statement = statement.order_by(desc(ChatThread.created_at)).limit(limit)
+        candidate_threads = (
+            thread_statement.order_by(desc(ChatThread.created_at), desc(ChatThread.id))
+            .limit(limit)
+            .subquery()
+        )
+        thread_alias = aliased(ChatThread, candidate_threads)
+        message_stats = _build_message_stats_subquery(candidate_threads)
+
+        statement = (
+            select(thread_alias, message_stats.c.message_count, message_stats.c.last_message_at)
+            .outerjoin(message_stats, thread_alias.id == message_stats.c.thread_id)
+            .order_by(desc(thread_alias.created_at), desc(thread_alias.id))
+        )
 
         rows = self._db_session.execute(statement).all()
         return tuple(
@@ -300,23 +307,21 @@ class ChatRepository:
     ) -> tuple[ChatThreadWithCountRecord, ...]:
         """Return all accessible user threads with counts, newest activity first."""
 
-        subquery = (
-            select(
-                ChatMessage.thread_id,
-                func.count(ChatMessage.id).label("message_count"),
-                func.max(ChatMessage.created_at).label("last_message_at"),
-            )
-            .group_by(ChatMessage.thread_id)
-            .subquery()
-        )
-
-        statement = (
-            select(ChatThread, subquery.c.message_count, subquery.c.last_message_at)
+        candidate_threads = (
+            select(ChatThread)
             .join(EntityMembership, EntityMembership.entity_id == ChatThread.entity_id)
-            .outerjoin(subquery, ChatThread.id == subquery.c.thread_id)
             .where(EntityMembership.user_id == user_id)
             .order_by(desc(ChatThread.updated_at), desc(ChatThread.id))
             .limit(limit)
+            .subquery()
+        )
+        thread_alias = aliased(ChatThread, candidate_threads)
+        message_stats = _build_message_stats_subquery(candidate_threads)
+
+        statement = (
+            select(thread_alias, message_stats.c.message_count, message_stats.c.last_message_at)
+            .outerjoin(message_stats, thread_alias.id == message_stats.c.thread_id)
+            .order_by(desc(thread_alias.updated_at), desc(thread_alias.id))
         )
 
         rows = self._db_session.execute(statement).all()
@@ -343,14 +348,13 @@ class ChatRepository:
         """Stage a new chat message and flush it immediately."""
 
         thread = self._db_session.execute(
-            select(ChatThread)
-            .where(ChatThread.id == thread_id)
-            .with_for_update()
+            select(ChatThread).where(ChatThread.id == thread_id).with_for_update()
         ).scalar_one()
         next_message_order = int(
             self._db_session.execute(
-                select(func.coalesce(func.max(ChatMessage.message_order), 0) + 1)
-                .where(ChatMessage.thread_id == thread.id)
+                select(func.coalesce(func.max(ChatMessage.message_order), 0) + 1).where(
+                    ChatMessage.thread_id == thread.id
+                )
             ).scalar_one()
         )
         model_metadata = _inherit_turn_metadata(
@@ -380,38 +384,86 @@ class ChatRepository:
         thread_id: UUID,
         limit: int | None = None,
     ) -> tuple[ChatMessageRecord, ...]:
-        """Return messages for a thread ordered oldest-first (chronological)."""
+        """Return thread messages ordered oldest-first, limited to the newest messages."""
 
-        statement = (
+        if limit is None:
+            statement = (
+                select(ChatMessage)
+                .where(ChatMessage.thread_id == thread_id)
+                .order_by(ChatMessage.message_order.asc(), ChatMessage.id.asc())
+            )
+            messages = self._db_session.execute(statement).scalars().all()
+            return tuple(_map_message(message) for message in messages)
+
+        newest_messages = (
             select(ChatMessage)
             .where(ChatMessage.thread_id == thread_id)
-            .order_by(ChatMessage.message_order)
+            .order_by(ChatMessage.message_order.desc(), ChatMessage.id.desc())
+            .limit(limit)
+            .subquery()
         )
-
-        if limit is not None:
-            statement = statement.limit(limit)
+        message_alias = aliased(ChatMessage, newest_messages)
+        statement = select(message_alias).order_by(
+            message_alias.message_order.asc(),
+            message_alias.id.asc(),
+        )
 
         messages = self._db_session.execute(statement).scalars().all()
         return tuple(_map_message(message) for message in messages)
 
+    def list_messages_for_thread_after_order(
+        self,
+        *,
+        thread_id: UUID,
+        after_message_order: int,
+        limit: int | None = None,
+    ) -> tuple[ChatMessageRecord, ...]:
+        """Return messages committed after a known per-thread message order."""
+
+        statement = (
+            select(ChatMessage)
+            .where(
+                ChatMessage.thread_id == thread_id,
+                ChatMessage.message_order > after_message_order,
+            )
+            .order_by(ChatMessage.message_order.asc(), ChatMessage.id.asc())
+        )
+        if limit is not None:
+            statement = statement.limit(limit)
+        messages = self._db_session.execute(statement).scalars().all()
+        return tuple(_map_message(message) for message in messages)
+
+    def get_message_stats_for_thread(self, *, thread_id: UUID) -> ChatThreadMessageStatsRecord:
+        """Return message count, latest timestamp, and latest order in one aggregate query."""
+
+        statement = select(
+            func.count(ChatMessage.id),
+            func.max(ChatMessage.created_at),
+            func.coalesce(func.max(ChatMessage.message_order), 0),
+        ).where(ChatMessage.thread_id == thread_id)
+        message_count, last_message_at, latest_message_order = self._db_session.execute(
+            statement
+        ).one()
+        return ChatThreadMessageStatsRecord(
+            message_count=int(message_count),
+            last_message_at=last_message_at,
+            latest_message_order=int(latest_message_order),
+        )
+
     def get_message_count_for_thread(self, *, thread_id: UUID) -> int:
         """Return the total number of messages in a thread."""
 
-        statement = (
-            select(func.count(ChatMessage.id))
-            .where(ChatMessage.thread_id == thread_id)
-        )
-        count = self._db_session.execute(statement).scalar_one()
-        return int(count)
+        return self.get_message_stats_for_thread(thread_id=thread_id).message_count
 
     def get_last_message_time_for_thread(self, *, thread_id: UUID) -> datetime | None:
         """Return the created_at of the most recent message in a thread."""
 
-        statement = (
-            select(func.max(ChatMessage.created_at))
-            .where(ChatMessage.thread_id == thread_id)
-        )
-        return self._db_session.execute(statement).scalar_one()
+        return self.get_message_stats_for_thread(thread_id=thread_id).last_message_at
+
+    def get_latest_message_order_for_thread(self, *, thread_id: UUID) -> int:
+        """Return the current high-water message order for one thread."""
+
+        return self.get_message_stats_for_thread(thread_id=thread_id).latest_message_order
 
     def commit(self) -> None:
         """Commit the current chat transaction and surface integrity problems unchanged."""
@@ -430,15 +482,18 @@ class ChatRepository:
             raise RuntimeError("A chat turn advisory lock is already held by this repository.")
 
         settings = get_settings()
-        connect_kwargs: dict[str, object] = {}
         preferred_hostaddr = settings.database.resolve_preferred_hostaddr()
         if preferred_hostaddr is not None:
-            connect_kwargs["hostaddr"] = preferred_hostaddr
-        connection = psycopg.connect(
-            settings.database.connection_url,
-            autocommit=True,
-            **connect_kwargs,
-        )
+            connection = psycopg.connect(
+                settings.database.connection_url,
+                autocommit=True,
+                hostaddr=preferred_hostaddr,
+            )
+        else:
+            connection = psycopg.connect(
+                settings.database.connection_url,
+                autocommit=True,
+            )
         try:
             connection.execute(
                 "SELECT pg_advisory_lock(%s)",
@@ -488,6 +543,21 @@ def _thread_advisory_lock_key(thread_id: UUID) -> int:
     """Return a stable positive bigint key for Postgres advisory locks."""
 
     return thread_id.int % (2**63)
+
+
+def _build_message_stats_subquery(candidate_threads: Any) -> Any:
+    """Build message aggregates for a pre-limited thread candidate set."""
+
+    return (
+        select(
+            ChatMessage.thread_id,
+            func.count(ChatMessage.id).label("message_count"),
+            func.max(ChatMessage.created_at).label("last_message_at"),
+        )
+        .where(ChatMessage.thread_id.in_(select(candidate_threads.c.id)))
+        .group_by(ChatMessage.thread_id)
+        .subquery()
+    )
 
 
 def _inherit_turn_metadata(
@@ -562,6 +632,7 @@ def _map_message(model: ChatMessage) -> ChatMessageRecord:
 __all__ = [
     "ChatMessageRecord",
     "ChatRepository",
+    "ChatThreadMessageStatsRecord",
     "ChatThreadRecord",
     "ChatThreadWithCountRecord",
 ]

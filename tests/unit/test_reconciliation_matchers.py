@@ -216,7 +216,8 @@ class TestBankReconciliationMatcher:
 
         results = self.matcher.match(source_items, counterparts)
         unmatched_ledger = [
-            r for r in results
+            r
+            for r in results
             if r.source_type == ReconciliationSourceType.LEDGER_TRANSACTION
             and r.match_status == MatchStatus.UNMATCHED
         ]
@@ -229,8 +230,18 @@ class TestBankReconciliationMatcher:
         ]
         # Two candidates: one close but imperfect, one exact match
         counterparts = [
-            {"ref": "ledger_close", "amount": "1000.00", "date": "2026-04-01", "reference": "TXN-001"},
-            {"ref": "ledger_fuzzy", "amount": "1010.00", "date": "2026-04-03", "reference": "TXN-002"},
+            {
+                "ref": "ledger_close",
+                "amount": "1000.00",
+                "date": "2026-04-01",
+                "reference": "TXN-001",
+            },
+            {
+                "ref": "ledger_fuzzy",
+                "amount": "1010.00",
+                "date": "2026-04-03",
+                "reference": "TXN-002",
+            },
         ]
 
         results = self.matcher.match(source_items, counterparts)
@@ -258,7 +269,12 @@ class TestAgeingMatcher:
             {"ref": "inv_001", "amount": "1000.00", "due_date": "2026-03-01", "bucket": "31-60"},
         ]
         counterparts = [
-            {"ref": "inv_001", "amount": "1000.00", "due_date": "2026-03-01", "account_code": "1100"},
+            {
+                "ref": "inv_001",
+                "amount": "1000.00",
+                "due_date": "2026-03-01",
+                "account_code": "1100",
+            },
         ]
 
         results = self.matcher.match(source_items, counterparts)
@@ -280,7 +296,12 @@ class TestAgeingMatcher:
             {"ref": "inv_001", "amount": "1000.00", "due_date": "2026-03-01", "bucket": "31-60"},
         ]
         counterparts = [
-            {"ref": "inv_001", "amount": "950.00", "due_date": "2026-03-01", "account_code": "1100"},
+            {
+                "ref": "inv_001",
+                "amount": "950.00",
+                "due_date": "2026-03-01",
+                "account_code": "1100",
+            },
         ]
 
         results = self.matcher.match(source_items, counterparts)
@@ -361,10 +382,20 @@ class TestPayrollControlMatcher:
 
     def test_exact_payroll_match(self) -> None:
         source_items = [
-            {"ref": "gross:2026-03", "category": "gross_pay", "amount": "50000.00", "period": "2026-03"},
+            {
+                "ref": "gross:2026-03",
+                "category": "gross_pay",
+                "amount": "50000.00",
+                "period": "2026-03",
+            },
         ]
         counterparts = [
-            {"ref": "ledger_gross", "category": "gross_pay", "amount": "50000.00", "period": "2026-03"},
+            {
+                "ref": "ledger_gross",
+                "category": "gross_pay",
+                "amount": "50000.00",
+                "period": "2026-03",
+            },
         ]
 
         results = self.matcher.match(source_items, counterparts)
@@ -373,7 +404,12 @@ class TestPayrollControlMatcher:
 
     def test_missing_payroll_category(self) -> None:
         source_items = [
-            {"ref": "tax:2026-03", "category": "paye_tax", "amount": "5000.00", "period": "2026-03"},
+            {
+                "ref": "tax:2026-03",
+                "category": "paye_tax",
+                "amount": "5000.00",
+                "period": "2026-03",
+            },
         ]
         counterparts = []
 
@@ -497,7 +533,12 @@ class TestAccrualTrackerMatcher:
             {"ref": "acc_001", "amount": "10000.00", "account_code": "2100", "period": "2026-03"},
         ]
         counterparts = [
-            {"ref": "ledger_acc", "amount": "10000.00", "account_code": "2100", "period": "2026-03"},
+            {
+                "ref": "ledger_acc",
+                "amount": "10000.00",
+                "account_code": "2100",
+                "period": "2026-03",
+            },
         ]
 
         results = self.matcher.match(source_items, counterparts)
@@ -646,10 +687,22 @@ class TestTrialBalanceChecker:
 
     def test_balanced_trial_balance(self) -> None:
         balances = [
-            {"account_code": "1000", "account_name": "Cash", "account_type": "asset",
-             "debit_balance": "10000.00", "credit_balance": "0.00", "is_active": True},
-            {"account_code": "4000", "account_name": "Revenue", "account_type": "revenue",
-             "debit_balance": "0.00", "credit_balance": "10000.00", "is_active": True},
+            {
+                "account_code": "1000",
+                "account_name": "Cash",
+                "account_type": "asset",
+                "debit_balance": "10000.00",
+                "credit_balance": "0.00",
+                "is_active": True,
+            },
+            {
+                "account_code": "4000",
+                "account_name": "Revenue",
+                "account_type": "revenue",
+                "debit_balance": "0.00",
+                "credit_balance": "10000.00",
+                "is_active": True,
+            },
         ]
 
         is_balanced, _debits, _credits, anomalies = self.checker.check_balance(balances)
@@ -660,10 +713,22 @@ class TestTrialBalanceChecker:
 
     def test_imbalanced_trial_balance(self) -> None:
         balances = [
-            {"account_code": "1000", "account_name": "Cash", "account_type": "asset",
-             "debit_balance": "10000.00", "credit_balance": "0.00", "is_active": True},
-            {"account_code": "4000", "account_name": "Revenue", "account_type": "revenue",
-             "debit_balance": "0.00", "credit_balance": "9000.00", "is_active": True},
+            {
+                "account_code": "1000",
+                "account_name": "Cash",
+                "account_type": "asset",
+                "debit_balance": "10000.00",
+                "credit_balance": "0.00",
+                "is_active": True,
+            },
+            {
+                "account_code": "4000",
+                "account_name": "Revenue",
+                "account_type": "revenue",
+                "debit_balance": "0.00",
+                "credit_balance": "9000.00",
+                "is_active": True,
+            },
         ]
 
         is_balanced, _debits, _credits, anomalies = self.checker.check_balance(balances)
@@ -674,10 +739,22 @@ class TestTrialBalanceChecker:
 
     def test_rounding_difference(self) -> None:
         balances = [
-            {"account_code": "1000", "account_name": "Cash", "account_type": "asset",
-             "debit_balance": "10000.01", "credit_balance": "0.00", "is_active": True},
-            {"account_code": "4000", "account_name": "Revenue", "account_type": "revenue",
-             "debit_balance": "0.00", "credit_balance": "10000.00", "is_active": True},
+            {
+                "account_code": "1000",
+                "account_name": "Cash",
+                "account_type": "asset",
+                "debit_balance": "10000.01",
+                "credit_balance": "0.00",
+                "is_active": True,
+            },
+            {
+                "account_code": "4000",
+                "account_name": "Revenue",
+                "account_type": "revenue",
+                "debit_balance": "0.00",
+                "credit_balance": "10000.00",
+                "is_active": True,
+            },
         ]
 
         is_balanced, _, _, anomalies = self.checker.check_balance(balances)
@@ -688,8 +765,14 @@ class TestTrialBalanceChecker:
 
     def test_unusual_balance_direction(self) -> None:
         balances = [
-            {"account_code": "1000", "account_name": "Cash", "account_type": "asset",
-             "debit_balance": "0.00", "credit_balance": "1000.00", "is_active": True},
+            {
+                "account_code": "1000",
+                "account_name": "Cash",
+                "account_type": "asset",
+                "debit_balance": "0.00",
+                "credit_balance": "1000.00",
+                "is_active": True,
+            },
         ]
 
         anomalies = self.checker.check_unusual_balances(balances)
@@ -699,8 +782,14 @@ class TestTrialBalanceChecker:
 
     def test_zero_balance_active_account(self) -> None:
         balances = [
-            {"account_code": "1000", "account_name": "Cash", "account_type": "asset",
-             "debit_balance": "0.00", "credit_balance": "0.00", "is_active": True},
+            {
+                "account_code": "1000",
+                "account_name": "Cash",
+                "account_type": "asset",
+                "debit_balance": "0.00",
+                "credit_balance": "0.00",
+                "is_active": True,
+            },
         ]
 
         anomalies = self.checker.check_unusual_balances(balances)
@@ -727,8 +816,14 @@ class TestTrialBalanceChecker:
 
     def test_missing_account_detection(self) -> None:
         balances = [
-            {"account_code": "1000", "account_name": "Cash", "account_type": "asset",
-             "debit_balance": "1000.00", "credit_balance": "0.00", "is_active": True},
+            {
+                "account_code": "1000",
+                "account_name": "Cash",
+                "account_type": "asset",
+                "debit_balance": "1000.00",
+                "credit_balance": "0.00",
+                "is_active": True,
+            },
         ]
         expected = {"1000", "2000", "3000"}
 
@@ -740,12 +835,24 @@ class TestTrialBalanceChecker:
 
     def test_variance_detection(self) -> None:
         current = [
-            {"account_code": "5000", "account_name": "Expense", "account_type": "expense",
-             "debit_balance": "15000.00", "credit_balance": "0.00", "is_active": True},
+            {
+                "account_code": "5000",
+                "account_name": "Expense",
+                "account_type": "expense",
+                "debit_balance": "15000.00",
+                "credit_balance": "0.00",
+                "is_active": True,
+            },
         ]
         prior = [
-            {"account_code": "5000", "account_name": "Expense", "account_type": "expense",
-             "debit_balance": "10000.00", "credit_balance": "0.00", "is_active": True},
+            {
+                "account_code": "5000",
+                "account_name": "Expense",
+                "account_type": "expense",
+                "debit_balance": "10000.00",
+                "credit_balance": "0.00",
+                "is_active": True,
+            },
         ]
 
         anomalies = self.checker.check_variance(current, prior, variance_threshold_pct=20.0)

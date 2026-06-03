@@ -108,6 +108,65 @@ class AutoTransactionMatchSummary(ContractModel):
     )
 
 
+class DocumentIntelligenceSummary(ContractModel):
+    """Describe source-document classification diagnostics for review surfaces."""
+
+    status: str = Field(description="Classification diagnostic status.")
+    final_document_type: DocumentType = Field(description="Final canonical document type.")
+    final_confidence: float | None = Field(
+        default=None,
+        ge=0.0,
+        le=1.0,
+        description="Final classification confidence, when available.",
+    )
+    classification_source: str = Field(description="Decision source: deterministic or ai_assist.")
+    deterministic_document_type: DocumentType = Field(
+        description="Deterministic parser classification before LLM assist.",
+    )
+    deterministic_confidence: float | None = Field(
+        default=None,
+        ge=0.0,
+        le=1.0,
+        description="Deterministic parser classification confidence.",
+    )
+    ai_assist_returned_output: bool = Field(
+        description="Whether bounded LLM assist returned schema-valid output.",
+    )
+    ai_assist_predicted_type: DocumentType | None = Field(
+        default=None,
+        description="LLM-predicted type, when assist returned output.",
+    )
+    ai_assist_classification_confidence: float | None = Field(
+        default=None,
+        ge=0.0,
+        le=1.0,
+        description="LLM classification confidence, when assist returned output.",
+    )
+    ai_assist_applied_classification: bool = Field(
+        description="Whether the final type used the LLM classification.",
+    )
+    ai_assist_field_candidates_applied: tuple[str, ...] = Field(
+        default=(),
+        description="Canonical fields copied from bounded LLM assist into parser output.",
+    )
+    missing_required_fields: tuple[str, ...] = Field(
+        default=(),
+        description="Required field groups missing after extraction.",
+    )
+    warnings: tuple[str, ...] = Field(
+        default=(),
+        description="Classification and extraction warnings for reviewer attention.",
+    )
+    recovery_actions: tuple[str, ...] = Field(
+        default=(),
+        description="Suggested operator recovery actions.",
+    )
+    agent_summary: str | None = Field(
+        default=None,
+        description="Compact summary suitable for agent context.",
+    )
+
+
 class DocumentExtractionSummary(ContractModel):
     """Describe the latest extraction payload attached to a document."""
 
@@ -132,6 +191,10 @@ class DocumentExtractionSummary(ContractModel):
     auto_transaction_match: AutoTransactionMatchSummary | None = Field(
         default=None,
         description="Latest deterministic transaction-linking result for the document.",
+    )
+    document_intelligence: DocumentIntelligenceSummary | None = Field(
+        default=None,
+        description="Latest source-document classification diagnostics.",
     )
     fields: tuple[ExtractedFieldSummary, ...] = Field(
         default=(),
@@ -355,6 +418,7 @@ __all__ = [
     "BatchUploadDocumentsResponse",
     "DocumentDeleteResponse",
     "DocumentExtractionSummary",
+    "DocumentIntelligenceSummary",
     "DocumentIssueSummary",
     "DocumentListResponse",
     "DocumentProcessingDispatch",

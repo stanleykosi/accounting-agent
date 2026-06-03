@@ -19,6 +19,13 @@ from openpyxl import load_workbook  # type: ignore[import-untyped]
 from pypdf import PdfReader
 from pypdf.errors import PdfReadError
 from services.common.types import JsonObject
+from services.imports.intelligence import (
+    IMPORT_INTELLIGENCE_METADATA_KEY,
+    ImportColumnMapping,
+    ImportDiagnosticIssue,
+    build_header_column_mappings,
+    build_import_intelligence_report,
+)
 
 
 class CoaImportErrorCode(StrEnum):
@@ -61,9 +68,28 @@ class ImportedCoaFile:
     import_metadata: JsonObject
 
 
+@dataclass(frozen=True, slots=True)
+class _CanonicalRow:
+    """Describe one canonicalized source row with its original 1-based row number."""
+
+    values: dict[str, str]
+    row_number: int
+
+
+@dataclass(frozen=True, slots=True)
+class _CanonicalRowsResult:
+    """Describe canonicalized rows plus header-detection evidence."""
+
+    rows: tuple[_CanonicalRow, ...]
+    detected_columns: frozenset[str]
+    header_row_index: int
+    column_mappings: tuple[ImportColumnMapping, ...]
+
+
 _REQUIRED_COLUMNS: Final[frozenset[str]] = frozenset(
     {"account_code", "account_name", "account_type"}
 )
+_SUPPORTED_FORMATS: Final[tuple[str, ...]] = ("csv", "xlsx", "pdf")
 
 _HEADER_ALIASES: Final[dict[str, str]] = {
     "account": "account_name",
@@ -122,13 +148,13 @@ def import_coa_file(*, filename: str, payload: bytes) -> ImportedCoaFile:
 
     suffix = Path(filename).suffix.lower()
     if suffix == ".csv":
-        rows, detected_columns = _read_csv_rows(payload=payload)
+        read_result = _read_csv_rows(payload=payload)
         source_format = "csv"
     elif suffix in {".xlsx", ".xlsm"}:
-        rows, detected_columns = _read_workbook_rows(payload=payload)
+        read_result = _read_workbook_rows(payload=payload)
         source_format = "xlsx"
     elif suffix == ".pdf":
-        rows, detected_columns = _read_pdf_rows(payload=payload)
+        read_result = _read_pdf_rows(payload=payload)
         source_format = "pdf"
     else:
         raise CoaImportError(
@@ -136,27 +162,62 @@ def import_coa_file(*, filename: str, payload: bytes) -> ImportedCoaFile:
             message="Upload a CSV, XLSX, or searchable PDF chart-of-accounts file.",
         )
 
-    if not rows:
+    if not read_result.rows:
         raise CoaImportError(
             code=CoaImportErrorCode.INVALID_FILE,
             message="The COA file does not contain any account rows.",
         )
 
     accounts = tuple(
-        _parse_account_row(row=row, row_number=index + 2) for index, row in enumerate(rows)
+        _parse_account_row(row=row.values, row_number=row.row_number)
+        for row in read_result.rows
     )
     _validate_accounts(accounts)
 
+    warnings = _build_import_warnings(
+        detected_columns=read_result.detected_columns,
+        source_format=source_format,
+    )
+    account_type_strategy = (
+        "explicit_column"
+        if "account_type" in read_result.detected_columns
+        else "inferred_from_statement_group"
+    )
     metadata: JsonObject = {
-        "detected_columns": ", ".join(sorted(detected_columns)),
+        "detected_columns": ", ".join(sorted(read_result.detected_columns)),
         "format": source_format,
         "row_count": len(accounts),
         "uploaded_filename": filename,
+        IMPORT_INTELLIGENCE_METADATA_KEY: build_import_intelligence_report(
+            document_kind="chart_of_accounts",
+            source_format=source_format,
+            uploaded_filename=filename,
+            row_count=len(read_result.rows),
+            accepted_row_count=len(accounts),
+            detected_columns=tuple(read_result.detected_columns),
+            header_row_index=read_result.header_row_index,
+            column_mappings=read_result.column_mappings,
+            confidence=_resolve_import_confidence(
+                detected_columns=read_result.detected_columns,
+                source_format=source_format,
+            ),
+            parsing_strategy="header_row_scan_with_alias_mapping",
+            parser_capabilities=_SUPPORTED_FORMATS,
+            warnings=warnings,
+            recovery_actions=tuple(
+                warning.recovery_action
+                for warning in warnings
+                if warning.recovery_action is not None
+            ),
+            extra={
+                "account_type_strategy": account_type_strategy,
+            },
+        ),
     }
     return ImportedCoaFile(accounts=accounts, import_metadata=metadata)
 
 
-def _read_csv_rows(*, payload: bytes) -> tuple[tuple[dict[str, str], ...], frozenset[str]]:
+def _read_csv_rows(*, payload: bytes) -> _CanonicalRowsResult:
     """Read CSV rows and normalize header names into canonical COA column keys."""
 
     try:
@@ -178,7 +239,7 @@ def _read_csv_rows(*, payload: bytes) -> tuple[tuple[dict[str, str], ...], froze
     return _read_matrix_rows(raw_rows=raw_rows)
 
 
-def _read_workbook_rows(*, payload: bytes) -> tuple[tuple[dict[str, str], ...], frozenset[str]]:
+def _read_workbook_rows(*, payload: bytes) -> _CanonicalRowsResult:
     """Read the first worksheet in an XLSX payload using normalized COA headers."""
 
     try:
@@ -203,7 +264,7 @@ def _read_workbook_rows(*, payload: bytes) -> tuple[tuple[dict[str, str], ...], 
     return _read_matrix_rows(raw_rows=raw_rows)
 
 
-def _read_pdf_rows(*, payload: bytes) -> tuple[tuple[dict[str, str], ...], frozenset[str]]:
+def _read_pdf_rows(*, payload: bytes) -> _CanonicalRowsResult:
     """Read searchable PDF text when the table structure is preserved by extraction."""
 
     try:
@@ -235,43 +296,53 @@ def _read_pdf_rows(*, payload: bytes) -> tuple[tuple[dict[str, str], ...], froze
 def _read_matrix_rows(
     *,
     raw_rows: Sequence[Sequence[str]],
-) -> tuple[tuple[dict[str, str], ...], frozenset[str]]:
+) -> _CanonicalRowsResult:
     """Find the header row in a worksheet/CSV matrix and normalize following rows."""
 
-    non_empty_rows = tuple(row for row in raw_rows if any(cell.strip() for cell in row))
-    if not non_empty_rows:
+    indexed_non_empty_rows = tuple(
+        (index, row) for index, row in enumerate(raw_rows) if any(cell.strip() for cell in row)
+    )
+    if not indexed_non_empty_rows:
         raise CoaImportError(
             code=CoaImportErrorCode.INVALID_FILE,
             message="The COA file does not contain any account rows.",
         )
 
-    best_header: tuple[int, dict[int, str]] | None = None
+    best_header: tuple[int, int, dict[int, str]] | None = None
     best_score = -1
-    for index, row in enumerate(non_empty_rows[:25]):
+    for position, (row_index, row) in enumerate(indexed_non_empty_rows[:25]):
         header_map = _build_header_map(row, validate=False)
         score = _score_header_map(header_map)
         if score > best_score:
-            best_header = (index, header_map)
+            best_header = (position, row_index, header_map)
             best_score = score
 
     if best_header is None:
         _raise_missing_header_error(())
     assert best_header is not None
 
-    header_index, canonical_header_map = best_header
+    header_position, header_row_index, canonical_header_map = best_header
     _validate_header_map(tuple(canonical_header_map.values()))
-    headers = tuple(non_empty_rows[header_index])
-    rows: list[dict[str, str]] = []
-    for raw_row in non_empty_rows[header_index + 1 :]:
+    headers = tuple(indexed_non_empty_rows[header_position][1])
+    rows: list[_CanonicalRow] = []
+    for row_index, raw_row in indexed_non_empty_rows[header_position + 1 :]:
         canonical = _canonicalize_matrix_row(
             raw_row=raw_row,
             headers=headers,
             header_map=canonical_header_map,
         )
         if canonical:
-            rows.append(canonical)
+            rows.append(_CanonicalRow(values=canonical, row_number=row_index + 1))
 
-    return tuple(rows), frozenset(canonical_header_map.values())
+    return _CanonicalRowsResult(
+        rows=tuple(rows),
+        detected_columns=frozenset(canonical_header_map.values()),
+        header_row_index=header_row_index,
+        column_mappings=build_header_column_mappings(
+            headers=headers,
+            header_map=canonical_header_map,
+        ),
+    )
 
 
 def _build_header_map(headers: Sequence[str], *, validate: bool = True) -> dict[int, str]:
@@ -577,6 +648,60 @@ def _parse_boolean(
         code=CoaImportErrorCode.INVALID_FILE,
         message=(f"Row {row_number} has invalid boolean value for {field_name}: {normalized}."),
     )
+
+
+def _build_import_warnings(
+    *,
+    detected_columns: frozenset[str],
+    source_format: str,
+) -> tuple[ImportDiagnosticIssue, ...]:
+    """Return non-blocking diagnostics for a successfully parsed COA file."""
+
+    warnings: list[ImportDiagnosticIssue] = []
+    if "account_type" not in detected_columns:
+        warnings.append(
+            ImportDiagnosticIssue(
+                code="account_type_inferred",
+                severity="warning",
+                message=(
+                    "The COA did not include an explicit account_type column; account types were "
+                    "inferred from statement/group/name columns."
+                ),
+                recovery_action=(
+                    "Review the imported account types before relying on automated coding."
+                ),
+            )
+        )
+    if source_format == "pdf":
+        warnings.append(
+            ImportDiagnosticIssue(
+                code="searchable_pdf_table_required",
+                severity="info",
+                message=(
+                    "The COA was parsed from searchable PDF text whose table columns extracted "
+                    "cleanly."
+                ),
+                recovery_action=(
+                    "Prefer the source XLSX/CSV export when the accounting package can provide it."
+                ),
+            )
+        )
+    return tuple(warnings)
+
+
+def _resolve_import_confidence(
+    *,
+    detected_columns: frozenset[str],
+    source_format: str,
+) -> float:
+    """Return a bounded parser-confidence score for a successful COA import."""
+
+    confidence = 0.97
+    if "account_type" not in detected_columns:
+        confidence -= 0.08
+    if source_format == "pdf":
+        confidence -= 0.06
+    return max(confidence, 0.75)
 
 
 __all__ = [

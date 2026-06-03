@@ -22,6 +22,13 @@ from openpyxl import load_workbook  # type: ignore[import-untyped]
 from pypdf import PdfReader
 from pypdf.errors import PdfReadError
 from services.common.types import JsonObject
+from services.imports.intelligence import (
+    IMPORT_INTELLIGENCE_METADATA_KEY,
+    ImportColumnMapping,
+    ImportDiagnosticIssue,
+    build_header_column_mappings,
+    build_import_intelligence_report,
+)
 
 
 class LedgerImportErrorCode(StrEnum):
@@ -86,8 +93,27 @@ class ImportedTrialBalanceFile:
     import_metadata: JsonObject
 
 
+@dataclass(frozen=True, slots=True)
+class _CanonicalRow:
+    """Describe one canonicalized source row with its original 1-based row number."""
+
+    values: dict[str, str]
+    row_number: int
+
+
+@dataclass(frozen=True, slots=True)
+class _CanonicalRowsResult:
+    """Describe canonicalized rows plus header-detection evidence."""
+
+    rows: tuple[_CanonicalRow, ...]
+    detected_columns: frozenset[str]
+    header_row_index: int
+    column_mappings: tuple[ImportColumnMapping, ...]
+
+
 _GL_REQUIRED_COLUMNS = frozenset({"posting_date"})
 _TB_REQUIRED_COLUMNS = frozenset[str]()
+_SUPPORTED_FORMATS = ("csv", "xlsx", "pdf")
 
 _GL_HEADER_ALIASES = {
     "account": "account_name",
@@ -180,7 +206,7 @@ def import_general_ledger_file(
 ) -> ImportedGeneralLedgerFile:
     """Parse a CSV/XLSX/searchable-PDF general-ledger payload into line seeds."""
 
-    rows, detected_columns, source_format = _read_rows(
+    read_result, source_format = _read_rows(
         filename=filename,
         payload=payload,
         header_aliases=_GL_HEADER_ALIASES,
@@ -191,25 +217,66 @@ def import_general_ledger_file(
     normalized_account_lookup = _normalize_account_code_lookup(account_code_lookup)
     lines = tuple(
         _parse_gl_row(
-            row=row,
-            row_number=index + 2,
+            row=row.values,
+            row_number=row.row_number,
             account_code_lookup=normalized_account_lookup,
         )
-        for index, row in enumerate(rows)
+        for row in read_result.rows
+    )
+    account_identity_strategy = (
+        "explicit_account_code"
+        if "account_code" in read_result.detected_columns
+        else "resolved_by_name"
+    )
+    transaction_grouping_strategy = (
+        "explicit_column"
+        if "transaction_group_key" in read_result.detected_columns
+        else "derived_from_ledger_fields"
+    )
+    warnings = _build_import_warnings(
+        document_kind="general_ledger",
+        source_format=source_format,
+        account_identity_strategy=account_identity_strategy,
+        transaction_grouping_strategy=transaction_grouping_strategy,
     )
     metadata: JsonObject = {
-        "detected_columns": ", ".join(sorted(detected_columns)),
+        "detected_columns": ", ".join(sorted(read_result.detected_columns)),
         "format": source_format,
         "row_count": len(lines),
-        "account_identity_strategy": (
-            "explicit_account_code" if "account_code" in detected_columns else "resolved_by_name"
-        ),
-        "transaction_grouping_strategy": (
-            "explicit_column"
-            if "transaction_group_key" in detected_columns
-            else "derived_from_ledger_fields"
-        ),
+        "account_identity_strategy": account_identity_strategy,
+        "transaction_grouping_strategy": transaction_grouping_strategy,
         "uploaded_filename": filename,
+        IMPORT_INTELLIGENCE_METADATA_KEY: build_import_intelligence_report(
+            document_kind="general_ledger",
+            source_format=source_format,
+            uploaded_filename=filename,
+            row_count=len(read_result.rows),
+            accepted_row_count=len(lines),
+            detected_columns=tuple(read_result.detected_columns),
+            header_row_index=read_result.header_row_index,
+            column_mappings=read_result.column_mappings,
+            confidence=_resolve_import_confidence(
+                source_format=source_format,
+                account_identity_strategy=account_identity_strategy,
+                transaction_grouping_strategy=transaction_grouping_strategy,
+            ),
+            parsing_strategy="header_row_scan_with_alias_mapping",
+            parser_capabilities=_SUPPORTED_FORMATS,
+            warnings=warnings,
+            recovery_actions=tuple(
+                warning.recovery_action
+                for warning in warnings
+                if warning.recovery_action is not None
+            ),
+            extra={
+                "account_identity_strategy": account_identity_strategy,
+                "account_name_resolution_count": _count_account_name_resolution_rows(
+                    rows=read_result.rows,
+                ),
+                "amount_strategy": _detect_gl_amount_strategy(read_result.detected_columns),
+                "transaction_grouping_strategy": transaction_grouping_strategy,
+            },
+        ),
     }
     return ImportedGeneralLedgerFile(lines=lines, import_metadata=metadata)
 
@@ -222,7 +289,7 @@ def import_trial_balance_file(
 ) -> ImportedTrialBalanceFile:
     """Parse a CSV/XLSX/searchable-PDF trial-balance payload into account seeds."""
 
-    rows, detected_columns, source_format = _read_rows(
+    read_result, source_format = _read_rows(
         filename=filename,
         payload=payload,
         header_aliases=_TB_HEADER_ALIASES,
@@ -231,28 +298,71 @@ def import_trial_balance_file(
         noun="trial balance",
     )
     normalized_account_lookup = _normalize_account_code_lookup(account_code_lookup)
-    data_rows = tuple(row for row in rows if not _is_trial_balance_summary_row(row=row))
+    data_rows = tuple(
+        row for row in read_result.rows if not _is_trial_balance_summary_row(row=row.values)
+    )
     lines = tuple(
         _parse_tb_row(
-            row=row,
-            row_number=index + 2,
+            row=row.values,
+            row_number=row.row_number,
             account_code_lookup=normalized_account_lookup,
         )
-        for index, row in enumerate(data_rows)
+        for row in data_rows
     )
     if not lines:
         raise LedgerImportError(
             code=LedgerImportErrorCode.INVALID_FILE,
             message="The trial balance file does not contain any account rows.",
         )
+    account_identity_strategy = (
+        "explicit_account_code"
+        if "account_code" in read_result.detected_columns
+        else "resolved_by_name"
+    )
+    skipped_summary_row_count = len(read_result.rows) - len(data_rows)
+    warnings = _build_import_warnings(
+        document_kind="trial_balance",
+        source_format=source_format,
+        account_identity_strategy=account_identity_strategy,
+        skipped_summary_row_count=skipped_summary_row_count,
+    )
     metadata: JsonObject = {
-        "detected_columns": ", ".join(sorted(detected_columns)),
+        "detected_columns": ", ".join(sorted(read_result.detected_columns)),
         "format": source_format,
         "row_count": len(lines),
-        "account_identity_strategy": (
-            "explicit_account_code" if "account_code" in detected_columns else "resolved_by_name"
-        ),
+        "account_identity_strategy": account_identity_strategy,
         "uploaded_filename": filename,
+        IMPORT_INTELLIGENCE_METADATA_KEY: build_import_intelligence_report(
+            document_kind="trial_balance",
+            source_format=source_format,
+            uploaded_filename=filename,
+            row_count=len(read_result.rows),
+            accepted_row_count=len(lines),
+            detected_columns=tuple(read_result.detected_columns),
+            header_row_index=read_result.header_row_index,
+            column_mappings=read_result.column_mappings,
+            confidence=_resolve_import_confidence(
+                source_format=source_format,
+                account_identity_strategy=account_identity_strategy,
+                transaction_grouping_strategy=None,
+            ),
+            parsing_strategy="header_row_scan_with_alias_mapping",
+            parser_capabilities=_SUPPORTED_FORMATS,
+            warnings=warnings,
+            recovery_actions=tuple(
+                warning.recovery_action
+                for warning in warnings
+                if warning.recovery_action is not None
+            ),
+            extra={
+                "account_identity_strategy": account_identity_strategy,
+                "account_name_resolution_count": _count_account_name_resolution_rows(
+                    rows=data_rows,
+                ),
+                "balance_strategy": _detect_tb_balance_strategy(read_result.detected_columns),
+                "skipped_summary_row_count": skipped_summary_row_count,
+            },
+        ),
     }
     return ImportedTrialBalanceFile(lines=lines, import_metadata=metadata)
 
@@ -265,7 +375,7 @@ def _read_rows(
     required_columns: frozenset[str],
     required_any_column_groups: tuple[frozenset[str], ...] = (),
     noun: str,
-) -> tuple[tuple[dict[str, str], ...], frozenset[str], str]:
+) -> tuple[_CanonicalRowsResult, str]:
     """Read canonicalized rows from a CSV, XLSX, or searchable PDF payload."""
 
     if not payload:
@@ -276,32 +386,38 @@ def _read_rows(
 
     suffix = Path(filename).suffix.lower()
     if suffix == ".csv":
-        rows, detected_columns = _read_csv_rows(
-            payload=payload,
-            header_aliases=header_aliases,
-            required_columns=required_columns,
-            required_any_column_groups=required_any_column_groups,
-            noun=noun,
+        return (
+            _read_csv_rows(
+                payload=payload,
+                header_aliases=header_aliases,
+                required_columns=required_columns,
+                required_any_column_groups=required_any_column_groups,
+                noun=noun,
+            ),
+            "csv",
         )
-        return rows, detected_columns, "csv"
     if suffix in {".xlsx", ".xlsm"}:
-        rows, detected_columns = _read_workbook_rows(
-            payload=payload,
-            header_aliases=header_aliases,
-            required_columns=required_columns,
-            required_any_column_groups=required_any_column_groups,
-            noun=noun,
+        return (
+            _read_workbook_rows(
+                payload=payload,
+                header_aliases=header_aliases,
+                required_columns=required_columns,
+                required_any_column_groups=required_any_column_groups,
+                noun=noun,
+            ),
+            "xlsx",
         )
-        return rows, detected_columns, "xlsx"
     if suffix == ".pdf":
-        rows, detected_columns = _read_pdf_rows(
-            payload=payload,
-            header_aliases=header_aliases,
-            required_columns=required_columns,
-            required_any_column_groups=required_any_column_groups,
-            noun=noun,
+        return (
+            _read_pdf_rows(
+                payload=payload,
+                header_aliases=header_aliases,
+                required_columns=required_columns,
+                required_any_column_groups=required_any_column_groups,
+                noun=noun,
+            ),
+            "pdf",
         )
-        return rows, detected_columns, "pdf"
 
     raise LedgerImportError(
         code=LedgerImportErrorCode.UNSUPPORTED_FILE_TYPE,
@@ -316,7 +432,7 @@ def _read_csv_rows(
     required_columns: frozenset[str],
     required_any_column_groups: tuple[frozenset[str], ...],
     noun: str,
-) -> tuple[tuple[dict[str, str], ...], frozenset[str]]:
+) -> _CanonicalRowsResult:
     """Read CSV rows and normalize headers into canonical column names."""
 
     try:
@@ -339,14 +455,13 @@ def _read_csv_rows(
             message=f"The {noun} CSV file must include a header row.",
         )
 
-    rows, detected_columns = _read_matrix_rows(
+    return _read_matrix_rows(
         raw_rows=raw_rows,
         header_aliases=header_aliases,
         required_columns=required_columns,
         required_any_column_groups=required_any_column_groups,
         noun=noun,
     )
-    return rows, detected_columns
 
 
 def _read_workbook_rows(
@@ -356,7 +471,7 @@ def _read_workbook_rows(
     required_columns: frozenset[str],
     required_any_column_groups: tuple[frozenset[str], ...],
     noun: str,
-) -> tuple[tuple[dict[str, str], ...], frozenset[str]]:
+) -> _CanonicalRowsResult:
     """Read the first worksheet in an XLSX payload and normalize headers."""
 
     try:
@@ -394,7 +509,7 @@ def _read_pdf_rows(
     required_columns: frozenset[str],
     required_any_column_groups: tuple[frozenset[str], ...],
     noun: str,
-) -> tuple[tuple[dict[str, str], ...], frozenset[str]]:
+) -> _CanonicalRowsResult:
     """Read searchable PDF text when the table structure is preserved by extraction."""
 
     try:
@@ -473,19 +588,21 @@ def _read_matrix_rows(
     required_columns: frozenset[str],
     required_any_column_groups: tuple[frozenset[str], ...],
     noun: str,
-) -> tuple[tuple[dict[str, str], ...], frozenset[str]]:
+) -> _CanonicalRowsResult:
     """Find the most likely header row and canonicalize rows below it."""
 
-    non_empty_rows = tuple(row for row in raw_rows if any(cell.strip() for cell in row))
-    if not non_empty_rows:
+    indexed_non_empty_rows = tuple(
+        (index, row) for index, row in enumerate(raw_rows) if any(cell.strip() for cell in row)
+    )
+    if not indexed_non_empty_rows:
         raise LedgerImportError(
             code=LedgerImportErrorCode.INVALID_FILE,
             message=f"The {noun} file does not contain any data rows.",
         )
 
-    best_header: tuple[int, dict[int, str]] | None = None
+    best_header: tuple[int, int, dict[int, str]] | None = None
     best_score = -1
-    for index, row in enumerate(non_empty_rows[:25]):
+    for position, (row_index, row) in enumerate(indexed_non_empty_rows[:25]):
         header_map = {
             column_index: header_aliases[normalized]
             for column_index, header in enumerate(row)
@@ -493,7 +610,7 @@ def _read_matrix_rows(
         }
         score = _score_header_map(header_map)
         if score > best_score:
-            best_header = (index, header_map)
+            best_header = (position, row_index, header_map)
             best_score = score
 
     if best_header is None:
@@ -506,25 +623,34 @@ def _read_matrix_rows(
         )
     assert best_header is not None
 
-    header_index, header_map = best_header
+    header_position, header_row_index, header_map = best_header
     header_map = _build_header_map(
-        headers=non_empty_rows[header_index],
+        headers=indexed_non_empty_rows[header_position][1],
         header_aliases=header_aliases,
         required_columns=required_columns,
         required_any_column_groups=required_any_column_groups,
         noun=noun,
     )
-    rows = [
-        _canonicalize_matrix_row(raw_row=raw_row, header_map=header_map)
-        for raw_row in non_empty_rows[header_index + 1 :]
-    ]
-    rows = [row for row in rows if row]
+    headers = tuple(indexed_non_empty_rows[header_position][1])
+    rows: list[_CanonicalRow] = []
+    for row_index, raw_row in indexed_non_empty_rows[header_position + 1 :]:
+        canonical = _canonicalize_matrix_row(raw_row=raw_row, header_map=header_map)
+        if canonical:
+            rows.append(_CanonicalRow(values=canonical, row_number=row_index + 1))
     if not rows:
         raise LedgerImportError(
             code=LedgerImportErrorCode.INVALID_FILE,
             message=f"The {noun} file does not contain any data rows.",
         )
-    return tuple(rows), frozenset(header_map.values())
+    return _CanonicalRowsResult(
+        rows=tuple(rows),
+        detected_columns=frozenset(header_map.values()),
+        header_row_index=header_row_index,
+        column_mappings=build_header_column_mappings(
+            headers=headers,
+            header_map=header_map,
+        ),
+    )
 
 
 def _score_header_map(header_map: dict[int, str]) -> int:
@@ -992,6 +1118,131 @@ def _normalize_header_name(value: str) -> str:
         .replace("/", "_")
         .replace(" ", "_")
     )
+
+
+def _build_import_warnings(
+    *,
+    document_kind: str,
+    source_format: str,
+    account_identity_strategy: str,
+    transaction_grouping_strategy: str | None = None,
+    skipped_summary_row_count: int = 0,
+) -> tuple[ImportDiagnosticIssue, ...]:
+    """Return non-blocking diagnostics for successfully parsed ledger imports."""
+
+    warnings: list[ImportDiagnosticIssue] = []
+    document_label = document_kind.replace("_", " ")
+    if account_identity_strategy == "resolved_by_name":
+        warnings.append(
+            ImportDiagnosticIssue(
+                code="account_names_resolved_from_active_coa",
+                severity="warning",
+                message=(
+                    f"The {document_label} did not include account codes; account names were "
+                    "resolved against the active chart of accounts."
+                ),
+                recovery_action=(
+                    "Confirm the active COA matches the source accounting package before using "
+                    "this import as a production baseline."
+                ),
+            )
+        )
+    if transaction_grouping_strategy == "derived_from_ledger_fields":
+        warnings.append(
+            ImportDiagnosticIssue(
+                code="transaction_groups_derived",
+                severity="info",
+                message=(
+                    "The general ledger did not include an explicit journal/transaction group "
+                    "column, so grouping keys were derived from reference, description, date, "
+                    "and line position."
+                ),
+                recovery_action=(
+                    "Include voucher, journal, or transaction numbers in future GL exports when "
+                    "available."
+                ),
+            )
+        )
+    if skipped_summary_row_count > 0:
+        warnings.append(
+            ImportDiagnosticIssue(
+                code="summary_rows_skipped",
+                severity="info",
+                message=(
+                    f"{skipped_summary_row_count} trial-balance total/subtotal row(s) were "
+                    "recognized and skipped."
+                ),
+                recovery_action=(
+                    "No action needed unless the skipped rows contain posting accounts."
+                ),
+            )
+        )
+    if source_format == "pdf":
+        warnings.append(
+            ImportDiagnosticIssue(
+                code="searchable_pdf_table_required",
+                severity="info",
+                message=(
+                    f"The {document_label} was parsed from searchable PDF text whose table "
+                    "columns extracted cleanly."
+                ),
+                recovery_action=(
+                    "Prefer the source XLSX/CSV export when the accounting package can provide it."
+                ),
+            )
+        )
+    return tuple(warnings)
+
+
+def _resolve_import_confidence(
+    *,
+    source_format: str,
+    account_identity_strategy: str,
+    transaction_grouping_strategy: str | None,
+) -> float:
+    """Return a bounded parser-confidence score for successful ledger imports."""
+
+    confidence = 0.97
+    if account_identity_strategy == "resolved_by_name":
+        confidence -= 0.10
+    if transaction_grouping_strategy == "derived_from_ledger_fields":
+        confidence -= 0.04
+    if source_format == "pdf":
+        confidence -= 0.06
+    return max(confidence, 0.70)
+
+
+def _count_account_name_resolution_rows(*, rows: Sequence[_CanonicalRow]) -> int:
+    """Return how many canonical rows depend on account-name lookup."""
+
+    return sum(
+        1
+        for row in rows
+        if _optional_text(row.values.get("account_code")) is None
+        and _optional_text(row.values.get("account_name")) is not None
+    )
+
+
+def _detect_gl_amount_strategy(detected_columns: frozenset[str]) -> str:
+    """Return the amount scheme detected from GL headers."""
+
+    if "signed_amount" in detected_columns:
+        return "signed_amount"
+    if {"debit_amount", "credit_amount"}.intersection(detected_columns):
+        return "debit_credit_columns"
+    if "amount" in detected_columns and "line_type" in detected_columns:
+        return "amount_with_line_type"
+    return "row_level_amount_resolution"
+
+
+def _detect_tb_balance_strategy(detected_columns: frozenset[str]) -> str:
+    """Return the balance scheme detected from trial-balance headers."""
+
+    if {"debit_balance", "credit_balance"}.intersection(detected_columns):
+        return "debit_credit_balance_columns"
+    if "balance" in detected_columns and "balance_side" in detected_columns:
+        return "balance_with_side"
+    return "row_level_balance_resolution"
 
 
 __all__ = [
