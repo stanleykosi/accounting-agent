@@ -164,16 +164,16 @@ export function ChatRail({
       const response = isGlobalAssistant
         ? await listGlobalChatThreads({ limit: 50 })
         : await listChatThreads(
-          resolvedEntityId,
-          closeRunId
-            ? {
-              closeRunId,
-              limit: 50,
-            }
-            : {
-              limit: 50,
-            },
-        );
+            resolvedEntityId,
+            closeRunId
+              ? {
+                  closeRunId,
+                  limit: 50,
+                }
+              : {
+                  limit: 50,
+                },
+          );
       setThreads(response.threads);
       setSelectedThread((current) => {
         if (current === null) {
@@ -273,16 +273,16 @@ export function ChatRail({
         const response = isGlobalAssistant
           ? await createGlobalChatThread()
           : await createChatThread(
-            closeRunId
-              ? {
-                close_run_id: closeRunId,
-                entity_id: resolvedEntityId,
-                title: nextThreadTitle ?? "Close run chat",
-              }
-              : {
-                entity_id: resolvedEntityId,
-              },
-          );
+              closeRunId
+                ? {
+                    close_run_id: closeRunId,
+                    entity_id: resolvedEntityId,
+                    title: nextThreadTitle ?? "Close run chat",
+                  }
+                : {
+                    entity_id: resolvedEntityId,
+                  },
+            );
         const nextThread = response.thread;
         activeEntityIdRef.current = nextThread.entity_id;
         setActiveEntityId(nextThread.entity_id);
@@ -461,9 +461,9 @@ export function ChatRail({
           presentation === "workspace"
             ? workbenchShellStyle
             : {
-              ...workbenchShellStyle,
-              gridTemplateColumns: "minmax(170px, 200px) minmax(0, 1fr)",
-            }
+                ...workbenchShellStyle,
+                gridTemplateColumns: "minmax(170px, 200px) minmax(0, 1fr)",
+              }
         }
       >
         <ThreadSidebar
@@ -510,6 +510,17 @@ export function ChatRail({
             onActionStateChange={() => {
               void refreshSelectedThread();
             }}
+            onAssistantDelta={(content: string) => {
+              setPendingTurn((current) =>
+                current === null
+                  ? current
+                  : {
+                      ...current,
+                      assistantContent: content,
+                      isAwaitingFinalReply: false,
+                    },
+              );
+            }}
             onMessageSent={(response: ChatActionResponse, draft: ComposerDraft) => {
               const threadId = selectedThread?.id;
               const isAcceptedAsyncTurn =
@@ -526,7 +537,9 @@ export function ChatRail({
                 );
                 setThreads((current) =>
                   current.map((thread) =>
-                    thread.id === threadId ? reconcileThreadFromActionResponse(thread, response) : thread,
+                    thread.id === threadId
+                      ? reconcileThreadFromActionResponse(thread, response)
+                      : thread,
                   ),
                 );
                 if (!isAcceptedAsyncTurn) {
@@ -546,10 +559,10 @@ export function ChatRail({
               setPendingTurn(
                 isAcceptedAsyncTurn
                   ? {
-                    assistantContent: response.content,
-                    draft,
-                    isAwaitingFinalReply: true,
-                  }
+                      assistantContent: response.content,
+                      draft,
+                      isAwaitingFinalReply: true,
+                    }
                   : null,
               );
               activeEntityIdRef.current = response.thread_entity_id;
@@ -580,10 +593,10 @@ export function ChatRail({
                         current === null
                           ? current
                           : {
-                            ...current,
-                            assistantContent: message,
-                            isAwaitingFinalReply: false,
-                          },
+                              ...current,
+                              assistantContent: message,
+                              isAwaitingFinalReply: false,
+                            },
                       );
                       setError(message);
                     },
@@ -593,10 +606,10 @@ export function ChatRail({
                         current === null
                           ? current
                           : {
-                            ...current,
-                            assistantContent: message,
-                            isAwaitingFinalReply: false,
-                          },
+                              ...current,
+                              assistantContent: message,
+                              isAwaitingFinalReply: false,
+                            },
                       );
                       setError(message);
                     },
@@ -616,10 +629,10 @@ export function ChatRail({
                 current === null
                   ? null
                   : {
-                    ...current,
-                    assistantContent: message,
-                    isAwaitingFinalReply: false,
-                  },
+                      ...current,
+                      assistantContent: message,
+                      isAwaitingFinalReply: false,
+                    },
               );
             }}
             onSubmissionStart={(draft: ComposerDraft) => {
@@ -901,7 +914,6 @@ function MessageList({
               ) : null}
 
               <p style={messageContentStyle}>{getMessageDisplayContent(message)}</p>
-
             </div>
           </article>
         ))}
@@ -1063,16 +1075,16 @@ function readInitialChatRailState(
   const threadResponse = options.isGlobalAssistant
     ? readGlobalChatThreadListSnapshot({ limit: 50 })
     : readChatThreadListSnapshot(
-      options.entityId,
-      options.closeRunId
-        ? {
-          closeRunId: options.closeRunId,
-          limit: 50,
-        }
-        : {
-          limit: 50,
-        },
-    );
+        options.entityId,
+        options.closeRunId
+          ? {
+              closeRunId: options.closeRunId,
+              limit: 50,
+            }
+          : {
+              limit: 50,
+            },
+      );
   const threads = threadResponse?.threads ?? [];
   const selectedThread = threads[0] ?? null;
   if (selectedThread === null) {
@@ -1168,11 +1180,11 @@ function buildLocalTurnMessages(options: {
   const attachmentPayload =
     options.draft.attachmentNames.length > 0
       ? {
-        attachments: options.draft.attachmentNames.map((filename) => ({
-          filename,
-          intent: "source_documents",
-        })),
-      }
+          attachments: options.draft.attachmentNames.map((filename) => ({
+            filename,
+            intent: "source_documents",
+          })),
+        }
       : {};
 
   return [
@@ -1511,9 +1523,7 @@ function threadCardStyle(active: boolean) {
     border: active ? "1px solid rgba(142, 115, 75, 0.35)" : "1px solid transparent",
     borderRadius: 6,
     background: active ? "rgba(255, 251, 235, 0.78)" : "transparent",
-    boxShadow: active
-      ? "inset 3px 0 0 var(--quartz-gold)"
-      : "none",
+    boxShadow: active ? "inset 3px 0 0 var(--quartz-gold)" : "none",
     color: "var(--quartz-ink)",
     cursor: "pointer",
     display: "grid",

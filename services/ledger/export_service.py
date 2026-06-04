@@ -13,6 +13,7 @@ import csv
 import json
 from enum import StrEnum
 from io import StringIO
+from typing import Protocol
 from uuid import UUID
 
 from services.common.enums import ArtifactType
@@ -22,6 +23,7 @@ from services.contracts.storage_models import CloseRunStorageScope
 from services.db.models.close_run import CloseRun
 from services.db.models.entity import Entity, EntityMembership
 from services.db.models.exports import Artifact
+from services.db.models.ledger import CloseRunLedgerBinding
 from services.idempotency.service import build_idempotency_key
 from services.ledger.effective_ledger import (
     load_close_run_ledger_binding,
@@ -60,6 +62,14 @@ class GeneralLedgerExportServiceError(Exception):
         self.message = message
 
 
+class _ActorUser(Protocol):
+    @property
+    def id(self) -> UUID:
+        """Return the authenticated actor UUID."""
+
+        ...
+
+
 class GeneralLedgerExportService:
     """Generate and read effective-ledger exports for one close run."""
 
@@ -75,7 +85,7 @@ class GeneralLedgerExportService:
     def generate_export(
         self,
         *,
-        actor_user,
+        actor_user: _ActorUser,
         entity_id: UUID,
         close_run_id: UUID,
     ) -> GeneralLedgerExportSummary:
@@ -197,7 +207,7 @@ class GeneralLedgerExportService:
     def get_latest_export(
         self,
         *,
-        actor_user,
+        actor_user: _ActorUser,
         entity_id: UUID,
         close_run_id: UUID,
     ) -> GeneralLedgerExportSummary | None:
@@ -291,7 +301,7 @@ def _build_general_ledger_csv_payload(
     close_run: CloseRun,
     close_run_id: UUID,
     transactions: list[dict[str, object]],
-    binding,
+    binding: CloseRunLedgerBinding | None,
 ) -> tuple[bytes, JsonObject]:
     """Render the effective-ledger CSV payload and export metadata."""
 
@@ -320,7 +330,7 @@ def _build_general_ledger_csv_payload(
         key=lambda row: (
             str(row.get("date") or ""),
             str(row.get("source_kind") or ""),
-            int(row.get("source_line_no") or 0),
+            _to_int(row.get("source_line_no")),
             str(row.get("ref") or ""),
         ),
     )
@@ -344,7 +354,7 @@ def _build_general_ledger_csv_payload(
             {
                 "source_kind": str(row.get("source_kind") or ""),
                 "source_record_id": str(row.get("source_record_id") or ""),
-                "source_line_no": int(row.get("source_line_no") or 0),
+                "source_line_no": _to_int(row.get("source_line_no")),
                 "transaction_group_key": str(row.get("transaction_group_key") or ""),
                 "line_ref": str(row.get("ref") or ""),
                 "posting_date": str(row.get("date") or ""),
@@ -474,8 +484,12 @@ def _to_general_ledger_export_summary(
 def _to_int(value: object) -> int:
     """Convert one metadata value into an integer without raising on malformed input."""
 
+    if value is None:
+        return 0
     try:
-        return int(value) if value is not None else 0
+        if isinstance(value, int | float | str):
+            return int(value)
+        return int(str(value))
     except (TypeError, ValueError):
         return 0
 

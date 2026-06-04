@@ -207,9 +207,7 @@ class TestEvaluateDeterministicRules:
         assert det.get("matched") is False
         assert det.get("reasons") == ["No deterministic GL coding rule matched this transaction."]
 
-    def test_configured_rule_produces_match(
-        self, sample_context: RecommendationContext
-    ) -> None:
+    def test_configured_rule_produces_match(self, sample_context: RecommendationContext) -> None:
         """When a rule engine with a matching rule is available, it should produce a result.
 
         Note: This test verifies the node wiring. The actual rule matching depends on
@@ -423,9 +421,7 @@ class TestAssembleRecommendation:
 class TestAutonomyRouting:
     """Verify autonomy mode routing behavior."""
 
-    def test_human_review_always_pending(
-        self, sample_context: RecommendationContext
-    ) -> None:
+    def test_human_review_always_pending(self, sample_context: RecommendationContext) -> None:
         """Human review mode should always route to pending_review."""
         ctx = sample_context.model_dump(mode="json")
         ctx["autonomy_mode"] = AutonomyMode.HUMAN_REVIEW.value
@@ -699,8 +695,83 @@ class TestModelGatewayHelpers:
         request_body_overrides = captured["request_body_overrides"]
         assert isinstance(request_body_overrides, dict)
         assert request_body_overrides["provider"]["require_parameters"] is True
+        assert request_body_overrides["parallel_tool_calls"] is False
         assert request_body_overrides["tool_choice"] == "required"
         assert isinstance(request_body_overrides["tools"], list)
+
+    def test_complete_tool_call_coerces_plain_text_to_read_only_tool(self, monkeypatch) -> None:
+        """Plain-text provider drift should become a safe read-only planning result."""
+
+        class FakeResponse:
+            def json(self) -> dict[str, object]:
+                return {
+                    "choices": [
+                        {
+                            "message": {
+                                "content": (
+                                    "Next, upload source documents so parsing and extraction "
+                                    "can begin."
+                                ),
+                                "tool_calls": None,
+                            }
+                        }
+                    ]
+                }
+
+        monkeypatch.setenv("MODEL_GATEWAY_API_KEY", "test-key")
+        reset_settings_cache()
+
+        try:
+            gateway = ModelGateway()
+
+            def fake_post_completion_request(
+                *,
+                messages: list[dict[str, str]],
+                request_body_overrides: dict[str, Any] | None = None,
+            ) -> FakeResponse:
+                del messages, request_body_overrides
+                return FakeResponse()
+
+            monkeypatch.setattr(
+                gateway,
+                "_post_completion_request",
+                fake_post_completion_request,
+            )
+
+            result = gateway.complete_tool_call(
+                messages=[{"role": "system", "content": "Plan with tools."}],
+                tools=[
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": "answer_operator",
+                            "description": "Answer without mutating state.",
+                            "parameters": {
+                                "type": "object",
+                                "properties": {
+                                    "assistant_response": {"type": "string"},
+                                    "reasoning": {"type": "string"},
+                                },
+                                "required": ["assistant_response", "reasoning"],
+                            },
+                        },
+                    }
+                ],
+                plain_text_fallback_tool_name="answer_operator",
+            )
+        finally:
+            reset_settings_cache()
+
+        assert result.name == "answer_operator"
+        assert result.arguments == {
+            "assistant_response": (
+                "Next, upload source documents so parsing and extraction can begin."
+            ),
+            "reasoning": (
+                "Model provider returned plain assistant content without a native tool call; "
+                "coerced to a read-only planning response."
+            ),
+        }
 
 
 # ---------------------------------------------------------------------------

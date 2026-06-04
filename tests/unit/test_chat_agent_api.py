@@ -107,12 +107,12 @@ def _chat_action_router_error_class() -> type[Exception]:
             self,
             *,
             status_code: int = 500,
-            code: str = "routing_failed",
+            code: object = "routing_failed",
             message: str = "",
         ) -> None:
             super().__init__(message)
             self.status_code = status_code
-            self.code = SimpleNamespace(value=code)
+            self.code = code if hasattr(code, "value") else SimpleNamespace(value=code)
             self.message = message
 
     return ChatActionRouterError
@@ -141,7 +141,10 @@ _install_service_stub(
     "services.chat.action_router",
     ChatActionRouter=_dummy_class("ChatActionRouter"),
     ChatActionRouterError=_chat_action_router_error_class(),
-    ChatActionRouterErrorCode=SimpleNamespace(ROUTING_FAILED="routing_failed"),
+    ChatActionRouterErrorCode=SimpleNamespace(
+        ROUTING_FAILED=SimpleNamespace(value="routing_failed"),
+        THREAD_NOT_FOUND=SimpleNamespace(value="thread_not_found"),
+    ),
 )
 _install_service_stub(
     "services.chat.action_execution",
@@ -185,6 +188,7 @@ _install_service_stub(
         JOB_NOT_FOUND="job_not_found",
         CANCEL_NOT_ALLOWED="cancel_not_allowed",
     ),
+    TaskDispatcherProtocol=object,
 )
 _install_service_stub(
     "services.model_gateway.client",
@@ -793,6 +797,44 @@ class DirectStatusChatActionExecutor(FakeChatActionExecutor):
         )
 
 
+class StreamingDirectChatActionExecutor(FakeChatActionExecutor):
+    """Emit deterministic read-only stream events for the streaming action route."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.stream_call: dict[str, object] | None = None
+
+    def stream_direct_read_only_message_if_supported(self, **kwargs):
+        self.stream_call = kwargs
+        yield SimpleNamespace(event="delta", payload={"delta": "The close "})
+        yield SimpleNamespace(event="delta", payload={"delta": "is waiting on approvals."})
+        yield SimpleNamespace(
+            event="final",
+            payload={
+                "response": {
+                    "message_id": str(uuid4()),
+                    "content": "The close is waiting on approvals.",
+                    "action_plan": None,
+                    "is_read_only": True,
+                    "thread_entity_id": str(kwargs["entity_id"]),
+                    "thread_close_run_id": None,
+                    "operator_controls": [],
+                    "turn_status": "completed",
+                    "turn_job_id": None,
+                    "client_turn_id": kwargs["client_turn_id"],
+                    "stream_after_message_order": None,
+                }
+            },
+        )
+
+
+async def _collect_streaming_response_body(response) -> str:
+    chunks: list[str] = []
+    async for chunk in response.body_iterator:
+        chunks.append(chunk.decode("utf-8") if isinstance(chunk, bytes) else str(chunk))
+    return "".join(chunks)
+
+
 def test_chat_workspace_endpoint_returns_memory_tools_and_traces(monkeypatch) -> None:
     """Ensure the workspace endpoint exposes thread memory, tools, and traces."""
 
@@ -1029,7 +1071,10 @@ def test_chat_action_attachment_route_ingests_source_documents(monkeypatch) -> N
         )
     )
 
-    assert result.content == "I uploaded the files and I'm processing the chat follow-up now."
+    assert result.content == (
+        "I uploaded the files and I'm processing the chat follow-up now. "
+        "I'll report back here when it finishes."
+    )
     assert result.turn_status == "accepted"
     assert result.turn_job_id is not None
     assert result.stream_after_message_order == 1
@@ -1185,7 +1230,10 @@ def test_chat_action_attachment_route_rewinds_mid_processing_upload(monkeypatch)
         )
     )
 
-    assert result.content == "I uploaded the files and I'm processing the chat follow-up now."
+    assert result.content == (
+        "I uploaded the files and I'm processing the chat follow-up now. "
+        "I'll report back here when it finishes."
+    )
     assert result.turn_status == "accepted"
     assert close_run_service.rewind_calls[0]["target_phase"] is chat_routes.WorkflowPhase.COLLECTION
     assert db_session.commit_count == 2
@@ -1335,6 +1383,56 @@ def test_chat_action_route_returns_direct_status_without_queueing(monkeypatch) -
     assert job_calls == []
 
 
+def test_chat_action_stream_route_emits_read_only_sse_without_queueing(monkeypatch) -> None:
+    """Safe read-only stream turns should emit deltas and final response frames."""
+
+    _install_browser_auth_stub(monkeypatch)
+    job_calls = _install_job_service_stub(monkeypatch)
+    repository = FakeChatRepository(close_run_id=None)
+    executor = StreamingDirectChatActionExecutor()
+    db_session = FakeDatabaseSession()
+    thread_id = uuid4()
+    entity_id = uuid4()
+    request = Request(
+        {
+            "type": "http",
+            "app": SimpleNamespace(version="0.1.0"),
+            "method": "POST",
+            "path": f"/api/chat/threads/{thread_id}/actions/stream",
+            "headers": [],
+        }
+    )
+
+    response = chat_routes.stream_chat_action(
+        thread_id=thread_id,
+        payload=chat_routes.SendChatActionRequest(
+            client_turn_id="turn-stream-status",
+            content="what is the close status?",
+        ),
+        entity_id=entity_id,
+        request=request,
+        response=Response(),
+        settings=SimpleNamespace(),
+        auth_service=SimpleNamespace(),
+        action_executor=executor,
+        chat_repository=repository,
+        db_session=db_session,
+        task_dispatcher=SimpleNamespace(),
+    )
+
+    body = asyncio.run(_collect_streaming_response_body(response))
+
+    assert response.media_type == "text/event-stream"
+    assert "event: delta" in body
+    assert '"delta":"The close "' in body
+    assert '"delta":"is waiting on approvals."' in body
+    assert "event: final" in body
+    assert '"turn_status":"completed"' in body
+    assert executor.stream_call is not None
+    assert executor.stream_call["client_turn_id"] == "turn-stream-status"
+    assert job_calls == []
+
+
 def test_chat_action_route_rejects_non_member_before_dispatch(monkeypatch) -> None:
     """Unauthorized users should not learn thread existence or queue worker jobs."""
 
@@ -1398,7 +1496,7 @@ def test_list_thread_actions_returns_typed_error_when_thread_scope_is_stale(monk
             del kwargs
             raise chat_routes.ChatActionRouterError(
                 status_code=404,
-                code="thread_not_found",
+                code=SimpleNamespace(value="thread_not_found"),
                 message="That chat thread does not exist or is not in this workspace.",
             )
 

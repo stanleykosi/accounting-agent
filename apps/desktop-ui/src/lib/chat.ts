@@ -556,6 +556,10 @@ export type ChatActionResponse = {
   turn_status: string;
 };
 
+export type ChatActionStreamCallbacks = {
+  onDelta?: (content: string) => void;
+};
+
 export type ApproveChatActionRequest = {
   approval_policy?: "auto_release_for_thread";
   reason?: string;
@@ -591,28 +595,85 @@ export async function sendChatAction(
       method: "POST",
     },
   );
-  return {
-    ...response,
-    client_turn_id:
-      typeof (response as Record<string, unknown>).client_turn_id === "string"
-        ? ((response as Record<string, unknown>).client_turn_id as string)
-        : null,
-    operator_controls: normalizeOperatorControls(
-      (response as Record<string, unknown>).operator_controls,
-    ),
-    stream_after_message_order:
-      typeof (response as Record<string, unknown>).stream_after_message_order === "number"
-        ? ((response as Record<string, unknown>).stream_after_message_order as number)
-        : null,
-    turn_job_id:
-      typeof (response as Record<string, unknown>).turn_job_id === "string"
-        ? ((response as Record<string, unknown>).turn_job_id as string)
-        : null,
-    turn_status:
-      typeof (response as Record<string, unknown>).turn_status === "string"
-        ? ((response as Record<string, unknown>).turn_status as string)
-        : "completed",
-  };
+  return normalizeChatActionResponse(response);
+}
+
+export async function streamChatAction(
+  threadId: string,
+  entityId: string,
+  content: string,
+  clientTurnId: string | undefined,
+  callbacks: ChatActionStreamCallbacks = {},
+): Promise<ChatActionResponse> {
+  const body: SendChatActionRequest =
+    clientTurnId === undefined
+      ? { content }
+      : {
+          client_turn_id: clientTurnId,
+          content,
+        };
+  const response = await fetch(
+    `${API_BASE}/threads/${threadId}/actions/stream?entity_id=${encodeURIComponent(entityId)}`,
+    {
+      body: JSON.stringify(body),
+      credentials: "include",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      method: "POST",
+    },
+  );
+
+  if (!response.ok) {
+    const bodyPayload = await parseJsonResponse(response);
+    throw new ChatApiError(
+      response.status,
+      extractChatApiErrorMessage(bodyPayload),
+      extractChatApiErrorCode(bodyPayload),
+    );
+  }
+  if (response.body === null) {
+    throw new ChatApiError(502, "The chat stream did not return a readable response body.");
+  }
+
+  invalidateChatCache();
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let streamedContent = "";
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (value !== undefined) {
+        buffer += decoder.decode(value, { stream: !done }).replace(/\r\n/g, "\n");
+        const frames = buffer.split("\n\n");
+        buffer = frames.pop() ?? "";
+        for (const frame of frames) {
+          const result = consumeChatActionStreamFrame(frame, streamedContent, callbacks);
+          streamedContent = result.streamedContent;
+          if (result.response !== null) {
+            await reader.cancel();
+            return result.response;
+          }
+        }
+      }
+      if (done) {
+        break;
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  if (buffer.trim().length > 0) {
+    const result = consumeChatActionStreamFrame(buffer, streamedContent, callbacks);
+    if (result.response !== null) {
+      return result.response;
+    }
+  }
+
+  throw new ChatApiError(502, "The chat stream ended before the assistant returned a result.");
 }
 
 export async function sendChatActionWithAttachments(
@@ -657,28 +718,7 @@ export async function sendChatActionWithAttachments(
 
   invalidateChatCache();
   const payload = (await parseJsonResponse(response)) as ChatActionResponse;
-  return {
-    ...payload,
-    client_turn_id:
-      typeof (payload as Record<string, unknown>).client_turn_id === "string"
-        ? ((payload as Record<string, unknown>).client_turn_id as string)
-        : null,
-    operator_controls: normalizeOperatorControls(
-      (payload as Record<string, unknown>).operator_controls,
-    ),
-    stream_after_message_order:
-      typeof (payload as Record<string, unknown>).stream_after_message_order === "number"
-        ? ((payload as Record<string, unknown>).stream_after_message_order as number)
-        : null,
-    turn_job_id:
-      typeof (payload as Record<string, unknown>).turn_job_id === "string"
-        ? ((payload as Record<string, unknown>).turn_job_id as string)
-        : null,
-    turn_status:
-      typeof (payload as Record<string, unknown>).turn_status === "string"
-        ? ((payload as Record<string, unknown>).turn_status as string)
-        : "completed",
-  };
+  return normalizeChatActionResponse(payload);
 }
 
 export function subscribeToChatThreadEvents(
@@ -738,6 +778,107 @@ export function subscribeToChatThreadEvents(
 
 export function invalidateChatCache(): void {
   invalidateClientCacheByPrefix([API_BASE]);
+}
+
+function normalizeChatActionResponse(response: ChatActionResponse): ChatActionResponse {
+  return {
+    ...response,
+    client_turn_id:
+      typeof (response as Record<string, unknown>).client_turn_id === "string"
+        ? ((response as Record<string, unknown>).client_turn_id as string)
+        : null,
+    operator_controls: normalizeOperatorControls(
+      (response as Record<string, unknown>).operator_controls,
+    ),
+    stream_after_message_order:
+      typeof (response as Record<string, unknown>).stream_after_message_order === "number"
+        ? ((response as Record<string, unknown>).stream_after_message_order as number)
+        : null,
+    turn_job_id:
+      typeof (response as Record<string, unknown>).turn_job_id === "string"
+        ? ((response as Record<string, unknown>).turn_job_id as string)
+        : null,
+    turn_status:
+      typeof (response as Record<string, unknown>).turn_status === "string"
+        ? ((response as Record<string, unknown>).turn_status as string)
+        : "completed",
+  };
+}
+
+function consumeChatActionStreamFrame(
+  frame: string,
+  streamedContent: string,
+  callbacks: ChatActionStreamCallbacks,
+): {
+  response: ChatActionResponse | null;
+  streamedContent: string;
+} {
+  const parsedFrame = parseSseFrame(frame);
+  if (parsedFrame === null) {
+    return { response: null, streamedContent };
+  }
+  const payload = isRecord(parsedFrame.data) ? parsedFrame.data : {};
+  if (parsedFrame.event === "delta") {
+    const delta = typeof payload.delta === "string" ? payload.delta : "";
+    if (delta.length === 0) {
+      return { response: null, streamedContent };
+    }
+    const nextContent = `${streamedContent}${delta}`;
+    callbacks.onDelta?.(nextContent);
+    return { response: null, streamedContent: nextContent };
+  }
+  if (parsedFrame.event === "final" || parsedFrame.event === "accepted") {
+    const responsePayload = isRecord(payload.response) ? payload.response : null;
+    if (!isValidChatActionResponse(responsePayload)) {
+      throw new ChatApiError(502, "The chat stream returned an invalid response payload.");
+    }
+    return {
+      response: normalizeChatActionResponse(responsePayload),
+      streamedContent,
+    };
+  }
+  if (parsedFrame.event === "error") {
+    throw new ChatApiError(
+      500,
+      typeof payload.message === "string" ? payload.message : "The chat stream failed.",
+      typeof payload.code === "string" ? payload.code : undefined,
+    );
+  }
+  return { response: null, streamedContent };
+}
+
+function parseSseFrame(frame: string): { data: unknown; event: string } | null {
+  const lines = frame.split("\n");
+  let event = "message";
+  const dataLines: string[] = [];
+  for (const line of lines) {
+    if (line.startsWith("event:")) {
+      event = line.slice("event:".length).trim();
+    } else if (line.startsWith("data:")) {
+      dataLines.push(line.slice("data:".length).trim());
+    }
+  }
+  if (dataLines.length === 0) {
+    return null;
+  }
+  try {
+    return {
+      data: JSON.parse(dataLines.join("\n")) as unknown,
+      event,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function isValidChatActionResponse(value: unknown): value is ChatActionResponse {
+  return (
+    isRecord(value) &&
+    typeof value.content === "string" &&
+    typeof value.message_id === "string" &&
+    typeof value.thread_entity_id === "string" &&
+    typeof value.is_read_only === "boolean"
+  );
 }
 
 function normalizeOperatorControls(value: unknown): AgentOperatorControl[] {

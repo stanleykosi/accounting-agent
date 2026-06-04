@@ -6,8 +6,10 @@ Dependencies: apps/desktop-ui/src/app/layout.tsx, protected app layouts, auth pa
 
 :root {
   color-scheme: light;
-  --font-body: var(--font-quartz-body), "Inter", "Segoe UI", sans-serif;
-  --font-display: var(--font-quartz-display), "Newsreader", "Iowan Old Style", serif;
+  --font-quartz-body: "Inter", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  --font-quartz-display: "Newsreader", "Iowan Old Style", Georgia, "Times New Roman", serif;
+  --font-body: var(--font-quartz-body);
+  --font-display: var(--font-quartz-display);
   --font-mono: "IBM Plex Mono", "SFMono-Regular", "Consolas", monospace;
   --page-bg: #fdf8f8;
   --page-bg-accent: #f1edec;

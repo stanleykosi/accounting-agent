@@ -129,7 +129,7 @@
           "refId": "A"
         }
       ],
-      "title": "Failures, Retries, Blocks",
+      "title": "Errors",
       "type": "stat"
     },
     {
@@ -251,6 +251,45 @@
         }
       ],
       "title": "Worker Pipeline Outcomes",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_OTEL_METRICS}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 0,
+        "y": 17
+      },
+      "id": 6,
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum by (route_group) (rate(accounting_agent_operational_duration_ms_sum{event_name=\"api.request\"}[5m])) / clamp_min(sum by (route_group) (rate(accounting_agent_operational_duration_ms_count{event_name=\"api.request\"}[5m])), 1)",
+          "legendFormat": "{{route_group}}",
+          "refId": "A"
+        }
+      ],
+      "title": "API Request Latency",
       "type": "timeseries"
     }
   ],

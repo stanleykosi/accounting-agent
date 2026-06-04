@@ -885,8 +885,8 @@ def test_hydrate_planning_result_answers_skipped_document_follow_up() -> None:
     assert "awaiting review" in hydrated.assistant_response
 
 
-def test_direct_status_message_does_not_lock_or_persist() -> None:
-    """Immediate read-only answers should not wait behind a long-running chat turn."""
+def test_direct_status_message_persists_with_turn_lock() -> None:
+    """Immediate read-only answers should serialize with worker turns before persisting."""
 
     actor_user = EntityUserRecord(id=uuid4(), email="ops@example.com", full_name="Finance Ops")
     thread_id = uuid4()
@@ -899,22 +899,26 @@ def test_direct_status_message_does_not_lock_or_persist() -> None:
     )
     db_session = _FakeLoopDbSession()
 
-    class NonBlockingChatRepository:
-        def get_thread_by_id(self, *, thread_id: UUID):
-            return thread
+    class LockingChatRepository(_FakeLoopChatRepository):
+        def __init__(self) -> None:
+            super().__init__()
+            self.thread = thread
+            self.try_lock_calls = 0
+            self.release_calls = 0
 
-        def list_messages_for_thread(self, **kwargs):
-            return ()
+        def try_lock_thread_for_turn(self, **kwargs):
+            del kwargs
+            self.try_lock_calls += 1
+            return self.thread
 
-        def lock_thread_for_turn(self, **kwargs):
-            raise AssertionError("Direct status answers must not take the thread turn lock.")
-
-        def create_message(self, **kwargs):
-            raise AssertionError("Direct status answers must not append through chat_threads.")
+        def release_thread_turn_lock(self, **kwargs) -> None:
+            del kwargs
+            self.release_calls += 1
 
     executor = ChatActionExecutor.__new__(ChatActionExecutor)
     executor._db_session = db_session
-    executor._chat_repo = NonBlockingChatRepository()
+    chat_repo = LockingChatRepository()
+    executor._chat_repo = chat_repo
     executor._action_repo = SimpleNamespace(list_actions_for_thread_turn=lambda **kwargs: ())
     executor._entity_repo = SimpleNamespace(get_entity_for_user=lambda **kwargs: object())
     executor._document_repository = SimpleNamespace(
@@ -925,7 +929,10 @@ def test_direct_status_message_does_not_lock_or_persist() -> None:
             ),
         )
     )
-    executor._load_thread_context = lambda **kwargs: (SimpleNamespace(), thread)  # type: ignore[method-assign]
+    executor._load_thread_context = lambda **kwargs: (  # type: ignore[method-assign]
+        SimpleNamespace(context=SimpleNamespace()),
+        thread,
+    )
     executor._memory_for_thread = lambda **kwargs: AgentMemorySummary(  # type: ignore[method-assign]
         last_assistant_response="I marked 2 documents as approved; skipped 1.",
         last_tool_name="review_documents",
@@ -933,6 +940,10 @@ def test_direct_status_message_does_not_lock_or_persist() -> None:
     executor._snapshot_for_thread = lambda **kwargs: (_ for _ in ()).throw(  # type: ignore[method-assign]
         AssertionError("Skipped-document follow-ups should use the lightweight document query.")
     )
+    executor._build_grounding_payload = lambda *args, **kwargs: {}  # type: ignore[method-assign]
+    executor._build_trace_metadata = lambda **kwargs: dict(kwargs)  # type: ignore[method-assign]
+    memory_updates: list[dict[str, object]] = []
+    executor._update_thread_memory = lambda **kwargs: memory_updates.append(kwargs)  # type: ignore[method-assign]
 
     outcome = executor.send_direct_status_message_if_supported(
         thread_id=thread_id,
@@ -945,9 +956,376 @@ def test_direct_status_message_does_not_lock_or_persist() -> None:
     )
 
     assert outcome is not None
-    assert outcome.assistant_message_id.startswith("direct:")
+    assert not outcome.assistant_message_id.startswith("direct:")
     assert "invoice-april-generator-overhaul-2026-04.pdf" in outcome.assistant_content
+    assert [message.role for message in chat_repo.messages] == ["user", "assistant"]
+    assert chat_repo.messages[0].model_metadata == {
+        "chat_turn_id": "turn-skip-follow-up",
+        "turn_status": "received",
+    }
+    assert chat_repo.messages[1].model_metadata["chat_turn_id"] == "turn-skip-follow-up"
+    assert chat_repo.messages[1].model_metadata["turn_status"] == "completed"
+    assert memory_updates[-1]["tool_name"] == "review_documents"
+    assert chat_repo.try_lock_calls == 1
+    assert chat_repo.release_calls == 1
+    assert db_session.commit_calls == 1
+    assert db_session.rollback_calls == 0
+
+
+def test_direct_status_message_defers_when_turn_lock_is_busy() -> None:
+    """Fast deterministic answers must not persist while another thread turn is active."""
+
+    actor_user = EntityUserRecord(id=uuid4(), email="ops@example.com", full_name="Finance Ops")
+    thread_id = uuid4()
+    entity_id = uuid4()
+    thread = SimpleNamespace(
+        id=thread_id,
+        entity_id=entity_id,
+        close_run_id=uuid4(),
+        context_payload={},
+    )
+    db_session = _FakeLoopDbSession()
+
+    class BusyChatRepository(_FakeLoopChatRepository):
+        def __init__(self) -> None:
+            super().__init__()
+            self.thread = thread
+            self.try_lock_calls = 0
+            self.release_calls = 0
+
+        def try_lock_thread_for_turn(self, **kwargs):
+            del kwargs
+            self.try_lock_calls += 1
+            return None
+
+        def release_thread_turn_lock(self, **kwargs) -> None:
+            del kwargs
+            self.release_calls += 1
+
+    executor = ChatActionExecutor.__new__(ChatActionExecutor)
+    executor._db_session = db_session
+    chat_repo = BusyChatRepository()
+    executor._chat_repo = chat_repo
+    executor._action_repo = SimpleNamespace(list_actions_for_thread_turn=lambda **kwargs: ())
+    executor._entity_repo = SimpleNamespace(get_entity_for_user=lambda **kwargs: object())
+    executor._document_repository = SimpleNamespace(
+        list_documents_for_close_run=lambda **kwargs: (
+            SimpleNamespace(
+                original_filename="invoice-april-generator-overhaul-2026-04.pdf",
+                status="needs_review",
+            ),
+        )
+    )
+    executor._load_thread_context = lambda **kwargs: (  # type: ignore[method-assign]
+        SimpleNamespace(context=SimpleNamespace()),
+        thread,
+    )
+    executor._memory_for_thread = lambda **kwargs: AgentMemorySummary(  # type: ignore[method-assign]
+        last_assistant_response="I marked 2 documents as approved; skipped 1.",
+        last_tool_name="review_documents",
+    )
+    executor._snapshot_for_thread = lambda **kwargs: (_ for _ in ()).throw(  # type: ignore[method-assign]
+        AssertionError("Skipped-document follow-ups should use the lightweight document query.")
+    )
+    executor._build_grounding_payload = lambda *args, **kwargs: {}  # type: ignore[method-assign]
+    executor._build_trace_metadata = lambda **kwargs: dict(kwargs)  # type: ignore[method-assign]
+    executor._update_thread_memory = lambda **kwargs: (_ for _ in ()).throw(  # type: ignore[method-assign]
+        AssertionError("Busy turn locks must prevent memory updates.")
+    )
+
+    outcome = executor.send_direct_status_message_if_supported(
+        thread_id=thread_id,
+        entity_id=entity_id,
+        actor_user=actor_user,
+        content="which one did you skip?",
+        client_turn_id="turn-busy-direct",
+        source_surface="desktop",
+        trace_id="trace-busy-direct",
+    )
+
+    assert outcome is None
+    assert chat_repo.messages == []
+    assert chat_repo.try_lock_calls == 1
+    assert chat_repo.release_calls == 0
     assert db_session.commit_calls == 0
+    assert db_session.rollback_calls == 0
+
+
+def test_inline_read_only_message_plans_once_and_persists_turn() -> None:
+    """Read-only questions should skip Celery and commit the normal transcript shape."""
+
+    actor_user = EntityUserRecord(id=uuid4(), email="ops@example.com", full_name="Finance Ops")
+    entity_id = uuid4()
+    close_run_id = uuid4()
+    thread_id = uuid4()
+    thread = SimpleNamespace(
+        id=thread_id,
+        entity_id=entity_id,
+        close_run_id=close_run_id,
+        context_payload={},
+    )
+    grounding = SimpleNamespace(
+        entity=SimpleNamespace(name="Apex Meridian Nigeria Ltd"),
+        context=SimpleNamespace(
+            autonomy_mode="human_review",
+            base_currency="NGN",
+        ),
+        close_run=None,
+    )
+    db_session = _FakeLoopDbSession()
+    chat_repo = _FakeLoopChatRepository()
+    chat_repo.thread = thread
+    memory_updates: list[dict[str, object]] = []
+    planning_calls: list[dict[str, object]] = []
+
+    executor = ChatActionExecutor.__new__(ChatActionExecutor)
+    executor._db_session = db_session
+    executor._chat_repo = chat_repo
+    executor._entity_repo = SimpleNamespace(get_entity_for_user=lambda **kwargs: object())
+    executor._action_repo = _FakeLoopActionRepository(close_run_id=close_run_id)
+    executor._ensure_entity_coa_available = lambda **kwargs: None
+    executor._load_thread_context = lambda **kwargs: (grounding, thread)  # type: ignore[method-assign]
+    executor._memory_for_thread = lambda **kwargs: AgentMemorySummary()  # type: ignore[method-assign]
+    executor._snapshot_for_thread = lambda **kwargs: {  # type: ignore[method-assign]
+        "progress_summary": "One close run is active.",
+        "readiness": {"next_actions": []},
+    }
+    executor._plan_action = lambda **kwargs: (  # type: ignore[method-assign]
+        planning_calls.append(kwargs)
+        or AgentPlanningResult(
+            mode="read_only",
+            assistant_response="I can explain status, review documents, and run close steps.",
+            reasoning="The operator asked for capabilities, not an action.",
+            tool_name=None,
+            tool_arguments={},
+        )
+    )
+    executor._hydrate_planning_result = lambda **kwargs: kwargs["planning"]  # type: ignore[method-assign]
+    executor._build_runtime_clarification = lambda **kwargs: None  # type: ignore[method-assign]
+    executor._resolve_action = lambda **kwargs: None  # type: ignore[method-assign]
+    executor._build_grounding_payload = lambda *args, **kwargs: {}  # type: ignore[method-assign]
+    executor._build_trace_metadata = lambda **kwargs: dict(kwargs)  # type: ignore[method-assign]
+    executor._update_thread_memory = lambda **kwargs: memory_updates.append(kwargs)  # type: ignore[method-assign]
+
+    outcome = executor.send_direct_status_message_if_supported(
+        thread_id=thread_id,
+        entity_id=entity_id,
+        actor_user=actor_user,
+        content="what are your capabilities here?",
+        client_turn_id="turn-capabilities",
+        source_surface="desktop",
+        trace_id="trace-inline-read-only",
+    )
+
+    assert outcome is not None
+    assert not outcome.assistant_message_id.startswith("direct:")
+    assert outcome.is_read_only is True
+    assert len(planning_calls) == 1
+    assert [message.role for message in chat_repo.messages] == ["user", "assistant"]
+    assert chat_repo.messages[0].model_metadata == {
+        "chat_turn_id": "turn-capabilities",
+        "turn_status": "received",
+    }
+    assert chat_repo.messages[1].model_metadata["chat_turn_id"] == "turn-capabilities"
+    assert chat_repo.messages[1].model_metadata["turn_status"] == "completed"
+    assert db_session.commit_calls == 1
+    assert db_session.rollback_calls == 0
+    assert memory_updates[-1]["action_status"] == "read_only"
+
+
+def test_inline_read_only_message_defers_when_planner_selects_tool() -> None:
+    """The fast lane must not execute or persist platform-tool plans."""
+
+    actor_user = EntityUserRecord(id=uuid4(), email="ops@example.com", full_name="Finance Ops")
+    entity_id = uuid4()
+    close_run_id = uuid4()
+    thread_id = uuid4()
+    thread = SimpleNamespace(
+        id=thread_id,
+        entity_id=entity_id,
+        close_run_id=close_run_id,
+        context_payload={},
+    )
+    grounding = SimpleNamespace(
+        entity=SimpleNamespace(name="Apex Meridian Nigeria Ltd"),
+        context=SimpleNamespace(
+            autonomy_mode="human_review",
+            base_currency="NGN",
+        ),
+        close_run=None,
+    )
+    db_session = _FakeLoopDbSession()
+    chat_repo = _FakeLoopChatRepository()
+    chat_repo.thread = thread
+
+    executor = ChatActionExecutor.__new__(ChatActionExecutor)
+    executor._db_session = db_session
+    executor._chat_repo = chat_repo
+    executor._entity_repo = SimpleNamespace(get_entity_for_user=lambda **kwargs: object())
+    executor._action_repo = _FakeLoopActionRepository(close_run_id=close_run_id)
+    executor._ensure_entity_coa_available = lambda **kwargs: None
+    executor._load_thread_context = lambda **kwargs: (grounding, thread)  # type: ignore[method-assign]
+    executor._memory_for_thread = lambda **kwargs: AgentMemorySummary()  # type: ignore[method-assign]
+    executor._snapshot_for_thread = lambda **kwargs: {"readiness": {"next_actions": []}}  # type: ignore[method-assign]
+    executor._plan_action = lambda **kwargs: AgentPlanningResult(  # type: ignore[method-assign]
+        mode="tool",
+        assistant_response="I'll review the clean documents.",
+        reasoning="The planner selected a mutating workflow step.",
+        tool_name="review_documents",
+        tool_arguments={"decision": "approved"},
+    )
+    executor._hydrate_planning_result = lambda **kwargs: kwargs["planning"]  # type: ignore[method-assign]
+    executor._build_runtime_clarification = lambda **kwargs: None  # type: ignore[method-assign]
+    executor._resolve_action = lambda **kwargs: _resolve_fake_action(kwargs["planning"])  # type: ignore[method-assign]
+
+    outcome = executor.send_direct_status_message_if_supported(
+        thread_id=thread_id,
+        entity_id=entity_id,
+        actor_user=actor_user,
+        content="what are your capabilities here?",
+        client_turn_id="turn-tool-deferred",
+        source_surface="desktop",
+        trace_id="trace-tool-deferred",
+    )
+
+    assert outcome is None
+    assert chat_repo.messages == []
+    assert db_session.commit_calls == 0
+    assert db_session.rollback_calls == 1
+
+
+def test_direct_probe_skips_snapshot_and_planning_for_action_like_request() -> None:
+    """Action turns should return to the route quickly so the worker plans once."""
+
+    actor_user = EntityUserRecord(id=uuid4(), email="ops@example.com", full_name="Finance Ops")
+    thread_id = uuid4()
+    entity_id = uuid4()
+    thread = SimpleNamespace(
+        id=thread_id,
+        entity_id=entity_id,
+        close_run_id=uuid4(),
+        context_payload={},
+    )
+    db_session = _FakeLoopDbSession()
+
+    executor = ChatActionExecutor.__new__(ChatActionExecutor)
+    executor._db_session = db_session
+    executor._chat_repo = SimpleNamespace(
+        get_thread_by_id=lambda **kwargs: thread,
+        list_messages_for_thread=lambda **kwargs: (),
+    )
+    executor._entity_repo = SimpleNamespace(get_entity_for_user=lambda **kwargs: object())
+    executor._action_repo = SimpleNamespace(list_actions_for_thread_turn=lambda **kwargs: ())
+    executor._load_thread_context = lambda **kwargs: (SimpleNamespace(), thread)  # type: ignore[method-assign]
+    executor._memory_for_thread = lambda **kwargs: (_ for _ in ()).throw(  # type: ignore[method-assign]
+        AssertionError("Action-like requests should not build chat memory in the API lane.")
+    )
+    executor._snapshot_for_thread = lambda **kwargs: (_ for _ in ()).throw(  # type: ignore[method-assign]
+        AssertionError("Action-like requests should not build a snapshot in the API lane.")
+    )
+    executor._plan_action = lambda **kwargs: (_ for _ in ()).throw(  # type: ignore[method-assign]
+        AssertionError("Action-like requests should not call the model in the API lane.")
+    )
+
+    outcome = executor.send_direct_status_message_if_supported(
+        thread_id=thread_id,
+        entity_id=entity_id,
+        actor_user=actor_user,
+        content="approve all documents",
+        client_turn_id="turn-approve-all",
+        source_surface="desktop",
+        trace_id="trace-action-skip",
+    )
+
+    assert outcome is None
+    assert db_session.commit_calls == 0
+    assert db_session.rollback_calls == 0
+
+
+def test_streaming_direct_probe_defers_ambiguous_action_questions() -> None:
+    """Modal action questions should go to the planner instead of read-only streaming."""
+
+    executor = ChatActionExecutor.__new__(ChatActionExecutor)
+    actor_user = EntityUserRecord(id=uuid4(), email="ops@example.com", full_name="Finance Ops")
+    thread_id = uuid4()
+    entity_id = uuid4()
+
+    for content in (
+        "Would you run reconciliation now?",
+        "Can we generate the reports?",
+    ):
+        stream = executor.stream_direct_read_only_message_if_supported(
+            thread_id=thread_id,
+            entity_id=entity_id,
+            actor_user=actor_user,
+            content=content,
+            client_turn_id=None,
+            source_surface="desktop",
+            trace_id="trace-ambiguous-action",
+        )
+
+        assert stream is None
+
+
+def test_streaming_read_only_prompt_does_not_duplicate_current_user_turn() -> None:
+    """The model prompt should include the persisted current user message only once."""
+
+    actor_user = EntityUserRecord(id=uuid4(), email="ops@example.com", full_name="Finance Ops")
+    entity_id = uuid4()
+    thread_id = uuid4()
+    content = "Can you explain the risk posture?"
+    thread = SimpleNamespace(
+        id=thread_id,
+        entity_id=entity_id,
+        close_run_id=uuid4(),
+        context_payload={},
+    )
+    grounding = SimpleNamespace(
+        context=SimpleNamespace(
+            entity_name="Apex Meridian Nigeria Ltd",
+            period_label="April 2026",
+        ),
+    )
+    chat_repo = _FakeLoopChatRepository()
+    chat_repo.thread = thread
+    db_session = _FakeLoopDbSession()
+    model_gateway = _CapturingStreamingModelGateway(chunks=("Risk posture is stable.",))
+    memory_updates: list[dict[str, object]] = []
+
+    executor = ChatActionExecutor.__new__(ChatActionExecutor)
+    executor._db_session = db_session
+    executor._chat_repo = chat_repo
+    executor._model_gateway = model_gateway
+    executor._ensure_entity_coa_available = lambda **kwargs: None  # type: ignore[method-assign]
+    executor._load_thread_context = lambda **kwargs: (grounding, thread)  # type: ignore[method-assign]
+    executor._memory_for_thread = lambda **kwargs: AgentMemorySummary()  # type: ignore[method-assign]
+    executor._snapshot_for_thread = lambda **kwargs: {"progress_summary": "Close is in review."}  # type: ignore[method-assign]
+    executor._build_grounding_payload = lambda *args, **kwargs: {}  # type: ignore[method-assign]
+    executor._build_trace_metadata = lambda **kwargs: dict(kwargs)  # type: ignore[method-assign]
+    executor._update_thread_memory = lambda **kwargs: memory_updates.append(kwargs)  # type: ignore[method-assign]
+
+    stream = executor.stream_direct_read_only_message_if_supported(
+        thread_id=thread_id,
+        entity_id=entity_id,
+        actor_user=actor_user,
+        content=content,
+        client_turn_id=None,
+        source_surface="desktop",
+        trace_id="trace-stream-read-only",
+    )
+
+    assert stream is not None
+    events = list(stream)
+
+    assert [event.event for event in events] == ["delta", "final"]
+    assert model_gateway.messages is not None
+    user_messages = [
+        message for message in model_gateway.messages if message["role"] == "user"
+    ]
+    assert [message["content"] for message in user_messages] == [content]
+    assert [message.role for message in chat_repo.messages] == ["user", "assistant"]
+    assert memory_updates[-1]["operator_message"] == content
+    assert db_session.commit_calls == 1
     assert db_session.rollback_calls == 0
 
 
@@ -4083,6 +4461,16 @@ class _FakeLoopDbSession:
 
     def rollback(self) -> None:
         self.rollback_calls += 1
+
+
+class _CapturingStreamingModelGateway:
+    def __init__(self, *, chunks: tuple[str, ...]) -> None:
+        self._chunks = chunks
+        self.messages: list[dict[str, str]] | None = None
+
+    def stream_complete(self, *, messages: list[dict[str, str]]):
+        self.messages = messages
+        yield from self._chunks
 
 
 class _FakeLoopChatRepository:

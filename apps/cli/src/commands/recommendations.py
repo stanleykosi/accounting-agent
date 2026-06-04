@@ -20,6 +20,7 @@ from apps.cli.src.command_helpers import (
 )
 from apps.cli.src.widgets.status_table import StatusColumn, build_status_table
 from rich.console import Console
+from services.common.types import JsonObject
 
 
 def configure_recommendation_subcommands(
@@ -212,7 +213,7 @@ def _recommendation_action(
     client: CliApiClientProtocol,
     console: Console,
     action: str,
-    payload: dict[str, object],
+    payload: JsonObject,
 ) -> int:
     """Execute one recommendation mutation and render the API response summary."""
 

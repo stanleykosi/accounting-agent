@@ -194,6 +194,282 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/chat/actions/{action_plan_id}/approve": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Approve a pending chat action plan
+     * @description Approve a pending chat-originated action plan.
+     */
+    post: operations["approve_chat_action"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/chat/actions/{action_plan_id}/reject": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Reject a pending chat action plan
+     * @description Reject a pending chat-originated action plan with a required reason.
+     */
+    post: operations["reject_chat_action"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/chat/global/threads": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * List chat threads across all accessible workspaces
+     * @description Return every chat thread the user can access, across workspace scopes.
+     */
+    get: operations["list_global_chat_threads"];
+    put?: never;
+    /**
+     * Create a new global assistant chat thread
+     * @description Create a global assistant thread with access to all caller workspaces.
+     */
+    post: operations["create_global_chat_thread"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/chat/mcp": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Serve the accounting agent over a canonical MCP-compatible JSON-RPC endpoint
+     * @description Handle initialize, tools/list, and tools/call requests for MCP clients.
+     */
+    post: operations["handle_chat_mcp_request"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/chat/threads": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * List chat threads for an entity or close run
+     * @description Return threads for an entity or close run, ordered newest-first.
+     */
+    get: operations["list_chat_threads"];
+    put?: never;
+    /**
+     * Create a new grounded chat thread
+     * @description Create a new chat thread grounded to an entity and optional close run.
+     */
+    post: operations["create_chat_thread"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/chat/threads/{thread_id}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Read a chat thread with message history
+     * @description Return one thread with its message history for detail views.
+     */
+    get: operations["get_chat_thread"];
+    put?: never;
+    post?: never;
+    /**
+     * Delete one chat thread
+     * @description Delete one chat thread together with its persisted message history.
+     */
+    delete: operations["delete_chat_thread"];
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/chat/threads/{thread_id}/actions": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * List pending action plans for a thread
+     * @description Return pending action plans for a chat thread for review-queue rendering.
+     */
+    get: operations["list_thread_actions"];
+    put?: never;
+    /**
+     * Send a message with action intent detection
+     * @description Send a user message through the deterministic accounting action agent.
+     */
+    post: operations["send_chat_action"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/chat/threads/{thread_id}/actions/attachments": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Send a message with inline file attachments through the action agent
+     * @description Accept inline chat attachments and route them through canonical upload services.
+     */
+    post: operations["send_chat_action_with_attachments"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/chat/threads/{thread_id}/actions/stream": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Send a chat action and stream safe read-only replies
+     * @description Stream plain read-only replies and queue action turns through the worker.
+     */
+    post: operations["stream_chat_action"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/chat/threads/{thread_id}/events": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Stream chat thread events after a message high-water mark
+     * @description Stream newly persisted messages for one thread over Server-Sent Events.
+     */
+    get: operations["stream_chat_thread_events"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/chat/threads/{thread_id}/messages": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Send a message and get a read-only analysis response
+     * @description Send a user message and receive a grounded read-only copilot analysis response.
+     */
+    post: operations["send_chat_message"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/chat/threads/{thread_id}/workspace": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Read the agent workspace context for a chat thread
+     * @description Return the agent memory, tool manifest, and recent traces for one thread.
+     */
+    get: operations["read_chat_thread_workspace"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/chat/tools/mcp": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Read the MCP-style manifest for registered accounting agent tools
+     * @description Return the portable MCP-style tool manifest for the accounting agent.
+     */
+    get: operations["read_chat_tool_manifest"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/entities": {
     parameters: {
       query?: never;
@@ -232,7 +508,11 @@ export interface paths {
     get: operations["read_entity_workspace"];
     put?: never;
     post?: never;
-    delete?: never;
+    /**
+     * Delete one entity workspace
+     * @description Delete one accessible entity workspace when the caller is an owner.
+     */
+    delete: operations["delete_entity"];
     options?: never;
     head?: never;
     /**
@@ -280,6 +560,50 @@ export interface paths {
     get: operations["read_close_run"];
     put?: never;
     post?: never;
+    /**
+     * Delete one mutable close run
+     * @description Delete one mutable close run and its owned working-state graph.
+     */
+    delete: operations["delete_close_run"];
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/entities/{entity_id}/close-runs/{close_run_id}/anomalies": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * List reconciliation anomalies
+     * @description Return anomalies for the close run.
+     */
+    get: operations["list_anomalies"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/entities/{entity_id}/close-runs/{close_run_id}/anomalies/{anomaly_id}/resolve": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Resolve a reconciliation anomaly
+     * @description Mark an anomaly as resolved with reviewer reasoning.
+     */
+    post: operations["resolve_anomaly"];
     delete?: never;
     options?: never;
     head?: never;
@@ -326,6 +650,638 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/entities/{entity_id}/close-runs/{close_run_id}/disposition/bulk": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Record bulk disposition for multiple reconciliation items
+     * @description Record bulk dispositions for multiple reconciliation items.
+     */
+    post: operations["bulk_disposition_items"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/entities/{entity_id}/close-runs/{close_run_id}/documents": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * List documents for one close run
+     * @description Return source documents attached to an accessible close run.
+     */
+    get: operations["list_documents"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/entities/{entity_id}/close-runs/{close_run_id}/documents/fields/{field_id}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    /**
+     * Persist one human correction for an extracted field
+     * @description Persist a human correction to one extracted field and refresh the document state.
+     */
+    put: operations["correct_extracted_field"];
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/entities/{entity_id}/close-runs/{close_run_id}/documents/parse": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Queue uploaded source documents for parsing
+     * @description Queue all staged uploaded documents for deterministic parsing.
+     */
+    post: operations["queue_uploaded_documents_for_parse"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/entities/{entity_id}/close-runs/{close_run_id}/documents/upload": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Upload a batch of source documents
+     * @description Accept PDF, Excel, and CSV source files and stage them for explicit parsing.
+     */
+    post: operations["upload_documents"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/entities/{entity_id}/close-runs/{close_run_id}/documents/{document_id}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post?: never;
+    /**
+     * Delete one uploaded source document
+     * @description Delete one document subtree from the current close-run collection queue.
+     */
+    delete: operations["delete_document"];
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/entities/{entity_id}/close-runs/{close_run_id}/documents/{document_id}/reparse": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Queue one uploaded source document for reparsing
+     * @description Clear prior parse artifacts and queue a fresh parse for one document.
+     */
+    post: operations["reparse_document"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/entities/{entity_id}/close-runs/{close_run_id}/documents/{document_id}/review": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Persist one review decision for a close-run document
+     * @description Persist a reviewer decision for one document in the collection/processing queue.
+     */
+    post: operations["review_document"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/entities/{entity_id}/close-runs/{close_run_id}/exports": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * List exports for one close run
+     * @description Return all export records for one close run in newest-first order.
+     */
+    get: operations["list_exports"];
+    put?: never;
+    /**
+     * Trigger a new export for a close run
+     * @description Trigger an export for one close run with idempotency protection.
+     */
+    post: operations["trigger_export"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/entities/{entity_id}/close-runs/{close_run_id}/exports/evidence-pack": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Read the latest evidence pack for a close run
+     * @description Return the latest released evidence-pack bundle metadata for one close run.
+     */
+    get: operations["read_latest_evidence_pack"];
+    put?: never;
+    /**
+     * Assemble and release an evidence pack for a close run
+     * @description Assemble a downloadable evidence-pack bundle for one close run.
+     */
+    post: operations["assemble_evidence_pack"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/entities/{entity_id}/close-runs/{close_run_id}/exports/evidence-pack/download": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Download the latest evidence pack for a close run
+     * @description Stream the latest released evidence-pack ZIP through the authenticated API surface.
+     */
+    get: operations["download_evidence_pack"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/entities/{entity_id}/close-runs/{close_run_id}/exports/evidence-pack/idempotency-key": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Preview the idempotency key for an evidence-pack action
+     * @description Return the deterministic idempotency key that would be used for an evidence-pack action.
+     */
+    get: operations["preview_evidence_pack_idempotency_key"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/entities/{entity_id}/close-runs/{close_run_id}/exports/{export_id}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Read one export detail
+     * @description Return one export record with full manifest and evidence-pack details.
+     */
+    get: operations["read_export_detail"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/entities/{entity_id}/close-runs/{close_run_id}/exports/{export_id}/distribute": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Record management distribution for one export
+     * @description Record one stakeholder release event for a completed export package.
+     */
+    post: operations["distribute_export"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/entities/{entity_id}/close-runs/{close_run_id}/items/{item_id}/disposition": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Record reviewer disposition for one reconciliation item
+     * @description Record a reviewer disposition for a reconciliation item.
+     */
+    post: operations["disposition_item"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/entities/{entity_id}/close-runs/{close_run_id}/journals": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * List journal entries for one close run
+     * @description Return journal entries for an authenticated user's close run.
+     */
+    get: operations["list_journals"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/entities/{entity_id}/close-runs/{close_run_id}/journals/{journal_id}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Read one journal entry with lines
+     * @description Return one journal entry with its attached lines.
+     */
+    get: operations["read_journal"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/entities/{entity_id}/close-runs/{close_run_id}/journals/{journal_id}/apply": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Post one approved journal through the chosen target
+     * @description Post an approved journal entry to the selected ledger target.
+     */
+    post: operations["apply_journal"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/entities/{entity_id}/close-runs/{close_run_id}/journals/{journal_id}/approve": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Approve one journal entry
+     * @description Approve a draft or pending journal entry.
+     */
+    post: operations["approve_journal"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/entities/{entity_id}/close-runs/{close_run_id}/journals/{journal_id}/postings/{posting_id}/download": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Download one external posting package for a journal
+     * @description Stream one generated journal posting package through the authenticated API surface.
+     */
+    get: operations["download_journal_posting_package"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/entities/{entity_id}/close-runs/{close_run_id}/journals/{journal_id}/reject": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Reject one journal entry
+     * @description Reject a draft or pending journal entry.
+     */
+    post: operations["reject_journal"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/entities/{entity_id}/close-runs/{close_run_id}/ledger/general-ledger-export": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Read the latest current-version general-ledger export
+     * @description Return the latest current-version effective-ledger export for one close run.
+     */
+    get: operations["read_latest_general_ledger_export"];
+    put?: never;
+    /**
+     * Generate the current close-run general-ledger export
+     * @description Generate or reuse the current-version effective-ledger export for one close run.
+     */
+    post: operations["generate_general_ledger_export"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/entities/{entity_id}/close-runs/{close_run_id}/ledger/general-ledger-export/download": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Download the latest current-version general-ledger export
+     * @description Stream the latest current-version effective-ledger CSV through the API surface.
+     */
+    get: operations["download_latest_general_ledger_export"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/entities/{entity_id}/close-runs/{close_run_id}/recommendations": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * List recommendations for one close run
+     * @description Return recommendations for an authenticated user's close run.
+     */
+    get: operations["list_recommendations"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/entities/{entity_id}/close-runs/{close_run_id}/recommendations/generate": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Queue recommendation generation for eligible close-run documents
+     * @description Queue accounting recommendation jobs for parsed documents in this close run.
+     */
+    post: operations["generate_recommendations_for_close_run"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/entities/{entity_id}/close-runs/{close_run_id}/recommendations/{recommendation_id}/approve": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Approve one recommendation and generate its journal draft
+     * @description Approve a pending recommendation and generate its journal draft.
+     */
+    post: operations["approve_recommendation"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/entities/{entity_id}/close-runs/{close_run_id}/recommendations/{recommendation_id}/reject": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Reject one recommendation
+     * @description Reject a pending recommendation so it does not affect working state.
+     */
+    post: operations["reject_recommendation"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/entities/{entity_id}/close-runs/{close_run_id}/reconciliations": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * List reconciliation runs for one close run
+     * @description Return reconciliation runs for an authenticated user's close run.
+     */
+    get: operations["list_reconciliations"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/entities/{entity_id}/close-runs/{close_run_id}/reconciliations/run": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Queue reconciliation execution for a close run
+     * @description Queue the canonical reconciliation execution workflow for this close run.
+     */
+    post: operations["queue_reconciliation_run"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/entities/{entity_id}/close-runs/{close_run_id}/reconciliations/{reconciliation_id}/approve": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Approve a reconciliation run
+     * @description Approve a reconciliation run after all required dispositions are recorded.
+     */
+    post: operations["approve_reconciliation"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/entities/{entity_id}/close-runs/{close_run_id}/reconciliations/{reconciliation_id}/items": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * List reconciliation items with optional filters
+     * @description Return reconciliation items for a reconciliation run scoped to the close run.
+     */
+    get: operations["list_reconciliation_items"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/entities/{entity_id}/close-runs/{close_run_id}/reopen": {
     parameters: {
       query?: never;
@@ -346,6 +1302,106 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/entities/{entity_id}/close-runs/{close_run_id}/rewind": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Reopen an earlier workflow phase on a mutable close run
+     * @description Move a mutable close run back into an earlier canonical phase.
+     */
+    post: operations["rewind_close_run"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/entities/{entity_id}/close-runs/{close_run_id}/supporting-schedules": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Read the Step 6 supporting-schedule workspace for one close run
+     * @description Return all standalone Step 6 schedules and their current row state.
+     */
+    get: operations["read_supporting_schedule_workspace"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/entities/{entity_id}/close-runs/{close_run_id}/supporting-schedules/{schedule_type}/rows": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Create or update one Step 6 supporting-schedule row
+     * @description Create or update one row in a standalone Step 6 supporting schedule.
+     */
+    post: operations["save_supporting_schedule_row"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/entities/{entity_id}/close-runs/{close_run_id}/supporting-schedules/{schedule_type}/rows/{row_id}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post?: never;
+    /**
+     * Delete one supporting-schedule row
+     * @description Delete one persisted Step 6 workpaper row and refresh the schedule state.
+     */
+    delete: operations["delete_supporting_schedule_row"];
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/entities/{entity_id}/close-runs/{close_run_id}/supporting-schedules/{schedule_type}/status": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Update one supporting-schedule review status
+     * @description Finalize or reopen one Step 6 supporting schedule.
+     */
+    post: operations["update_supporting_schedule_status"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/entities/{entity_id}/close-runs/{close_run_id}/transition": {
     parameters: {
       query?: never;
@@ -360,6 +1416,346 @@ export interface paths {
      * @description Complete the active ready phase and open the requested immediate successor.
      */
     post: operations["transition_close_run"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/entities/{entity_id}/close-runs/{close_run_id}/trial-balance": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Get the latest trial balance snapshot
+     * @description Return the most recent trial balance snapshot for the close run.
+     */
+    get: operations["get_trial_balance"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/entities/{entity_id}/coa": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Read the entity chart-of-accounts workspace
+     * @description Return active COA state and version history, applying precedence when needed.
+     */
+    get: operations["read_coa_workspace"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/entities/{entity_id}/coa/accounts": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Create one account through versioned COA editing
+     * @description Create one COA account by materializing a new immutable manual revision.
+     */
+    post: operations["create_coa_account"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/entities/{entity_id}/coa/accounts/{account_id}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    /**
+     * Update one account through versioned COA editing
+     * @description Update one account by materializing a new immutable manual revision.
+     */
+    patch: operations["update_coa_account"];
+    trace?: never;
+  };
+  "/api/entities/{entity_id}/coa/sets/{coa_set_id}/activate": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Activate one chart-of-accounts set version
+     * @description Switch the active COA set version for the entity workspace.
+     */
+    post: operations["activate_coa_set"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/entities/{entity_id}/coa/upload": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Upload a manual chart-of-accounts file
+     * @description Import one manual COA file as a new active versioned set.
+     */
+    post: operations["upload_manual_coa"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/entities/{entity_id}/integrations/quickbooks/connect": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Start QuickBooks Online OAuth connection
+     * @description Return the QuickBooks authorization URL for one accessible entity workspace.
+     */
+    get: operations["start_quickbooks_connection"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/entities/{entity_id}/integrations/quickbooks/disconnect": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Disconnect QuickBooks Online
+     * @description Revoke stored QuickBooks tokens and mark the connection as revoked.
+     */
+    post: operations["disconnect_quickbooks"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/entities/{entity_id}/integrations/quickbooks/status": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Read QuickBooks Online connection status
+     * @description Return sanitized connection status without exposing encrypted token material.
+     */
+    get: operations["read_quickbooks_status"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/entities/{entity_id}/integrations/quickbooks/sync-coa": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Synchronize QuickBooks chart of accounts
+     * @description Import QuickBooks accounts into a versioned COA set for COA and posting-package workflows.
+     */
+    post: operations["sync_quickbooks_chart_of_accounts"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/entities/{entity_id}/jobs": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * List background jobs for one entity
+     * @description Return recent jobs visible to the current user for one entity workspace.
+     */
+    get: operations["list_jobs"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/entities/{entity_id}/jobs/{job_id}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Read one background job
+     * @description Return one durable background-job record with payloads and checkpoint state.
+     */
+    get: operations["read_job_detail"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/entities/{entity_id}/jobs/{job_id}/cancel": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Request cancellation for one background job
+     * @description Request cancellation and return the updated durable job state.
+     */
+    post: operations["cancel_job"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/entities/{entity_id}/jobs/{job_id}/resume": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Resume one failed, blocked, or canceled background job from its checkpoint
+     * @description Create a fresh queued job from the saved checkpoint of a prior execution.
+     */
+    post: operations["resume_job"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/entities/{entity_id}/ledger": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Read the entity imported-ledger workspace
+     * @description Return imported GL/TB baselines and current close-run bindings for one entity.
+     */
+    get: operations["read_ledger_workspace"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/entities/{entity_id}/ledger/general-ledger/upload": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Upload a general-ledger baseline file
+     * @description Import one general-ledger baseline and auto-bind safe matching close runs.
+     */
+    post: operations["upload_general_ledger"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/entities/{entity_id}/ledger/trial-balance/upload": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Upload a trial-balance baseline file
+     * @description Import one trial-balance baseline and auto-bind safe matching close runs.
+     */
+    post: operations["upload_trial_balance"];
     delete?: never;
     options?: never;
     head?: never;
@@ -486,6 +1882,214 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/entities/{entity_id}/reports/close-runs/{close_run_id}/generate": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Trigger report generation for a close run
+     * @description Trigger asynchronous report generation for a close run.
+     *
+     *     This endpoint creates a persistent report-run record, dispatches a Celery
+     *     task to generate Excel and PDF report packs, and returns the report-run
+     *     summary so callers can poll the detail endpoint for status.
+     */
+    post: operations["trigger_report_generation"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/entities/{entity_id}/reports/close-runs/{close_run_id}/runs": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * List report runs for one close run
+     * @description Return all report generation runs for one close run.
+     */
+    get: operations["list_report_runs_for_close_run"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/entities/{entity_id}/reports/close-runs/{close_run_id}/runs/{report_run_id}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Read one report run
+     * @description Return one report run with commentary and artifact references.
+     */
+    get: operations["read_report_run_detail"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/entities/{entity_id}/reports/close-runs/{close_run_id}/runs/{report_run_id}/artifacts/{artifact_type}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Download one generated report artifact
+     * @description Stream one generated report artifact through the authenticated API surface.
+     */
+    get: operations["download_report_artifact"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/entities/{entity_id}/reports/close-runs/{close_run_id}/runs/{report_run_id}/commentary/{section_key}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    /**
+     * Update commentary for one report section
+     * @description Update or create draft commentary text for one report section.
+     */
+    put: operations["update_commentary"];
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/entities/{entity_id}/reports/close-runs/{close_run_id}/runs/{report_run_id}/commentary/{section_key}/approve": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Approve commentary for one report section
+     * @description Approve commentary for one report section, optionally with a final text edit.
+     */
+    post: operations["approve_commentary"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/entities/{entity_id}/reports/templates": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * List report templates for one entity
+     * @description Return all report template versions for the entity workspace.
+     */
+    get: operations["list_report_templates"];
+    put?: never;
+    /**
+     * Create one report template
+     * @description Create a new entity-scoped report template with guardrail validation.
+     */
+    post: operations["create_report_template"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/entities/{entity_id}/reports/templates/{template_id}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Read one report template
+     * @description Return one report template with full section definitions and guardrail config.
+     */
+    get: operations["read_report_template"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/entities/{entity_id}/reports/templates/{template_id}/activate": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Activate one report template
+     * @description Activate a report template version for the entity workspace.
+     */
+    post: operations["activate_report_template"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/entities/{entity_id}/reports/templates/{template_id}/validate": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Validate template guardrails
+     * @description Run guardrail validation against one template and return the result.
+     */
+    get: operations["validate_template_guardrails_route"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/health": {
     parameters: {
       query?: never;
@@ -498,6 +2102,26 @@ export interface paths {
      * @description Return a deterministic health payload for operators and generated clients.
      */
     get: operations["read_health_status"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/integrations/quickbooks/callback": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Handle QuickBooks Online OAuth callback
+     * @description Exchange callback code for tokens and persist encrypted QuickBooks credentials.
+     */
+    get: operations["complete_quickbooks_connection"];
     put?: never;
     post?: never;
     delete?: never;
@@ -526,10 +2150,76 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/ready": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Read API dependency readiness
+     * @description Return readiness for dependency-backed API routes without dropping the process socket.
+     */
+    get: operations["read_readiness_status"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
 }
 export type webhooks = Record<string, never>;
 export interface components {
   schemas: {
+    /**
+     * AccrualTrackerScheduleRowPayload
+     * @description Typed payload for one accrual tracker row.
+     */
+    AccrualTrackerScheduleRowPayload: {
+      /**
+       * Account Code
+       * @description Accrual ledger account code being reconciled.
+       */
+      account_code: string;
+      /**
+       * Amount
+       * @description Expected accrual amount as a decimal string.
+       */
+      amount: string;
+      /**
+       * Counterparty
+       * @description Counterparty or source contract reference when applicable.
+       */
+      counterparty?: string | null;
+      /**
+       * Description
+       * @description Accrual description.
+       */
+      description: string;
+      /**
+       * Notes
+       * @description Optional operator note.
+       */
+      notes?: string | null;
+      /**
+       * Period
+       * @description Accounting period in YYYY-MM format.
+       */
+      period: string;
+      /**
+       * Ref
+       * @description Stable accrual reference.
+       */
+      ref: string;
+      /**
+       * Reversal Date
+       * @description Expected reversal date in YYYY-MM-DD format when applicable.
+       */
+      reversal_date?: string | null;
+    };
     /**
      * AcquireOwnershipLockRequest
      * @description Capture a request to assign ownership and hold an in-progress lock.
@@ -559,6 +2249,712 @@ export interface components {
       /** @description Canonical type of the ownership target. */
       target_type: components["schemas"]["OwnershipTargetType"];
     };
+    /**
+     * ActivateReportTemplateRequest
+     * @description Capture an operator reason when switching the active report template.
+     */
+    ActivateReportTemplateRequest: {
+      /**
+       * Reason
+       * @description Optional reason persisted in the activity timeline for the activation.
+       */
+      reason?: string | null;
+    };
+    /**
+     * AgentCoaAccountSummary
+     * @description Describe one active COA account surfaced into the agent workspace.
+     */
+    AgentCoaAccountSummary: {
+      /**
+       * Account Code
+       * @description Canonical account code.
+       */
+      account_code: string;
+      /**
+       * Account Name
+       * @description Display account name.
+       */
+      account_name: string;
+      /**
+       * Account Type
+       * @description Normalized account type label.
+       */
+      account_type: string;
+      /**
+       * Is Active
+       * @description Whether the account is active in the current COA set.
+       */
+      is_active: boolean;
+      /**
+       * Is Postable
+       * @description Whether the account is eligible for journal posting.
+       */
+      is_postable: boolean;
+    };
+    /**
+     * AgentCoaSummary
+     * @description Describe the active chart-of-accounts state available to the agent.
+     */
+    AgentCoaSummary: {
+      /**
+       * Account Count
+       * @description Number of active accounts in the current COA set.
+       * @default 0
+       */
+      account_count: number;
+      /**
+       * Accounts
+       * @description Active COA accounts exposed to the planner for grounded reasoning.
+       * @default []
+       */
+      accounts: components["schemas"]["AgentCoaAccountSummary"][];
+      /**
+       * Activated At
+       * @description UTC timestamp when the active COA set became effective.
+       */
+      activated_at?: string | null;
+      /**
+       * Is Available
+       * @description Whether an active chart of accounts is currently available.
+       * @default false
+       */
+      is_available: boolean;
+      /**
+       * Postable Account Count
+       * @description Number of postable active accounts in the current COA set.
+       * @default 0
+       */
+      postable_account_count: number;
+      /**
+       * Requires Operator Upload
+       * @description Whether the operator should upload or sync a production COA.
+       * @default false
+       */
+      requires_operator_upload: boolean;
+      /**
+       * Source
+       * @description Source of the active COA set when available.
+       */
+      source?: string | null;
+      /**
+       * Status
+       * @description Readiness label for the COA state: missing, fallback, or active.
+       * @default missing
+       */
+      status: string;
+      /**
+       * Summary
+       * @description Compact narrative of the active COA readiness state.
+       */
+      summary?: string | null;
+      /**
+       * Version No
+       * @description Active COA version number when available.
+       */
+      version_no?: number | null;
+    };
+    /**
+     * AgentImportBindingSummary
+     * @description Describe the close-run import binding visible to the agent.
+     */
+    AgentImportBindingSummary: {
+      /**
+       * Binding Source
+       * @description How the binding was created: auto or manual.
+       */
+      binding_source: string;
+      /**
+       * Close Run Id
+       * @description Close run owning the baseline binding.
+       */
+      close_run_id: string;
+      /**
+       * General Ledger Import Batch Id
+       * @description Bound GL import batch UUID, if any.
+       */
+      general_ledger_import_batch_id?: string | null;
+      /**
+       * Trial Balance Import Batch Id
+       * @description Bound trial-balance import batch UUID, if any.
+       */
+      trial_balance_import_batch_id?: string | null;
+    };
+    /**
+     * AgentImportDiagnosticSummary
+     * @description Describe one parsed accounting import visible to the agent.
+     */
+    AgentImportDiagnosticSummary: {
+      /**
+       * Accepted Row Count
+       * @description Number of rows accepted into the import.
+       */
+      accepted_row_count: number;
+      /**
+       * Account Identity Strategy
+       * @description How account identity was resolved, when relevant.
+       */
+      account_identity_strategy?: string | null;
+      /**
+       * Agent Summary
+       * @description Compact natural-language parser summary for agent prompts.
+       */
+      agent_summary?: string | null;
+      /**
+       * Amount Strategy
+       * @description How GL debit/credit amounts were resolved, when relevant.
+       */
+      amount_strategy?: string | null;
+      /**
+       * Balance Strategy
+       * @description How trial-balance amounts were resolved, when relevant.
+       */
+      balance_strategy?: string | null;
+      /**
+       * Confidence
+       * @description Parser confidence score.
+       */
+      confidence: number;
+      /**
+       * Created At
+       * @description UTC timestamp when the import record was created.
+       */
+      created_at?: string | null;
+      /**
+       * Document Kind
+       * @description Canonical import kind: COA, GL, or trial balance.
+       */
+      document_kind: string;
+      /**
+       * Header Row Number
+       * @description 1-based source row number detected as the table header.
+       */
+      header_row_number?: number | null;
+      /**
+       * Recovery Actions
+       * @description Operator recovery actions supplied by the parser.
+       * @default []
+       */
+      recovery_actions: string[];
+      /**
+       * Row Count
+       * @description Number of source data rows considered.
+       */
+      row_count: number;
+      /**
+       * Source Format
+       * @description Detected upload format for the import.
+       */
+      source_format: string;
+      /**
+       * Status
+       * @description Parser status such as parsed or parsed_with_warnings.
+       */
+      status: string;
+      /**
+       * Transaction Grouping Strategy
+       * @description How GL transaction grouping keys were resolved, when relevant.
+       */
+      transaction_grouping_strategy?: string | null;
+      /**
+       * Uploaded Filename
+       * @description Original filename supplied by the operator.
+       */
+      uploaded_filename: string;
+      /**
+       * Warnings
+       * @description Parser warnings summarized for the agent and workbench.
+       * @default []
+       */
+      warnings: string[];
+    };
+    /**
+     * AgentImportWorkspaceSummary
+     * @description Describe latest accounting import diagnostics available to the agent.
+     */
+    AgentImportWorkspaceSummary: {
+      /** @description Import binding for this close run, when the thread is close-run scoped. */
+      close_run_binding?: components["schemas"]["AgentImportBindingSummary"] | null;
+      /** @description Latest active COA import diagnostics, when available. */
+      latest_coa?: components["schemas"]["AgentImportDiagnosticSummary"] | null;
+      /** @description Latest or bound GL import diagnostics, when available. */
+      latest_general_ledger?: components["schemas"]["AgentImportDiagnosticSummary"] | null;
+      /** @description Latest or bound trial-balance import diagnostics, when available. */
+      latest_trial_balance?: components["schemas"]["AgentImportDiagnosticSummary"] | null;
+    };
+    /**
+     * AgentMemorySummary
+     * @description Describe the persisted working memory for one agent-scoped chat thread.
+     */
+    AgentMemorySummary: {
+      /**
+       * Active Async Last Failure
+       * @description Most recent recovery failure note attached to the active async workflow.
+       */
+      active_async_last_failure?: string | null;
+      /**
+       * Active Async Objective
+       * @description Objective currently waiting on background work, when present.
+       */
+      active_async_objective?: string | null;
+      /**
+       * Active Async Originating Tool
+       * @description Originating tool for the active async workflow, when present.
+       */
+      active_async_originating_tool?: string | null;
+      /**
+       * Active Async Retry Count
+       * @description Number of async recovery retries attempted for the active workflow.
+       * @default 0
+       */
+      active_async_retry_count: number;
+      /**
+       * Active Async Status
+       * @description Status of the currently active async workflow owned by this thread.
+       */
+      active_async_status?: string | null;
+      /**
+       * Approved Objective
+       * @description Most recent operator objective that the agent actively committed to carry out.
+       */
+      approved_objective?: string | null;
+      /**
+       * Last Action Status
+       * @description Outcome state of the last recorded agent action.
+       */
+      last_action_status?: string | null;
+      /**
+       * Last Assistant Response
+       * @description Most recent assistant response summary retained in thread memory.
+       */
+      last_assistant_response?: string | null;
+      /**
+       * Last Async Note
+       * @description Final note retained from the most recent async workflow outcome.
+       */
+      last_async_note?: string | null;
+      /**
+       * Last Async Objective
+       * @description Objective of the most recent async workflow retained for resume guidance.
+       */
+      last_async_objective?: string | null;
+      /**
+       * Last Async Status
+       * @description Final status of the most recently completed or superseded async workflow.
+       */
+      last_async_status?: string | null;
+      /**
+       * Last Operator Message
+       * @description Most recent operator instruction retained in thread memory.
+       */
+      last_operator_message?: string | null;
+      /**
+       * Last Target Id
+       * @description Most recent concrete target identifier retained for follow-up resolution.
+       */
+      last_target_id?: string | null;
+      /**
+       * Last Target Label
+       * @description Most recent concrete target label retained for follow-up resolution.
+       */
+      last_target_label?: string | null;
+      /**
+       * Last Target Type
+       * @description Most recent concrete target type retained for follow-up resolution.
+       */
+      last_target_type?: string | null;
+      /**
+       * Last Tool Name
+       * @description Most recent deterministic tool used by the agent, if any.
+       */
+      last_tool_name?: string | null;
+      /**
+       * Last Tool Namespace
+       * @description Most recent operator namespace used by the agent, if any.
+       */
+      last_tool_namespace?: string | null;
+      /**
+       * Last Trace Id
+       * @description Trace identifier linked to the most recent agent turn.
+       */
+      last_trace_id?: string | null;
+      /**
+       * Pending Action Count
+       * @description Number of staged approvals currently pending in the thread.
+       * @default 0
+       */
+      pending_action_count: number;
+      /**
+       * Pending Branch
+       * @description Compact next branch or hold state retained for long-turn continuity.
+       */
+      pending_branch?: string | null;
+      /**
+       * Preferred Confirmation Style
+       * @description Preferred action-confirmation style inferred from operator instructions.
+       * @default confirm_high_risk
+       */
+      preferred_confirmation_style: string;
+      /**
+       * Preferred Explanation Depth
+       * @description Preferred answer depth inferred from recent operator instructions.
+       * @default balanced
+       */
+      preferred_explanation_depth: string;
+      /**
+       * Progress Summary
+       * @description Latest compact progress narrative for the close run.
+       */
+      progress_summary?: string | null;
+      /**
+       * Recent Entity Names
+       * @description Recent workspace names retained to help the agent target the right scope.
+       * @default []
+       */
+      recent_entity_names: string[];
+      /**
+       * Recent Objectives
+       * @description Recent operator objectives retained for conversational continuity.
+       * @default []
+       */
+      recent_objectives: string[];
+      /**
+       * Recent Period Labels
+       * @description Recent period labels retained for conversational targeting.
+       * @default []
+       */
+      recent_period_labels: string[];
+      /**
+       * Recent Target Labels
+       * @description Recent concrete target labels retained for follow-up continuity.
+       * @default []
+       */
+      recent_target_labels: string[];
+      /**
+       * Recent Tool Names
+       * @description Recently used tool names retained in compact thread memory.
+       * @default []
+       */
+      recent_tool_names: string[];
+      /**
+       * Recent Tool Namespaces
+       * @description Recently used operator namespaces retained in compact thread memory.
+       * @default []
+       */
+      recent_tool_namespaces: string[];
+      /**
+       * Recovery Actions
+       * @description Suggested operator recovery actions derived from async workflow state.
+       * @default []
+       */
+      recovery_actions: string[];
+      /**
+       * Recovery State
+       * @description Operator-facing recovery state derived from active or recent async workflows.
+       */
+      recovery_state?: string | null;
+      /**
+       * Recovery Summary
+       * @description Compact recovery guidance shown when async work needs monitoring or intervention.
+       */
+      recovery_summary?: string | null;
+      /**
+       * Updated At
+       * @description UTC timestamp when the thread memory was last refreshed.
+       */
+      updated_at?: string | null;
+      /**
+       * Working Subtask
+       * @description Compact current subtask summary retained for conversational continuity.
+       */
+      working_subtask?: string | null;
+    };
+    /**
+     * AgentOperatorControl
+     * @description Describe one channel-portable operator action suggestion.
+     */
+    AgentOperatorControl: {
+      /**
+       * Command
+       * @description Canonical natural-language command that can be sent back to the agent.
+       */
+      command: string;
+      /**
+       * Description
+       * @description Optional longer explanation of what the control will do.
+       */
+      description?: string | null;
+      /**
+       * Disabled Reason
+       * @description Reason the control is unavailable when enabled is false.
+       */
+      disabled_reason?: string | null;
+      /**
+       * Enabled
+       * @description Whether the control is currently actionable.
+       * @default true
+       */
+      enabled: boolean;
+      /**
+       * Id
+       * @description Stable control identifier for analytics and deduplication.
+       */
+      id: string;
+      /**
+       * Kind
+       * @description Control type such as next_step, recovery, governed_action, or status_check.
+       */
+      kind: string;
+      /**
+       * Label
+       * @description Short operator-facing label for the control.
+       */
+      label: string;
+      /**
+       * Requires Confirmation
+       * @description Whether using this control will still lead into governed confirmation.
+       * @default false
+       */
+      requires_confirmation: boolean;
+      /**
+       * Scope
+       * @description Control scope such as global, entity, or close_run.
+       */
+      scope: string;
+    };
+    /**
+     * AgentRunPhaseState
+     * @description Describe one workflow phase shown in the agent readiness timeline.
+     */
+    AgentRunPhaseState: {
+      /**
+       * Blocking Reason
+       * @description Reason the phase is blocked, when applicable.
+       */
+      blocking_reason?: string | null;
+      /**
+       * Completed At
+       * @description UTC timestamp when the phase completed, when applicable.
+       */
+      completed_at?: string | null;
+      /**
+       * Label
+       * @description Operator-facing workflow phase label.
+       */
+      label: string;
+      /**
+       * Phase
+       * @description Stable workflow phase key.
+       */
+      phase: string;
+      /**
+       * Status
+       * @description Current state of the workflow phase.
+       */
+      status: string;
+    };
+    /**
+     * AgentRunReadiness
+     * @description Describe the run-level readiness state exposed to the chat workbench.
+     */
+    AgentRunReadiness: {
+      /**
+       * Blockers
+       * @description Issues that should be resolved before the next major workflow step.
+       * @default []
+       */
+      blockers: string[];
+      /**
+       * Document Count
+       * @description Total documents currently attached to the close run.
+       * @default 0
+       */
+      document_count: number;
+      /**
+       * Has Close Run
+       * @description Whether this chat thread is currently scoped to a close run.
+       * @default false
+       */
+      has_close_run: boolean;
+      /**
+       * Has Source Documents
+       * @description Whether the close run has any uploaded source documents.
+       * @default false
+       */
+      has_source_documents: boolean;
+      /**
+       * Next Actions
+       * @description Suggested next operator or agent actions based on current state.
+       * @default []
+       */
+      next_actions: string[];
+      /**
+       * Parsed Document Count
+       * @description Number of documents that have reached parsed or later states.
+       * @default 0
+       */
+      parsed_document_count: number;
+      /**
+       * Phase States
+       * @description Ordered workflow phases with current status for timeline rendering.
+       * @default []
+       */
+      phase_states: components["schemas"]["AgentRunPhaseState"][];
+      /**
+       * Status
+       * @description Overall readiness state: ready, attention_required, blocked, or not_scoped.
+       * @default not_scoped
+       */
+      status: string;
+      /**
+       * Warnings
+       * @description Advisory notices that should remain visible to the operator.
+       * @default []
+       */
+      warnings: string[];
+    };
+    /**
+     * AgentToolManifestItem
+     * @description Describe one registered agent tool surfaced to UI and external runtimes.
+     */
+    AgentToolManifestItem: {
+      /**
+       * Description
+       * @description Operator-facing summary of what the tool does.
+       */
+      description: string;
+      /**
+       * Input Schema
+       * @description Portable tool input schema for external runtimes and manifests.
+       */
+      input_schema?: {
+        [key: string]: unknown;
+      };
+      /**
+       * Intent
+       * @description Intent bucket used for routing and review.
+       */
+      intent: string;
+      /**
+       * Name
+       * @description Stable registered tool name.
+       */
+      name: string;
+      /**
+       * Namespace
+       * @description Operator namespace that owns this tool.
+       */
+      namespace: string;
+      /**
+       * Namespace Label
+       * @description Human-readable label for the tool namespace.
+       */
+      namespace_label: string;
+      /**
+       * Prompt Signature
+       * @description Prompt-facing function signature.
+       */
+      prompt_signature: string;
+      /**
+       * Requires Human Approval
+       * @description Whether tool execution stages for human approval by policy.
+       */
+      requires_human_approval: boolean;
+      /**
+       * Specialist Mission
+       * @description Compact mission statement for the internal specialist domain.
+       */
+      specialist_mission: string;
+      /**
+       * Specialist Name
+       * @description Internal specialist persona that owns this tool namespace.
+       */
+      specialist_name: string;
+    };
+    /**
+     * AgentTraceRecord
+     * @description Describe one recent trace event from an agent message or system action.
+     */
+    AgentTraceRecord: {
+      /**
+       * Action Status
+       * @description Action status linked to the trace.
+       */
+      action_status?: string | null;
+      /**
+       * Confirmation Policy Version
+       * @description Confirmation policy version applied to this turn when recorded.
+       */
+      confirmation_policy_version?: string | null;
+      /**
+       * Created At
+       * Format: date-time
+       * @description UTC timestamp when the trace was recorded.
+       */
+      created_at: string;
+      /**
+       * Eval Tags
+       * @description Compact evaluation tags attached to the trace for analytics and QA.
+       * @default []
+       */
+      eval_tags: string[];
+      /**
+       * Message Id
+       * @description Chat message UUID that emitted this trace.
+       */
+      message_id: string;
+      /**
+       * Mode
+       * @description Planner or system execution mode.
+       */
+      mode?: string | null;
+      /**
+       * Planner Policy Version
+       * @description Planner policy version applied to this turn when recorded.
+       */
+      planner_policy_version?: string | null;
+      /**
+       * Specialist Name
+       * @description Internal specialist persona associated with the tool, when present.
+       */
+      specialist_name?: string | null;
+      /**
+       * Summary
+       * @description Compact summary of what happened.
+       */
+      summary?: string | null;
+      /**
+       * Tool Intent
+       * @description Intent bucket associated with the tool, when present.
+       */
+      tool_intent?: string | null;
+      /**
+       * Tool Name
+       * @description Deterministic tool name when present.
+       */
+      tool_name?: string | null;
+      /**
+       * Tool Namespace
+       * @description Operator namespace that owned the tool decision, when present.
+       */
+      tool_namespace?: string | null;
+      /**
+       * Trace Id
+       * @description Request trace identifier when present.
+       */
+      trace_id?: string | null;
+    };
+    /**
+     * AnomalyType
+     * @description Enumerate trial-balance and reconciliation anomaly categories.
+     * @enum {string}
+     */
+    AnomalyType:
+      | "debit_credit_imbalance"
+      | "unusual_account_balance"
+      | "unexplained_variance"
+      | "zero_balance_active"
+      | "rounding_difference"
+      | "missing_account";
     /**
      * ApiContractMetadata
      * @description Describe contract-level API metadata needed by local tooling and generated clients.
@@ -625,6 +3021,61 @@ export interface components {
        * @constant
        */
       status: "ok";
+      /**
+       * Version
+       * @description Semantic application version exposed by the API.
+       */
+      version: string;
+    };
+    /**
+     * ApiReadinessStatus
+     * @description Describe the current backend dependency readiness for this API process.
+     */
+    ApiReadinessStatus: {
+      /**
+       * Api Base Path
+       * @description Base path prefix that all API routes are mounted beneath.
+       */
+      api_base_path: string;
+      /**
+       * Attempt Count
+       * @description Number of dependency probe attempts completed since process start.
+       */
+      attempt_count: number;
+      /** @description Active runtime environment for the current backend process. */
+      environment: components["schemas"]["DeploymentEnvironment"];
+      /**
+       * Generated At
+       * Format: date-time
+       * @description UTC timestamp indicating when the response payload was generated.
+       */
+      generated_at: string;
+      /**
+       * Last Checked At
+       * @description UTC timestamp of the most recent completed dependency probe attempt.
+       */
+      last_checked_at?: string | null;
+      /**
+       * Last Error
+       * @description Latest dependency probe failure summary when the API is still retrying.
+       */
+      last_error?: string | null;
+      /**
+       * Ready
+       * @description Whether dependency-backed routes are currently ready to accept traffic.
+       */
+      ready: boolean;
+      /**
+       * Service Name
+       * @description Logical service name for this API process.
+       */
+      service_name: string;
+      /**
+       * Status
+       * @description Dependency-readiness state for the current API process.
+       * @enum {string}
+       */
+      status: "starting" | "retrying" | "ready" | "failed";
       /**
        * Version
        * @description Semantic application version exposed by the API.
@@ -825,6 +3276,95 @@ export interface components {
       updated_at: string;
     };
     /**
+     * ApplyJournalRequest
+     * @description Capture a request to post an approved journal through the chosen target.
+     */
+    ApplyJournalRequest: {
+      /**
+       * Posting Target
+       * @description Canonical posting target: internal_ledger writes to the platform working ledger, while external_erp_package generates an accountant-managed ERP import package.
+       */
+      posting_target: string;
+      /**
+       * Reason
+       * @description Optional operator note for audit and timeline context.
+       */
+      reason?: string | null;
+    };
+    /**
+     * ApproveChatActionRequest
+     * @description Approve a pending chat-originated action plan.
+     */
+    ApproveChatActionRequest: {
+      /**
+       * Approval Policy
+       * @description Optional scoped approval policy. auto_release_for_thread allows future non-destructive release controls in this thread to run without another prompt.
+       */
+      approval_policy?: "auto_release_for_thread" | null;
+      /**
+       * Reason
+       * @description Optional reviewer note for the audit trail.
+       */
+      reason?: string | null;
+    };
+    /**
+     * ApproveCommentaryRequest
+     * @description Capture an explicit commentary approval with optional edit.
+     */
+    ApproveCommentaryRequest: {
+      /**
+       * Body
+       * @description Optional final commentary text applied during approval.
+       */
+      body?: string | null;
+      /**
+       * Reason
+       * @description Optional approval reason persisted to the activity timeline.
+       */
+      reason?: string | null;
+    };
+    /**
+     * ApproveJournalRequest
+     * @description Capture a human approval decision for a journal entry.
+     */
+    ApproveJournalRequest: {
+      /**
+       * Reason
+       * @description Optional reviewer note for audit and timeline context.
+       */
+      reason?: string | null;
+    };
+    /**
+     * ApproveReconciliationRequest
+     * @description Capture reviewer approval of a reconciliation run.
+     */
+    ApproveReconciliationRequest: {
+      /**
+       * Reason
+       * @description Required reviewer note for approval.
+       */
+      reason: string;
+    };
+    /**
+     * ApproveReconciliationResult
+     * @description Return the result after approving a reconciliation run.
+     */
+    ApproveReconciliationResult: {
+      /**
+       * Approved By User Id
+       * @description Approver user ID.
+       */
+      approved_by_user_id: string;
+      /**
+       * Reconciliation Id
+       * Format: uuid
+       * @description Reconciliation UUID.
+       */
+      reconciliation_id: string;
+      /** @description Updated status (should be 'approved'). */
+      status: components["schemas"]["ReconciliationStatus"];
+    };
+    /**
      * AuthSessionResponse
      * @description Return the authenticated user plus current session metadata after auth mutations.
      */
@@ -866,11 +3406,580 @@ export interface components {
       status: string;
     };
     /**
+     * AutoTransactionMatchSummary
+     * @description Describe the current deterministic transaction-linking result for a document.
+     */
+    AutoTransactionMatchSummary: {
+      /**
+       * Match Source
+       * @description Source family used for the match, such as bank_statement_line.
+       */
+      match_source?: string | null;
+      /**
+       * Matched Amount
+       * @description Matched transaction amount as a decimal string when available.
+       */
+      matched_amount?: string | null;
+      /**
+       * Matched Date
+       * @description Matched transaction date when available.
+       */
+      matched_date?: string | null;
+      /**
+       * Matched Description
+       * @description Matched narration or description text, when available.
+       */
+      matched_description?: string | null;
+      /**
+       * Matched Document Filename
+       * @description Matched source document filename when available.
+       */
+      matched_document_filename?: string | null;
+      /**
+       * Matched Document Id
+       * @description Matched source document UUID when a transaction candidate was found.
+       */
+      matched_document_id?: string | null;
+      /**
+       * Matched Line No
+       * @description Matched line number within the source transaction document, when available.
+       */
+      matched_line_no?: number | null;
+      /**
+       * Matched Reference
+       * @description Matched bank or transaction reference text, when available.
+       */
+      matched_reference?: string | null;
+      /**
+       * Reasons
+       * @description Human-readable deterministic reasons that explain the match outcome.
+       * @default []
+       */
+      reasons: string[];
+      /**
+       * Score
+       * @description Deterministic candidate score when a comparison was possible.
+       */
+      score?: number | null;
+      /**
+       * Status
+       * @description matched, unmatched, pending_evidence, or not_applicable.
+       */
+      status: string;
+    };
+    /**
      * AutonomyMode
      * @description Enumerate the user-controlled routing modes for AI-suggested changes.
      * @enum {string}
      */
     AutonomyMode: "human_review" | "reduced_interruption";
+    /**
+     * BatchQueueDocumentsForParseResponse
+     * @description Return all uploaded documents that were queued for parsing.
+     */
+    BatchQueueDocumentsForParseResponse: {
+      /**
+       * Queued Documents
+       * @description Documents queued for parsing in deterministic upload order.
+       * @default []
+       */
+      queued_documents: components["schemas"]["QueuedDocumentParseResult"][];
+    };
+    /**
+     * BatchUploadDocumentsResponse
+     * @description Return all documents accepted by one batch upload request.
+     */
+    BatchUploadDocumentsResponse: {
+      /**
+       * Uploaded Documents
+       * @description Uploaded documents in the same order as the submitted files.
+       * @default []
+       */
+      uploaded_documents: components["schemas"]["UploadedDocumentResult"][];
+    };
+    /** Body_send_chat_action_with_attachments */
+    Body_send_chat_action_with_attachments: {
+      /**
+       * Attachment Intent
+       * @default source_documents
+       */
+      attachment_intent: string;
+      /** Client Turn Id */
+      client_turn_id?: string | null;
+      /** Content */
+      content?: string | null;
+      /**
+       * Files
+       * @description Inline chat attachments.
+       * @default []
+       */
+      files: string[];
+    };
+    /** Body_upload_documents */
+    Body_upload_documents: {
+      /**
+       * Files
+       * @description PDF, Excel, or CSV files.
+       */
+      files: string[];
+    };
+    /** Body_upload_general_ledger */
+    Body_upload_general_ledger: {
+      /**
+       * File
+       * @description CSV, XLSX, or searchable PDF general-ledger file.
+       */
+      file: string;
+      /**
+       * Period End
+       * Format: date
+       * @description Last day covered by the imported ledger.
+       */
+      period_end: string;
+      /**
+       * Period Start
+       * Format: date
+       * @description First day covered by the imported ledger.
+       */
+      period_start: string;
+    };
+    /** Body_upload_manual_coa */
+    Body_upload_manual_coa: {
+      /**
+       * File
+       * @description CSV, XLSX, or searchable PDF chart-of-accounts file.
+       */
+      file: string;
+    };
+    /** Body_upload_trial_balance */
+    Body_upload_trial_balance: {
+      /**
+       * File
+       * @description CSV, XLSX, or searchable PDF trial-balance file.
+       */
+      file: string;
+      /**
+       * Period End
+       * Format: date
+       * @description Last day covered by the imported trial balance.
+       */
+      period_end: string;
+      /**
+       * Period Start
+       * Format: date
+       * @description First day covered by the imported trial balance.
+       */
+      period_start: string;
+    };
+    /**
+     * BudgetVsActualScheduleRowPayload
+     * @description Typed payload for one budget-vs-actual workpaper row.
+     */
+    BudgetVsActualScheduleRowPayload: {
+      /**
+       * Account Code
+       * @description Budget account code used for variance analysis.
+       */
+      account_code: string;
+      /**
+       * Budget Amount
+       * @description Budgeted amount as a decimal string.
+       */
+      budget_amount: string;
+      /**
+       * Cost Centre
+       * @description Optional cost-centre dimension used for the budget line.
+       */
+      cost_centre?: string | null;
+      /**
+       * Department
+       * @description Optional department dimension used for the budget line.
+       */
+      department?: string | null;
+      /**
+       * Notes
+       * @description Optional operator note.
+       */
+      notes?: string | null;
+      /**
+       * Period
+       * @description Budget period in YYYY-MM format.
+       */
+      period: string;
+      /**
+       * Project
+       * @description Optional project dimension used for the budget line.
+       */
+      project?: string | null;
+    };
+    /**
+     * BulkDispositionRequest
+     * @description Capture bulk disposition for multiple reconciliation items.
+     */
+    BulkDispositionRequest: {
+      /** @description The reviewer's disposition choice for all items. */
+      disposition: components["schemas"]["DispositionAction"];
+      /**
+       * Item Ids
+       * @description List of reconciliation item UUIDs to disposition.
+       */
+      item_ids: string[];
+      /**
+       * Reason
+       * @description Required reasoning for the bulk disposition.
+       */
+      reason: string;
+    };
+    /**
+     * CancelJobRequest
+     * @description Capture an operator-issued cancel request for one background job.
+     */
+    CancelJobRequest: {
+      /**
+       * Reason
+       * @description Operator-facing reason recorded with the cancellation request.
+       */
+      reason: string;
+    };
+    /**
+     * ChatActionResponse
+     * @description Return the assistant response that may include an action execution plan.
+     */
+    ChatActionResponse: {
+      /** @description Action summary when the message contained action intent. Null when the response is pure read-only analysis. */
+      action_plan?: components["schemas"]["ChatActionSummary"] | null;
+      /**
+       * Client Turn Id
+       * @description Client-generated idempotency key for the submitted turn, if supplied.
+       */
+      client_turn_id?: string | null;
+      /**
+       * Content
+       * @description Assistant response text.
+       */
+      content: string;
+      /**
+       * Is Read Only
+       * @description True when the response is pure analysis with no state changes.
+       * @default true
+       */
+      is_read_only: boolean;
+      /**
+       * Message Id
+       * @description Assistant message UUID.
+       */
+      message_id: string;
+      /**
+       * Operator Controls
+       * @description Channel-portable suggested commands and governed-action controls returned with the assistant reply.
+       * @default []
+       */
+      operator_controls: components["schemas"]["AgentOperatorControl"][];
+      /**
+       * Stream After Message Order
+       * @description Message order after which SSE clients should stream this turn's updates.
+       */
+      stream_after_message_order?: number | null;
+      /**
+       * Thread Close Run Id
+       * @description Close run UUID anchoring the thread after this turn, if any.
+       */
+      thread_close_run_id?: string | null;
+      /**
+       * Thread Entity Id
+       * @description Entity workspace UUID that now anchors the thread after this turn.
+       */
+      thread_entity_id: string;
+      /**
+       * Turn Job Id
+       * @description Durable background job UUID when the turn was accepted asynchronously.
+       */
+      turn_job_id?: string | null;
+      /**
+       * Turn Status
+       * @description Lifecycle status for this chat turn: completed or accepted.
+       * @default completed
+       */
+      turn_status: string;
+    };
+    /**
+     * ChatActionSummary
+     * @description Summarize a chat action plan for list and badge views.
+     */
+    ChatActionSummary: {
+      /**
+       * Assistant Response
+       * @description Brief assistant-facing rationale captured when the action was staged.
+       */
+      assistant_response?: string | null;
+      /**
+       * Created At
+       * @description UTC creation timestamp.
+       */
+      created_at: string;
+      /**
+       * Id
+       * @description Action plan UUID.
+       */
+      id: string;
+      /**
+       * Intent
+       * @description Classified action intent.
+       */
+      intent: string;
+      /**
+       * Requires Human Approval
+       * @description Whether human approval is needed.
+       */
+      requires_human_approval: boolean;
+      /**
+       * Status
+       * @description Current review status.
+       */
+      status: string;
+      /**
+       * Target Id
+       * @description Target business object UUID.
+       */
+      target_id?: string | null;
+      /**
+       * Target Type
+       * @description Target business object type.
+       */
+      target_type?: string | null;
+      /**
+       * Thread Id
+       * @description Source chat thread.
+       */
+      thread_id: string;
+      /**
+       * Tool Name
+       * @description Deterministic tool waiting to run.
+       */
+      tool_name?: string | null;
+    };
+    /**
+     * ChatMessageRecord
+     * @description Describe one message persisted inside a chat thread.
+     */
+    ChatMessageRecord: {
+      /**
+       * Content
+       * @description Message text content (Markdown for assistant messages).
+       */
+      content: string;
+      /**
+       * Created At
+       * Format: date-time
+       * @description UTC timestamp when the message was created.
+       */
+      created_at: string;
+      /**
+       * Grounding Payload
+       * @description Evidence snapshot attached to assistant messages.
+       */
+      grounding_payload?: {
+        [key: string]: unknown;
+      };
+      /**
+       * Id
+       * @description Stable UUID for the chat message.
+       */
+      id: string;
+      /**
+       * Linked Action Id
+       * @description Optional reference to the chat action plan discussed in this message.
+       */
+      linked_action_id?: string | null;
+      /**
+       * Message Order
+       * @description Canonical per-thread message sequence used for deterministic conversation ordering.
+       */
+      message_order: number;
+      /**
+       * Message Type
+       * @description Intent classification used for UI rendering.
+       * @default analysis
+       * @enum {string}
+       */
+      message_type: "analysis" | "workflow" | "action" | "warning";
+      /**
+       * Model Metadata
+       * @description Model name, token usage, and latency for assistant messages.
+       */
+      model_metadata?: {
+        [key: string]: unknown;
+      } | null;
+      /**
+       * Role
+       * @description Message originator: user, assistant, or system.
+       * @enum {string}
+       */
+      role: "user" | "assistant" | "system";
+      /**
+       * Thread Id
+       * @description Parent chat thread that this message belongs to.
+       */
+      thread_id: string;
+    };
+    /**
+     * ChatMessageResponse
+     * @description Return the assistant response generated for a user message.
+     */
+    ChatMessageResponse: {
+      /** @description The newly created assistant message with grounding payload. */
+      message: components["schemas"]["ChatMessageRecord"];
+      /** @description Echo of the persisted user message when sent in the same response. */
+      user_message?: components["schemas"]["ChatMessageRecord"] | null;
+    };
+    /**
+     * ChatThreadDeleteResponse
+     * @description Return the canonical result after deleting one chat thread.
+     */
+    ChatThreadDeleteResponse: {
+      /**
+       * Deleted Message Count
+       * @description Number of persisted messages deleted with the thread.
+       */
+      deleted_message_count: number;
+      /**
+       * Deleted Thread Id
+       * @description Stable UUID of the deleted thread.
+       */
+      deleted_thread_id: string;
+      /**
+       * Deleted Thread Title
+       * @description Human-readable title of the deleted thread, when present.
+       */
+      deleted_thread_title?: string | null;
+    };
+    /**
+     * ChatThreadListResponse
+     * @description Return the threads available for an entity or close run.
+     */
+    ChatThreadListResponse: {
+      /**
+       * Threads
+       * @description Threads ordered newest-first for the specified scope.
+       * @default []
+       */
+      threads: components["schemas"]["ChatThreadSummary"][];
+    };
+    /**
+     * ChatThreadSummary
+     * @description Describe one chat thread for list and overview surfaces.
+     */
+    ChatThreadSummary: {
+      /**
+       * Close Run Id
+       * @description Close run scoping this thread, if period-specific.
+       */
+      close_run_id?: string | null;
+      /**
+       * Created At
+       * Format: date-time
+       * @description UTC timestamp when the thread was created.
+       */
+      created_at: string;
+      /**
+       * Entity Id
+       * @description Entity workspace that owns this thread.
+       */
+      entity_id: string;
+      /** @description Entity and close run context that grounds this thread. */
+      grounding: components["schemas"]["GroundingContext"];
+      /**
+       * Id
+       * @description Stable UUID for the chat thread.
+       */
+      id: string;
+      /**
+       * Last Message At
+       * @description UTC timestamp of the most recent message in the thread.
+       */
+      last_message_at?: string | null;
+      /**
+       * Message Count
+       * @description Total number of messages in the thread.
+       */
+      message_count: number;
+      /**
+       * Title
+       * @description Thread title shown in the conversation list.
+       */
+      title?: string | null;
+      /**
+       * Updated At
+       * Format: date-time
+       * @description UTC timestamp when the thread was last updated.
+       */
+      updated_at: string;
+    };
+    /**
+     * ChatThreadWithMessages
+     * @description Return a full chat thread with its message history for detail views.
+     */
+    ChatThreadWithMessages: {
+      /**
+       * Messages
+       * @description Messages ordered chronologically (oldest first).
+       * @default []
+       */
+      messages: components["schemas"]["ChatMessageRecord"][];
+      /** @description Thread summary with grounding context. */
+      thread: components["schemas"]["ChatThreadSummary"];
+    };
+    /**
+     * ChatThreadWorkspaceResponse
+     * @description Return the agent workspace context surfaced for one chat thread.
+     */
+    ChatThreadWorkspaceResponse: {
+      /** @description Active chart-of-accounts state visible to the agent. */
+      coa: components["schemas"]["AgentCoaSummary"];
+      /** @description Grounding context for this thread. */
+      grounding: components["schemas"]["GroundingContext"];
+      /** @description Accounting import parser diagnostics visible to the agent. */
+      imports?: components["schemas"]["AgentImportWorkspaceSummary"];
+      /**
+       * Mcp Manifest
+       * @description Portable MCP-style tool manifest for external agent integrations.
+       */
+      mcp_manifest?: {
+        [key: string]: unknown;
+      };
+      /** @description Persisted working memory for the thread. */
+      memory: components["schemas"]["AgentMemorySummary"];
+      /**
+       * Operator Controls
+       * @description Channel-portable suggested commands and governed-action controls that non-web clients can surface directly.
+       * @default []
+       */
+      operator_controls: components["schemas"]["AgentOperatorControl"][];
+      /**
+       * Progress Summary
+       * @description Current close-run progress summary visible to the agent.
+       */
+      progress_summary?: string | null;
+      /** @description Run readiness, workflow phases, and next-step guidance for the workbench. */
+      readiness: components["schemas"]["AgentRunReadiness"];
+      /**
+       * Recent Traces
+       * @description Recent trace events emitted by the agent in this thread.
+       * @default []
+       */
+      recent_traces: components["schemas"]["AgentTraceRecord"][];
+      /**
+       * Thread Id
+       * @description Chat thread UUID.
+       */
+      thread_id: string;
+      /**
+       * Tools
+       * @description Registered deterministic tools available to the agent.
+       * @default []
+       */
+      tools: components["schemas"]["AgentToolManifestItem"][];
+    };
     /**
      * CloseRunDecisionRequest
      * @description Capture an approval, archive, or reopen decision note.
@@ -883,6 +3992,90 @@ export interface components {
       reason?: string | null;
     };
     /**
+     * CloseRunDeleteResponse
+     * @description Describe the destructive result of deleting one mutable close run.
+     */
+    CloseRunDeleteResponse: {
+      /**
+       * Canceled Job Count
+       * @description Number of active background jobs canceled before deletion.
+       */
+      canceled_job_count: number;
+      /**
+       * Deleted Close Run Id
+       * @description UUID of the deleted close run.
+       */
+      deleted_close_run_id: string;
+      /**
+       * Deleted Document Count
+       * @description Number of source documents removed with the close run.
+       */
+      deleted_document_count: number;
+      /**
+       * Deleted Journal Count
+       * @description Number of journals removed with the close run.
+       */
+      deleted_journal_count: number;
+      /**
+       * Deleted Recommendation Count
+       * @description Number of recommendations removed with the close run.
+       */
+      deleted_recommendation_count: number;
+      /**
+       * Deleted Report Run Count
+       * @description Number of reporting runs removed with the close run.
+       */
+      deleted_report_run_count: number;
+      /**
+       * Deleted Thread Count
+       * @description Number of close-run-scoped chat threads removed with the close run.
+       */
+      deleted_thread_count: number;
+    };
+    /**
+     * CloseRunLedgerBindingSummary
+     * @description Describe the imported ledger baseline currently bound to one close run.
+     */
+    CloseRunLedgerBindingSummary: {
+      /**
+       * Binding Source
+       * @description How the binding was created: auto or manual.
+       */
+      binding_source: string;
+      /**
+       * Bound By User Id
+       * @description User who created the binding, if recorded.
+       */
+      bound_by_user_id?: string | null;
+      /**
+       * Close Run Id
+       * @description Owning close-run UUID.
+       */
+      close_run_id: string;
+      /**
+       * Created At
+       * Format: date-time
+       * @description UTC timestamp when the binding was created.
+       */
+      created_at: string;
+      /**
+       * General Ledger Import Batch Id
+       * @description Bound general-ledger import batch UUID, if any.
+       */
+      general_ledger_import_batch_id?: string | null;
+      /**
+       * Trial Balance Import Batch Id
+       * @description Bound trial-balance import batch UUID, if any.
+       */
+      trial_balance_import_batch_id?: string | null;
+      /**
+       * Updated At
+       * Format: date-time
+       * @description UTC timestamp when the binding was last changed.
+       */
+      updated_at: string;
+    };
+    /**
      * CloseRunListResponse
      * @description Return close runs for one entity in deterministic period/version order.
      */
@@ -893,6 +4086,64 @@ export interface components {
        * @default []
        */
       close_runs: components["schemas"]["CloseRunSummary"][];
+    };
+    /**
+     * CloseRunOperatingMode
+     * @description Describe the ledger/control data posture available for one close run.
+     * @enum {string}
+     */
+    CloseRunOperatingMode:
+      | "source_documents_only"
+      | "working_ledger"
+      | "imported_general_ledger"
+      | "trial_balance_only";
+    /**
+     * CloseRunOperatingModeSummary
+     * @description Describe the ledger/control posture automatically detected for one close run.
+     */
+    CloseRunOperatingModeSummary: {
+      /**
+       * Bank Reconciliation Available
+       * @description Whether bank reconciliation is currently applicable for this run.
+       */
+      bank_reconciliation_available: boolean;
+      /**
+       * Description
+       * @description Operator-facing explanation of how this run will behave.
+       */
+      description: string;
+      /**
+       * General Ledger Export Available
+       * @description Whether a general-ledger export can currently be generated for the run.
+       */
+      general_ledger_export_available: boolean;
+      /**
+       * Has General Ledger Baseline
+       * @description Whether an imported general-ledger baseline is bound to the close run.
+       */
+      has_general_ledger_baseline: boolean;
+      /**
+       * Has Trial Balance Baseline
+       * @description Whether an imported trial-balance baseline is bound to the close run.
+       */
+      has_trial_balance_baseline: boolean;
+      /**
+       * Has Working Ledger Entries
+       * @description Whether approved or applied close-run journals already provide ledger-side data.
+       */
+      has_working_ledger_entries: boolean;
+      /**
+       * Journal Posting Available
+       * @description Whether this mode supports posting eligible document journals into the working ledger layer.
+       */
+      journal_posting_available: boolean;
+      /** @description Canonical operating mode resolved from available ledger and control data. */
+      mode: components["schemas"]["CloseRunOperatingMode"];
+      /**
+       * Trial Balance Review Available
+       * @description Whether trial-balance review is currently applicable for this run.
+       */
+      trial_balance_review_available: boolean;
     };
     /**
      * CloseRunPhaseState
@@ -938,6 +4189,18 @@ export interface components {
        * @constant
        */
       status: "reopened";
+    };
+    /**
+     * CloseRunRewindResponse
+     * @description Return the refreshed close run after reopening an earlier workflow phase.
+     */
+    CloseRunRewindResponse: {
+      /** @description Phase that is now active again. */
+      active_phase: components["schemas"]["WorkflowPhase"];
+      /** @description Refreshed close-run detail. */
+      close_run: components["schemas"]["CloseRunSummary"];
+      /** @description Phase that was active before the rewind. */
+      previous_active_phase: components["schemas"]["WorkflowPhase"];
     };
     /**
      * CloseRunStatus
@@ -986,11 +4249,15 @@ export interface components {
        * @description Stable UUID for the close run.
        */
       id: string;
+      /** @description Imported ledger baseline bound to this close run, if any. */
+      ledger_binding?: components["schemas"]["CloseRunLedgerBindingSummary"] | null;
       /**
        * Opened By User Id
        * @description UUID of the user who opened this run.
        */
       opened_by_user_id: string;
+      /** @description Automatically detected ledger/control mode and its runtime capabilities. */
+      operating_mode: components["schemas"]["CloseRunOperatingModeSummary"];
       /**
        * Period End
        * Format: date
@@ -1050,6 +4317,325 @@ export interface components {
       phase_states: components["schemas"]["CloseRunPhaseState"][];
       /** @description Lifecycle status of the enclosing close run. */
       status: components["schemas"]["CloseRunStatus"];
+    };
+    /**
+     * CoaAccountCreateRequest
+     * @description Capture required fields for creating a new account in a COA revision.
+     */
+    CoaAccountCreateRequest: {
+      /**
+       * Account Code
+       * @description New account code.
+       */
+      account_code: string;
+      /**
+       * Account Name
+       * @description New account name.
+       */
+      account_name: string;
+      /**
+       * Account Type
+       * @description New account type.
+       */
+      account_type: string;
+      /**
+       * Dimension Defaults
+       * @description Optional default dimensions attached to the account.
+       */
+      dimension_defaults?: {
+        [key: string]: string;
+      };
+      /**
+       * External Ref
+       * @description Optional external system reference.
+       */
+      external_ref?: string | null;
+      /**
+       * Is Active
+       * @description Activation flag for the new account.
+       * @default true
+       */
+      is_active: boolean;
+      /**
+       * Is Postable
+       * @description Posting eligibility for the new account.
+       * @default true
+       */
+      is_postable: boolean;
+      /**
+       * Parent Account Id
+       * @description Optional parent account UUID in the active set.
+       */
+      parent_account_id?: string | null;
+    };
+    /**
+     * CoaAccountSummary
+     * @description Describe one account row attached to a COA set.
+     */
+    CoaAccountSummary: {
+      /**
+       * Account Code
+       * @description Operator-facing account code.
+       */
+      account_code: string;
+      /**
+       * Account Name
+       * @description Operator-facing account name.
+       */
+      account_name: string;
+      /**
+       * Account Type
+       * @description Normalized account type label.
+       */
+      account_type: string;
+      /**
+       * Coa Set Id
+       * @description Stable UUID of the owning COA set.
+       */
+      coa_set_id: string;
+      /**
+       * Created At
+       * Format: date-time
+       * @description UTC timestamp when the account row was created.
+       */
+      created_at: string;
+      /**
+       * Dimension Defaults
+       * @description Default cost-centre/department/project dimensions for this account.
+       */
+      dimension_defaults?: {
+        [key: string]: string;
+      };
+      /**
+       * External Ref
+       * @description Optional external integration reference for this account.
+       */
+      external_ref?: string | null;
+      /**
+       * Id
+       * @description Stable UUID for the account row.
+       */
+      id: string;
+      /**
+       * Is Active
+       * @description Whether the account is active for mapping and posting.
+       */
+      is_active: boolean;
+      /**
+       * Is Postable
+       * @description Whether the account can be used for posting lines.
+       */
+      is_postable: boolean;
+      /**
+       * Parent Account Id
+       * @description Optional parent account row in the same COA set.
+       */
+      parent_account_id?: string | null;
+      /**
+       * Updated At
+       * Format: date-time
+       * @description UTC timestamp when the account row was last updated.
+       */
+      updated_at: string;
+    };
+    /**
+     * CoaAccountUpdateRequest
+     * @description Capture editable fields for updating one account in a versioned COA revision.
+     */
+    CoaAccountUpdateRequest: {
+      /** Account Code */
+      account_code?: string | null;
+      /** Account Name */
+      account_name?: string | null;
+      /** Account Type */
+      account_type?: string | null;
+      /** Dimension Defaults */
+      dimension_defaults?: {
+        [key: string]: string;
+      } | null;
+      /** External Ref */
+      external_ref?: string | null;
+      /** Is Active */
+      is_active?: boolean | null;
+      /** Is Postable */
+      is_postable?: boolean | null;
+      /** Parent Account Id */
+      parent_account_id?: string | null;
+    };
+    /**
+     * CoaSetActivationRequest
+     * @description Capture an explicit operator reason when switching the active COA set.
+     */
+    CoaSetActivationRequest: {
+      /**
+       * Reason
+       * @description Optional reason persisted in the activity timeline for activation changes.
+       */
+      reason?: string | null;
+    };
+    /**
+     * CoaSetSummary
+     * @description Describe one versioned COA set for an entity workspace.
+     */
+    CoaSetSummary: {
+      /**
+       * Account Count
+       * @description Number of account rows attached to the set.
+       */
+      account_count: number;
+      /**
+       * Activated At
+       * @description UTC timestamp when the set became active, if ever.
+       */
+      activated_at?: string | null;
+      /**
+       * Created At
+       * Format: date-time
+       * @description UTC timestamp when the set was created.
+       */
+      created_at: string;
+      /**
+       * Entity Id
+       * @description Stable UUID of the owning entity workspace.
+       */
+      entity_id: string;
+      /**
+       * Id
+       * @description Stable UUID for the COA set.
+       */
+      id: string;
+      /**
+       * Import Metadata
+       * @description Source-specific import metadata captured when the set was created.
+       */
+      import_metadata?: {
+        [key: string]: unknown;
+      };
+      /**
+       * Is Active
+       * @description Whether this COA set is currently active for the entity.
+       */
+      is_active: boolean;
+      /**
+       * Source
+       * @description COA source: manual_upload, quickbooks_sync, or fallback_nigerian_sme.
+       */
+      source: string;
+      /**
+       * Updated At
+       * Format: date-time
+       * @description UTC timestamp when the set was last updated.
+       */
+      updated_at: string;
+      /**
+       * Version No
+       * @description Monotonic version number for this entity's COA set.
+       */
+      version_no: number;
+    };
+    /**
+     * CoaWorkspaceResponse
+     * @description Describe the resolved COA workspace used by the entity COA editor.
+     */
+    CoaWorkspaceResponse: {
+      /**
+       * Accounts
+       * @description Accounts attached to the active set in deterministic display order.
+       * @default []
+       */
+      accounts: components["schemas"]["CoaAccountSummary"][];
+      /** @description Currently active COA set for the entity. */
+      active_set: components["schemas"]["CoaSetSummary"];
+      /**
+       * Coa Sets
+       * @description All COA set versions for the entity, newest first.
+       * @default []
+       */
+      coa_sets: components["schemas"]["CoaSetSummary"][];
+      /**
+       * Entity Id
+       * @description Stable UUID of the entity workspace.
+       */
+      entity_id: string;
+      /**
+       * Precedence Order
+       * @description Current precedence order used when no set is active.
+       * @default [
+       *       "manual_upload",
+       *       "quickbooks_sync",
+       *       "fallback_nigerian_sme"
+       *     ]
+       */
+      precedence_order: string[];
+    };
+    /**
+     * CommentarySummary
+     * @description Describe one version of management commentary for a report section.
+     */
+    CommentarySummary: {
+      /**
+       * Authored By User Id
+       * @description UUID of the user who last edited or approved this commentary.
+       */
+      authored_by_user_id?: string | null;
+      /**
+       * Body
+       * @description Commentary text content.
+       */
+      body: string;
+      /**
+       * Created At
+       * Format: date-time
+       * @description UTC timestamp when the commentary was created.
+       */
+      created_at: string;
+      /**
+       * Id
+       * @description Stable UUID for the commentary row.
+       */
+      id: string;
+      /**
+       * Report Run Id
+       * @description Parent report run UUID.
+       */
+      report_run_id: string;
+      /**
+       * Section Key
+       * @description Report section this commentary applies to.
+       */
+      section_key: string;
+      /**
+       * Status
+       * @description Current lifecycle state of this commentary.
+       */
+      status: string;
+      /**
+       * Updated At
+       * Format: date-time
+       * @description UTC timestamp when the commentary was last updated.
+       */
+      updated_at: string;
+    };
+    /**
+     * CreateChatThreadRequest
+     * @description Capture the inputs required to create a new grounded chat thread.
+     */
+    CreateChatThreadRequest: {
+      /**
+       * Close Run Id
+       * @description Optional close run UUID to scope the thread to a specific period.
+       */
+      close_run_id?: string | null;
+      /**
+       * Entity Id
+       * @description Entity workspace UUID that will own this conversation.
+       */
+      entity_id: string;
+      /**
+       * Title
+       * @description Optional user-provided or auto-derived thread title.
+       */
+      title?: string | null;
     };
     /**
      * CreateCloseRunRequest
@@ -1153,11 +4739,633 @@ export interface components {
       timezone: string;
     };
     /**
+     * CreateExportRequest
+     * @description Capture the inputs required to trigger a new export for a close run.
+     */
+    CreateExportRequest: {
+      /**
+       * Action Qualifier
+       * @description Optional action scope for idempotency key disambiguation (e.g. 'full_export', 'regeneration').
+       */
+      action_qualifier?: string | null;
+      /**
+       * Include Audit Trail
+       * @description Whether to include the audit trail export in the manifest.
+       * @default true
+       */
+      include_audit_trail: boolean;
+      /**
+       * Include Evidence Pack
+       * @description Whether to assemble an evidence pack bundle alongside the export.
+       * @default true
+       */
+      include_evidence_pack: boolean;
+    };
+    /**
+     * CreateGlobalChatThreadRequest
+     * @description Capture optional inputs for a workspace-wide global assistant thread.
+     */
+    CreateGlobalChatThreadRequest: {
+      /**
+       * Title
+       * @description Optional user-provided or auto-derived thread title.
+       */
+      title?: string | null;
+    };
+    /**
+     * CreateReportTemplateRequest
+     * @description Capture the inputs required to create a new entity-scoped report template.
+     */
+    CreateReportTemplateRequest: {
+      /**
+       * Activate Immediately
+       * @description Whether to activate this template upon creation.
+       * @default true
+       */
+      activate_immediately: boolean;
+      /**
+       * Description
+       * @description Optional template description.
+       */
+      description?: string | null;
+      /**
+       * Guardrail Config
+       * @description Optional guardrail policy overrides for this template.
+       */
+      guardrail_config?: {
+        [key: string]: unknown;
+      };
+      /**
+       * Name
+       * @description New template display name.
+       */
+      name: string;
+      /**
+       * Sections
+       * @description Ordered section definitions for the new template.
+       */
+      sections: components["schemas"]["ReportSectionDefinition"][];
+    };
+    /**
      * DeploymentEnvironment
      * @description Enumerate the supported runtime environments for local and packaged deployments.
      * @enum {string}
      */
     DeploymentEnvironment: "development" | "test" | "staging" | "production";
+    /**
+     * DispositionAction
+     * @description Enumerate the reviewer disposition choices for unresolved reconciliation items.
+     * @enum {string}
+     */
+    DispositionAction: "resolved" | "adjusted" | "accepted_as_is" | "escalated" | "pending_info";
+    /**
+     * DispositionItemRequest
+     * @description Capture a reviewer disposition for a reconciliation item.
+     */
+    DispositionItemRequest: {
+      /** @description The reviewer's disposition choice. */
+      disposition: components["schemas"]["DispositionAction"];
+      /**
+       * Reason
+       * @description Required reasoning for the disposition decision.
+       */
+      reason: string;
+    };
+    /**
+     * DispositionResult
+     * @description Return the result after recording a reviewer disposition.
+     */
+    DispositionResult: {
+      /** @description The recorded disposition. */
+      disposition: components["schemas"]["DispositionAction"];
+      /**
+       * Item Id
+       * Format: uuid
+       * @description Reconciliation item UUID.
+       */
+      item_id: string;
+      /**
+       * Requires Further Action
+       * @description Whether further action is needed after this disposition.
+       */
+      requires_further_action: boolean;
+    };
+    /**
+     * DistributeExportRequest
+     * @description Capture one management-distribution action for an export package.
+     */
+    DistributeExportRequest: {
+      /**
+       * Delivery Channel
+       * @description Controlled delivery channel used for this release.
+       * @default secure_email
+       */
+      delivery_channel: string;
+      /**
+       * Note
+       * @description Optional operator note about the distribution or sign-off context.
+       */
+      note?: string | null;
+      /**
+       * Recipient Email
+       * @description Stakeholder email receiving the package.
+       */
+      recipient_email: string;
+      /**
+       * Recipient Name
+       * @description Stakeholder name receiving the package.
+       */
+      recipient_name: string;
+      /**
+       * Recipient Role
+       * @description Optional stakeholder role such as CFO or Finance Manager.
+       */
+      recipient_role?: string | null;
+    };
+    /**
+     * DocumentDeleteResponse
+     * @description Return the canonical outcome after deleting one document subtree.
+     */
+    DocumentDeleteResponse: {
+      /**
+       * Canceled Job Count
+       * @description Number of active linked jobs that were canceled before deletion.
+       */
+      canceled_job_count: number;
+      /**
+       * Deleted Document Count
+       * @description Total number of document rows deleted, including descendants.
+       */
+      deleted_document_count: number;
+      /**
+       * Deleted Document Filename
+       * @description Original filename of the deleted root document.
+       */
+      deleted_document_filename: string;
+      /**
+       * Deleted Document Id
+       * @description The root document UUID that was deleted.
+       */
+      deleted_document_id: string;
+    };
+    /**
+     * DocumentExtractionSummary
+     * @description Describe the latest extraction payload attached to a document.
+     */
+    DocumentExtractionSummary: {
+      /**
+       * Approved Version
+       * @description Whether a reviewer approved this extraction version.
+       */
+      approved_version: boolean;
+      /**
+       * Auto Approved
+       * @description Whether reduced-interruption mode auto-approved this extraction/document.
+       * @default false
+       */
+      auto_approved: boolean;
+      /** @description Latest deterministic transaction-linking result for the document. */
+      auto_transaction_match?: components["schemas"]["AutoTransactionMatchSummary"] | null;
+      /**
+       * Confidence Summary
+       * @description Aggregate extraction confidence metrics.
+       */
+      confidence_summary?: {
+        [key: string]: unknown;
+      };
+      /**
+       * Created At
+       * Format: date-time
+       * @description UTC timestamp when the extraction row was created.
+       */
+      created_at: string;
+      /** @description Latest source-document classification diagnostics. */
+      document_intelligence?: components["schemas"]["DocumentIntelligenceSummary"] | null;
+      /**
+       * Fields
+       * @description Structured fields extracted from the document.
+       * @default []
+       */
+      fields: components["schemas"]["ExtractedFieldSummary"][];
+      /**
+       * Id
+       * @description Stable UUID for the extraction version.
+       */
+      id: string;
+      /**
+       * Needs Review
+       * @description Whether extraction policy routed this version to review.
+       */
+      needs_review: boolean;
+      /**
+       * Schema Name
+       * @description Extraction schema family used.
+       */
+      schema_name: string;
+      /**
+       * Schema Version
+       * @description Extraction schema version used.
+       */
+      schema_version: string;
+      /**
+       * Updated At
+       * Format: date-time
+       * @description UTC timestamp when the extraction row was last updated.
+       */
+      updated_at: string;
+      /**
+       * Version No
+       * @description Monotonic extraction version number.
+       */
+      version_no: number;
+    };
+    /**
+     * DocumentIntelligenceSummary
+     * @description Describe source-document classification diagnostics for review surfaces.
+     */
+    DocumentIntelligenceSummary: {
+      /**
+       * Agent Summary
+       * @description Compact summary suitable for agent context.
+       */
+      agent_summary?: string | null;
+      /**
+       * Ai Assist Applied Classification
+       * @description Whether the final type used the LLM classification.
+       */
+      ai_assist_applied_classification: boolean;
+      /**
+       * Ai Assist Classification Confidence
+       * @description LLM classification confidence, when assist returned output.
+       */
+      ai_assist_classification_confidence?: number | null;
+      /**
+       * Ai Assist Field Candidates Applied
+       * @description Canonical fields copied from bounded LLM assist into parser output.
+       * @default []
+       */
+      ai_assist_field_candidates_applied: string[];
+      /** @description LLM-predicted type, when assist returned output. */
+      ai_assist_predicted_type?: components["schemas"]["DocumentType"] | null;
+      /**
+       * Ai Assist Returned Output
+       * @description Whether bounded LLM assist returned schema-valid output.
+       */
+      ai_assist_returned_output: boolean;
+      /**
+       * Classification Source
+       * @description Decision source: deterministic or ai_assist.
+       */
+      classification_source: string;
+      /**
+       * Deterministic Confidence
+       * @description Deterministic parser classification confidence.
+       */
+      deterministic_confidence?: number | null;
+      /** @description Deterministic parser classification before LLM assist. */
+      deterministic_document_type: components["schemas"]["DocumentType"];
+      /**
+       * Final Confidence
+       * @description Final classification confidence, when available.
+       */
+      final_confidence?: number | null;
+      /** @description Final canonical document type. */
+      final_document_type: components["schemas"]["DocumentType"];
+      /**
+       * Missing Required Fields
+       * @description Required field groups missing after extraction.
+       * @default []
+       */
+      missing_required_fields: string[];
+      /**
+       * Recovery Actions
+       * @description Suggested operator recovery actions.
+       * @default []
+       */
+      recovery_actions: string[];
+      /**
+       * Status
+       * @description Classification diagnostic status.
+       */
+      status: string;
+      /**
+       * Warnings
+       * @description Classification and extraction warnings for reviewer attention.
+       * @default []
+       */
+      warnings: string[];
+    };
+    /**
+     * DocumentIssueSummary
+     * @description Describe one open collection/verification issue attached to a document.
+     */
+    DocumentIssueSummary: {
+      /**
+       * Created At
+       * Format: date-time
+       * @description UTC timestamp when the issue was created.
+       */
+      created_at: string;
+      /**
+       * Details
+       * @description Structured issue details for reviewer context.
+       */
+      details?: {
+        [key: string]: unknown;
+      };
+      /**
+       * Id
+       * @description Stable UUID for the issue row.
+       */
+      id: string;
+      /**
+       * Issue Type
+       * @description Canonical issue type code.
+       */
+      issue_type: string;
+      /**
+       * Severity
+       * @description Issue severity label.
+       */
+      severity: string;
+      /**
+       * Status
+       * @description Issue lifecycle status.
+       */
+      status: string;
+      /**
+       * Updated At
+       * Format: date-time
+       * @description UTC timestamp when the issue last changed.
+       */
+      updated_at: string;
+    };
+    /**
+     * DocumentListResponse
+     * @description Return documents for a close run in deterministic upload order.
+     */
+    DocumentListResponse: {
+      /**
+       * Documents
+       * @description Documents currently attached to the close run.
+       * @default []
+       */
+      documents: components["schemas"]["DocumentSummary"][];
+    };
+    /**
+     * DocumentProcessingDispatch
+     * @description Describe the background task queued for one uploaded document.
+     */
+    DocumentProcessingDispatch: {
+      /**
+       * Queue Name
+       * @description Queue lane used by the task.
+       */
+      queue_name: string;
+      /**
+       * Routing Key
+       * @description Task routing key.
+       */
+      routing_key: string;
+      /**
+       * Task Id
+       * @description Celery task identifier.
+       */
+      task_id: string;
+      /**
+       * Task Name
+       * @description Canonical task name.
+       */
+      task_name: string;
+      /**
+       * Trace Id
+       * @description Trace ID linked to task dispatch.
+       */
+      trace_id?: string | null;
+    };
+    /**
+     * DocumentReparseResponse
+     * @description Return the canonical outcome after queuing one document for reparsing.
+     */
+    DocumentReparseResponse: {
+      /**
+       * Canceled Job Count
+       * @description Number of active linked jobs canceled before reparsing.
+       */
+      canceled_job_count: number;
+      /**
+       * Cleared Extraction Count
+       * @description Number of prior extraction versions removed before reparsing.
+       */
+      cleared_extraction_count: number;
+      /**
+       * Cleared Issue Count
+       * @description Number of prior document issues cleared before reparsing.
+       */
+      cleared_issue_count: number;
+      /**
+       * Cleared Version Count
+       * @description Number of prior parser versions removed before reparsing.
+       */
+      cleared_version_count: number;
+      /** @description Background parse task receipt for the queued reparse. */
+      dispatch: components["schemas"]["DocumentProcessingDispatch"];
+      /**
+       * Reparsed Document Filename
+       * @description Original filename of the reparsed document.
+       */
+      reparsed_document_filename: string;
+      /**
+       * Reparsed Document Id
+       * @description The document UUID queued for reparsing.
+       */
+      reparsed_document_id: string;
+    };
+    /**
+     * DocumentReviewActionResponse
+     * @description Return the refreshed document state after a persisted review decision.
+     */
+    DocumentReviewActionResponse: {
+      /**
+       * Decision
+       * @description Decision that was applied.
+       * @enum {string}
+       */
+      decision: "approved" | "rejected" | "needs_info";
+      /** @description Refreshed document state after the review action. */
+      document: components["schemas"]["DocumentSummary"];
+      /**
+       * Extraction Approved
+       * @description Whether the latest extraction version is now approved.
+       */
+      extraction_approved: boolean;
+    };
+    /**
+     * DocumentReviewDecisionRequest
+     * @description Capture a reviewer decision for one document queue item.
+     */
+    DocumentReviewDecisionRequest: {
+      /**
+       * Decision
+       * @description Reviewer decision applied to the document.
+       * @enum {string}
+       */
+      decision: "approved" | "rejected" | "needs_info";
+      /**
+       * Reason
+       * @description Optional reviewer note preserved in the audit trail.
+       */
+      reason?: string | null;
+      /**
+       * Verified Authorized
+       * @description Whether the reviewer confirmed the document is authorized.
+       */
+      verified_authorized?: boolean | null;
+      /**
+       * Verified Complete
+       * @description Whether the reviewer confirmed the document is complete for this workflow step.
+       */
+      verified_complete?: boolean | null;
+      /**
+       * Verified Period
+       * @description Whether the reviewer confirmed the document belongs to the close-run period.
+       */
+      verified_period?: boolean | null;
+      /**
+       * Verified Transaction Match
+       * @description Whether the reviewer confirmed the document matches the relevant transaction(s).
+       */
+      verified_transaction_match?: boolean | null;
+    };
+    /**
+     * DocumentSourceChannel
+     * @description Enumerate the canonical ways source documents can enter a close run.
+     * @enum {string}
+     */
+    DocumentSourceChannel: "upload" | "api_import" | "manual_entry";
+    /**
+     * DocumentStatus
+     * @description Enumerate the lifecycle states of a document attached to a close run.
+     * @enum {string}
+     */
+    DocumentStatus:
+      | "uploaded"
+      | "processing"
+      | "parsed"
+      | "needs_review"
+      | "approved"
+      | "rejected"
+      | "failed"
+      | "duplicate"
+      | "blocked";
+    /**
+     * DocumentSummary
+     * @description Describe one document attached to a close run.
+     */
+    DocumentSummary: {
+      /**
+       * Classification Confidence
+       * @description Classification confidence once available.
+       */
+      classification_confidence?: number | null;
+      /**
+       * Close Run Id
+       * @description Close run that owns the document.
+       */
+      close_run_id: string;
+      /**
+       * Created At
+       * Format: date-time
+       * @description UTC timestamp when the row was created.
+       */
+      created_at: string;
+      /** @description Current document classification. */
+      document_type: components["schemas"]["DocumentType"];
+      /**
+       * File Size Bytes
+       * @description Exact uploaded payload byte size.
+       */
+      file_size_bytes: number;
+      /**
+       * Id
+       * @description Stable UUID for the document.
+       */
+      id: string;
+      /**
+       * Last Touched By User Id
+       * @description Last operator to touch this document.
+       */
+      last_touched_by_user_id?: string | null;
+      /** @description Most recent structured extraction result available for review. */
+      latest_extraction?: components["schemas"]["DocumentExtractionSummary"] | null;
+      /**
+       * Mime Type
+       * @description Sniffed true MIME type.
+       */
+      mime_type: string;
+      /**
+       * Ocr Required
+       * @description Whether the source likely needs OCR.
+       */
+      ocr_required: boolean;
+      /**
+       * Open Issues
+       * @description Open document issues currently blocking or warning in review.
+       * @default []
+       */
+      open_issues: components["schemas"]["DocumentIssueSummary"][];
+      /**
+       * Original Filename
+       * @description Original uploaded filename.
+       */
+      original_filename: string;
+      /**
+       * Owner User Id
+       * @description Current owner user UUID.
+       */
+      owner_user_id?: string | null;
+      /**
+       * Parent Document Id
+       * @description Parent upload when this row is a split child document.
+       */
+      parent_document_id?: string | null;
+      /**
+       * Period End
+       * @description Detected source period end.
+       */
+      period_end?: string | null;
+      /**
+       * Period Start
+       * @description Detected source period start.
+       */
+      period_start?: string | null;
+      /**
+       * Sha256 Hash
+       * @description Lower-case SHA-256 checksum.
+       */
+      sha256_hash: string;
+      /** @description How the document entered the run. */
+      source_channel: components["schemas"]["DocumentSourceChannel"];
+      /** @description Current document lifecycle status. */
+      status: components["schemas"]["DocumentStatus"];
+      /**
+       * Storage Key
+       * @description Canonical object-storage key.
+       */
+      storage_key: string;
+      /**
+       * Updated At
+       * Format: date-time
+       * @description UTC timestamp when the row last changed.
+       */
+      updated_at: string;
+    };
+    /**
+     * DocumentType
+     * @description Enumerate document classifications supported by the intake pipeline.
+     * @enum {string}
+     */
+    DocumentType: "unknown" | "invoice" | "bank_statement" | "payslip" | "receipt" | "contract";
     /**
      * EntityActivityEvent
      * @description Describe one immutable entity-scoped activity event shown in the timeline.
@@ -1196,6 +5404,42 @@ export interface components {
        * @description Request or trace identifier that links the event back to runtime logs.
        */
       trace_id?: string | null;
+    };
+    /**
+     * EntityDeleteResponse
+     * @description Return the canonical result after deleting one entity workspace.
+     */
+    EntityDeleteResponse: {
+      /**
+       * Canceled Job Count
+       * @description Number of active jobs canceled before the workspace was deleted.
+       */
+      canceled_job_count: number;
+      /**
+       * Deleted Close Run Count
+       * @description Number of close runs deleted with the workspace.
+       */
+      deleted_close_run_count: number;
+      /**
+       * Deleted Document Count
+       * @description Number of source documents deleted with the workspace.
+       */
+      deleted_document_count: number;
+      /**
+       * Deleted Entity Id
+       * @description Stable UUID of the deleted workspace.
+       */
+      deleted_entity_id: string;
+      /**
+       * Deleted Entity Name
+       * @description Display name of the deleted workspace.
+       */
+      deleted_entity_name: string;
+      /**
+       * Deleted Thread Count
+       * @description Number of chat threads deleted with the workspace.
+       */
+      deleted_thread_count: number;
     };
     /**
      * EntityListResponse
@@ -1437,10 +5681,826 @@ export interface components {
        */
       workspace_language: "en";
     };
+    /**
+     * EvidencePackBundle
+     * @description Describe the complete evidence-pack bundle for one close run.
+     */
+    EvidencePackBundle: {
+      /**
+       * Checksum
+       * @description SHA-256 checksum of the assembled ZIP payload.
+       */
+      checksum?: string | null;
+      /**
+       * Close Run Id
+       * @description UUID of the close run this evidence pack belongs to.
+       */
+      close_run_id: string;
+      /**
+       * Generated At
+       * Format: date-time
+       * @description UTC timestamp when the evidence pack was assembled.
+       */
+      generated_at: string;
+      /**
+       * Idempotency Key
+       * @description Deterministic idempotency key used for this pack release. Populated after upload.
+       */
+      idempotency_key?: string | null;
+      /**
+       * Items
+       * @description Ordered collection of evidence items bundled into this pack.
+       * @default []
+       */
+      items: components["schemas"]["EvidencePackItem"][];
+      /**
+       * Size Bytes
+       * @description Total byte size of the assembled ZIP payload.
+       */
+      size_bytes?: number | null;
+      /**
+       * Storage Key
+       * @description Object-storage key for the assembled ZIP evidence pack.
+       */
+      storage_key?: string | null;
+      /**
+       * Version No
+       * @description Close-run version number this pack represents.
+       */
+      version_no: number;
+    };
+    /**
+     * EvidencePackItem
+     * @description Describe one bundle entry inside an evidence pack.
+     */
+    EvidencePackItem: {
+      /**
+       * Checksum
+       * @description SHA-256 checksum of the bundled payload when applicable.
+       */
+      checksum?: string | null;
+      /**
+       * Description
+       * @description Optional explanation of what this evidence item represents.
+       */
+      description?: string | null;
+      /**
+       * Item Type
+       * @description Stable item category: source_reference, extracted_field, approval_record, diff_entry, or report_output.
+       */
+      item_type: string;
+      /**
+       * Label
+       * @description Human-readable label shown in evidence-pack viewers.
+       */
+      label: string;
+      /**
+       * Payload Ref
+       * @description Structured reference to the underlying data: document ID, field name, recommendation ID, artifact ID, etc.
+       */
+      payload_ref?: {
+        [key: string]: unknown;
+      };
+      /**
+       * Size Bytes
+       * @description Byte size of the bundled payload when applicable.
+       */
+      size_bytes?: number | null;
+      /**
+       * Storage Key
+       * @description Object-storage key when the item has an associated binary payload.
+       */
+      storage_key?: string | null;
+    };
+    /**
+     * ExportArtifactEntry
+     * @description Describe one released artifact inside an export manifest.
+     */
+    ExportArtifactEntry: {
+      /**
+       * Artifact Type
+       * @description Canonical artifact type (e.g. report_excel, evidence_pack).
+       */
+      artifact_type: string;
+      /**
+       * Checksum
+       * @description SHA-256 checksum of the artifact payload.
+       */
+      checksum: string;
+      /**
+       * Content Type
+       * @description MIME type of the artifact.
+       */
+      content_type: string;
+      /**
+       * Filename
+       * @description Downloadable filename exposed to the user.
+       */
+      filename: string;
+      /**
+       * Idempotency Key
+       * @description Idempotency key that guards against duplicate release.
+       */
+      idempotency_key: string;
+      /**
+       * Released At
+       * Format: date-time
+       * @description UTC timestamp when the artifact was released.
+       */
+      released_at: string;
+      /**
+       * Size Bytes
+       * @description Byte size of the artifact payload.
+       */
+      size_bytes: number;
+      /**
+       * Storage Key
+       * @description Object-storage key where the artifact lives.
+       */
+      storage_key: string;
+    };
+    /**
+     * ExportDetail
+     * @description Extend the export summary with full manifest and evidence pack details.
+     */
+    ExportDetail: {
+      /**
+       * Artifact Count
+       * @description Number of artifacts in this export.
+       */
+      artifact_count: number;
+      /**
+       * Close Run Id
+       * @description Close run this export was generated for.
+       */
+      close_run_id: string;
+      /**
+       * Completed At
+       * @description UTC timestamp when the export reached a terminal state.
+       */
+      completed_at?: string | null;
+      /**
+       * Created At
+       * Format: date-time
+       * @description UTC timestamp when the export was created.
+       */
+      created_at: string;
+      /**
+       * Distribution Count
+       * @description Number of management-distribution records attached to this export.
+       * @default 0
+       */
+      distribution_count: number;
+      /**
+       * Distribution Records
+       * @description Recorded management distributions for this export version.
+       * @default []
+       */
+      distribution_records: components["schemas"]["ExportDistributionRecord"][];
+      /** @description Evidence pack bundle associated with this export. */
+      evidence_pack?: components["schemas"]["EvidencePackBundle"] | null;
+      /**
+       * Failure Reason
+       * @description Structured failure description when status indicates failure.
+       */
+      failure_reason?: string | null;
+      /**
+       * Id
+       * @description Stable UUID for this export record.
+       */
+      id: string;
+      /**
+       * Idempotency Key
+       * @description Idempotency key used for this export.
+       */
+      idempotency_key: string;
+      /**
+       * Latest Distribution At
+       * @description UTC timestamp of the most recent management distribution, if any.
+       */
+      latest_distribution_at?: string | null;
+      /** @description Full export manifest with all artifact entries. */
+      manifest?: components["schemas"]["ExportManifest"] | null;
+      /**
+       * Status
+       * @description Current export lifecycle status.
+       */
+      status: string;
+      /**
+       * Version No
+       * @description Close-run version number.
+       */
+      version_no: number;
+    };
+    /**
+     * ExportDistributionRecord
+     * @description Describe one stakeholder distribution event for an export package.
+     */
+    ExportDistributionRecord: {
+      /**
+       * Delivery Channel
+       * @description Controlled delivery channel used for the release.
+       */
+      delivery_channel: string;
+      /**
+       * Distributed At
+       * Format: date-time
+       * @description UTC timestamp when the package was distributed.
+       */
+      distributed_at: string;
+      /**
+       * Distributed By User Id
+       * @description User who recorded the distribution event.
+       */
+      distributed_by_user_id?: string | null;
+      /**
+       * Id
+       * @description Stable UUID for this distribution record.
+       */
+      id: string;
+      /**
+       * Note
+       * @description Optional operator note recorded alongside the distribution event.
+       */
+      note?: string | null;
+      /**
+       * Recipient Email
+       * @description Delivery email for the stakeholder release record.
+       */
+      recipient_email: string;
+      /**
+       * Recipient Name
+       * @description Human-readable stakeholder name that received the package.
+       */
+      recipient_name: string;
+      /**
+       * Recipient Role
+       * @description Optional stakeholder role such as CFO or Finance Manager.
+       */
+      recipient_role?: string | null;
+    };
+    /**
+     * ExportListResponse
+     * @description Return all exports for one close run in newest-first order.
+     */
+    ExportListResponse: {
+      /**
+       * Close Run Id
+       * @description Close run UUID the exports belong to.
+       */
+      close_run_id: string;
+      /**
+       * Exports
+       * @description Export records for the close run, newest first.
+       * @default []
+       */
+      exports: components["schemas"]["ExportSummary"][];
+    };
+    /**
+     * ExportManifest
+     * @description Describe the full export manifest for one close run version.
+     */
+    ExportManifest: {
+      /**
+       * Artifacts
+       * @description All released artifacts linked to this close run version.
+       * @default []
+       */
+      artifacts: components["schemas"]["ExportArtifactEntry"][];
+      /**
+       * Close Run Id
+       * @description UUID of the close run this export manifest belongs to.
+       */
+      close_run_id: string;
+      /** @description Reference to the associated evidence pack bundle, if available. */
+      evidence_pack_ref?: components["schemas"]["EvidencePackBundle"] | null;
+      /**
+       * Generated At
+       * Format: date-time
+       * @description UTC timestamp when the manifest was assembled.
+       */
+      generated_at: string;
+      /**
+       * Version No
+       * @description Close-run version number this manifest represents.
+       */
+      version_no: number;
+    };
+    /**
+     * ExportSummary
+     * @description Describe one export action for listing views.
+     */
+    ExportSummary: {
+      /**
+       * Artifact Count
+       * @description Number of artifacts in this export.
+       */
+      artifact_count: number;
+      /**
+       * Close Run Id
+       * @description Close run this export was generated for.
+       */
+      close_run_id: string;
+      /**
+       * Completed At
+       * @description UTC timestamp when the export reached a terminal state.
+       */
+      completed_at?: string | null;
+      /**
+       * Created At
+       * Format: date-time
+       * @description UTC timestamp when the export was created.
+       */
+      created_at: string;
+      /**
+       * Distribution Count
+       * @description Number of management-distribution records attached to this export.
+       * @default 0
+       */
+      distribution_count: number;
+      /**
+       * Failure Reason
+       * @description Structured failure description when status indicates failure.
+       */
+      failure_reason?: string | null;
+      /**
+       * Id
+       * @description Stable UUID for this export record.
+       */
+      id: string;
+      /**
+       * Idempotency Key
+       * @description Idempotency key used for this export.
+       */
+      idempotency_key: string;
+      /**
+       * Latest Distribution At
+       * @description UTC timestamp of the most recent management distribution, if any.
+       */
+      latest_distribution_at?: string | null;
+      /**
+       * Status
+       * @description Current export lifecycle status.
+       */
+      status: string;
+      /**
+       * Version No
+       * @description Close-run version number.
+       */
+      version_no: number;
+    };
+    /**
+     * ExtractedFieldSummary
+     * @description Describe one structured extracted field available for review and correction.
+     */
+    ExtractedFieldSummary: {
+      /**
+       * Confidence
+       * @description Field-level confidence score.
+       */
+      confidence: number;
+      /**
+       * Created At
+       * Format: date-time
+       * @description UTC timestamp when the field row was created.
+       */
+      created_at: string;
+      /**
+       * Evidence Ref
+       * @description Structured evidence reference for this field.
+       */
+      evidence_ref?: {
+        [key: string]: unknown;
+      };
+      /**
+       * Field Name
+       * @description Canonical extracted field name.
+       */
+      field_name: string;
+      /**
+       * Field Type
+       * @description Stored extracted field type label.
+       */
+      field_type: string;
+      /**
+       * Field Value
+       * @description Structured extracted field value.
+       */
+      field_value?: unknown;
+      /**
+       * Id
+       * @description Stable UUID for the extracted field.
+       */
+      id: string;
+      /**
+       * Is Human Corrected
+       * @description Whether a reviewer corrected this field after extraction.
+       * @default false
+       */
+      is_human_corrected: boolean;
+      /**
+       * Updated At
+       * Format: date-time
+       * @description UTC timestamp when the field row was last updated.
+       */
+      updated_at: string;
+    };
+    /**
+     * FieldCorrectionRequest
+     * @description Capture a human correction for one extracted field.
+     */
+    FieldCorrectionRequest: {
+      /**
+       * Corrected Type
+       * @description Field type label describing the corrected value shape.
+       */
+      corrected_type: string;
+      /**
+       * Corrected Value
+       * @description Corrected field value to persist.
+       */
+      corrected_value: unknown;
+      /**
+       * Reason
+       * @description Optional reviewer note preserved in the audit trail.
+       */
+      reason?: string | null;
+    };
+    /**
+     * FieldCorrectionResponse
+     * @description Return the refreshed field and document state after a human correction.
+     */
+    FieldCorrectionResponse: {
+      /** @description Refreshed document state after the correction. */
+      document: components["schemas"]["DocumentSummary"];
+      /** @description Updated extracted field. */
+      field: components["schemas"]["ExtractedFieldSummary"];
+    };
+    /**
+     * FixedAssetScheduleRowPayload
+     * @description Typed payload for one fixed-asset register row.
+     */
+    FixedAssetScheduleRowPayload: {
+      /**
+       * Accumulated Depreciation
+       * @description Accumulated depreciation as a decimal string.
+       */
+      accumulated_depreciation: string;
+      /**
+       * Accumulated Depreciation Account Code
+       * @description Accumulated depreciation ledger account code.
+       */
+      accumulated_depreciation_account_code: string;
+      /**
+       * Acquisition Date
+       * @description Acquisition date in YYYY-MM-DD format.
+       */
+      acquisition_date: string;
+      /**
+       * Asset Account Code
+       * @description Fixed-asset ledger account code used for reconciliation.
+       */
+      asset_account_code: string;
+      /**
+       * Asset Id
+       * @description Stable asset reference.
+       */
+      asset_id: string;
+      /**
+       * Asset Name
+       * @description Display asset name.
+       */
+      asset_name: string;
+      /**
+       * Cost
+       * @description Asset cost as a decimal string.
+       */
+      cost: string;
+      /**
+       * Depreciation Expense
+       * @description Current-period depreciation expense as a decimal string.
+       */
+      depreciation_expense?: string | null;
+      /**
+       * Disposal Date
+       * @description Disposal date in YYYY-MM-DD format when applicable.
+       */
+      disposal_date?: string | null;
+      /**
+       * Net Book Value
+       * @description Net book value as a decimal string. Derived if omitted.
+       */
+      net_book_value?: string | null;
+      /**
+       * Notes
+       * @description Optional operator note.
+       */
+      notes?: string | null;
+    };
+    /**
+     * GeneralLedgerExportSummary
+     * @description Describe one generated close-run general-ledger export artifact.
+     */
+    GeneralLedgerExportSummary: {
+      /**
+       * Adjustment Line Count
+       * @description How many rows came from approved or applied close-run journals.
+       */
+      adjustment_line_count: number;
+      /**
+       * Artifact Id
+       * @description Released artifact UUID for the export.
+       */
+      artifact_id: string;
+      /**
+       * Checksum
+       * @description SHA-256 checksum of the exported payload.
+       */
+      checksum: string;
+      /**
+       * Close Run Id
+       * @description Owning close-run UUID.
+       */
+      close_run_id: string;
+      /**
+       * Composition Mode
+       * @description Whether the export contains imported GL only, adjustments only, or imported GL plus current-run adjustments.
+       */
+      composition_mode: string;
+      /**
+       * Content Type
+       * @description MIME type recorded for the stored artifact.
+       */
+      content_type: string;
+      /**
+       * Filename
+       * @description Operator-facing filename for the downloadable CSV.
+       */
+      filename: string;
+      /**
+       * Generated At
+       * Format: date-time
+       * @description UTC timestamp when the export artifact was generated.
+       */
+      generated_at: string;
+      /**
+       * Idempotency Key
+       * @description Idempotency key guarding this exact export snapshot.
+       */
+      idempotency_key: string;
+      /**
+       * Imported Line Count
+       * @description How many rows came from the bound imported general-ledger baseline.
+       */
+      imported_line_count: number;
+      /**
+       * Includes Imported Baseline
+       * @description Whether a bound imported general-ledger baseline is included in the export.
+       */
+      includes_imported_baseline: boolean;
+      /**
+       * Period End
+       * Format: date
+       * @description Inclusive accounting-period end date.
+       */
+      period_end: string;
+      /**
+       * Period Start
+       * Format: date
+       * @description Inclusive accounting-period start date.
+       */
+      period_start: string;
+      /**
+       * Row Count
+       * @description Number of ledger rows written into the CSV export.
+       */
+      row_count: number;
+      /**
+       * Size Bytes
+       * @description Byte size of the exported payload.
+       */
+      size_bytes: number;
+      /**
+       * Storage Key
+       * @description Artifact storage key in the canonical object store.
+       */
+      storage_key: string;
+      /**
+       * Version No
+       * @description Close-run working version captured by the export.
+       */
+      version_no: number;
+    };
+    /**
+     * GeneralLedgerImportSummary
+     * @description Describe one uploaded general-ledger baseline.
+     */
+    GeneralLedgerImportSummary: {
+      /**
+       * Created At
+       * Format: date-time
+       * @description UTC timestamp when the batch was created.
+       */
+      created_at: string;
+      /**
+       * Entity Id
+       * @description Owning entity UUID.
+       */
+      entity_id: string;
+      /**
+       * Id
+       * @description General-ledger import batch UUID.
+       */
+      id: string;
+      /**
+       * Import Metadata
+       * @description Structured import diagnostics and header metadata.
+       */
+      import_metadata?: {
+        [key: string]: unknown;
+      };
+      /**
+       * Imported By User Id
+       * @description User who uploaded the batch, if recorded.
+       */
+      imported_by_user_id?: string | null;
+      /**
+       * Period End
+       * Format: date
+       * @description Last day covered by the imported ledger batch.
+       */
+      period_end: string;
+      /**
+       * Period Start
+       * Format: date
+       * @description First day covered by the imported ledger batch.
+       */
+      period_start: string;
+      /**
+       * Row Count
+       * @description Number of imported ledger rows.
+       */
+      row_count: number;
+      /**
+       * Source Format
+       * @description Upload format detected for the import batch.
+       */
+      source_format: string;
+      /**
+       * Updated At
+       * Format: date-time
+       * @description UTC timestamp when the batch was last changed.
+       */
+      updated_at: string;
+      /**
+       * Uploaded Filename
+       * @description Original filename supplied by the operator.
+       */
+      uploaded_filename: string;
+    };
+    /**
+     * GeneralLedgerImportUploadResponse
+     * @description Return the result after uploading a general-ledger baseline.
+     */
+    GeneralLedgerImportUploadResponse: {
+      /**
+       * Auto Bound Close Run Ids
+       * @description Open close runs that were automatically bound to this import.
+       * @default []
+       */
+      auto_bound_close_run_ids: string[];
+      /** @description The imported general-ledger batch. */
+      imported_batch: components["schemas"]["GeneralLedgerImportSummary"];
+      /**
+       * Skipped Close Run Ids
+       * @description Matching close runs left unbound because they already had ledger activity.
+       * @default []
+       */
+      skipped_close_run_ids: string[];
+      /** @description Refreshed ledger workspace after the upload. */
+      workspace: components["schemas"]["LedgerWorkspaceResponse"];
+    };
+    /**
+     * GenerateRecommendationsRequest
+     * @description Capture an explicit request to generate recommendations for a close run.
+     */
+    GenerateRecommendationsRequest: {
+      /**
+       * Document Ids
+       * @description Optional subset of document IDs to process.
+       */
+      document_ids?: string[] | null;
+      /**
+       * Force
+       * @description Queue jobs even when a document already has an active recommendation.
+       * @default false
+       */
+      force: boolean;
+    };
+    /**
+     * GroundingContext
+     * @description Describe the entity, close run, and period context that grounds a chat thread.
+     */
+    GroundingContext: {
+      /**
+       * Autonomy Mode
+       * @description Current autonomy mode for the entity (human_review or reduced_interruption).
+       */
+      autonomy_mode: string;
+      /**
+       * Base Currency
+       * @description Entity base currency used for formatting context.
+       */
+      base_currency: string;
+      /**
+       * Close Run Id
+       * @description UUID of the close run scoping this thread, if period-specific.
+       */
+      close_run_id?: string | null;
+      /**
+       * Entity Id
+       * @description UUID of the entity workspace that owns this conversation.
+       */
+      entity_id: string;
+      /**
+       * Entity Name
+       * @description Display name of the entity workspace.
+       */
+      entity_name: string;
+      /**
+       * Period Label
+       * @description Human-readable period label (e.g. 'Jan 2025') when a close run is present.
+       */
+      period_label?: string | null;
+    };
+    /**
+     * GuardrailValidationResponse
+     * @description Return the result of validating a template against guardrail rules.
+     */
+    GuardrailValidationResponse: {
+      /**
+       * Is Valid
+       * @description Whether the template passes all guardrail checks.
+       */
+      is_valid: boolean;
+      /**
+       * Template Id
+       * @description Template UUID that was validated.
+       */
+      template_id: string;
+      /**
+       * Violations
+       * @description Guardrail violations found, empty when the template is valid.
+       * @default []
+       */
+      violations: components["schemas"]["GuardrailViolation"][];
+    };
+    /**
+     * GuardrailViolation
+     * @description Describe one template guardrail validation failure.
+     */
+    GuardrailViolation: {
+      /**
+       * Message
+       * @description Operator-facing explanation of the guardrail violation.
+       */
+      message: string;
+      /**
+       * Section Key
+       * @description Section key involved in the violation, if applicable.
+       */
+      section_key?: string | null;
+      /**
+       * Violation Type
+       * @description Stable violation category: missing_required_section, etc.
+       */
+      violation_type: string;
+    };
     /** HTTPValidationError */
     HTTPValidationError: {
       /** Detail */
       detail?: components["schemas"]["ValidationError"][];
+    };
+    /**
+     * IdempotencyKeyResponse
+     * @description Return the computed idempotency key for an export action.
+     */
+    IdempotencyKeyResponse: {
+      /**
+       * Artifact Type
+       * @description Artifact type the key covers.
+       */
+      artifact_type: string;
+      /**
+       * Close Run Id
+       * @description Close run the key was computed for.
+       */
+      close_run_id: string;
+      /**
+       * Idempotency Key
+       * @description Deterministic idempotency key for the requested export action.
+       */
+      idempotency_key: string;
     };
     /**
      * IssuedApiToken
@@ -1503,6 +6563,591 @@ export interface components {
       updated_at: string;
     };
     /**
+     * JobDetail
+     * @description Describe one durable background job with payloads, checkpoints, and results.
+     */
+    JobDetail: {
+      /**
+       * Actor User Id
+       * @description User who triggered the job.
+       */
+      actor_user_id?: string | null;
+      /**
+       * Attempt Count
+       * @description Total execution attempts started so far.
+       */
+      attempt_count: number;
+      /**
+       * Blocking Reason
+       * @description Recovery-oriented reason when the job is blocked.
+       */
+      blocking_reason?: string | null;
+      /**
+       * Canceled By User Id
+       * @description User who requested or completed cancellation, if applicable.
+       */
+      canceled_by_user_id?: string | null;
+      /**
+       * Cancellation Requested At
+       * @description UTC timestamp when a cancel request was issued, if any.
+       */
+      cancellation_requested_at?: string | null;
+      /** @description Latest resumable checkpoint persisted by the worker. */
+      checkpoint_payload: components["schemas"]["JsonObject"];
+      /**
+       * Close Run Id
+       * @description Owning close run UUID.
+       */
+      close_run_id?: string | null;
+      /**
+       * Completed At
+       * @description UTC timestamp when the job reached a terminal state.
+       */
+      completed_at?: string | null;
+      /**
+       * Created At
+       * Format: date-time
+       * @description UTC timestamp when the job row was created.
+       */
+      created_at: string;
+      /**
+       * Dead Lettered At
+       * @description UTC timestamp when the job exhausted retries and entered dead-letter state.
+       */
+      dead_lettered_at?: string | null;
+      /**
+       * Document Id
+       * @description Related document UUID if any.
+       */
+      document_id?: string | null;
+      /**
+       * Entity Id
+       * @description Owning entity workspace UUID.
+       */
+      entity_id?: string | null;
+      /** @description Structured failure metadata recorded for retries or terminal failures. */
+      failure_details?: components["schemas"]["JsonObject"] | null;
+      /**
+       * Failure Reason
+       * @description Current failure summary when the job is blocked or failed.
+       */
+      failure_reason?: string | null;
+      /**
+       * Id
+       * @description Stable UUID for the job and its Celery task identifier.
+       */
+      id: string;
+      /**
+       * Max Retries
+       * @description Configured retry budget for this job.
+       */
+      max_retries: number;
+      /** @description JSON-safe task payload recorded at dispatch time. */
+      payload: components["schemas"]["JsonObject"];
+      /**
+       * Queue Name
+       * @description Queue lane used for execution.
+       */
+      queue_name: string;
+      /** @description JSON-safe completion payload when the job succeeded or returned a terminal state. */
+      result_payload?: components["schemas"]["JsonObject"] | null;
+      /**
+       * Resumed From Job Id
+       * @description Prior job UUID when this row is a resumed execution.
+       */
+      resumed_from_job_id?: string | null;
+      /**
+       * Retry Count
+       * @description Number of retries already consumed.
+       */
+      retry_count: number;
+      /**
+       * Routing Key
+       * @description Routing key used for execution.
+       */
+      routing_key: string;
+      /**
+       * Started At
+       * @description UTC timestamp when the current job began running.
+       */
+      started_at?: string | null;
+      /** @description Current durable lifecycle status. */
+      status: components["schemas"]["JobStatus"];
+      /**
+       * Task Name
+       * @description Canonical background task name.
+       */
+      task_name: string;
+      /**
+       * Trace Id
+       * @description Trace identifier linked to the dispatch and worker execution.
+       */
+      trace_id?: string | null;
+      /**
+       * Updated At
+       * Format: date-time
+       * @description UTC timestamp when the job row was last updated.
+       */
+      updated_at: string;
+    };
+    /**
+     * JobListResponse
+     * @description Return jobs for one entity scope in deterministic recent-first order.
+     */
+    JobListResponse: {
+      /**
+       * Jobs
+       * @description Jobs visible to the caller for the selected scope.
+       * @default []
+       */
+      jobs: components["schemas"]["JobSummary"][];
+    };
+    /**
+     * JobStatus
+     * @description Enumerate canonical background-job states used across API and worker services.
+     * @enum {string}
+     */
+    JobStatus: "queued" | "running" | "blocked" | "failed" | "canceled" | "completed";
+    /**
+     * JobSummary
+     * @description Describe one durable background job at list-response granularity.
+     */
+    JobSummary: {
+      /**
+       * Attempt Count
+       * @description Total execution attempts started so far.
+       */
+      attempt_count: number;
+      /**
+       * Blocking Reason
+       * @description Recovery-oriented reason when the job is blocked.
+       */
+      blocking_reason?: string | null;
+      /**
+       * Cancellation Requested At
+       * @description UTC timestamp when a cancel request was issued, if any.
+       */
+      cancellation_requested_at?: string | null;
+      /**
+       * Close Run Id
+       * @description Owning close run UUID.
+       */
+      close_run_id?: string | null;
+      /**
+       * Completed At
+       * @description UTC timestamp when the job reached a terminal state.
+       */
+      completed_at?: string | null;
+      /**
+       * Created At
+       * Format: date-time
+       * @description UTC timestamp when the job row was created.
+       */
+      created_at: string;
+      /**
+       * Dead Lettered At
+       * @description UTC timestamp when the job exhausted retries and entered dead-letter state.
+       */
+      dead_lettered_at?: string | null;
+      /**
+       * Document Id
+       * @description Related document UUID if any.
+       */
+      document_id?: string | null;
+      /**
+       * Entity Id
+       * @description Owning entity workspace UUID.
+       */
+      entity_id?: string | null;
+      /**
+       * Failure Reason
+       * @description Current failure summary when the job is blocked or failed.
+       */
+      failure_reason?: string | null;
+      /**
+       * Id
+       * @description Stable UUID for the job and its Celery task identifier.
+       */
+      id: string;
+      /**
+       * Max Retries
+       * @description Configured retry budget for this job.
+       */
+      max_retries: number;
+      /**
+       * Queue Name
+       * @description Queue lane used for execution.
+       */
+      queue_name: string;
+      /**
+       * Resumed From Job Id
+       * @description Prior job UUID when this row is a resumed execution.
+       */
+      resumed_from_job_id?: string | null;
+      /**
+       * Retry Count
+       * @description Number of retries already consumed.
+       */
+      retry_count: number;
+      /**
+       * Routing Key
+       * @description Routing key used for execution.
+       */
+      routing_key: string;
+      /**
+       * Started At
+       * @description UTC timestamp when the current job began running.
+       */
+      started_at?: string | null;
+      /** @description Current durable lifecycle status. */
+      status: components["schemas"]["JobStatus"];
+      /**
+       * Task Name
+       * @description Canonical background task name.
+       */
+      task_name: string;
+      /**
+       * Updated At
+       * Format: date-time
+       * @description UTC timestamp when the job row was last updated.
+       */
+      updated_at: string;
+    };
+    /**
+     * JournalActionResponse
+     * @description Return the refreshed journal after an approval, rejection, or apply action.
+     */
+    JournalActionResponse: {
+      /**
+       * Action
+       * @description The action that was performed.
+       */
+      action: string;
+      /** @description Autonomy mode in effect when the action was taken. */
+      autonomy_mode?: components["schemas"]["AutonomyMode"] | null;
+      /** @description Updated journal entry. */
+      journal: components["schemas"]["JournalSummary"];
+    };
+    /**
+     * JournalLineSummary
+     * @description Represent one journal line in an API response.
+     */
+    JournalLineSummary: {
+      /**
+       * Account Code
+       * @description GL account code.
+       */
+      account_code: string;
+      /**
+       * Amount
+       * @description Line amount as a decimal string.
+       */
+      amount: string;
+      /**
+       * Description
+       * @description Line memo.
+       */
+      description?: string | null;
+      /**
+       * Dimensions
+       * @description Assigned dimensions.
+       */
+      dimensions: {
+        [key: string]: string;
+      };
+      /**
+       * Id
+       * @description Journal line UUID.
+       */
+      id: string;
+      /**
+       * Line No
+       * @description Sequential line number.
+       */
+      line_no: number;
+      /**
+       * Line Type
+       * @description Debit or credit.
+       */
+      line_type: string;
+      /**
+       * Reference
+       * @description External reference.
+       */
+      reference?: string | null;
+    };
+    /**
+     * JournalListResponse
+     * @description Return journal entries for a close run or recommendation.
+     */
+    JournalListResponse: {
+      /**
+       * Journals
+       * @description Journal entries in deterministic order.
+       * @default []
+       */
+      journals: components["schemas"]["JournalSummary"][];
+    };
+    /**
+     * JournalPostingSummary
+     * @description Describe the applied posting outcome for a journal entry.
+     */
+    JournalPostingSummary: {
+      /**
+       * Artifact Filename
+       * @description Download filename for the posting package, when applicable.
+       */
+      artifact_filename?: string | null;
+      /**
+       * Artifact Id
+       * @description Generated artifact UUID when an external package was created.
+       */
+      artifact_id?: string | null;
+      /**
+       * Artifact Storage Key
+       * @description Storage key for the posting package artifact, when applicable.
+       */
+      artifact_storage_key?: string | null;
+      /**
+       * Artifact Type
+       * @description Artifact type released for the posting, when applicable.
+       */
+      artifact_type?: string | null;
+      /**
+       * Id
+       * @description Journal posting UUID.
+       */
+      id: string;
+      /**
+       * Note
+       * @description Optional operator note recorded at posting time.
+       */
+      note?: string | null;
+      /**
+       * Posted At
+       * @description UTC timestamp when the posting completed.
+       */
+      posted_at: string;
+      /**
+       * Posted By User Id
+       * @description User who executed the posting action.
+       */
+      posted_by_user_id?: string | null;
+      /**
+       * Posting Metadata
+       * @description Structured posting metadata for UI and audit rendering.
+       */
+      posting_metadata?: {
+        [key: string]: unknown;
+      };
+      /**
+       * Posting Target
+       * @description Selected posting target for the journal.
+       */
+      posting_target: string;
+      /**
+       * Provider
+       * @description Resolved provider or package format when applicable.
+       */
+      provider?: string | null;
+      /**
+       * Status
+       * @description Posting lifecycle state.
+       */
+      status: string;
+    };
+    /**
+     * JournalSummary
+     * @description Represent a journal entry in API response payloads.
+     */
+    JournalSummary: {
+      /**
+       * Applied By User Id
+       * @description Applier user ID.
+       */
+      applied_by_user_id?: string | null;
+      /**
+       * Approved By User Id
+       * @description Approver user ID.
+       */
+      approved_by_user_id?: string | null;
+      /**
+       * Autonomy Mode
+       * @description Autonomy mode at creation.
+       */
+      autonomy_mode?: string | null;
+      /**
+       * Close Run Id
+       * @description Owning close run UUID.
+       */
+      close_run_id: string;
+      /**
+       * Created At
+       * @description UTC creation timestamp.
+       */
+      created_at: string;
+      /**
+       * Description
+       * @description Journal narrative description.
+       */
+      description: string;
+      /**
+       * Entity Id
+       * @description Owning entity UUID.
+       */
+      entity_id: string;
+      /**
+       * Id
+       * @description Journal entry UUID.
+       */
+      id: string;
+      /**
+       * Journal Number
+       * @description Human-readable journal identifier.
+       */
+      journal_number: string;
+      /**
+       * Line Count
+       * @description Number of lines.
+       */
+      line_count: number;
+      /**
+       * Lines
+       * @description Journal line items.
+       */
+      lines: components["schemas"]["JournalLineSummary"][];
+      /**
+       * Posting Date
+       * Format: date
+       * @description Accounting posting date.
+       */
+      posting_date: string;
+      /**
+       * Postings
+       * @description Posting outcomes recorded for this journal entry.
+       */
+      postings?: components["schemas"]["JournalPostingSummary"][];
+      /**
+       * Reasoning Summary
+       * @description Why this journal was created.
+       */
+      reasoning_summary?: string | null;
+      /**
+       * Recommendation Id
+       * @description Source recommendation, if any.
+       */
+      recommendation_id?: string | null;
+      /**
+       * Source Surface
+       * @description Creation surface.
+       */
+      source_surface: string;
+      /** @description Current review status. */
+      status: components["schemas"]["ReviewStatus"];
+      /**
+       * Total Credits
+       * @description Total credit amount.
+       */
+      total_credits: string;
+      /**
+       * Total Debits
+       * @description Total debit amount.
+       */
+      total_debits: string;
+      /**
+       * Updated At
+       * @description UTC update timestamp.
+       */
+      updated_at: string;
+    };
+    /** @description JSON object with arbitrary JSON-compatible values. */
+    JsonObject: {
+      [key: string]: unknown;
+    };
+    JsonScalar: string | number | boolean | null;
+    /** @description Any JSON-compatible value. */
+    JsonValue: unknown;
+    /**
+     * LedgerWorkspaceResponse
+     * @description Return the imported ledger workspace for one entity.
+     */
+    LedgerWorkspaceResponse: {
+      /**
+       * Close Run Bindings
+       * @description Close-run baseline bindings currently present for the entity.
+       * @default []
+       */
+      close_run_bindings: components["schemas"]["CloseRunLedgerBindingSummary"][];
+      /**
+       * General Ledger Imports
+       * @description General-ledger baseline imports in newest-first order.
+       * @default []
+       */
+      general_ledger_imports: components["schemas"]["GeneralLedgerImportSummary"][];
+      /**
+       * Trial Balance Imports
+       * @description Trial-balance baseline imports in newest-first order.
+       * @default []
+       */
+      trial_balance_imports: components["schemas"]["TrialBalanceImportSummary"][];
+    };
+    /**
+     * LoanAmortisationScheduleRowPayload
+     * @description Typed payload for one loan amortisation schedule row.
+     */
+    LoanAmortisationScheduleRowPayload: {
+      /**
+       * Balance
+       * @description Outstanding balance after this payment as a decimal string.
+       */
+      balance: string;
+      /**
+       * Due Date
+       * @description Payment due date in YYYY-MM-DD format.
+       */
+      due_date: string;
+      /**
+       * Interest
+       * @description Scheduled interest amount as a decimal string.
+       */
+      interest: string;
+      /**
+       * Interest Account Code
+       * @description Interest expense or accrued-interest ledger account code.
+       */
+      interest_account_code: string;
+      /**
+       * Lender Name
+       * @description Lender display name.
+       */
+      lender_name: string;
+      /**
+       * Loan Account Code
+       * @description Principal or loan-balance ledger account code.
+       */
+      loan_account_code: string;
+      /**
+       * Loan Id
+       * @description Stable loan reference.
+       */
+      loan_id: string;
+      /**
+       * Notes
+       * @description Optional operator note.
+       */
+      notes?: string | null;
+      /**
+       * Payment No
+       * @description Sequential payment number in the amortisation table.
+       */
+      payment_no: number;
+      /**
+       * Principal
+       * @description Scheduled principal amount as a decimal string.
+       */
+      principal: string;
+    };
+    /**
      * LoginRequest
      * @description Capture the credentials required to exchange for an authenticated session cookie.
      */
@@ -1530,6 +7175,12 @@ export interface components {
        */
       status: string;
     };
+    /**
+     * MatchStatus
+     * @description Enumerate the matching outcomes for reconciliation items.
+     * @enum {string}
+     */
+    MatchStatus: "matched" | "partially_matched" | "unmatched" | "exception";
     /**
      * OwnershipState
      * @description Describe current ownership, lock, and last-touch metadata for a target.
@@ -1581,6 +7232,448 @@ export interface components {
      */
     OwnershipTargetType: "entity" | "close_run" | "document" | "recommendation" | "review_target";
     /**
+     * QueuedDocumentParseResult
+     * @description Return one document that was queued explicitly for parsing.
+     */
+    QueuedDocumentParseResult: {
+      /** @description Background parse task receipt for this document. */
+      dispatch: components["schemas"]["DocumentProcessingDispatch"];
+      /** @description Document metadata after parse queueing. */
+      document: components["schemas"]["DocumentSummary"];
+    };
+    /**
+     * QuickBooksCoaSyncResponse
+     * @description Describe the durable result of syncing QuickBooks chart-of-accounts accounts.
+     */
+    QuickBooksCoaSyncResponse: {
+      /**
+       * Account Count
+       * @description Number of QuickBooks accounts imported.
+       */
+      account_count: number;
+      /**
+       * Activated
+       * @description Whether the synced QuickBooks set became the active COA.
+       */
+      activated: boolean;
+      /**
+       * Coa Set Id
+       * @description UUID of the created QuickBooks COA set.
+       */
+      coa_set_id: string;
+      /**
+       * Message
+       * @description Operator-facing sync result message.
+       */
+      message: string;
+      /**
+       * Synced At
+       * Format: date-time
+       * @description UTC timestamp of the successful sync.
+       */
+      synced_at: string;
+      /**
+       * Version No
+       * @description Entity-scoped COA set version number.
+       */
+      version_no: number;
+    };
+    /**
+     * QuickBooksConnectResponse
+     * @description Describe the generated authorization redirect for a QuickBooks connect flow.
+     */
+    QuickBooksConnectResponse: {
+      /**
+       * Authorization Url
+       * @description QuickBooks authorization URL for browser navigation.
+       */
+      authorization_url: string;
+    };
+    /**
+     * QuickBooksConnectionStatusResponse
+     * @description Describe one entity's QuickBooks Online connection state.
+     */
+    QuickBooksConnectionStatusResponse: {
+      /**
+       * External Realm Id
+       * @description QuickBooks company realm ID for connected or previously connected accounts.
+       */
+      external_realm_id?: string | null;
+      /**
+       * Last Sync At
+       * @description UTC timestamp for the latest successful chart-of-accounts sync.
+       */
+      last_sync_at?: string | null;
+      /**
+       * Recovery Action
+       * @description Operator-facing recovery action when the connection is not usable.
+       */
+      recovery_action?: string | null;
+      /**
+       * Status
+       * @description Connection status: disconnected, connected, expired, revoked, or error.
+       */
+      status: string;
+    };
+    /**
+     * QuickBooksDisconnectResponse
+     * @description Describe the result of disconnecting a QuickBooks connection.
+     */
+    QuickBooksDisconnectResponse: {
+      /**
+       * Message
+       * @description Operator-facing disconnect result message.
+       */
+      message: string;
+      /**
+       * Status
+       * @description The resulting connection status.
+       */
+      status: string;
+    };
+    /**
+     * ReconciliationAnomalyListResponse
+     * @description Return anomalies for a close run.
+     */
+    ReconciliationAnomalyListResponse: {
+      /**
+       * Anomalies
+       * @description Anomalies in deterministic order.
+       * @default []
+       */
+      anomalies: components["schemas"]["ReconciliationAnomalySummary"][];
+    };
+    /**
+     * ReconciliationAnomalySummary
+     * @description Represent one anomaly in API response payloads.
+     */
+    ReconciliationAnomalySummary: {
+      /**
+       * Account Code
+       * @description Associated GL account code.
+       */
+      account_code?: string | null;
+      /** @description Category of the anomaly. */
+      anomaly_type: components["schemas"]["AnomalyType"];
+      /**
+       * Close Run Id
+       * @description Owning close run UUID.
+       */
+      close_run_id: string;
+      /**
+       * Created At
+       * @description UTC creation timestamp.
+       */
+      created_at: string;
+      /**
+       * Description
+       * @description Human-readable anomaly description.
+       */
+      description: string;
+      /**
+       * Details
+       * @description Structured anomaly details.
+       */
+      details?: {
+        [key: string]: unknown;
+      };
+      /**
+       * Id
+       * @description Anomaly UUID.
+       */
+      id: string;
+      /**
+       * Resolved
+       * @description Whether the anomaly was resolved.
+       */
+      resolved: boolean;
+      /**
+       * Resolved By User Id
+       * @description Resolver user ID.
+       */
+      resolved_by_user_id?: string | null;
+      /**
+       * Severity
+       * @description Severity: info, warning, or blocking.
+       */
+      severity: string;
+    };
+    /**
+     * ReconciliationItemListResponse
+     * @description Return reconciliation items for a reconciliation run.
+     */
+    ReconciliationItemListResponse: {
+      /**
+       * Items
+       * @description Reconciliation items in deterministic order.
+       * @default []
+       */
+      items: components["schemas"]["ReconciliationItemSummary"][];
+    };
+    /**
+     * ReconciliationItemMatch
+     * @description Represent one counterpart that a reconciliation item was matched to.
+     */
+    ReconciliationItemMatch: {
+      /**
+       * Amount
+       * @description Counterpart amount as a decimal string, if applicable.
+       */
+      amount?: string | null;
+      /**
+       * Confidence
+       * @description Match confidence score between 0 and 1.
+       */
+      confidence?: number | null;
+      /**
+       * Source Ref
+       * @description Reference to the matched counterpart.
+       */
+      source_ref: string;
+      /** @description Type of the matched counterpart. */
+      source_type: components["schemas"]["ReconciliationSourceType"];
+    };
+    /**
+     * ReconciliationItemSummary
+     * @description Represent one reconciliation item in API response payloads.
+     */
+    ReconciliationItemSummary: {
+      /**
+       * Amount
+       * @description Monetary amount as a decimal string.
+       */
+      amount: string;
+      /**
+       * Created At
+       * @description UTC creation timestamp.
+       */
+      created_at: string;
+      /**
+       * Difference Amount
+       * @description Difference from matched counterpart(s).
+       */
+      difference_amount: string;
+      /**
+       * Dimensions
+       * @description Accounting dimensions if applicable.
+       */
+      dimensions?: {
+        [key: string]: unknown;
+      };
+      /** @description Reviewer disposition choice. */
+      disposition?: components["schemas"]["DispositionAction"] | null;
+      /**
+       * Disposition By User Id
+       * @description Disposer user ID.
+       */
+      disposition_by_user_id?: string | null;
+      /**
+       * Disposition Reason
+       * @description Reviewer reasoning for the disposition.
+       */
+      disposition_reason?: string | null;
+      /**
+       * Explanation
+       * @description Match outcome explanation.
+       */
+      explanation?: string | null;
+      /**
+       * Id
+       * @description Reconciliation item UUID.
+       */
+      id: string;
+      /** @description Match outcome for this item. */
+      match_status: components["schemas"]["MatchStatus"];
+      /**
+       * Matched To
+       * @description Counterparts this item was matched to.
+       */
+      matched_to?: components["schemas"]["ReconciliationItemMatch"][];
+      /**
+       * Period Date
+       * @description Accounting period date (YYYY-MM-DD).
+       */
+      period_date?: string | null;
+      /**
+       * Reconciliation Id
+       * @description Parent reconciliation UUID.
+       */
+      reconciliation_id: string;
+      /**
+       * Requires Disposition
+       * @description Whether reviewer disposition is required.
+       */
+      requires_disposition: boolean;
+      /**
+       * Source Ref
+       * @description Reference to the originating record.
+       */
+      source_ref: string;
+      /**
+       * Source Type
+       * @description Source type of the item.
+       */
+      source_type: string;
+      /**
+       * Updated At
+       * @description UTC update timestamp.
+       */
+      updated_at: string;
+    };
+    /**
+     * ReconciliationListResponse
+     * @description Return reconciliation runs for a close run.
+     */
+    ReconciliationListResponse: {
+      /**
+       * Reconciliations
+       * @description Reconciliation runs in deterministic order.
+       * @default []
+       */
+      reconciliations: components["schemas"]["ReconciliationSummary"][];
+    };
+    /**
+     * ReconciliationRunResponse
+     * @description Return the result of requesting reconciliation execution for a close run.
+     */
+    ReconciliationRunResponse: {
+      /**
+       * Job Id
+       * @description Queued job UUID when execution was dispatched, else null.
+       */
+      job_id?: string | null;
+      /**
+       * Message
+       * @description Optional operator-facing guidance about skipped or non-applicable work.
+       */
+      message?: string | null;
+      /**
+       * Reconciliation Types
+       * @description Reconciliation types that will actually run for this request.
+       * @default []
+       */
+      reconciliation_types: components["schemas"]["ReconciliationType"][];
+      /**
+       * Skipped Types
+       * @description Requested reconciliation types skipped because they are not applicable.
+       * @default []
+       */
+      skipped_types: components["schemas"]["ReconciliationType"][];
+      /**
+       * Status
+       * @description Execution status, such as queued or not_applicable.
+       */
+      status: string;
+      /**
+       * Task Name
+       * @description Canonical task name or no-op marker for this request.
+       */
+      task_name: string;
+    };
+    /**
+     * ReconciliationSourceType
+     * @description Enumerate the sources that feed into reconciliation items.
+     * @enum {string}
+     */
+    ReconciliationSourceType:
+      | "bank_statement_line"
+      | "ledger_transaction"
+      | "recommendation"
+      | "external_balance"
+      | "manual_adjustment";
+    /**
+     * ReconciliationStatus
+     * @description Enumerate the lifecycle states of a reconciliation object.
+     * @enum {string}
+     */
+    ReconciliationStatus: "draft" | "in_review" | "approved" | "blocked";
+    /**
+     * ReconciliationSummary
+     * @description Represent one reconciliation run in API response payloads.
+     */
+    ReconciliationSummary: {
+      /**
+       * Approved By User Id
+       * @description Approver user ID.
+       */
+      approved_by_user_id?: string | null;
+      /**
+       * Blocking Reason
+       * @description Blocking reason when status is 'blocked'.
+       */
+      blocking_reason?: string | null;
+      /**
+       * Close Run Id
+       * @description Owning close run UUID.
+       */
+      close_run_id: string;
+      /**
+       * Created At
+       * @description UTC creation timestamp.
+       */
+      created_at: string;
+      /**
+       * Created By User Id
+       * @description Creator user ID.
+       */
+      created_by_user_id?: string | null;
+      /**
+       * Exception Count
+       * @description Number of items with exception or unmatched status requiring disposition.
+       * @default 0
+       */
+      exception_count: number;
+      /**
+       * Id
+       * @description Reconciliation UUID.
+       */
+      id: string;
+      /**
+       * Item Count
+       * @description Total number of reconciliation items.
+       * @default 0
+       */
+      item_count: number;
+      /**
+       * Matched Count
+       * @description Number of items with matched status.
+       * @default 0
+       */
+      matched_count: number;
+      /** @description The reconciliation category. */
+      reconciliation_type: components["schemas"]["ReconciliationType"];
+      /** @description Current lifecycle status. */
+      status: components["schemas"]["ReconciliationStatus"];
+      /**
+       * Summary
+       * @description Aggregated reconciliation summary (matched count, exceptions, totals).
+       */
+      summary?: {
+        [key: string]: unknown;
+      };
+      /**
+       * Updated At
+       * @description UTC update timestamp.
+       */
+      updated_at: string;
+    };
+    /**
+     * ReconciliationType
+     * @description Enumerate the canonical reconciliation categories within a close run.
+     * @enum {string}
+     */
+    ReconciliationType:
+      | "bank_reconciliation"
+      | "ar_ageing"
+      | "ap_ageing"
+      | "intercompany"
+      | "payroll_control"
+      | "fixed_assets"
+      | "loan_amortisation"
+      | "accrual_tracker"
+      | "budget_vs_actual"
+      | "trial_balance";
+    /**
      * RegistrationRequest
      * @description Capture the fields required to create a new locally authenticated user account.
      */
@@ -1602,6 +7695,28 @@ export interface components {
       password: string;
     };
     /**
+     * RejectChatActionRequest
+     * @description Reject a pending chat-originated action plan.
+     */
+    RejectChatActionRequest: {
+      /**
+       * Reason
+       * @description Required reason for rejecting the chat action.
+       */
+      reason: string;
+    };
+    /**
+     * RejectJournalRequest
+     * @description Capture a rejection decision for a journal entry.
+     */
+    RejectJournalRequest: {
+      /**
+       * Reason
+       * @description Required reason for rejecting a journal entry.
+       */
+      reason: string;
+    };
+    /**
      * ReleaseOwnershipLockRequest
      * @description Capture a request to release the caller's in-progress lock.
      */
@@ -1619,6 +7734,450 @@ export interface components {
       target_id: string;
       /** @description Canonical type of the ownership target. */
       target_type: components["schemas"]["OwnershipTargetType"];
+    };
+    /**
+     * ReportRunDetail
+     * @description Extend the report run summary with commentary and artifact references.
+     */
+    ReportRunDetail: {
+      /**
+       * Artifact Refs
+       * @description Storage references for generated artifacts (Excel, PDF, evidence packs).
+       */
+      artifact_refs?: {
+        [key: string]: unknown;
+      }[];
+      /**
+       * Close Run Id
+       * @description Close run this report pack was generated for.
+       */
+      close_run_id: string;
+      /**
+       * Commentary
+       * @description Commentary versions attached to this report run.
+       * @default []
+       */
+      commentary: components["schemas"]["CommentarySummary"][];
+      /**
+       * Completed At
+       * @description UTC timestamp when the run reached a terminal state.
+       */
+      completed_at?: string | null;
+      /**
+       * Created At
+       * Format: date-time
+       * @description UTC timestamp when the report run was created.
+       */
+      created_at: string;
+      /**
+       * Failure Reason
+       * @description Structured failure description when status is 'failed'.
+       */
+      failure_reason?: string | null;
+      /**
+       * Generated By User Id
+       * @description UUID of the user who triggered this report generation.
+       */
+      generated_by_user_id?: string | null;
+      /**
+       * Id
+       * @description Stable UUID for the report run.
+       */
+      id: string;
+      /**
+       * Status
+       * @description Current lifecycle state of the report run.
+       */
+      status: string;
+      /**
+       * Template Id
+       * @description Report template version used for generation.
+       */
+      template_id: string;
+      /**
+       * Updated At
+       * Format: date-time
+       * @description UTC timestamp when the report run was last updated.
+       */
+      updated_at: string;
+      /**
+       * Version No
+       * @description Monotonic run number within the close run.
+       */
+      version_no: number;
+    };
+    /**
+     * ReportRunListResponse
+     * @description Return report runs for one close run in newest-first order.
+     */
+    ReportRunListResponse: {
+      /**
+       * Close Run Id
+       * @description Close run UUID the report runs belong to.
+       */
+      close_run_id: string;
+      /**
+       * Report Runs
+       * @description Report runs for the close run, newest first.
+       * @default []
+       */
+      report_runs: components["schemas"]["ReportRunSummary"][];
+    };
+    /**
+     * ReportRunSummary
+     * @description Describe one report-generation run for a close run.
+     */
+    ReportRunSummary: {
+      /**
+       * Close Run Id
+       * @description Close run this report pack was generated for.
+       */
+      close_run_id: string;
+      /**
+       * Completed At
+       * @description UTC timestamp when the run reached a terminal state.
+       */
+      completed_at?: string | null;
+      /**
+       * Created At
+       * Format: date-time
+       * @description UTC timestamp when the report run was created.
+       */
+      created_at: string;
+      /**
+       * Failure Reason
+       * @description Structured failure description when status is 'failed'.
+       */
+      failure_reason?: string | null;
+      /**
+       * Generated By User Id
+       * @description UUID of the user who triggered this report generation.
+       */
+      generated_by_user_id?: string | null;
+      /**
+       * Id
+       * @description Stable UUID for the report run.
+       */
+      id: string;
+      /**
+       * Status
+       * @description Current lifecycle state of the report run.
+       */
+      status: string;
+      /**
+       * Template Id
+       * @description Report template version used for generation.
+       */
+      template_id: string;
+      /**
+       * Updated At
+       * Format: date-time
+       * @description UTC timestamp when the report run was last updated.
+       */
+      updated_at: string;
+      /**
+       * Version No
+       * @description Monotonic run number within the close run.
+       */
+      version_no: number;
+    };
+    /**
+     * ReportSectionDefinition
+     * @description Define one report section with guardrail metadata and display config.
+     */
+    ReportSectionDefinition: {
+      /**
+       * Display Order
+       * @description Zero-based rendering order within the report template.
+       */
+      display_order: number;
+      /**
+       * Is Required
+       * @description Whether this section is mandatory and protected by template guardrails.
+       * @default true
+       */
+      is_required: boolean;
+      /**
+       * Label
+       * @description Human-readable section label rendered in reports and the UI.
+       */
+      label: string;
+      /**
+       * Section Config
+       * @description Optional per-section configuration such as filters or format overrides.
+       */
+      section_config?: {
+        [key: string]: unknown;
+      };
+      /**
+       * Section Key
+       * @description Stable section identifier (e.g. profit_and_loss, balance_sheet).
+       */
+      section_key: string;
+    };
+    /**
+     * ReportTemplateDetail
+     * @description Extend the summary with full section definitions and guardrail config.
+     */
+    ReportTemplateDetail: {
+      /**
+       * Created At
+       * Format: date-time
+       * @description UTC timestamp when the template was created.
+       */
+      created_at: string;
+      /**
+       * Created By User Id
+       * @description UUID of the user who created this template version.
+       */
+      created_by_user_id?: string | null;
+      /**
+       * Description
+       * @description Optional template description for operator context.
+       */
+      description?: string | null;
+      /**
+       * Entity Id
+       * @description Owning entity workspace UUID, or null for global default templates.
+       */
+      entity_id?: string | null;
+      /**
+       * Guardrail Config
+       * @description Guardrail metadata for this template.
+       */
+      guardrail_config?: {
+        [key: string]: unknown;
+      };
+      /**
+       * Has Required Sections
+       * @description Whether all mandatory workflow sections are present.
+       */
+      has_required_sections: boolean;
+      /**
+       * Id
+       * @description Stable UUID for the report template.
+       */
+      id: string;
+      /**
+       * Is Active
+       * @description Whether this template is the active one for its scope.
+       */
+      is_active: boolean;
+      /**
+       * Name
+       * @description Template display name.
+       */
+      name: string;
+      /**
+       * Section Count
+       * @description Number of section definitions attached to this template version.
+       */
+      section_count: number;
+      /**
+       * Sections
+       * @description Ordered section definitions persisted with this template version.
+       * @default []
+       */
+      sections: components["schemas"]["ReportSectionDefinition"][];
+      /**
+       * Source
+       * @description Template provenance: global_default or entity_custom.
+       */
+      source: string;
+      /**
+       * Updated At
+       * Format: date-time
+       * @description UTC timestamp when the template was last updated.
+       */
+      updated_at: string;
+      /**
+       * Version No
+       * @description Monotonic version number within the template lineage.
+       */
+      version_no: number;
+    };
+    /**
+     * ReportTemplateListResponse
+     * @description Return all templates for one entity workspace in version order.
+     */
+    ReportTemplateListResponse: {
+      /**
+       * Active Template Id
+       * @description UUID of the currently active template, if one exists.
+       */
+      active_template_id?: string | null;
+      /**
+       * Entity Id
+       * @description Owning entity workspace UUID.
+       */
+      entity_id: string;
+      /**
+       * Templates
+       * @description Report template versions for the entity, newest first.
+       * @default []
+       */
+      templates: components["schemas"]["ReportTemplateSummary"][];
+    };
+    /**
+     * ReportTemplateSummary
+     * @description Describe one versioned report template for list and detail views.
+     */
+    ReportTemplateSummary: {
+      /**
+       * Created At
+       * Format: date-time
+       * @description UTC timestamp when the template was created.
+       */
+      created_at: string;
+      /**
+       * Created By User Id
+       * @description UUID of the user who created this template version.
+       */
+      created_by_user_id?: string | null;
+      /**
+       * Description
+       * @description Optional template description for operator context.
+       */
+      description?: string | null;
+      /**
+       * Entity Id
+       * @description Owning entity workspace UUID, or null for global default templates.
+       */
+      entity_id?: string | null;
+      /**
+       * Has Required Sections
+       * @description Whether all mandatory workflow sections are present.
+       */
+      has_required_sections: boolean;
+      /**
+       * Id
+       * @description Stable UUID for the report template.
+       */
+      id: string;
+      /**
+       * Is Active
+       * @description Whether this template is the active one for its scope.
+       */
+      is_active: boolean;
+      /**
+       * Name
+       * @description Template display name.
+       */
+      name: string;
+      /**
+       * Section Count
+       * @description Number of section definitions attached to this template version.
+       */
+      section_count: number;
+      /**
+       * Source
+       * @description Template provenance: global_default or entity_custom.
+       */
+      source: string;
+      /**
+       * Updated At
+       * Format: date-time
+       * @description UTC timestamp when the template was last updated.
+       */
+      updated_at: string;
+      /**
+       * Version No
+       * @description Monotonic version number within the template lineage.
+       */
+      version_no: number;
+    };
+    /**
+     * ResolveAnomalyRequest
+     * @description Capture reviewer resolution of a reconciliation anomaly.
+     */
+    ResolveAnomalyRequest: {
+      /**
+       * Resolution Note
+       * @description Required reviewer reasoning for resolving the anomaly.
+       */
+      resolution_note: string;
+    };
+    /**
+     * ResumeJobRequest
+     * @description Capture an operator-issued resume request for one resumable background job.
+     */
+    ResumeJobRequest: {
+      /**
+       * Reason
+       * @description Operator-facing reason recorded when resuming from a checkpoint.
+       */
+      reason: string;
+    };
+    /**
+     * ResumeJobResponse
+     * @description Return the new queued job created from a resumable failed or blocked execution.
+     */
+    ResumeJobResponse: {
+      /** @description New queued job created from a saved checkpoint. */
+      resumed_job: components["schemas"]["JobSummary"];
+    };
+    /**
+     * ReviewStatus
+     * @description Enumerate the lifecycle states of reviewable changes such as recommendations.
+     * @enum {string}
+     */
+    ReviewStatus: "draft" | "pending_review" | "approved" | "rejected" | "superseded" | "applied";
+    /**
+     * RewindCloseRunRequest
+     * @description Capture an explicit request to reopen an earlier canonical workflow phase.
+     */
+    RewindCloseRunRequest: {
+      /**
+       * Reason
+       * @description Optional operator note explaining why the workflow is moving backward.
+       */
+      reason?: string | null;
+      /** @description Earlier workflow phase to reopen and resume work from. */
+      target_phase: components["schemas"]["WorkflowPhase"];
+    };
+    /**
+     * RunReconciliationRequest
+     * @description Capture an explicit request to execute reconciliation for a close run.
+     */
+    RunReconciliationRequest: {
+      /**
+       * Reconciliation Types
+       * @description Optional reconciliation types. Defaults to all canonical types.
+       */
+      reconciliation_types?: components["schemas"]["ReconciliationType"][] | null;
+    };
+    /**
+     * SendChatActionRequest
+     * @description Input for sending a user message that may contain action intents.
+     */
+    SendChatActionRequest: {
+      /**
+       * Client Turn Id
+       * @description Client-generated stable retry key for this operator turn. Reusing the same value must replay the completed turn instead of applying tools again.
+       */
+      client_turn_id?: string | null;
+      /**
+       * Content
+       * @description User message text that may contain action intent.
+       */
+      content: string;
+      /**
+       * Force Action Mode
+       * @description When true, skip read-only analysis and attempt action routing.
+       * @default false
+       */
+      force_action_mode: boolean;
+    };
+    /**
+     * SendChatMessageRequest
+     * @description Capture a user message to be sent to an existing chat thread.
+     */
+    SendChatMessageRequest: {
+      /**
+       * Content
+       * @description User question or instruction text.
+       */
+      content: string;
     };
     /**
      * SessionDetails
@@ -1647,6 +8206,153 @@ export interface components {
        * @description Indicates whether the session token was rotated during the current request.
        */
       rotated: boolean;
+    };
+    /**
+     * SupportingScheduleDetail
+     * @description Describe one full supporting schedule including its rows.
+     */
+    SupportingScheduleDetail: {
+      /**
+       * Rows
+       * @description Rows in deterministic line order.
+       * @default []
+       */
+      rows: components["schemas"]["SupportingScheduleRowSummary"][];
+      /** @description Schedule header state. */
+      schedule: components["schemas"]["SupportingScheduleSummary"];
+    };
+    /**
+     * SupportingScheduleRowMutationResult
+     * @description Return the current schedule after a row mutation.
+     */
+    SupportingScheduleRowMutationResult: {
+      /** @description Schedule detail after the mutation. */
+      schedule: components["schemas"]["SupportingScheduleDetail"];
+    };
+    /**
+     * SupportingScheduleRowSummary
+     * @description Describe one persisted workpaper row in a supporting schedule.
+     */
+    SupportingScheduleRowSummary: {
+      /**
+       * Created At
+       * Format: date-time
+       * @description UTC timestamp when the row was created.
+       */
+      created_at: string;
+      /**
+       * Id
+       * @description Row UUID.
+       */
+      id: string;
+      /**
+       * Line No
+       * @description Stable display order.
+       */
+      line_no: number;
+      /**
+       * Payload
+       * @description Normalized row payload exposed to the editor and agent.
+       */
+      payload?: {
+        [key: string]: unknown;
+      };
+      /**
+       * Row Ref
+       * @description Canonical row reference.
+       */
+      row_ref: string;
+      /**
+       * Schedule Id
+       * @description Parent schedule UUID.
+       */
+      schedule_id: string;
+      /** @description Canonical schedule type. */
+      schedule_type: components["schemas"]["SupportingScheduleType"];
+      /**
+       * Updated At
+       * Format: date-time
+       * @description UTC timestamp when the row was last updated.
+       */
+      updated_at: string;
+    };
+    /**
+     * SupportingScheduleStatus
+     * @description Enumerate the lifecycle states of a standalone supporting schedule.
+     * @enum {string}
+     */
+    SupportingScheduleStatus: "draft" | "in_review" | "approved" | "not_applicable";
+    /**
+     * SupportingScheduleSummary
+     * @description Describe one Step 6 supporting schedule in workspace responses.
+     */
+    SupportingScheduleSummary: {
+      /**
+       * Close Run Id
+       * @description Owning close run UUID.
+       */
+      close_run_id: string;
+      /**
+       * Id
+       * @description Schedule UUID when created.
+       */
+      id?: string | null;
+      /**
+       * Label
+       * @description Operator-facing schedule label.
+       */
+      label: string;
+      /**
+       * Note
+       * @description Latest schedule note when present.
+       */
+      note?: string | null;
+      /**
+       * Reviewed At
+       * @description UTC timestamp of final review.
+       */
+      reviewed_at?: string | null;
+      /**
+       * Reviewed By User Id
+       * @description Reviewing user UUID when finalized.
+       */
+      reviewed_by_user_id?: string | null;
+      /**
+       * Row Count
+       * @description Number of maintained rows in the schedule.
+       */
+      row_count: number;
+      /** @description Canonical supporting schedule type. */
+      schedule_type: components["schemas"]["SupportingScheduleType"];
+      /** @description Current schedule lifecycle status. */
+      status: components["schemas"]["SupportingScheduleStatus"];
+      /**
+       * Updated At
+       * @description UTC timestamp of the latest row or header update.
+       */
+      updated_at?: string | null;
+    };
+    /**
+     * SupportingScheduleType
+     * @description Enumerate the standalone supporting schedules maintained during Step 6.
+     * @enum {string}
+     */
+    SupportingScheduleType:
+      | "fixed_assets"
+      | "loan_amortisation"
+      | "accrual_tracker"
+      | "budget_vs_actual";
+    /**
+     * SupportingScheduleWorkspaceResponse
+     * @description Return the full Step 6 supporting-schedule workspace for a close run.
+     */
+    SupportingScheduleWorkspaceResponse: {
+      /**
+       * Schedules
+       * @description All canonical Step 6 schedules in deterministic order.
+       * @default []
+       */
+      schedules: components["schemas"]["SupportingScheduleDetail"][];
     };
     /**
      * TouchOwnershipTargetRequest
@@ -1681,6 +8387,214 @@ export interface components {
       target_phase: components["schemas"]["WorkflowPhase"];
     };
     /**
+     * TrialBalanceAccountEntry
+     * @description Represent one account's balance in a trial balance snapshot.
+     */
+    TrialBalanceAccountEntry: {
+      /**
+       * Account Code
+       * @description GL account code.
+       */
+      account_code: string;
+      /**
+       * Account Name
+       * @description GL account name.
+       */
+      account_name: string;
+      /**
+       * Account Type
+       * @description Account type (asset, liability, etc.).
+       */
+      account_type: string;
+      /**
+       * Credit Balance
+       * @description Credit balance as a decimal string.
+       * @default 0.00
+       */
+      credit_balance: string;
+      /**
+       * Debit Balance
+       * @description Debit balance as a decimal string.
+       * @default 0.00
+       */
+      debit_balance: string;
+      /**
+       * Is Active
+       * @description Whether the account is active in the chart of accounts.
+       * @default true
+       */
+      is_active: boolean;
+      /**
+       * Net Balance
+       * @description Net balance (debit - credit) as a decimal string.
+       */
+      net_balance: string;
+    };
+    /**
+     * TrialBalanceDetailResponse
+     * @description Return a full trial balance with per-account detail.
+     */
+    TrialBalanceDetailResponse: {
+      /**
+       * Accounts
+       * @description Per-account balance entries.
+       */
+      accounts: components["schemas"]["TrialBalanceAccountEntry"][];
+      /** @description Snapshot metadata. */
+      snapshot: components["schemas"]["TrialBalanceSnapshotSummary"];
+    };
+    /**
+     * TrialBalanceImportSummary
+     * @description Describe one uploaded trial-balance baseline.
+     */
+    TrialBalanceImportSummary: {
+      /**
+       * Created At
+       * Format: date-time
+       * @description UTC timestamp when the batch was created.
+       */
+      created_at: string;
+      /**
+       * Entity Id
+       * @description Owning entity UUID.
+       */
+      entity_id: string;
+      /**
+       * Id
+       * @description Trial-balance import batch UUID.
+       */
+      id: string;
+      /**
+       * Import Metadata
+       * @description Structured import diagnostics and header metadata.
+       */
+      import_metadata?: {
+        [key: string]: unknown;
+      };
+      /**
+       * Imported By User Id
+       * @description User who uploaded the batch, if recorded.
+       */
+      imported_by_user_id?: string | null;
+      /**
+       * Period End
+       * Format: date
+       * @description Last day covered by the imported trial balance.
+       */
+      period_end: string;
+      /**
+       * Period Start
+       * Format: date
+       * @description First day covered by the imported trial balance.
+       */
+      period_start: string;
+      /**
+       * Row Count
+       * @description Number of imported trial-balance rows.
+       */
+      row_count: number;
+      /**
+       * Source Format
+       * @description Upload format detected for the import batch.
+       */
+      source_format: string;
+      /**
+       * Updated At
+       * Format: date-time
+       * @description UTC timestamp when the batch was last changed.
+       */
+      updated_at: string;
+      /**
+       * Uploaded Filename
+       * @description Original filename supplied by the operator.
+       */
+      uploaded_filename: string;
+    };
+    /**
+     * TrialBalanceImportUploadResponse
+     * @description Return the result after uploading a trial-balance baseline.
+     */
+    TrialBalanceImportUploadResponse: {
+      /**
+       * Auto Bound Close Run Ids
+       * @description Open close runs that were automatically bound to this import.
+       * @default []
+       */
+      auto_bound_close_run_ids: string[];
+      /** @description The imported trial-balance batch. */
+      imported_batch: components["schemas"]["TrialBalanceImportSummary"];
+      /**
+       * Skipped Close Run Ids
+       * @description Matching close runs left unbound because they already had ledger activity.
+       * @default []
+       */
+      skipped_close_run_ids: string[];
+      /** @description Refreshed ledger workspace after the upload. */
+      workspace: components["schemas"]["LedgerWorkspaceResponse"];
+    };
+    /**
+     * TrialBalanceSnapshotSummary
+     * @description Represent a trial balance snapshot in API responses.
+     */
+    TrialBalanceSnapshotSummary: {
+      /**
+       * Account Count
+       * @description Number of accounts in the snapshot.
+       */
+      account_count: number;
+      /**
+       * Close Run Id
+       * @description Owning close run UUID.
+       */
+      close_run_id: string;
+      /**
+       * Created At
+       * @description UTC creation timestamp.
+       */
+      created_at: string;
+      /**
+       * Generated By User Id
+       * @description Generator user ID.
+       */
+      generated_by_user_id?: string | null;
+      /**
+       * Id
+       * @description Snapshot UUID.
+       */
+      id: string;
+      /**
+       * Is Balanced
+       * @description Whether debits equal credits.
+       */
+      is_balanced: boolean;
+      /**
+       * Snapshot No
+       * @description Sequential snapshot number.
+       */
+      snapshot_no: number;
+      /**
+       * Total Credits
+       * @description Total credits as a decimal string.
+       */
+      total_credits: string;
+      /**
+       * Total Debits
+       * @description Total debits as a decimal string.
+       */
+      total_debits: string;
+    };
+    /**
+     * UpdateCommentaryRequest
+     * @description Capture commentary text edits for one report section.
+     */
+    UpdateCommentaryRequest: {
+      /**
+       * Body
+       * @description Updated commentary text content for the section.
+       */
+      body: string;
+    };
+    /**
      * UpdateEntityMembershipRequest
      * @description Capture the optional fields that can be updated on an existing workspace membership.
      */
@@ -1708,6 +8622,51 @@ export interface components {
       name?: string | null;
       /** Timezone */
       timezone?: string | null;
+    };
+    /**
+     * UpdateSupportingScheduleStatusRequest
+     * @description Transition one supporting schedule between review states.
+     */
+    UpdateSupportingScheduleStatusRequest: {
+      /**
+       * Note
+       * @description Optional note. Required when marking the schedule not applicable.
+       */
+      note?: string | null;
+      /**
+       * Status
+       * @description Next schedule status.
+       * @enum {string}
+       */
+      status: "in_review" | "approved" | "not_applicable";
+    };
+    /**
+     * UploadedDocumentResult
+     * @description Return one successfully uploaded document staged for later parsing.
+     */
+    UploadedDocumentResult: {
+      /** @description Persisted document metadata. */
+      document: components["schemas"]["DocumentSummary"];
+    };
+    /**
+     * UpsertSupportingScheduleRowRequest
+     * @description Create or update one schedule row using a typed payload.
+     */
+    UpsertSupportingScheduleRowRequest: {
+      /**
+       * Payload
+       * @description Typed schedule-row payload validated against the canonical contracts.
+       */
+      payload:
+        | components["schemas"]["FixedAssetScheduleRowPayload"]
+        | components["schemas"]["LoanAmortisationScheduleRowPayload"]
+        | components["schemas"]["AccrualTrackerScheduleRowPayload"]
+        | components["schemas"]["BudgetVsActualScheduleRowPayload"];
+      /**
+       * Row Id
+       * @description Existing row UUID for updates.
+       */
+      row_id?: string | null;
     };
     /** ValidationError */
     ValidationError: {
@@ -2000,6 +8959,607 @@ export interface operations {
       };
     };
   };
+  approve_chat_action: {
+    parameters: {
+      query: {
+        /** @description Thread UUID for access verification. */
+        thread_id: string;
+        /** @description Entity workspace UUID. */
+        entity_id?: string;
+      };
+      header?: never;
+      path: {
+        /** @description Action plan UUID to approve or reject. */
+        action_plan_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: {
+      content: {
+        "application/json": components["schemas"]["ApproveChatActionRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ChatActionSummary"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  reject_chat_action: {
+    parameters: {
+      query: {
+        /** @description Thread UUID for access verification. */
+        thread_id: string;
+        /** @description Entity workspace UUID. */
+        entity_id?: string;
+      };
+      header?: never;
+      path: {
+        /** @description Action plan UUID to approve or reject. */
+        action_plan_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: {
+      content: {
+        "application/json": components["schemas"]["RejectChatActionRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ChatActionSummary"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  list_global_chat_threads: {
+    parameters: {
+      query?: {
+        /** @description Maximum items. */
+        limit?: number;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ChatThreadListResponse"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  create_global_chat_thread: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["CreateGlobalChatThreadRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ChatThreadWithMessages"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  handle_chat_mcp_request: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": {
+          [key: string]: unknown;
+        };
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": unknown;
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  list_chat_threads: {
+    parameters: {
+      query: {
+        /** @description Entity workspace UUID. */
+        entity_id: string;
+        /** @description Optional close run UUID. */
+        close_run_id?: string | null;
+        /** @description Maximum items. */
+        limit?: number;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ChatThreadListResponse"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  create_chat_thread: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["CreateChatThreadRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ChatThreadWithMessages"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  get_chat_thread: {
+    parameters: {
+      query: {
+        /** @description Entity workspace UUID. */
+        entity_id: string;
+        /** @description Maximum messages. */
+        message_limit?: number;
+      };
+      header?: never;
+      path: {
+        thread_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ChatThreadWithMessages"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  delete_chat_thread: {
+    parameters: {
+      query: {
+        /** @description Entity workspace UUID. */
+        entity_id: string;
+      };
+      header?: never;
+      path: {
+        thread_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ChatThreadDeleteResponse"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  list_thread_actions: {
+    parameters: {
+      query: {
+        /** @description Entity workspace UUID. */
+        entity_id: string;
+        /** @description Maximum items. */
+        limit?: number;
+      };
+      header?: never;
+      path: {
+        thread_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ChatActionSummary"][];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  send_chat_action: {
+    parameters: {
+      query: {
+        /** @description Entity workspace UUID. */
+        entity_id: string;
+      };
+      header?: never;
+      path: {
+        thread_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["SendChatActionRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ChatActionResponse"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  send_chat_action_with_attachments: {
+    parameters: {
+      query: {
+        /** @description Entity workspace UUID. */
+        entity_id: string;
+      };
+      header?: never;
+      path: {
+        thread_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: {
+      content: {
+        "multipart/form-data": components["schemas"]["Body_send_chat_action_with_attachments"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ChatActionResponse"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  stream_chat_action: {
+    parameters: {
+      query: {
+        /** @description Entity workspace UUID. */
+        entity_id: string;
+      };
+      header?: never;
+      path: {
+        thread_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["SendChatActionRequest"];
+      };
+    };
+    responses: {
+      /** @description Server-Sent Events stream for read-only or queued chat action turns. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "text/event-stream": string;
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  stream_chat_thread_events: {
+    parameters: {
+      query: {
+        /** @description Entity workspace UUID. */
+        entity_id: string;
+        after_message_order?: number;
+        client_turn_id?: string | null;
+      };
+      header?: never;
+      path: {
+        thread_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": unknown;
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  send_chat_message: {
+    parameters: {
+      query: {
+        /** @description Entity workspace UUID. */
+        entity_id: string;
+      };
+      header?: never;
+      path: {
+        thread_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["SendChatMessageRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ChatMessageResponse"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  read_chat_thread_workspace: {
+    parameters: {
+      query: {
+        /** @description Entity workspace UUID. */
+        entity_id: string;
+      };
+      header?: never;
+      path: {
+        thread_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ChatThreadWorkspaceResponse"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  read_chat_tool_manifest: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": {
+            [key: string]: unknown;
+          };
+        };
+      };
+    };
+  };
   list_entities: {
     parameters: {
       query?: never;
@@ -2084,6 +9644,37 @@ export interface operations {
       };
     };
   };
+  delete_entity: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        entity_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["EntityDeleteResponse"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
   update_entity: {
     parameters: {
       query?: never;
@@ -2121,7 +9712,9 @@ export interface operations {
   };
   list_close_runs: {
     parameters: {
-      query?: never;
+      query?: {
+        limit?: number | null;
+      };
       header?: never;
       path: {
         entity_id: string;
@@ -2217,6 +9810,110 @@ export interface operations {
       };
     };
   };
+  delete_close_run: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        entity_id: string;
+        close_run_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["CloseRunDeleteResponse"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  list_anomalies: {
+    parameters: {
+      query?: {
+        severity?: string | null;
+        resolved?: boolean | null;
+      };
+      header?: never;
+      path: {
+        entity_id: string;
+        close_run_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ReconciliationAnomalyListResponse"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  resolve_anomaly: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        entity_id: string;
+        close_run_id: string;
+        anomaly_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["ResolveAnomalyRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ReconciliationAnomalySummary"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
   approve_close_run: {
     parameters: {
       query?: never;
@@ -2289,6 +9986,1177 @@ export interface operations {
       };
     };
   };
+  bulk_disposition_items: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        entity_id: string;
+        close_run_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["BulkDispositionRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": unknown;
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  list_documents: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        entity_id: string;
+        close_run_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["DocumentListResponse"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  correct_extracted_field: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        entity_id: string;
+        close_run_id: string;
+        field_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["FieldCorrectionRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["FieldCorrectionResponse"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  queue_uploaded_documents_for_parse: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        entity_id: string;
+        close_run_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      202: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["BatchQueueDocumentsForParseResponse"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  upload_documents: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        entity_id: string;
+        close_run_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "multipart/form-data": components["schemas"]["Body_upload_documents"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      202: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["BatchUploadDocumentsResponse"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  delete_document: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        entity_id: string;
+        close_run_id: string;
+        document_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["DocumentDeleteResponse"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  reparse_document: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        entity_id: string;
+        close_run_id: string;
+        document_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["DocumentReparseResponse"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  review_document: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        entity_id: string;
+        close_run_id: string;
+        document_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["DocumentReviewDecisionRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["DocumentReviewActionResponse"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  list_exports: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        entity_id: string;
+        close_run_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ExportListResponse"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  trigger_export: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        entity_id: string;
+        close_run_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["CreateExportRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ExportDetail"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  read_latest_evidence_pack: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        entity_id: string;
+        close_run_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["EvidencePackBundle"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  assemble_evidence_pack: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        entity_id: string;
+        close_run_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["EvidencePackBundle"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  download_evidence_pack: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        entity_id: string;
+        close_run_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": unknown;
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  preview_evidence_pack_idempotency_key: {
+    parameters: {
+      query?: {
+        /** @description Close-run version number. */
+        version?: number;
+      };
+      header?: never;
+      path: {
+        entity_id: string;
+        close_run_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["IdempotencyKeyResponse"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  read_export_detail: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        entity_id: string;
+        close_run_id: string;
+        export_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ExportDetail"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  distribute_export: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        entity_id: string;
+        close_run_id: string;
+        export_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["DistributeExportRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ExportDetail"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  disposition_item: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        entity_id: string;
+        close_run_id: string;
+        item_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["DispositionItemRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["DispositionResult"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  list_journals: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        entity_id: string;
+        close_run_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["JournalListResponse"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  read_journal: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        entity_id: string;
+        close_run_id: string;
+        journal_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["JournalSummary"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  apply_journal: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        entity_id: string;
+        close_run_id: string;
+        journal_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["ApplyJournalRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["JournalActionResponse"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  approve_journal: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        entity_id: string;
+        close_run_id: string;
+        journal_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["ApproveJournalRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["JournalActionResponse"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  download_journal_posting_package: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        entity_id: string;
+        close_run_id: string;
+        journal_id: string;
+        posting_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": unknown;
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  reject_journal: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        entity_id: string;
+        close_run_id: string;
+        journal_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["RejectJournalRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["JournalActionResponse"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  read_latest_general_ledger_export: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        entity_id: string;
+        close_run_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["GeneralLedgerExportSummary"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  generate_general_ledger_export: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        entity_id: string;
+        close_run_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["GeneralLedgerExportSummary"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  download_latest_general_ledger_export: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        entity_id: string;
+        close_run_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": unknown;
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  list_recommendations: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        entity_id: string;
+        close_run_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": unknown;
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  generate_recommendations_for_close_run: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        entity_id: string;
+        close_run_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["GenerateRecommendationsRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      202: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": unknown;
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  approve_recommendation: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        entity_id: string;
+        close_run_id: string;
+        recommendation_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["ApproveJournalRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": unknown;
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  reject_recommendation: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        entity_id: string;
+        close_run_id: string;
+        recommendation_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["RejectJournalRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": unknown;
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  list_reconciliations: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        entity_id: string;
+        close_run_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ReconciliationListResponse"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  queue_reconciliation_run: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        entity_id: string;
+        close_run_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["RunReconciliationRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      202: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ReconciliationRunResponse"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  approve_reconciliation: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        entity_id: string;
+        close_run_id: string;
+        reconciliation_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["ApproveReconciliationRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ApproveReconciliationResult"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  list_reconciliation_items: {
+    parameters: {
+      query?: {
+        match_status?: components["schemas"]["MatchStatus"] | null;
+        requires_disposition?: boolean | null;
+      };
+      header?: never;
+      path: {
+        entity_id: string;
+        close_run_id: string;
+        reconciliation_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ReconciliationItemListResponse"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
   reopen_close_run: {
     parameters: {
       query?: never;
@@ -2325,6 +11193,182 @@ export interface operations {
       };
     };
   };
+  rewind_close_run: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        entity_id: string;
+        close_run_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["RewindCloseRunRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["CloseRunRewindResponse"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  read_supporting_schedule_workspace: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        entity_id: string;
+        close_run_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["SupportingScheduleWorkspaceResponse"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  save_supporting_schedule_row: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        entity_id: string;
+        close_run_id: string;
+        schedule_type: components["schemas"]["SupportingScheduleType"];
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["UpsertSupportingScheduleRowRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["SupportingScheduleRowMutationResult"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  delete_supporting_schedule_row: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        entity_id: string;
+        close_run_id: string;
+        schedule_type: components["schemas"]["SupportingScheduleType"];
+        row_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["SupportingScheduleRowMutationResult"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  update_supporting_schedule_status: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        entity_id: string;
+        close_run_id: string;
+        schedule_type: components["schemas"]["SupportingScheduleType"];
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["UpdateSupportingScheduleStatusRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["SupportingScheduleRowMutationResult"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
   transition_close_run: {
     parameters: {
       query?: never;
@@ -2348,6 +11392,579 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["CloseRunTransitionResponse"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  get_trial_balance: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        entity_id: string;
+        close_run_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["TrialBalanceDetailResponse"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  read_coa_workspace: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        entity_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["CoaWorkspaceResponse"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  create_coa_account: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        entity_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["CoaAccountCreateRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["CoaWorkspaceResponse"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  update_coa_account: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        entity_id: string;
+        account_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["CoaAccountUpdateRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["CoaWorkspaceResponse"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  activate_coa_set: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        entity_id: string;
+        coa_set_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["CoaSetActivationRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["CoaWorkspaceResponse"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  upload_manual_coa: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        entity_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "multipart/form-data": components["schemas"]["Body_upload_manual_coa"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["CoaWorkspaceResponse"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  start_quickbooks_connection: {
+    parameters: {
+      query?: {
+        /** @description Optional relative or allow-listed hosted UI URL to return to after the callback. */
+        return_url?: string | null;
+      };
+      header?: never;
+      path: {
+        entity_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["QuickBooksConnectResponse"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  disconnect_quickbooks: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        entity_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["QuickBooksDisconnectResponse"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  read_quickbooks_status: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        entity_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["QuickBooksConnectionStatusResponse"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  sync_quickbooks_chart_of_accounts: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        entity_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["QuickBooksCoaSyncResponse"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  list_jobs: {
+    parameters: {
+      query?: {
+        /** @description Optional close-run filter. */
+        close_run_id?: string | null;
+        /** @description Optional job-status filters. */
+        status_filter?: components["schemas"]["JobStatus"][] | null;
+      };
+      header?: never;
+      path: {
+        entity_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["JobListResponse"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  read_job_detail: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        entity_id: string;
+        job_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["JobDetail"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  cancel_job: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        entity_id: string;
+        job_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["CancelJobRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["JobDetail"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  resume_job: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        entity_id: string;
+        job_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["ResumeJobRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      202: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ResumeJobResponse"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  read_ledger_workspace: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        entity_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["LedgerWorkspaceResponse"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  upload_general_ledger: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        entity_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "multipart/form-data": components["schemas"]["Body_upload_general_ledger"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["GeneralLedgerImportUploadResponse"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  upload_trial_balance: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        entity_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "multipart/form-data": components["schemas"]["Body_upload_trial_balance"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["TrialBalanceImportUploadResponse"];
         };
       };
       /** @description Validation Error */
@@ -2572,6 +12189,386 @@ export interface operations {
       };
     };
   };
+  trigger_report_generation: {
+    parameters: {
+      query?: {
+        /** @description Optional template to use. */
+        template_id?: string | null;
+        /** @description Generate commentary drafts. */
+        generate_commentary?: boolean;
+        /** @description Use LLM-enhanced commentary. */
+        use_llm_commentary?: boolean;
+      };
+      header?: never;
+      path: {
+        entity_id: string;
+        close_run_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      202: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ReportRunSummary"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  list_report_runs_for_close_run: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        entity_id: string;
+        close_run_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ReportRunListResponse"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  read_report_run_detail: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        entity_id: string;
+        close_run_id: string;
+        report_run_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ReportRunDetail"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  download_report_artifact: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        entity_id: string;
+        close_run_id: string;
+        report_run_id: string;
+        artifact_type: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": unknown;
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  update_commentary: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        entity_id: string;
+        close_run_id: string;
+        report_run_id: string;
+        section_key: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["UpdateCommentaryRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["CommentarySummary"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  approve_commentary: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        entity_id: string;
+        close_run_id: string;
+        report_run_id: string;
+        section_key: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["ApproveCommentaryRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["CommentarySummary"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  list_report_templates: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        entity_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ReportTemplateListResponse"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  create_report_template: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        entity_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["CreateReportTemplateRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ReportTemplateDetail"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  read_report_template: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        entity_id: string;
+        template_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ReportTemplateDetail"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  activate_report_template: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        entity_id: string;
+        template_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["ActivateReportTemplateRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ReportTemplateDetail"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  validate_template_guardrails_route: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        entity_id: string;
+        template_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["GuardrailValidationResponse"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
   read_health_status: {
     parameters: {
       query?: never;
@@ -2592,6 +12589,39 @@ export interface operations {
       };
     };
   };
+  complete_quickbooks_connection: {
+    parameters: {
+      query: {
+        code: string;
+        state: string;
+        realmId: string;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": unknown;
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
   read_api_metadata: {
     parameters: {
       query?: never;
@@ -2608,6 +12638,26 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["ApiContractMetadata"];
+        };
+      };
+    };
+  };
+  read_readiness_status: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ApiReadinessStatus"];
         };
       };
     };

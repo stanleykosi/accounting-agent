@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from apps.worker.app.celery_runtime import celery_app
+from apps.worker.app.celery_runtime import observed_task
 from apps.worker.app.tasks.base import JobRuntimeContext, TrackedJobTask
 from apps.worker.app.tasks.close_run_phase_guard import ensure_close_run_active_phase
 from services.common.enums import WorkflowPhase
@@ -178,7 +178,7 @@ def _run_assemble_evidence_pack_task(
         }
 
 
-@celery_app.task(
+@observed_task(
     bind=True,
     base=TrackedJobTask,
     name=TaskName.EXPORTS_GENERATE_CLOSE_RUN_PACKAGE.value,
@@ -212,7 +212,7 @@ def generate_export_package(
     )
 
 
-@celery_app.task(
+@observed_task(
     bind=True,
     base=TrackedJobTask,
     name=TaskName.EXPORTS_ASSEMBLE_EVIDENCE_PACK.value,

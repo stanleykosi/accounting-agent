@@ -9,7 +9,7 @@ and the seed API contract models.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator, Iterable
+from collections.abc import AsyncIterator, Callable, Iterable
 from contextlib import asynccontextmanager, suppress
 from typing import Any
 
@@ -33,6 +33,7 @@ from apps.api.app.routes.report_templates import router as report_templates_rout
 from apps.api.app.routes.reports import router as reports_router
 from apps.api.app.routes.supporting_schedules import router as supporting_schedules_router
 from fastapi import APIRouter, FastAPI, Request
+from fastapi.openapi.utils import get_openapi
 from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
 from services.common.logging import configure_logging, get_logger
@@ -45,7 +46,7 @@ from services.common.runtime_checks import (
     run_backend_dependency_healthcheck,
 )
 from services.common.settings import AppSettings, get_settings
-from services.common.types import utc_now
+from services.common.types import DeploymentEnvironment, utc_now
 from services.contracts.api_models import (
     ApiContractMetadata,
     ApiHealthStatus,
@@ -53,6 +54,7 @@ from services.contracts.api_models import (
     ApiRouteDescriptor,
 )
 from services.observability.otel import configure_observability
+from structlog.stdlib import BoundLogger
 
 API_VERSION = "0.1.0"
 
@@ -129,7 +131,10 @@ def create_app(*, settings: AppSettings | None = None) -> FastAPI:
     install_request_telemetry_middleware(app)
 
     @app.middleware("http")
-    async def gate_dependency_backed_routes(request: Request, call_next):
+    async def gate_dependency_backed_routes(
+        request: Request,
+        call_next: Any,
+    ) -> Any:
         if _is_readiness_exempt_path(request.url.path, api_base_path):
             return await call_next(request)
 
@@ -219,6 +224,7 @@ def create_app(*, settings: AppSettings | None = None) -> FastAPI:
     api_router.include_router(reports_router)
     api_router.include_router(exports_router)
     app.include_router(api_router)
+    app.openapi = _build_openapi_schema_factory(app)  # type: ignore[method-assign]
     return app
 
 
@@ -251,6 +257,58 @@ def _build_operation_id(route: APIRoute) -> str:
     return f"{methods}_{normalized_path or 'root'}"
 
 
+def _build_openapi_schema_factory(application: FastAPI) -> Callable[[], dict[str, Any]]:
+    """Build the canonical OpenAPI exporter with SDK-safe JSON aliases."""
+
+    def openapi_schema() -> dict[str, Any]:
+        if application.openapi_schema:
+            return application.openapi_schema
+
+        schema = get_openapi(
+            title=application.title,
+            version=application.version,
+            openapi_version=application.openapi_version,
+            summary=application.summary,
+            description=application.description,
+            routes=application.routes,
+            webhooks=application.webhooks.routes,
+            tags=application.openapi_tags,
+            servers=application.servers,
+            terms_of_service=application.terms_of_service,
+            contact=application.contact,
+            license_info=application.license_info,
+            separate_input_output_schemas=application.separate_input_output_schemas,
+        )
+        _normalize_openapi_json_aliases(schema)
+        application.openapi_schema = schema
+        return schema
+
+    return openapi_schema
+
+
+def _normalize_openapi_json_aliases(openapi_schema: dict[str, Any]) -> None:
+    """Expose arbitrary JSON contracts without recursive TypeScript component members."""
+
+    components = openapi_schema.get("components")
+    if not isinstance(components, dict):
+        return
+
+    schemas = components.get("schemas")
+    if not isinstance(schemas, dict):
+        return
+
+    if "JsonValue" in schemas:
+        schemas["JsonValue"] = {
+            "description": "Any JSON-compatible value.",
+        }
+    if "JsonObject" in schemas:
+        schemas["JsonObject"] = {
+            "additionalProperties": {},
+            "description": "JSON object with arbitrary JSON-compatible values.",
+            "type": "object",
+        }
+
+
 def _collect_route_descriptors(routes: Iterable[Any]) -> tuple[ApiRouteDescriptor, ...]:
     """Collect public API route metadata for contract introspection responses."""
 
@@ -278,7 +336,7 @@ def _collect_route_descriptors(routes: Iterable[Any]) -> tuple[ApiRouteDescripto
 
 async def _run_initial_dependency_readiness_probe(
     *,
-    logger,
+    logger: BoundLogger,
     readiness: BackendDependencyReadiness,
     settings: AppSettings,
 ) -> bool:
@@ -320,7 +378,7 @@ async def _run_initial_dependency_readiness_probe(
 
 async def _run_dependency_readiness_probe(
     *,
-    logger,
+    logger: BoundLogger,
     readiness: BackendDependencyReadiness,
     settings: AppSettings,
     shutdown_event: asyncio.Event,
@@ -396,7 +454,7 @@ def _read_dependency_readiness(application: FastAPI) -> BackendDependencyReadine
 def _build_api_readiness_status(
     *,
     api_base_path: str,
-    environment,
+    environment: DeploymentEnvironment,
     readiness_snapshot: BackendDependencyReadinessSnapshot,
     service_name: str,
     version: str,

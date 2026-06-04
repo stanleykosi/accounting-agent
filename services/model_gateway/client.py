@@ -13,6 +13,8 @@ Design notes:
 from __future__ import annotations
 
 import json
+import time
+from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import Any, TypeVar
 
@@ -194,12 +196,21 @@ class ModelGateway:
             timeout_seconds=self._config.timeout_seconds,
         )
 
+        started_at = time.perf_counter()
         with httpx.Client(timeout=self._config.timeout_seconds) as client:
             response = client.post(
                 url=f"{self.base_url}/chat/completions",
                 headers=headers,
                 json=body,
             )
+        duration_ms = int((time.perf_counter() - started_at) * 1000)
+        logger.info(
+            "model_request_completed",
+            model=self._config.model,
+            message_count=len(messages),
+            status_code=response.status_code,
+            duration_ms=duration_ms,
+        )
 
         if response.status_code == 429:
             retry_after = None
@@ -265,6 +276,95 @@ class ModelGateway:
         )
 
         return content
+
+    def stream_complete(
+        self,
+        *,
+        messages: list[dict[str, str]],
+        request_body_overrides: dict[str, Any] | None = None,
+    ) -> Iterator[str]:
+        """Stream plain assistant text chunks from the provider.
+
+        This path is intentionally text-only. Tool-call planning remains on
+        ``complete_tool_call`` so partial tool JSON is never rendered to users.
+        """
+
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+            "HTTP-Referer": "http://127.0.0.1:8000",
+            "X-Title": "accounting-ai-agent",
+        }
+        body = {
+            "model": self._config.model,
+            "messages": messages,
+            "temperature": self._config.temperature,
+            "max_tokens": self._config.max_tokens,
+            "top_p": self._config.top_p,
+            "stream": True,
+        }
+        if request_body_overrides:
+            body.update(request_body_overrides)
+
+        started_at = time.perf_counter()
+        status_code: int | None = None
+        logger.debug(
+            "model_stream_request_start",
+            model=self._config.model,
+            message_count=len(messages),
+            timeout_seconds=self._config.timeout_seconds,
+        )
+        try:
+            with httpx.Client(timeout=self._config.timeout_seconds) as client:
+                with client.stream(
+                    "POST",
+                    url=f"{self.base_url}/chat/completions",
+                    headers=headers,
+                    json=body,
+                ) as response:
+                    status_code = response.status_code
+                    if response.status_code == 429:
+                        retry_after = None
+                        retry_header = response.headers.get("retry-after")
+                        if retry_header is not None:
+                            try:
+                                retry_after = int(retry_header)
+                            except ValueError:
+                                pass
+                        raise ModelGatewayRateLimitError(
+                            retry_after_seconds=retry_after,
+                        )
+
+                    try:
+                        response.raise_for_status()
+                    except httpx.HTTPStatusError:
+                        response.read()
+                        raise
+                    for line in response.iter_lines():
+                        content_delta = _extract_stream_content_delta(line)
+                        if content_delta is None:
+                            continue
+                        yield content_delta
+        except httpx.ConnectError as error:
+            raise ModelGatewayError(
+                f"Failed to connect to model provider at {self.base_url}. "
+                "Check network connectivity and the provider endpoint."
+            ) from error
+        except httpx.HTTPStatusError as error:
+            response_body = _read_http_error_body(error.response)
+            raise ModelGatewayError(
+                f"Model provider returned HTTP {error.response.status_code}. "
+                f"Response body: {response_body[:300]}"
+            ) from error
+        finally:
+            duration_ms = int((time.perf_counter() - started_at) * 1000)
+            logger.info(
+                "model_stream_request_completed",
+                model=self._config.model,
+                message_count=len(messages),
+                status_code=status_code,
+                duration_ms=duration_ms,
+            )
 
     def complete_structured(
         self,
@@ -344,6 +444,7 @@ class ModelGateway:
         *,
         messages: list[dict[str, str]],
         tools: list[dict[str, Any]],
+        plain_text_fallback_tool_name: str | None = None,
     ) -> ModelGatewayToolCall:
         """Send a native OpenRouter/OpenAI-compatible tool-call planning request.
 
@@ -360,6 +461,7 @@ class ModelGateway:
                     "provider": {
                         "require_parameters": True,
                     },
+                    "parallel_tool_calls": False,
                     "tool_choice": "required",
                     "tools": tools,
                 },
@@ -378,17 +480,29 @@ class ModelGateway:
         payload = response.json()
         choices = payload.get("choices", [])
         if not choices:
-            raise ModelGatewayError(
-                "Model provider returned no choices in the tool-call response."
-            )
+            raise ModelGatewayError("Model provider returned no choices in the tool-call response.")
 
         message = choices[0].get("message", {})
         if not isinstance(message, dict):
             raise ModelGatewayError("Model provider returned an invalid assistant message.")
         tool_calls = message.get("tool_calls", [])
-        if not isinstance(tool_calls, list) or len(tool_calls) != 1:
+        if tool_calls is None:
+            tool_calls = []
+        if not isinstance(tool_calls, list):
+            raise ModelGatewayError("Model provider returned invalid tool_calls metadata.")
+        if len(tool_calls) == 0:
+            fallback_tool_call = _coerce_plain_text_tool_call(
+                message=message,
+                tools=tools,
+                fallback_tool_name=plain_text_fallback_tool_name,
+                model=self._config.model,
+            )
+            if fallback_tool_call is not None:
+                return fallback_tool_call
+        if len(tool_calls) != 1:
             raise ModelGatewayError(
-                "Model provider must return exactly one tool call for agent planning."
+                "Model provider must return exactly one tool call for agent planning "
+                f"(received {len(tool_calls)})."
             )
 
         tool_call = tool_calls[0]
@@ -411,9 +525,7 @@ class ModelGateway:
         elif isinstance(raw_arguments, dict):
             arguments = raw_arguments
         else:
-            raise ModelGatewayError(
-                f"Model tool-call arguments for '{name}' must be an object."
-            )
+            raise ModelGatewayError(f"Model tool-call arguments for '{name}' must be an object.")
         if not isinstance(arguments, dict):
             raise ModelGatewayError(
                 f"Model tool-call arguments for '{name}' must be a JSON object."
@@ -449,6 +561,91 @@ def _build_structured_output_request(response_model: type[BaseModel]) -> dict[st
             },
         },
     }
+
+
+def _extract_stream_content_delta(line: str) -> str | None:
+    """Extract one content delta from an OpenAI-compatible SSE stream line."""
+
+    if not line:
+        return None
+    if not line.startswith("data:"):
+        return None
+    raw_payload = line.removeprefix("data:").strip()
+    if raw_payload == "[DONE]":
+        return None
+    try:
+        payload = json.loads(raw_payload)
+    except json.JSONDecodeError:
+        return None
+    choices = payload.get("choices")
+    if not isinstance(choices, list) or not choices:
+        return None
+    first_choice = choices[0]
+    if not isinstance(first_choice, dict):
+        return None
+    delta = first_choice.get("delta")
+    if not isinstance(delta, dict):
+        return None
+    content = delta.get("content")
+    return content if isinstance(content, str) and content else None
+
+
+def _read_http_error_body(response: httpx.Response) -> str:
+    """Read a provider error body without depending on eager response loading."""
+
+    try:
+        return response.text
+    except httpx.ResponseNotRead:
+        return response.read().decode("utf-8", errors="replace")
+
+
+def _coerce_plain_text_tool_call(
+    *,
+    message: dict[str, Any],
+    tools: list[dict[str, Any]],
+    fallback_tool_name: str | None,
+    model: str,
+) -> ModelGatewayToolCall | None:
+    """Convert provider plain text into a configured read-only planning tool call."""
+
+    if fallback_tool_name is None or not _tool_list_contains_name(
+        tools=tools,
+        tool_name=fallback_tool_name,
+    ):
+        return None
+
+    content = message.get("content")
+    if not isinstance(content, str) or not content.strip():
+        return None
+
+    stripped_content = content.strip()
+    logger.warning(
+        "model_tool_call_missing_plain_text_coerced",
+        model=model,
+        fallback_tool_name=fallback_tool_name,
+        content_length=len(stripped_content),
+    )
+    return ModelGatewayToolCall(
+        name=fallback_tool_name,
+        arguments={
+            "assistant_response": stripped_content,
+            "reasoning": (
+                "Model provider returned plain assistant content without a native tool call; "
+                "coerced to a read-only planning response."
+            ),
+        },
+        content=content,
+    )
+
+
+def _tool_list_contains_name(*, tools: list[dict[str, Any]], tool_name: str) -> bool:
+    """Return whether an OpenAI-compatible tool list contains one function name."""
+
+    for tool in tools:
+        function = tool.get("function")
+        if isinstance(function, dict) and function.get("name") == tool_name:
+            return True
+    return False
 
 
 def _strip_markdown_fences(content: str) -> str:

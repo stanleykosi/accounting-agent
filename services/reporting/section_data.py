@@ -249,6 +249,7 @@ def _prepare_period_transactions(
         account_info = account_lookup.get(account_code, {})
         account_type = str(account_info.get("account_type") or "")
         signed_amount = _coerce_decimal(row.get("signed_amount")) or Decimal("0.00")
+        dimensions_payload = row.get("dimensions")
         prepared.append(
             _PreparedTransaction(
                 account_code=account_code,
@@ -261,8 +262,8 @@ def _prepare_period_transactions(
                 posting_date=posting_date,
                 period=str(row.get("period") or posting_date.strftime("%Y-%m")),
                 dimensions=(
-                    dict(row.get("dimensions"))
-                    if isinstance(row.get("dimensions"), dict)
+                    dict(dimensions_payload)
+                    if isinstance(dimensions_payload, dict)
                     else {}
                 ),
                 presentation_amount=_normalize_signed_amount(
@@ -604,10 +605,18 @@ def _build_kpi_dashboard_data(
     )
     if budget_items:
         current_budget = sum(
-            (_coerce_decimal(item.get("budget")) or Decimal("0.00")) for item in budget_items
+            (
+                _coerce_decimal(item.get("budget")) or Decimal("0.00")
+                for item in budget_items
+            ),
+            Decimal("0.00"),
         )
         current_actual = sum(
-            (_coerce_decimal(item.get("actual")) or Decimal("0.00")) for item in budget_items
+            (
+                _coerce_decimal(item.get("actual")) or Decimal("0.00")
+                for item in budget_items
+            ),
+            Decimal("0.00"),
         )
         metrics.append(
             {
@@ -805,22 +814,22 @@ def _load_balance_by_account(
             .filter(JournalLine.journal_entry_id == journal.id)
             .all()
         )
-        for line in lines:
+        for journal_line in lines:
             bucket = balances.setdefault(
-                line.account_code,
+                journal_line.account_code,
                 {
                     "debit": Decimal("0.00"),
                     "credit": Decimal("0.00"),
                     "account_type": str(
-                        account_lookup.get(line.account_code, {}).get("account_type") or ""
+                        account_lookup.get(journal_line.account_code, {}).get("account_type") or ""
                     ),
                 },
             )
-            amount = _coerce_decimal(line.amount) or Decimal("0.00")
-            if line.line_type == "debit":
-                bucket["debit"] = _coerce_decimal(bucket["debit"]) + amount
+            amount = _coerce_decimal(journal_line.amount) or Decimal("0.00")
+            if journal_line.line_type == "debit":
+                bucket["debit"] = (_coerce_decimal(bucket["debit"]) or Decimal("0.00")) + amount
             else:
-                bucket["credit"] = _coerce_decimal(bucket["credit"]) + amount
+                bucket["credit"] = (_coerce_decimal(bucket["credit"]) or Decimal("0.00")) + amount
 
     normalized: dict[str, Decimal] = {}
     for account_code, bucket in balances.items():
@@ -1090,10 +1099,13 @@ def _sum_balance_for_type(
     if snapshot is None:
         return Decimal("0.00")
     return sum(
-        amount
-        for account_code, amount in snapshot.balance_by_account.items()
-        if str(snapshot.account_lookup.get(account_code, {}).get("account_type") or "")
-        in allowed_account_types
+        (
+            amount
+            for account_code, amount in snapshot.balance_by_account.items()
+            if str(snapshot.account_lookup.get(account_code, {}).get("account_type") or "")
+            in allowed_account_types
+        ),
+        Decimal("0.00"),
     )
 
 

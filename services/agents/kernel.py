@@ -73,6 +73,7 @@ class AgentKernel:
             tool_call = self._model_gateway.complete_tool_call(
                 messages=[{"role": "system", "content": system_prompt}, *conversation],
                 tools=_build_native_planning_tools(self._tool_registry),
+                plain_text_fallback_tool_name=_READ_ONLY_TOOL_NAME,
             )
         except ModelGatewayError as error:
             raise AgentKernelError(str(error)) from error

@@ -24,7 +24,7 @@ from datetime import date
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
-from apps.worker.app.celery_runtime import celery_app
+from apps.worker.app.celery_runtime import observed_task
 from apps.worker.app.tasks.base import JobRuntimeContext, TrackedJobTask
 from apps.worker.app.tasks.close_run_phase_guard import ensure_close_run_active_phase
 from services.common.enums import (
@@ -33,7 +33,7 @@ from services.common.enums import (
     WorkflowPhase,
 )
 from services.common.logging import get_logger
-from services.common.types import utc_now
+from services.common.types import JsonObject, JsonValue, utc_now
 from services.contracts.storage_models import CloseRunStorageScope
 from services.db.models.close_run import CloseRun
 from services.db.models.entity import Entity
@@ -77,7 +77,7 @@ class ReportGenerationReceipt:
     excel_generated: bool
     pdf_generated: bool
     commentary_generated: bool
-    artifact_refs: list[dict[str, Any]]
+    artifact_refs: list[dict[str, object]]
     errors: list[str]
 
 
@@ -90,7 +90,7 @@ def _run_report_generation_task(
     generate_commentary_flag: bool = True,
     use_llm_commentary: bool = False,
     job_context: JobRuntimeContext,
-) -> dict[str, Any]:
+) -> dict[str, object]:
     """Execute the full report generation workflow for a close run.
 
     Args:
@@ -204,16 +204,18 @@ def _run_report_generation_task(
                 version_no = repo.next_version_no_for_close_run(
                     close_run_id=parsed_close_run_id,
                 )
+                section_values: list[JsonValue] = [str(section) for section in sections or []]
+                generation_config: JsonObject = {
+                    "sections": section_values,
+                    "generate_commentary": generate_commentary_flag,
+                    "use_llm_commentary": use_llm_commentary,
+                }
                 run_record = repo.create_report_run(
                     close_run_id=parsed_close_run_id,
                     template_id=context.template_id,
                     version_no=version_no,
                     status=ReportRunStatus.GENERATING,
-                    generation_config={
-                        "sections": sections or [],
-                        "generate_commentary": generate_commentary_flag,
-                        "use_llm_commentary": use_llm_commentary,
-                    },
+                    generation_config=generation_config,
                     generated_by_user_id=parsed_actor_user_id,
                 )
             else:
@@ -231,7 +233,7 @@ def _run_report_generation_task(
                 },
             )
 
-        artifact_refs: list[dict[str, Any]] = []
+        artifact_refs: list[dict[str, object]] = []
         excel_generated = False
         pdf_generated = False
         commentary_generated = False
@@ -275,7 +277,7 @@ def _run_report_generation_task(
                     )
                     job_context.checkpoint(
                         step="generate_commentary",
-                        state={"commentary": commentary},
+                        state={"commentary": _string_map_payload(commentary)},
                     )
                     ensure_reporting_phase()
 
@@ -314,7 +316,7 @@ def _run_report_generation_task(
                     payload=excel_result.payload,
                     content_type=excel_result.content_type,
                 )
-                excel_artifact_ref = {
+                excel_artifact_ref: dict[str, object] = {
                     "type": "report_excel",
                     "filename": excel_result.filename,
                     "storage_key": excel_artifact.reference.object_key,
@@ -325,7 +327,7 @@ def _run_report_generation_task(
                 artifact_refs.append(excel_artifact_ref)
                 job_context.checkpoint(
                     step="build_excel_pack",
-                    state={"artifact_ref": excel_artifact_ref},
+                    state={"artifact_ref": _json_object_payload(excel_artifact_ref)},
                 )
                 ensure_reporting_phase()
 
@@ -356,7 +358,7 @@ def _run_report_generation_task(
                     payload=pdf_result.payload,
                     content_type=pdf_result.content_type,
                 )
-                pdf_artifact_ref = {
+                pdf_artifact_ref: dict[str, object] = {
                     "type": "report_pdf",
                     "filename": pdf_result.filename,
                     "storage_key": pdf_artifact.reference.object_key,
@@ -367,7 +369,7 @@ def _run_report_generation_task(
                 artifact_refs.append(pdf_artifact_ref)
                 job_context.checkpoint(
                     step="build_pdf_pack",
-                    state={"artifact_ref": pdf_artifact_ref},
+                    state={"artifact_ref": _json_object_payload(pdf_artifact_ref)},
                 )
                 ensure_reporting_phase()
 
@@ -454,7 +456,13 @@ def _restore_report_run_resolution(
             "Report resume could not load the previously created report run from checkpoint state."
         )
 
-    return run_record, int(checkpoint_state["version_no"])
+    checkpoint_version_no = checkpoint_state.get("version_no")
+    if not isinstance(checkpoint_version_no, int):
+        raise RuntimeError(
+            "Report resume requires a persisted integer version_no checkpoint value."
+        )
+
+    return run_record, checkpoint_version_no
 
 
 def _restore_commentary_checkpoint(*, job_context: JobRuntimeContext) -> dict[str, str]:
@@ -468,11 +476,17 @@ def _restore_commentary_checkpoint(*, job_context: JobRuntimeContext) -> dict[st
     return {str(key): str(value) for key, value in raw_commentary.items()}
 
 
+def _string_map_payload(values: dict[str, str]) -> JsonObject:
+    """Return a JSON object payload for a string-to-string mapping."""
+
+    return {str(key): str(value) for key, value in values.items()}
+
+
 def _restore_artifact_checkpoint(
     *,
     job_context: JobRuntimeContext,
     step: str,
-) -> dict[str, Any]:
+) -> dict[str, object]:
     """Restore one uploaded artifact reference from checkpoint state during resume."""
 
     checkpoint_state = job_context.step_state(step)
@@ -482,10 +496,28 @@ def _restore_artifact_checkpoint(
             f"Report resume requires artifact_ref state for completed step '{step}'."
         )
 
-    return dict(raw_artifact_ref)
+    return {str(key): value for key, value in raw_artifact_ref.items()}
 
 
-def _report_generation_receipt_to_payload(receipt: ReportGenerationReceipt) -> dict[str, Any]:
+def _json_object_payload(values: dict[Any, Any]) -> JsonObject:
+    """Coerce a persisted checkpoint mapping into the canonical JSON object type."""
+
+    return {str(key): _json_value_payload(value) for key, value in values.items()}
+
+
+def _json_value_payload(value: Any) -> JsonValue:
+    """Coerce one checkpoint value into the canonical JSON value type."""
+
+    if value is None or isinstance(value, str | int | float | bool):
+        return value
+    if isinstance(value, list):
+        return [_json_value_payload(item) for item in value]
+    if isinstance(value, dict):
+        return _json_object_payload(value)
+    return str(value)
+
+
+def _report_generation_receipt_to_payload(receipt: ReportGenerationReceipt) -> dict[str, object]:
     """Convert the slotted receipt dataclass into the JSON-safe task payload shape."""
 
     return {
@@ -661,8 +693,8 @@ def _generate_commentary_phase(
     input_data = CommentaryGenerationInput(
         close_run_id=context.close_run_id,
         entity_name=context.entity_name,
-        period_start=context.period_start,
-        period_end=context.period_end,
+        period_start=context.period_start.isoformat(),
+        period_end=context.period_end.isoformat(),
         currency_code=context.currency_code,
         p_and_l=section_data.get('p_and_l', {}),
         balance_sheet=section_data.get('balance_sheet', {}),
@@ -800,7 +832,7 @@ def _report_failure_reason_for_cancellation(message: str) -> str:
 # Celery task registration
 # ---------------------------------------------------------------------------
 
-@celery_app.task(
+@observed_task(
     bind=True,
     base=TrackedJobTask,
     name=TaskName.REPORTING_GENERATE_CLOSE_RUN_PACK.value,

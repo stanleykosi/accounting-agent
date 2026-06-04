@@ -43,6 +43,32 @@ def test_openapi_operation_ids_are_unique() -> None:
     assert len(operation_ids) == len(set(operation_ids))
 
 
+def test_openapi_json_aliases_are_sdk_safe() -> None:
+    """Arbitrary JSON aliases should generate TypeScript without recursive member errors."""
+
+    schema = api_main.app.openapi()
+    schemas = schema["components"]["schemas"]
+
+    assert schemas["JsonValue"] == {"description": "Any JSON-compatible value."}
+    assert schemas["JsonObject"] == {
+        "additionalProperties": {},
+        "description": "JSON object with arbitrary JSON-compatible values.",
+        "type": "object",
+    }
+
+
+def test_openapi_declares_chat_action_stream_as_sse() -> None:
+    """Generated clients should treat chat action streaming as Server-Sent Events."""
+
+    schema = api_main.app.openapi()
+    response_content = schema["paths"]["/api/chat/threads/{thread_id}/actions/stream"][
+        "post"
+    ]["responses"]["200"]["content"]
+
+    assert "text/event-stream" in response_content
+    assert "application/json" not in response_content
+
+
 def test_metadata_endpoint_returns_contract_catalog(monkeypatch) -> None:
     """Ensure the metadata endpoint publishes route descriptors for the generated SDK."""
 

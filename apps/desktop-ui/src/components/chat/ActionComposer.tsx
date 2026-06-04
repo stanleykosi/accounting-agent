@@ -20,6 +20,7 @@ import {
   rejectChatAction,
   sendChatAction,
   sendChatActionWithAttachments,
+  streamChatAction,
 } from "../../lib/chat";
 import { QuartzIcon } from "../layout/QuartzIcons";
 
@@ -36,6 +37,7 @@ export type ActionComposerProps = {
   disabled?: boolean;
   entityId: string;
   onActionStateChange?: (action: ChatActionSummary) => void;
+  onAssistantDelta?: (content: string) => void;
   onMessageSent: (response: ChatActionResponse, draft: ComposerDraft) => void;
   onSubmissionError?: (message: string) => void;
   onSubmissionStart?: (draft: ComposerDraft) => void;
@@ -70,6 +72,7 @@ export function ActionComposer({
   disabled = false,
   entityId,
   onActionStateChange,
+  onAssistantDelta,
   onMessageSent,
   onSubmissionError,
   onSubmissionStart,
@@ -184,22 +187,28 @@ export function ActionComposer({
         const actionResponse =
           allowAttachments && attachments.length > 0
             ? await sendChatActionWithAttachments(
-              threadId,
-              entityId,
-              trimmed.length > 0
-                ? {
-                  attachmentIntent: "source_documents",
-                  clientTurnId,
-                  content: trimmed,
-                  files: attachments,
-                }
-                : {
-                  attachmentIntent: "source_documents",
-                  clientTurnId,
-                  files: attachments,
-                },
-            )
-            : await sendChatAction(threadId, entityId, trimmed, clientTurnId);
+                threadId,
+                entityId,
+                trimmed.length > 0
+                  ? {
+                      attachmentIntent: "source_documents",
+                      clientTurnId,
+                      content: trimmed,
+                      files: attachments,
+                    }
+                  : {
+                      attachmentIntent: "source_documents",
+                      clientTurnId,
+                      files: attachments,
+                    },
+              )
+            : await streamChatAction(
+                threadId,
+                entityId,
+                trimmed,
+                clientTurnId,
+                onAssistantDelta === undefined ? {} : { onDelta: onAssistantDelta },
+              );
 
         resetComposer();
         onMessageSent(actionResponse, draft);
@@ -211,7 +220,12 @@ export function ActionComposer({
           !(allowAttachments && attachments.length > 0)
         ) {
           try {
-            const replayedResponse = await sendChatAction(threadId, entityId, trimmed, clientTurnId);
+            const replayedResponse = await sendChatAction(
+              threadId,
+              entityId,
+              trimmed,
+              clientTurnId,
+            );
             resetComposer();
             onMessageSent(replayedResponse, draft);
             await loadPendingActions();
@@ -240,6 +254,7 @@ export function ActionComposer({
       isLoading,
       loadPendingActions,
       onMessageSent,
+      onAssistantDelta,
       onSubmissionError,
       onSubmissionStart,
       resetComposer,
@@ -256,20 +271,19 @@ export function ActionComposer({
 
       setLoadingActions((current) => new Set(current).add(actionId));
       try {
-        const shouldAutoApproveRelease =
-          autoApproveRelease && isAutoReleaseEligibleAction(action);
+        const shouldAutoApproveRelease = autoApproveRelease && isAutoReleaseEligibleAction(action);
         const updated = await approveChatAction(
           actionId,
           threadId,
           entityId,
           shouldAutoApproveRelease
             ? {
-              approvalPolicy: "auto_release_for_thread",
-              reason: "Approved from chat; auto-approve release controls for this thread.",
-            }
+                approvalPolicy: "auto_release_for_thread",
+                reason: "Approved from chat; auto-approve release controls for this thread.",
+              }
             : {
-              reason: "Approved from chat.",
-            },
+                reason: "Approved from chat.",
+              },
         );
         setPendingActions((current) => current.filter((action) => action.id !== actionId));
         onActionStateChange?.(updated);
@@ -591,7 +605,9 @@ function buildApprovalContinuationPrompt(input: {
 
 function formatPendingActionTitle(action: ChatActionSummary): string {
   if (action.tool_name !== null) {
-    return PENDING_TOOL_LABELS[action.tool_name] ?? titleCase(action.tool_name.replaceAll("_", " "));
+    return (
+      PENDING_TOOL_LABELS[action.tool_name] ?? titleCase(action.tool_name.replaceAll("_", " "))
+    );
   }
   return ACTION_INTENT_LABELS[action.intent] ?? titleCase(action.intent.replaceAll("_", " "));
 }

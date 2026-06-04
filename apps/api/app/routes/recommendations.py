@@ -208,17 +208,19 @@ def list_recommendations(
         else {}
     )
     recommendation_ids = tuple(recommendation.id for recommendation in recommendations)
-    journaled_recommendation_ids = {
-        recommendation_id
-        for recommendation_id, in db_session.query(JournalEntry.recommendation_id)
-        .filter(
-            JournalEntry.close_run_id == close_run_id,
-            JournalEntry.recommendation_id.in_(recommendation_ids) if recommendation_ids else False,
-            JournalEntry.superseded_by_id.is_(None),
-        )
-        .all()
-        if recommendation_id is not None
-    }
+    journaled_recommendation_ids: set[UUID] = set()
+    if recommendation_ids:
+        journaled_recommendation_ids = {
+            recommendation_id
+            for recommendation_id, in db_session.query(JournalEntry.recommendation_id)
+            .filter(
+                JournalEntry.close_run_id == close_run_id,
+                JournalEntry.recommendation_id.in_(recommendation_ids),
+                JournalEntry.superseded_by_id.is_(None),
+            )
+            .all()
+            if recommendation_id is not None
+        }
     recommendations = tuple(
         recommendation
         for recommendation in recommendations

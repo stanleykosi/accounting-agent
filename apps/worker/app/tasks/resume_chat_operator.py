@@ -11,7 +11,7 @@ from __future__ import annotations
 from typing import Any
 from uuid import UUID
 
-from apps.worker.app.celery_runtime import ObservedTask, celery_app
+from apps.worker.app.celery_runtime import ObservedTask, celery_app, observed_task
 from services.chat.job_continuation import ChatJobContinuationResult, ChatJobContinuationService
 from services.db.session import get_session_factory
 from services.jobs.dispatcher import TaskDispatcher
@@ -52,7 +52,7 @@ def _serialize_result(result: ChatJobContinuationResult) -> dict[str, Any]:
     }
 
 
-resume_chat_operator = celery_app.task(
+resume_chat_operator = observed_task(
     bind=True,
     base=ObservedTask,
     name=TaskName.CHAT_RESUME_OPERATOR_TURN.value,

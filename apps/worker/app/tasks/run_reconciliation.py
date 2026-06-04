@@ -25,12 +25,13 @@ from decimal import Decimal, InvalidOperation
 from typing import Any
 from uuid import UUID
 
-from apps.worker.app.celery_runtime import celery_app
+from apps.worker.app.celery_runtime import observed_task
 from apps.worker.app.tasks.base import JobRuntimeContext, TrackedJobTask
 from apps.worker.app.tasks.close_run_phase_guard import ensure_close_run_active_phase
-from services.common.enums import ReconciliationType, WorkflowPhase
+from services.common.enums import DocumentType, ReconciliationType, WorkflowPhase
 from services.common.logging import get_logger
-from services.db.models.documents import Document, DocumentType
+from services.common.types import JsonObject, JsonValue
+from services.db.models.documents import Document
 from services.db.models.extractions import DocumentExtraction
 from services.db.models.journals import JournalEntry, JournalLine
 from services.db.models.ledger import (
@@ -57,6 +58,7 @@ from services.reconciliation.applicability import (
 from services.reconciliation.matchers import DEFAULT_MATCHING_CONFIG, MatchingConfig
 from services.reconciliation.service import ReconciliationRunOutput, ReconciliationService
 from services.supporting_schedules.service import SupportingScheduleService
+from sqlalchemy.orm import Session
 
 logger = get_logger(__name__)
 
@@ -88,7 +90,7 @@ class ReconciliationReceipt:
     errors: list[str]
 
 
-def _load_bank_statement_data(session, close_run_id: UUID) -> dict[str, list[dict[str, Any]]]:
+def _load_bank_statement_data(session: Session, close_run_id: UUID) -> dict[str, Any]:
     """Load bank statement lines from extracted bank statement documents.
 
     Args:
@@ -196,7 +198,7 @@ def _read_statement_lines_from_payload(*, payload: Any) -> tuple[dict[str, Any],
     return tuple(item for item in candidate if isinstance(item, dict))
 
 
-def _compute_account_balances(session, close_run_id: UUID) -> list[dict[str, Any]]:
+def _compute_account_balances(session: Session, close_run_id: UUID) -> list[dict[str, Any]]:
     """Compute effective account balances for the close run trial balance.
 
     Args:
@@ -246,7 +248,7 @@ def _compute_account_balances(session, close_run_id: UUID) -> list[dict[str, Any
 
 def _seed_balances_from_imported_trial_balance(
     *,
-    session,
+    session: Session,
     trial_balance_import_batch_id: UUID,
     coa_accounts: dict[str, dict[str, Any]],
     balances: dict[str, dict[str, Any]],
@@ -274,7 +276,7 @@ def _seed_balances_from_imported_trial_balance(
 
 def _seed_balances_from_imported_general_ledger(
     *,
-    session,
+    session: Session,
     general_ledger_import_batch_id: UUID,
     coa_accounts: dict[str, dict[str, Any]],
     balances: dict[str, dict[str, Any]],
@@ -301,7 +303,7 @@ def _seed_balances_from_imported_general_ledger(
 
 def _apply_close_run_journal_deltas(
     *,
-    session,
+    session: Session,
     close_run_id: UUID,
     coa_accounts: dict[str, dict[str, Any]],
     balances: dict[str, dict[str, Any]],
@@ -362,10 +364,10 @@ def _ensure_balance_bucket(
 
 
 def _build_reconciliation_source_data(
-    session,
+    session: Session,
     close_run_id: UUID,
     reconciliation_types: list[ReconciliationType],
-) -> dict[ReconciliationType, dict[str, list[dict[str, Any]]]]:
+) -> dict[ReconciliationType, dict[str, Any]]:
     """Build source data for all requested reconciliation types.
 
     Args:
@@ -833,11 +835,14 @@ def _run_reconciliation_task(
             source_data = _build_reconciliation_source_data(
                 session, parsed_close_run_id, parsed_types
             )
+            reconciliation_type_values: list[JsonValue] = [
+                str(item) for item in reconciliation_types
+            ]
             job_context.checkpoint(
                 step="load_reconciliation_sources",
                 state={
                     "close_run_id": close_run_id,
-                    "reconciliation_types": reconciliation_types,
+                    "reconciliation_types": reconciliation_type_values,
                 },
             )
             ensure_reconciliation_phase()
@@ -1033,23 +1038,27 @@ def _run_reconciliation_task(
     return _reconciliation_receipt_to_payload(receipt)
 
 
-def _reconciliation_receipt_to_payload(receipt: ReconciliationReceipt) -> dict[str, Any]:
+def _reconciliation_receipt_to_payload(receipt: ReconciliationReceipt) -> JsonObject:
     """Convert the slotted receipt dataclass into the JSON-safe task payload shape."""
 
+    reconciliation_types: list[JsonValue] = [
+        str(item) for item in receipt.reconciliation_types
+    ]
+    errors: list[JsonValue] = [str(item) for item in receipt.errors]
     return {
         "close_run_id": receipt.close_run_id,
-        "reconciliation_types": receipt.reconciliation_types,
+        "reconciliation_types": reconciliation_types,
         "total_items": receipt.total_items,
         "matched_items": receipt.matched_items,
         "exception_items": receipt.exception_items,
         "unmatched_items": receipt.unmatched_items,
         "trial_balance_computed": receipt.trial_balance_computed,
         "trial_balance_balanced": receipt.trial_balance_balanced,
-        "errors": receipt.errors,
+        "errors": errors,
     }
 
 
-@celery_app.task(
+@observed_task(
     bind=True,
     base=TrackedJobTask,
     name=TaskName.RECONCILIATION_EXECUTE_CLOSE_RUN.value,

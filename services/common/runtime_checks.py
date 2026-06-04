@@ -54,13 +54,21 @@ def run_backend_dependency_healthcheck(settings: AppSettings) -> None:
 def verify_database_connectivity(settings: AppSettings) -> None:
     """Confirm that PostgreSQL is reachable and responds to a trivial query."""
 
-    connect_kwargs: dict[str, object] = {"connect_timeout": 5}
     preferred_hostaddr = settings.database.resolve_preferred_hostaddr()
-    if preferred_hostaddr is not None:
-        connect_kwargs["hostaddr"] = preferred_hostaddr
 
     try:
-        with psycopg.connect(settings.database.connection_url, **connect_kwargs) as connection:
+        if preferred_hostaddr is not None:
+            connection_context = psycopg.connect(
+                settings.database.connection_url,
+                connect_timeout=5,
+                hostaddr=preferred_hostaddr,
+            )
+        else:
+            connection_context = psycopg.connect(
+                settings.database.connection_url,
+                connect_timeout=5,
+            )
+        with connection_context as connection:
             with connection.cursor() as cursor:
                 cursor.execute("SELECT 1;")
                 cursor.fetchone()

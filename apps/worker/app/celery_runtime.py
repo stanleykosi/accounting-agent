@@ -6,7 +6,8 @@ Dependencies: Celery, shared job configuration, shared observability helpers, an
 
 from __future__ import annotations
 
-from typing import Any
+from collections.abc import Callable
+from typing import Any, TypeVar, cast
 
 from apps.worker.app.telemetry import observe_worker_task_execution
 from celery import Task, signals
@@ -29,6 +30,13 @@ from services.observability.otel import configure_observability, get_tracer
 SETTINGS = get_settings()
 LOGGER = get_logger(__name__)
 celery_app = create_celery_app(settings=SETTINGS)
+_TaskFunction = TypeVar("_TaskFunction", bound=Callable[..., Any])
+
+
+def observed_task(*args: Any, **kwargs: Any) -> Callable[[_TaskFunction], _TaskFunction]:
+    """Return the Celery task decorator with a precise function-preserving type."""
+
+    return cast(Callable[[_TaskFunction], _TaskFunction], celery_app.task(*args, **kwargs))
 
 
 class TraceProbePayload(BaseModel):

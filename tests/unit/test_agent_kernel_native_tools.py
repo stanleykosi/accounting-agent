@@ -26,8 +26,15 @@ class FakeModelGateway:
         *,
         messages: list[dict[str, str]],
         tools: list[dict[str, Any]],
+        plain_text_fallback_tool_name: str | None = None,
     ) -> ModelGatewayToolCall:
-        self.calls.append({"messages": messages, "tools": tools})
+        self.calls.append(
+            {
+                "messages": messages,
+                "plain_text_fallback_tool_name": plain_text_fallback_tool_name,
+                "tools": tools,
+            }
+        )
         return self.tool_call
 
 
@@ -65,6 +72,7 @@ def test_agent_kernel_uses_native_read_only_tool_for_direct_answers() -> None:
         if isinstance(tool.get("function"), dict)
     }
     assert native_tool_names == {"answer_operator", "create_workspace"}
+    assert gateway.calls[0]["plain_text_fallback_tool_name"] == "answer_operator"
 
 
 def test_agent_kernel_strips_planning_metadata_before_tool_validation() -> None:
@@ -102,9 +110,7 @@ def test_agent_kernel_strips_planning_metadata_before_tool_validation() -> None:
         "legal_name": "Stanley Limited",
     }
     native_tool = next(
-        tool
-        for tool in gateway.calls[0]["tools"]
-        if tool["function"]["name"] == "create_workspace"
+        tool for tool in gateway.calls[0]["tools"] if tool["function"]["name"] == "create_workspace"
     )
     parameters = native_tool["function"]["parameters"]
     assert parameters["additionalProperties"] is False

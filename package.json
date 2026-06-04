@@ -17,6 +17,9 @@
     "format": "prettier --write . --ignore-unknown",
     "format:check": "prettier --check . --ignore-unknown",
     "lint": "pnpm --filter @accounting-ai-agent/ui lint && pnpm --filter @accounting-ai-agent/ts-sdk lint && pnpm --filter @accounting-ai-agent/desktop-ui lint",
+    "production:gate": "uv run python scripts/production_gate.py",
+    "production:gate:quick": "uv run python scripts/production_gate.py --quick",
+    "production:load-smoke": "uv run python scripts/load_smoke.py --required",
     "typecheck": "pnpm --filter @accounting-ai-agent/ui typecheck && pnpm --filter @accounting-ai-agent/ts-sdk typecheck && pnpm --filter @accounting-ai-agent/desktop-ui typecheck",
     "verify": "pnpm lint && pnpm typecheck && pnpm build && pnpm format:check"
   },

@@ -8,9 +8,10 @@ extraction database models.
 
 from __future__ import annotations
 
+from typing import Any
 from uuid import UUID
 
-from apps.worker.app.celery_runtime import ObservedTask, celery_app
+from apps.worker.app.celery_runtime import ObservedTask, observed_task
 from celery import Task
 from services.common.enums import DocumentStatus, DocumentType
 from services.common.logging import get_logger
@@ -31,7 +32,7 @@ from services.jobs.task_names import TaskName, resolve_task_route
 logger = get_logger(__name__)
 
 
-@celery_app.task(
+@observed_task(
     bind=True,
     base=ObservedTask,
     name=TaskName.DOCUMENT_EXTRACT.value,
@@ -44,8 +45,8 @@ logger = get_logger(__name__)
 def extract_document(
     self: Task,
     document_id: str,
-    parser_output: dict,
-) -> dict:
+    parser_output: dict[str, Any],
+) -> dict[str, Any]:
     """Extract structured fields from a parsed document.
 
     This task runs after parse_document and transforms raw parser output

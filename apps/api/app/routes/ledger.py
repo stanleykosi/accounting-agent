@@ -30,7 +30,7 @@ from fastapi import (
     UploadFile,
     status,
 )
-from services.auth.service import AuthService
+from services.auth.service import AuthenticatedSessionResult, AuthService
 from services.common.settings import AppSettings, get_settings
 from services.contracts.ledger_models import (
     GeneralLedgerExportSummary,
@@ -214,7 +214,7 @@ async def upload_trial_balance(
 async def _upload_general_ledger(
     *,
     entity_id: UUID,
-    session_result,
+    session_result: AuthenticatedSessionResult,
     request: Request,
     file: UploadFile,
     period_start: date,
@@ -344,7 +344,7 @@ def download_latest_general_ledger_export(
 async def _upload_trial_balance(
     *,
     entity_id: UUID,
-    session_result,
+    session_result: AuthenticatedSessionResult,
     request: Request,
     file: UploadFile,
     period_start: date,

@@ -13,8 +13,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
+from collections.abc import AsyncIterator, Iterator
 from dataclasses import dataclass
-from typing import Annotated
+from typing import Annotated, Literal, cast
 from uuid import UUID
 
 from apps.api.app.dependencies.db import DatabaseSessionDependency
@@ -80,7 +82,9 @@ from services.close_runs.delete_service import CloseRunDeleteService
 from services.close_runs.service import CloseRunService, CloseRunServiceError
 from services.coa.service import CoaRepository, CoaService, CoaServiceError
 from services.common.enums import WorkflowPhase
+from services.common.logging import get_logger
 from services.common.settings import AppSettings, get_settings
+from services.common.types import JsonObject, JsonValue
 from services.contracts.chat_models import (
     AgentOperatorControl,
     ChatMessageRecord,
@@ -101,6 +105,9 @@ from services.db.repositories.chat_repo import (
 from services.db.repositories.chat_repo import (
     ChatRepository,
 )
+from services.db.repositories.chat_repo import (
+    ChatThreadRecord as ChatRepositoryThreadRecord,
+)
 from services.db.repositories.close_run_repo import CloseRunRepository
 from services.db.repositories.document_repo import DocumentRepository
 from services.db.repositories.entity_repo import EntityRepository, EntityUserRecord
@@ -118,15 +125,17 @@ from services.documents.upload_service import (
 from services.entity.delete_service import EntityDeleteService
 from services.entity.service import EntityService
 from services.exports.service import ExportService
-from services.jobs.service import JobService
+from services.jobs.service import JobRecord, JobService, TaskDispatcherProtocol
 from services.jobs.task_names import TaskName
 from services.model_gateway.client import ModelGateway
 from services.reconciliation.service import ReconciliationService
 from services.reporting.service import ReportService
 from services.storage.repository import StorageRepository
+from sqlalchemy.orm import Session
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 MCP_PROTOCOL_VERSION = "2025-11-25"
+logger = get_logger(__name__)
 
 SettingsDependency = Annotated[AppSettings, Depends(get_settings)]
 AuthServiceDependency = Annotated[AuthService, Depends(get_auth_service)]
@@ -304,15 +313,15 @@ def _latest_message_order(
 
 def _dispatch_chat_operator_turn(
     *,
-    db_session,
-    task_dispatcher,
+    db_session: Session,
+    task_dispatcher: TaskDispatcherProtocol,
     thread_id: UUID,
     entity_id: UUID,
     close_run_id: UUID | None,
     actor_user_id: UUID,
     trace_id: str | None,
-    payload: dict[str, object],
-):
+    payload: JsonObject,
+) -> JobRecord:
     """Queue one durable chat operator turn on the control lane."""
 
     try:
@@ -341,7 +350,7 @@ def _persist_accepted_chat_user_turn(
     chat_repository: ChatRepository,
     thread_id: UUID,
     content: str,
-    grounding_payload: dict[str, object],
+    grounding_payload: JsonObject,
     client_turn_id: str | None,
 ) -> ChatRepositoryMessageRecord:
     """Persist the visible user turn before related background continuations can resume."""
@@ -372,7 +381,7 @@ def _persist_accepted_chat_user_turn(
 
 def _require_chat_entity_membership(
     *,
-    db_session,
+    db_session: Session,
     entity_id: UUID,
     user_id: UUID,
 ) -> EntityUserRecord:
@@ -400,7 +409,7 @@ async def _stream_thread_message_events(
     user_id: UUID,
     after_message_order: int,
     client_turn_id: str | None,
-):
+) -> AsyncIterator[str]:
     """Yield SSE events for messages persisted after the supplied high-water mark."""
 
     last_seen_order = after_message_order
@@ -533,14 +542,32 @@ def _chat_message_to_payload(message: ChatRepositoryMessageRecord) -> dict[str, 
         id=str(message.id),
         thread_id=str(message.thread_id),
         message_order=message.message_order,
-        role=message.role,
+        role=_coerce_chat_message_role(message.role),
         content=message.content,
-        message_type=message.message_type,
+        message_type=_coerce_chat_message_type(message.message_type),
         linked_action_id=str(message.linked_action_id) if message.linked_action_id else None,
         grounding_payload=message.grounding_payload,
         model_metadata=message.model_metadata,
         created_at=message.created_at,
     ).model_dump(mode="json")
+
+
+def _coerce_chat_message_role(value: str) -> Literal["user", "assistant", "system"]:
+    """Return a strict chat role literal or fail on invalid persisted data."""
+
+    if value not in {"user", "assistant", "system"}:
+        raise ValueError(f"Invalid chat message role: {value!r}")
+    return cast(Literal["user", "assistant", "system"], value)
+
+
+def _coerce_chat_message_type(
+    value: str,
+) -> Literal["analysis", "workflow", "action", "warning"]:
+    """Return a strict chat message type literal or fail on invalid persisted data."""
+
+    if value not in {"analysis", "workflow", "action", "warning"}:
+        raise ValueError(f"Invalid chat message type: {value!r}")
+    return cast(Literal["analysis", "workflow", "action", "warning"], value)
 
 
 def _format_sse_event(event: str, payload: dict[str, object]) -> str:
@@ -692,11 +719,11 @@ async def _ingest_chat_attachments(
     *,
     actor_user: EntityUserRecord,
     attachment_intent: str,
-    chat_thread,
+    chat_thread: ChatRepositoryThreadRecord,
     close_run_service: CloseRunService,
     coa_service: CoaService,
     content: str | None,
-    db_session: DatabaseSessionDependency,
+    db_session: Session,
     document_upload_service: DocumentUploadService,
     entity_id: UUID,
     files: tuple[UploadFile, ...],
@@ -761,17 +788,21 @@ async def _ingest_chat_attachments(
                 source_surface=AuditSourceSurface.DESKTOP,
                 trace_id=trace_id,
             )
-            attachments = tuple(
-                {
-                    "filename": uploaded.document.original_filename,
-                    "file_size_bytes": uploaded.document.file_size_bytes,
-                    "mime_type": uploaded.document.mime_type,
-                    "document_id": uploaded.document.id,
-                    "intent": normalized_intent,
-                    "status": uploaded.document.status,
-                }
-                for uploaded in result.uploaded_documents
-            )
+            document_ids: list[UUID] = []
+            attachments_list: list[dict[str, JsonValue]] = []
+            for uploaded in result.uploaded_documents:
+                document_ids.append(UUID(uploaded.document.id))
+                attachments_list.append(
+                    {
+                        "filename": uploaded.document.original_filename,
+                        "file_size_bytes": uploaded.document.file_size_bytes,
+                        "mime_type": uploaded.document.mime_type,
+                        "document_id": uploaded.document.id,
+                        "intent": normalized_intent,
+                        "status": uploaded.document.status,
+                    }
+                )
+            attachments = tuple(attachments_list)
             summary = (
                 f"{len(attachments)} source document"
                 f"{'' if len(attachments) == 1 else 's'} uploaded and parsing started."
@@ -800,7 +831,7 @@ async def _ingest_chat_attachments(
                 actor_user=actor_user,
                 entity_id=entity_id,
                 close_run_id=chat_thread.close_run_id,
-                document_ids=tuple(uploaded.document.id for uploaded in result.uploaded_documents),
+                document_ids=tuple(document_ids),
                 source_surface=AuditSourceSurface.DESKTOP,
                 trace_id=trace_id,
                 checkpoint_payload=embed_continuation_in_checkpoint(
@@ -1410,7 +1441,7 @@ def send_chat_action(
 
     return ChatActionResponse(
         message_id=f"queued:{job.id}",
-        content="I'm working on that now.",
+        content="I'm on it. I'll report back here when the task finishes.",
         action_plan=None,
         is_read_only=True,
         thread_entity_id=str(thread.entity_id),
@@ -1423,12 +1454,179 @@ def send_chat_action(
     )
 
 
+@router.post(
+    "/threads/{thread_id}/actions/stream",
+    summary="Send a chat action and stream safe read-only replies",
+    response_class=StreamingResponse,
+    responses={
+        200: {
+            "content": {
+                "text/event-stream": {
+                    "schema": {"type": "string"},
+                },
+            },
+            "description": "Server-Sent Events stream for read-only or queued chat action turns.",
+        },
+    },
+)
+def stream_chat_action(
+    thread_id: UUID,
+    payload: SendChatActionRequest,
+    entity_id: EntityIdQuery,
+    request: Request = None,  # type: ignore[assignment]
+    response: Response = None,  # type: ignore[assignment]
+    settings: SettingsDependency = None,  # type: ignore[assignment]
+    auth_service: AuthServiceDependency = None,  # type: ignore[assignment]
+    action_executor: ChatActionExecutorDependency = None,  # type: ignore[assignment]
+    chat_repository: ChatRepositoryDependency = None,  # type: ignore[assignment]
+    db_session: DatabaseSessionDependency = None,  # type: ignore[assignment]
+    task_dispatcher: TaskDispatcherDependency = None,  # type: ignore[assignment]
+) -> StreamingResponse:
+    """Stream plain read-only replies and queue action turns through the worker."""
+
+    session_result = _require_authenticated_browser_session(
+        request=request,
+        response=response,
+        auth_service=auth_service,
+        settings=settings,
+    )
+    trace_id = getattr(request.state, "request_id", None)
+
+    _require_chat_entity_membership(
+        db_session=db_session,
+        entity_id=entity_id,
+        user_id=session_result.user.id,
+    )
+    thread = chat_repository.get_thread_for_entity(thread_id=thread_id, entity_id=entity_id)
+    if thread is None:
+        raise HTTPException(
+            status_code=404,
+            detail=_error_payload(
+                code="thread_not_found",
+                message="That chat thread does not exist in this workspace.",
+            ),
+        )
+
+    def event_stream() -> Iterator[str]:
+        started_at = time.perf_counter()
+        direct_streamer = getattr(
+            action_executor,
+            "stream_direct_read_only_message_if_supported",
+            None,
+        )
+        if callable(direct_streamer):
+            try:
+                direct_events = direct_streamer(
+                    thread_id=thread_id,
+                    entity_id=entity_id,
+                    actor_user=_to_entity_user(session_result),
+                    content=payload.content,
+                    client_turn_id=payload.client_turn_id,
+                    source_surface=AuditSourceSurface.DESKTOP,
+                    trace_id=trace_id,
+                )
+            except ChatActionExecutionError as error:
+                yield _format_sse_event(
+                    "error",
+                    {"code": error.code.value, "message": error.message},
+                )
+                return
+            if direct_events is not None:
+                direct_stream_deferred = False
+                for stream_event in direct_events:
+                    if stream_event.event == "deferred":
+                        direct_stream_deferred = True
+                        break
+                    yield _format_sse_event(stream_event.event, stream_event.payload)
+                    if stream_event.event == "error":
+                        return
+                if not direct_stream_deferred:
+                    logger.info(
+                        "chat_stream_request_completed",
+                        thread_id=str(thread_id),
+                        entity_id=str(thread.entity_id),
+                        response_path="direct_read_only",
+                        duration_ms=int((time.perf_counter() - started_at) * 1000),
+                    )
+                    yield _format_sse_event("done", {"status": "completed"})
+                    return
+
+        try:
+            stream_after_order = _latest_message_order(
+                chat_repository=chat_repository,
+                thread_id=thread_id,
+            )
+            job = _dispatch_chat_operator_turn(
+                db_session=db_session,
+                task_dispatcher=task_dispatcher,
+                thread_id=thread_id,
+                entity_id=thread.entity_id,
+                close_run_id=thread.close_run_id,
+                actor_user_id=session_result.user.id,
+                trace_id=trace_id,
+                payload={
+                    "thread_id": str(thread_id),
+                    "entity_id": str(thread.entity_id),
+                    "actor_user_id": str(session_result.user.id),
+                    "content": payload.content,
+                    "client_turn_id": payload.client_turn_id,
+                    "process_existing_user_turn": True,
+                },
+            )
+        except HTTPException as error:
+            detail: dict[str, object] = (
+                error.detail if isinstance(error.detail, dict) else {}
+            )
+            message = (
+                detail.get("message")
+                if isinstance(detail.get("message"), str)
+                else "The chat worker could not be queued."
+            )
+            code = detail.get("code") if isinstance(detail.get("code"), str) else "queue_failed"
+            yield _format_sse_event("error", {"code": code, "message": message})
+            return
+
+        response_payload = ChatActionResponse(
+            message_id=f"queued:{job.id}",
+            content="I'm on it. I'll report back here when the task finishes.",
+            action_plan=None,
+            is_read_only=True,
+            thread_entity_id=str(thread.entity_id),
+            thread_close_run_id=str(thread.close_run_id)
+            if thread.close_run_id is not None
+            else None,
+            operator_controls=(),
+            turn_status="accepted",
+            turn_job_id=str(job.id),
+            client_turn_id=payload.client_turn_id,
+            stream_after_message_order=stream_after_order,
+        ).model_dump(mode="json")
+        logger.info(
+            "chat_stream_request_completed",
+            thread_id=str(thread_id),
+            entity_id=str(thread.entity_id),
+            response_path="worker_accepted",
+            duration_ms=int((time.perf_counter() - started_at) * 1000),
+        )
+        yield _format_sse_event("accepted", {"response": response_payload})
+        yield _format_sse_event("done", {"status": "accepted"})
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class ChatInlineAttachmentResult:
     """Describe inline chat attachments after canonical ingestion succeeds."""
 
     attachment_intent: str
-    files: tuple[dict[str, object], ...]
+    files: tuple[dict[str, JsonValue], ...]
     operator_prompt: str
     summary: str
     continuation_group_id: str
@@ -1469,6 +1667,7 @@ async def send_chat_action_with_attachments(
     )
     trace_id = getattr(request.state, "request_id", None)
     inline_result: ChatInlineAttachmentResult | None = None
+    thread_for_partial_success: ChatRepositoryThreadRecord | None = None
 
     try:
         _require_chat_entity_membership(
@@ -1485,6 +1684,7 @@ async def send_chat_action_with_attachments(
                     message="That chat thread does not exist in this workspace.",
                 ),
             )
+        thread_for_partial_success = thread
         if attachment_intent.strip().lower() == "source_documents" and thread.close_run_id is None:
             try:
                 workspace = action_executor.get_thread_workspace(
@@ -1522,7 +1722,7 @@ async def send_chat_action_with_attachments(
             content=content,
             summary=inline_result.summary,
         )
-        message_grounding_payload = {
+        message_grounding_payload: JsonObject = {
             "attachment_intent": inline_result.attachment_intent,
             "attachments": list(inline_result.files),
             "ingestion_summary": inline_result.summary,
@@ -1571,7 +1771,7 @@ async def send_chat_action_with_attachments(
     except HTTPException:
         raise
     except ChatActionExecutionError as error:
-        if inline_result is None:
+        if inline_result is None or thread_for_partial_success is None:
             raise HTTPException(
                 status_code=error.status_code,
                 detail=_error_payload(code=error.code.value, message=error.message),
@@ -1581,8 +1781,8 @@ async def send_chat_action_with_attachments(
             content=content,
             inline_result=inline_result,
             thread_id=thread_id,
-            thread_entity_id=thread.entity_id,
-            thread_close_run_id=thread.close_run_id,
+            thread_entity_id=thread_for_partial_success.entity_id,
+            thread_close_run_id=thread_for_partial_success.close_run_id,
             trace_id=trace_id,
         )
     except (CloseRunServiceError, CoaServiceError, DocumentUploadServiceError) as error:
@@ -1596,7 +1796,10 @@ async def send_chat_action_with_attachments(
 
     return ChatActionResponse(
         message_id=f"queued:{job.id}",
-        content="I uploaded the files and I'm processing the chat follow-up now.",
+        content=(
+            "I uploaded the files and I'm processing the chat follow-up now. "
+            "I'll report back here when it finishes."
+        ),
         action_plan=None,
         is_read_only=True,
         thread_entity_id=str(thread.entity_id),
@@ -1940,7 +2143,7 @@ def approve_chat_action(
             detail=_error_payload(code=error.code.value, message=error.message),
         ) from error
 
-    return _to_chat_action_summary(record)
+    return _require_chat_action_summary(record)
 
 
 @router.post(
@@ -1990,7 +2193,22 @@ def reject_chat_action(
             detail=_error_payload(code=error.code.value, message=error.message),
         ) from error
 
-    return _to_chat_action_summary(record)
+    return _require_chat_action_summary(record)
+
+
+def _require_chat_action_summary(record: object | None) -> ChatActionSummary:
+    """Convert an action-plan record or fail when the executor returned none."""
+
+    summary = _to_chat_action_summary(record)
+    if summary is None:
+        raise HTTPException(
+            status_code=404,
+            detail=_error_payload(
+                code="action_plan_not_found",
+                message="That chat action is no longer available.",
+            ),
+        )
+    return summary
 
 
 def _to_chat_action_summary(record: object | None) -> ChatActionSummary | None:

@@ -9,7 +9,7 @@ and the shared export service.
 
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, NoReturn
 from uuid import UUID
 
 from apps.api.app.dependencies.db import DatabaseSessionDependency
@@ -322,7 +322,7 @@ def _to_entity_user(session_result: AuthenticatedUserContext) -> EntityUserRecor
     )
 
 
-def _raise_export_http_error(error: ExportServiceError) -> None:
+def _raise_export_http_error(error: ExportServiceError) -> NoReturn:
     """Translate one export service error into the API's structured HTTP response."""
 
     raise HTTPException(
@@ -331,7 +331,7 @@ def _raise_export_http_error(error: ExportServiceError) -> None:
     ) from error
 
 
-def _raise_evidence_pack_not_found() -> None:
+def _raise_evidence_pack_not_found() -> NoReturn:
     """Raise the canonical not-found response for missing evidence-pack metadata."""
 
     raise HTTPException(

@@ -8,6 +8,7 @@ Dependencies: FastAPI, request-scoped auth helpers, close-run access checks,
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Annotated
 from uuid import UUID
 
@@ -18,6 +19,7 @@ from apps.api.app.routes.workflow_phase import require_active_close_run_phase
 from fastapi import APIRouter, Depends, HTTPException, status
 from services.auth.service import serialize_uuid
 from services.common.enums import SupportingScheduleStatus, SupportingScheduleType, WorkflowPhase
+from services.common.types import JsonObject
 from services.contracts.supporting_schedule_models import (
     SupportingScheduleDetail,
     SupportingScheduleRowMutationResult,
@@ -306,7 +308,7 @@ def _emit_schedule_event(
     actor_user_id: UUID,
     event_type: str,
     schedule_type: SupportingScheduleType,
-    payload: dict[str, object],
+    payload: JsonObject,
 ) -> None:
     CloseRunRepository(db_session=db_session).create_activity_event(
         entity_id=entity_id,
@@ -362,7 +364,7 @@ def _build_row_summary(
     )
 
 
-def _resolve_schedule_updated_at(snapshot: SupportingScheduleSnapshot):
+def _resolve_schedule_updated_at(snapshot: SupportingScheduleSnapshot) -> datetime:
     if not snapshot.rows:
         return snapshot.schedule.updated_at
     return max(snapshot.schedule.updated_at, *(row.updated_at for row in snapshot.rows))

@@ -10,6 +10,7 @@ and durable job lifecycle records.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 from uuid import UUID
 
 from services.accounting.recommendation_apply import RecommendationApplyService
@@ -50,6 +51,9 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 _TERMINAL_JOB_STATUSES = frozenset({"completed", "blocked", "failed", "canceled"})
+
+if TYPE_CHECKING:
+    from services.db.models.audit import AuditSourceSurface
 
 
 @dataclass(frozen=True, slots=True)
@@ -342,7 +346,7 @@ def build_chat_job_continuation_service(
     )
 
 
-def _coerce_source_surface(source_surface: str):
+def _coerce_source_surface(source_surface: str) -> AuditSourceSurface:
     """Import the audit enum lazily to avoid circular imports in module constants."""
 
     from services.db.models.audit import AuditSourceSurface

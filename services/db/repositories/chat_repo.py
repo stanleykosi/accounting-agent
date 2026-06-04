@@ -124,6 +124,21 @@ class ChatRepository:
             self._acquire_thread_turn_lock(thread_id=thread_id)
         return _map_thread(thread)
 
+    def try_lock_thread_for_turn(self, *, thread_id: UUID) -> ChatThreadRecord | None:
+        """Acquire the turn lock only when it is immediately available."""
+
+        statement = select(ChatThread).where(ChatThread.id == thread_id)
+        thread = self._db_session.execute(statement).scalar_one_or_none()
+        if thread is None:
+            return None
+
+        bind = self._db_session.get_bind()
+        if bind.dialect.name == "postgresql" and not self._try_acquire_thread_turn_lock(
+            thread_id=thread_id,
+        ):
+            return None
+        return _map_thread(thread)
+
     def release_thread_turn_lock(self, *, thread_id: UUID) -> None:
         """Release the dedicated Postgres advisory lock connection for one operator turn."""
 
@@ -481,19 +496,7 @@ class ChatRepository:
         if self._turn_lock_connection is not None:
             raise RuntimeError("A chat turn advisory lock is already held by this repository.")
 
-        settings = get_settings()
-        preferred_hostaddr = settings.database.resolve_preferred_hostaddr()
-        if preferred_hostaddr is not None:
-            connection = psycopg.connect(
-                settings.database.connection_url,
-                autocommit=True,
-                hostaddr=preferred_hostaddr,
-            )
-        else:
-            connection = psycopg.connect(
-                settings.database.connection_url,
-                autocommit=True,
-            )
+        connection = _open_thread_turn_lock_connection()
         try:
             connection.execute(
                 "SELECT pg_advisory_lock(%s)",
@@ -503,6 +506,29 @@ class ChatRepository:
             connection.close()
             raise
         self._turn_lock_connection = connection
+
+    def _try_acquire_thread_turn_lock(self, *, thread_id: UUID) -> bool:
+        """Return False instead of blocking behind an active operator turn."""
+
+        if self._turn_lock_connection is not None:
+            raise RuntimeError("A chat turn advisory lock is already held by this repository.")
+
+        connection = _open_thread_turn_lock_connection()
+        try:
+            cursor = connection.execute(
+                "SELECT pg_try_advisory_lock(%s)",
+                (_thread_advisory_lock_key(thread_id),),
+            )
+            row = cursor.fetchone()
+            acquired = bool(row[0]) if row is not None else False
+        except Exception:
+            connection.close()
+            raise
+        if not acquired:
+            connection.close()
+            return False
+        self._turn_lock_connection = connection
+        return True
 
     def _notify_message_created(self, message: ChatMessage) -> None:
         """Stage a Postgres notification that fires when this message commits."""
@@ -543,6 +569,23 @@ def _thread_advisory_lock_key(thread_id: UUID) -> int:
     """Return a stable positive bigint key for Postgres advisory locks."""
 
     return thread_id.int % (2**63)
+
+
+def _open_thread_turn_lock_connection() -> psycopg.Connection[Any]:
+    """Open the dedicated connection used for turn-long advisory locks."""
+
+    settings = get_settings()
+    preferred_hostaddr = settings.database.resolve_preferred_hostaddr()
+    if preferred_hostaddr is not None:
+        return psycopg.connect(
+            settings.database.connection_url,
+            autocommit=True,
+            hostaddr=preferred_hostaddr,
+        )
+    return psycopg.connect(
+        settings.database.connection_url,
+        autocommit=True,
+    )
 
 
 def _build_message_stats_subquery(candidate_threads: Any) -> Any:

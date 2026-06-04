@@ -39,6 +39,7 @@ from services.auth.service import (
 )
 from services.common.enums import (
     DEFAULT_RECONCILIATION_EXECUTION_TYPES,
+    DocumentType,
     JobStatus,
     MatchStatus,
     ReconciliationSourceType,
@@ -67,7 +68,7 @@ from services.contracts.reconciliation_models import (
     TrialBalanceDetailResponse,
     TrialBalanceSnapshotSummary,
 )
-from services.db.models.documents import Document, DocumentType
+from services.db.models.documents import Document
 from services.db.repositories.close_run_repo import CloseRunRepository
 from services.db.repositories.entity_repo import EntityUserRecord
 from services.db.repositories.reconciliation_repo import (

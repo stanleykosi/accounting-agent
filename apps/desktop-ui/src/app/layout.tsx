@@ -5,19 +5,8 @@ Dependencies: apps/desktop-ui/src/app/globals.css and Next.js metadata support.
 */
 
 import type { Metadata } from "next";
-import { Inter, Newsreader } from "next/font/google";
 import type { ReactElement, ReactNode } from "react";
 import "./globals.css";
-
-const inter = Inter({
-  subsets: ["latin"],
-  variable: "--font-quartz-body",
-});
-
-const newsreader = Newsreader({
-  subsets: ["latin"],
-  variable: "--font-quartz-display",
-});
 
 export const metadata: Metadata = {
   title: "Accounting AI Agent",
@@ -38,7 +27,7 @@ export default function RootLayout({
 }>): ReactElement {
   return (
     <html lang="en">
-      <body className={`${inter.variable} ${newsreader.variable}`}>{children}</body>
+      <body>{children}</body>
     </html>
   );
 }

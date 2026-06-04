@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
 
-from apps.worker.app.celery_runtime import celery_app
+from apps.worker.app.celery_runtime import observed_task
 from apps.worker.app.tasks.base import JobRuntimeContext, TrackedJobTask
 from apps.worker.app.tasks.close_run_phase_guard import ensure_close_run_active_phase
 from services.common.enums import (
@@ -51,6 +51,7 @@ from services.orchestration.recommendation_graph import (
     RecommendationGraphError,
     execute_recommendation_workflow,
 )
+from sqlalchemy.orm import Session
 
 logger = get_logger(__name__)
 
@@ -75,7 +76,7 @@ def _build_imported_gl_suppression_payload(
     close_run_id: str,
     document_id: str,
     reason: str,
-) -> dict[str, Any]:
+) -> dict[str, object]:
     """Return the stable task payload for an imported-GL suppression no-op."""
 
     return {
@@ -97,7 +98,7 @@ def _run_recommendation_task(
     actor_user_id: str,
     force: bool,
     job_context: JobRuntimeContext,
-) -> dict[str, Any]:
+) -> dict[str, object]:
     """Run the recommendation workflow from a Celery invocation.
 
     Args:
@@ -311,12 +312,16 @@ def _load_recommendation_context(
                     for field_item in fields_list:
                         if isinstance(field_item, dict):
                             field_name = field_item.get("field_name")
-                            if field_name:
+                            if isinstance(field_name, str) and field_name:
                                 extracted_fields[field_name] = field_item.get("field_value", {})
 
                 parser_output = payload.get("parser_output", {})
                 if isinstance(parser_output, dict):
-                    line_items = parser_output.get("line_items", [])
+                    raw_line_items = parser_output.get("line_items", [])
+                    if isinstance(raw_line_items, list):
+                        line_items = [
+                            dict(item) for item in raw_line_items if isinstance(item, dict)
+                        ]
 
             # Determine document type from extraction schema
             try:
@@ -329,7 +334,7 @@ def _load_recommendation_context(
 
         doc = db.query(Document).filter(Document.id == document_id).first()
         if doc is not None and doc.document_type != DocumentType.UNKNOWN:
-            document_type = doc.document_type
+            document_type = DocumentType(doc.document_type)
 
     # Determine autonomy mode and confidence threshold from entity
     autonomy_mode_raw = "human_review"
@@ -341,7 +346,7 @@ def _load_recommendation_context(
         autonomy_mode = AutonomyMode.HUMAN_REVIEW
 
     # Parse confidence thresholds
-    thresholds: dict = {}
+    thresholds: dict[str, Any] = {}
     if hasattr(entity, "default_confidence_thresholds"):
         thresholds = entity.default_confidence_thresholds
     confidence_threshold = 0.7
@@ -493,6 +498,10 @@ def _persist_recommendation(
         db.add(recommendation)
         db.flush()
         if force:
+            if context.document_id is None:
+                raise RecommendationRegenerationBlockedError(
+                    "Force regeneration requires a source document in recommendation context."
+                )
             (
                 superseded_recommendation_count,
                 superseded_journal_count,
@@ -549,7 +558,7 @@ def _persist_recommendation(
 
 def _supersede_existing_recommendation_state_for_document(
     *,
-    db_session,
+    db_session: Session,
     close_run_id: UUID,
     document_id: UUID,
     replacement_recommendation_id: UUID,
@@ -618,7 +627,7 @@ def _supersede_existing_recommendation_state_for_document(
     return superseded_recommendation_count, superseded_journal_count
 
 
-@celery_app.task(
+@observed_task(
     bind=True,
     base=TrackedJobTask,
     name=TaskName.ACCOUNTING_RECOMMEND_CLOSE_RUN.value,
@@ -635,7 +644,7 @@ def recommend_close_run(
     document_id: str,
     actor_user_id: str,
     force: bool = False,
-) -> dict[str, Any]:
+    ) -> dict[str, object]:
     """Execute recommendation generation under the canonical checkpointed job wrapper."""
 
     return self.run_tracked_job(

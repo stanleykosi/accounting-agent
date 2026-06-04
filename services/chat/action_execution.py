@@ -11,11 +11,13 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from calendar import monthrange
+from collections.abc import Iterator
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any, TypedDict, cast
-from uuid import UUID, uuid4
+from uuid import UUID
 
 from services.accounting.recommendation_apply import (
     RecommendationApplyError,
@@ -50,6 +52,7 @@ from services.close_runs.delete_service import CloseRunDeleteService
 from services.close_runs.service import CloseRunService, CloseRunServiceError
 from services.coa.service import CoaRepository, CoaService
 from services.common.enums import CloseRunStatus, ReportSectionKey, WorkflowPhase
+from services.common.logging import get_logger
 from services.common.types import utc_now
 from services.contracts.chat_models import (
     AgentCoaSummary,
@@ -95,6 +98,8 @@ from services.supporting_schedules.service import (
 )
 from sqlalchemy.orm import Session
 
+logger = get_logger(__name__)
+
 
 class ChatActionExecutionErrorCode(StrEnum):
     """Enumerate stable error codes surfaced by the chat action executor."""
@@ -134,6 +139,14 @@ class ChatExecutionOutcome:
     is_read_only: bool
     thread_entity_id: str
     thread_close_run_id: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class ChatReadOnlyStreamEvent:
+    """Describe one server-sent event for the read-only chat streaming lane."""
+
+    event: str
+    payload: dict[str, Any]
 
 
 @dataclass(frozen=True, slots=True)
@@ -259,6 +272,7 @@ class ChatActionExecutor:
         )
         tool_registry = self._toolset.build_registry()
         self._tool_registry = tool_registry
+        self._model_gateway = model_gateway
         self._kernel = AgentKernel(
             model_gateway=model_gateway,
             tool_registry=tool_registry,
@@ -297,6 +311,16 @@ class ChatActionExecutor:
                 code=ChatActionExecutionErrorCode.THREAD_NOT_FOUND,
                 message="That chat thread does not exist.",
             )
+
+    def _try_lock_thread_for_turn(self, *, thread_id: UUID) -> bool:
+        """Acquire the operator turn lock only when it is immediately free."""
+
+        try_lock = getattr(self._chat_repo, "try_lock_thread_for_turn", None)
+        if callable(try_lock):
+            thread = try_lock(thread_id=thread_id)
+            return thread is not None
+        self._lock_thread_for_turn(thread_id=thread_id)
+        return True
 
     def _release_thread_turn_lock(self, *, thread_id: UUID) -> None:
         """Release the thread turn serialization lock without masking turn outcomes."""
@@ -478,15 +502,16 @@ class ChatActionExecutor:
         source_surface: AuditSourceSurface,
         trace_id: str | None,
     ) -> ChatExecutionOutcome | None:
-        """Return an immediate deterministic read-only reply when one is available."""
+        """Return an immediate read-only reply when it can be answered safely."""
 
-        del message_grounding_payload, source_surface, trace_id, user_message_content
-        _, thread = self._load_thread_context(
+        del source_surface
+        grounding, thread = self._load_thread_context(
             thread_id=thread_id,
             entity_id=entity_id,
             user_id=actor_user.id,
         )
         active_entity_id = thread.entity_id
+        turn_lock_acquired = False
 
         try:
             replayed_outcome = self._replay_completed_turn_if_present(
@@ -497,7 +522,10 @@ class ChatActionExecutor:
             if replayed_outcome is not None:
                 return replayed_outcome
 
-            _, thread = self._load_thread_context(
+            if _is_likely_operator_action_request(_searchable_text(content)):
+                return None
+
+            grounding, thread = self._load_thread_context(
                 thread_id=thread_id,
                 entity_id=active_entity_id,
                 user_id=actor_user.id,
@@ -510,6 +538,91 @@ class ChatActionExecutor:
                 context_payload=thread.context_payload,
             )
             snapshot: dict[str, Any] | None = None
+            assistant_content = None
+            document_repository = getattr(self, "_document_repository", None)
+            if (
+                thread.close_run_id is not None
+                and document_repository is not None
+                and _is_document_skip_follow_up_request(
+                    operator_content=content,
+                    operator_memory=operator_memory,
+                )
+            ):
+                documents = document_repository.list_documents_for_close_run(
+                    close_run_id=thread.close_run_id,
+                )
+                snapshot = {
+                    "documents": [
+                        {
+                            "filename": document.original_filename,
+                            "status": (
+                                document.status.value
+                                if hasattr(document.status, "value")
+                                else str(document.status)
+                            ),
+                        }
+                        for document in documents
+                    ]
+                }
+                assistant_content = _build_document_skip_follow_up_response(
+                    snapshot=snapshot,
+                    operator_content=content,
+                    operator_memory=operator_memory,
+                )
+
+            if assistant_content is None:
+                if not _is_fast_inline_read_only_candidate(content):
+                    return None
+                snapshot = self._snapshot_for_thread(
+                    actor_user=actor_user,
+                    entity_id=active_entity_id,
+                    close_run_id=thread.close_run_id,
+                    thread_id=thread_id,
+                )
+                assistant_content = _build_direct_operator_status_response(
+                    snapshot=snapshot,
+                    operator_content=content,
+                    operator_memory=operator_memory,
+                )
+            if assistant_content is None:
+                return self._send_inline_read_only_message_if_supported(
+                    thread_id=thread_id,
+                    entity_id=active_entity_id,
+                    actor_user=actor_user,
+                    content=content,
+                    operator_message_for_memory=(
+                        user_message_content if user_message_content is not None else content
+                    ),
+                    client_turn_id=client_turn_id,
+                    message_grounding_payload=message_grounding_payload,
+                    user_message_content=user_message_content,
+                    trace_id=trace_id,
+                )
+
+            if not self._try_lock_thread_for_turn(thread_id=thread_id):
+                return None
+            turn_lock_acquired = True
+            replayed_outcome = self._replay_completed_turn_if_present(
+                thread_id=thread_id,
+                actor_user=actor_user,
+                client_turn_id=client_turn_id,
+            )
+            if replayed_outcome is not None:
+                return replayed_outcome
+
+            grounding, thread = self._load_thread_context(
+                thread_id=thread_id,
+                entity_id=active_entity_id,
+                user_id=actor_user.id,
+            )
+            active_entity_id = thread.entity_id
+            operator_memory = self._memory_for_thread(
+                thread_id=thread_id,
+                entity_id=active_entity_id,
+                actor_user_id=actor_user.id,
+                context_payload=thread.context_payload,
+            )
+            snapshot = None
             assistant_content = None
             document_repository = getattr(self, "_document_repository", None)
             if (
@@ -557,9 +670,241 @@ class ChatActionExecutor:
             if assistant_content is None:
                 return None
 
-            return self._build_execution_outcome(
-                assistant_message_id=f"direct:{uuid4()}",
+            return self._persist_fast_read_only_message(
+                thread_id=thread_id,
+                thread=thread,
+                grounding=grounding,
+                content=content,
                 assistant_content=assistant_content,
+                operator_memory=operator_memory,
+                snapshot=snapshot or {},
+                client_turn_id=client_turn_id,
+                message_grounding_payload=message_grounding_payload,
+                user_message_content=user_message_content,
+                trace_id=trace_id,
+                planner_mode="deterministic_status",
+            )
+        except ChatActionExecutionError:
+            self._db_session.rollback()
+            raise
+        except Exception as error:
+            self._db_session.rollback()
+            raise ChatActionExecutionError(
+                status_code=500,
+                code=ChatActionExecutionErrorCode.EXECUTION_FAILED,
+                message=_build_unexpected_operator_failure_message(error=error),
+            ) from error
+        finally:
+            if turn_lock_acquired:
+                self._release_thread_turn_lock(thread_id=thread_id)
+
+    def _persist_fast_read_only_message(
+        self,
+        *,
+        thread_id: UUID,
+        thread: Any,
+        grounding: GroundingContextRecord,
+        content: str,
+        assistant_content: str,
+        operator_memory: AgentMemorySummary,
+        snapshot: dict[str, Any],
+        client_turn_id: str | None,
+        message_grounding_payload: dict[str, Any] | None,
+        user_message_content: str | None,
+        trace_id: str | None,
+        planner_mode: str,
+    ) -> ChatExecutionOutcome:
+        """Persist a fast deterministic read-only turn without invoking model planning."""
+
+        self._chat_repo.create_message(
+            thread_id=thread_id,
+            role="user",
+            content=user_message_content if user_message_content is not None else content,
+            message_type="action",
+            linked_action_id=None,
+            grounding_payload=dict(message_grounding_payload or {}),
+            model_metadata=_build_turn_metadata(
+                metadata=None,
+                client_turn_id=client_turn_id,
+                turn_status="received",
+            ),
+        )
+        assistant_message = self._chat_repo.create_message(
+            thread_id=thread_id,
+            role="assistant",
+            content=assistant_content,
+            message_type="analysis",
+            linked_action_id=None,
+            grounding_payload=self._build_grounding_payload(grounding),
+            model_metadata=_build_turn_metadata(
+                metadata=self._build_trace_metadata(
+                    trace_id=trace_id,
+                    mode=planner_mode,
+                    tool_name=operator_memory.last_tool_name,
+                    action_status="read_only",
+                    summary=snapshot.get("progress_summary")
+                    if isinstance(snapshot.get("progress_summary"), str)
+                    else None,
+                ),
+                client_turn_id=client_turn_id,
+                turn_status="completed",
+            ),
+        )
+        self._update_thread_memory(
+            thread_id=thread_id,
+            existing_payload=thread.context_payload,
+            operator_message=user_message_content if user_message_content is not None else content,
+            assistant_response=assistant_content,
+            tool_name=operator_memory.last_tool_name,
+            tool_arguments=None,
+            action_status="read_only",
+            trace_id=trace_id,
+            snapshot=snapshot,
+        )
+        self._db_session.commit()
+        return self._build_execution_outcome(
+            assistant_message_id=serialize_uuid(assistant_message.id),
+            assistant_content=assistant_message.content,
+            action_plan=None,
+            is_read_only=True,
+            thread=thread,
+        )
+
+    def _send_inline_read_only_message_if_supported(
+        self,
+        *,
+        thread_id: UUID,
+        entity_id: UUID,
+        actor_user: EntityUserRecord,
+        content: str,
+        operator_message_for_memory: str | None,
+        client_turn_id: str | None,
+        message_grounding_payload: dict[str, Any] | None,
+        user_message_content: str | None,
+        trace_id: str | None,
+    ) -> ChatExecutionOutcome | None:
+        """Plan and persist an inline turn only when the selected action is read-only."""
+
+        active_entity_id = entity_id
+        turn_lock_acquired = False
+        try:
+            if not self._try_lock_thread_for_turn(thread_id=thread_id):
+                return None
+            turn_lock_acquired = True
+            replayed_outcome = self._replay_completed_turn_if_present(
+                thread_id=thread_id,
+                actor_user=actor_user,
+                client_turn_id=client_turn_id,
+            )
+            if replayed_outcome is not None:
+                return replayed_outcome
+
+            grounding, thread = self._load_thread_context(
+                thread_id=thread_id,
+                entity_id=active_entity_id,
+                user_id=actor_user.id,
+            )
+            active_entity_id = thread.entity_id
+            self._ensure_entity_coa_available(actor_user=actor_user, entity_id=active_entity_id)
+            operator_memory = self._memory_for_thread(
+                thread_id=thread_id,
+                entity_id=active_entity_id,
+                actor_user_id=actor_user.id,
+                context_payload=thread.context_payload,
+            )
+            snapshot = self._snapshot_for_thread(
+                actor_user=actor_user,
+                entity_id=active_entity_id,
+                close_run_id=thread.close_run_id,
+                thread_id=thread_id,
+            )
+            planning = self._plan_action(
+                thread_id=thread_id,
+                entity_id=active_entity_id,
+                actor_user=actor_user,
+                content=content,
+                grounding=grounding,
+                operator_memory=operator_memory,
+                snapshot=snapshot,
+                loop_context=None,
+            )
+            planning = self._hydrate_planning_result(
+                planning=planning,
+                snapshot=snapshot,
+                operator_content=content,
+                operator_memory=operator_memory,
+            )
+            clarification = self._build_runtime_clarification(
+                planning=planning,
+                snapshot=snapshot,
+            )
+            action = None if clarification is not None else self._resolve_action(planning=planning)
+            if action is not None:
+                self._db_session.rollback()
+                return None
+
+            assistant_content = _compose_assistant_content(
+                assistant_response=clarification or planning.assistant_response,
+                handoff_message=None,
+                result_summary=None,
+                next_step=(
+                    None
+                    if _should_suppress_generic_next_step(
+                        operator_content=content,
+                        last_tool_name=None,
+                    )
+                    else _format_next_step(snapshot)
+                ),
+            )
+            self._chat_repo.create_message(
+                thread_id=thread_id,
+                role="user",
+                content=user_message_content if user_message_content is not None else content,
+                message_type="action",
+                linked_action_id=None,
+                grounding_payload=dict(message_grounding_payload or {}),
+                model_metadata=_build_turn_metadata(
+                    metadata=None,
+                    client_turn_id=client_turn_id,
+                    turn_status="received",
+                ),
+            )
+            assistant_message = self._chat_repo.create_message(
+                thread_id=thread_id,
+                role="assistant",
+                content=assistant_content,
+                message_type="analysis",
+                linked_action_id=None,
+                grounding_payload=self._build_grounding_payload(grounding),
+                model_metadata=_build_turn_metadata(
+                    metadata=self._build_trace_metadata(
+                        trace_id=trace_id,
+                        mode="planner",
+                        tool_name=planning.tool_name,
+                        action_status="read_only",
+                        summary=snapshot.get("progress_summary")
+                        if isinstance(snapshot.get("progress_summary"), str)
+                        else None,
+                    ),
+                    client_turn_id=client_turn_id,
+                    turn_status="completed",
+                ),
+            )
+            self._update_thread_memory(
+                thread_id=thread_id,
+                existing_payload=thread.context_payload,
+                operator_message=operator_message_for_memory,
+                assistant_response=assistant_content,
+                tool_name=planning.tool_name,
+                tool_arguments=planning.tool_arguments,
+                action_status="read_only",
+                trace_id=trace_id,
+                snapshot=snapshot,
+            )
+            self._db_session.commit()
+            return self._build_execution_outcome(
+                assistant_message_id=serialize_uuid(assistant_message.id),
+                assistant_content=assistant_message.content,
                 action_plan=None,
                 is_read_only=True,
                 thread=thread,
@@ -574,6 +919,305 @@ class ChatActionExecutor:
                 code=ChatActionExecutionErrorCode.EXECUTION_FAILED,
                 message=_build_unexpected_operator_failure_message(error=error),
             ) from error
+        finally:
+            if turn_lock_acquired:
+                self._release_thread_turn_lock(thread_id=thread_id)
+
+    def stream_direct_read_only_message_if_supported(
+        self,
+        *,
+        thread_id: UUID,
+        entity_id: UUID,
+        actor_user: EntityUserRecord,
+        content: str,
+        client_turn_id: str | None,
+        source_surface: AuditSourceSurface,
+        trace_id: str | None,
+    ) -> Iterator[ChatReadOnlyStreamEvent] | None:
+        """Return a streaming read-only turn generator when no tools can be needed."""
+
+        normalized_content = _searchable_text(content)
+        if not _is_fast_inline_read_only_candidate(content):
+            return None
+        if _is_ambiguous_operator_action_question(normalized_content):
+            return None
+        if _is_likely_operator_action_request(normalized_content):
+            return None
+        return self._stream_direct_read_only_message_with_lock(
+            thread_id=thread_id,
+            entity_id=entity_id,
+            actor_user=actor_user,
+            content=content,
+            client_turn_id=client_turn_id,
+            source_surface=source_surface,
+            trace_id=trace_id,
+        )
+
+    def _stream_direct_read_only_message_with_lock(
+        self,
+        *,
+        thread_id: UUID,
+        entity_id: UUID,
+        actor_user: EntityUserRecord,
+        content: str,
+        client_turn_id: str | None,
+        source_surface: AuditSourceSurface,
+        trace_id: str | None,
+    ) -> Iterator[ChatReadOnlyStreamEvent]:
+        """Stream one read-only assistant answer and persist the completed turn."""
+
+        active_entity_id = entity_id
+        started_at = time.perf_counter()
+        turn_lock_acquired = False
+        try:
+            if not self._try_lock_thread_for_turn(thread_id=thread_id):
+                yield ChatReadOnlyStreamEvent(event="deferred", payload={})
+                return
+            turn_lock_acquired = True
+            replayed_outcome = self._replay_completed_turn_if_present(
+                thread_id=thread_id,
+                actor_user=actor_user,
+                client_turn_id=client_turn_id,
+            )
+            if replayed_outcome is not None:
+                yield ChatReadOnlyStreamEvent(
+                    event="final",
+                    payload={
+                        "response": self._build_read_only_stream_response_payload(
+                            outcome=replayed_outcome,
+                            client_turn_id=client_turn_id,
+                        ),
+                    },
+                )
+                return
+
+            grounding, thread = self._load_thread_context(
+                thread_id=thread_id,
+                entity_id=active_entity_id,
+                user_id=actor_user.id,
+            )
+            active_entity_id = thread.entity_id
+            self._ensure_entity_coa_available(actor_user=actor_user, entity_id=active_entity_id)
+            operator_memory = self._memory_for_thread(
+                thread_id=thread_id,
+                entity_id=active_entity_id,
+                actor_user_id=actor_user.id,
+                context_payload=thread.context_payload,
+            )
+            snapshot = self._snapshot_for_thread(
+                actor_user=actor_user,
+                entity_id=active_entity_id,
+                close_run_id=thread.close_run_id,
+                thread_id=thread_id,
+            )
+            self._chat_repo.create_message(
+                thread_id=thread_id,
+                role="user",
+                content=content,
+                message_type="action",
+                linked_action_id=None,
+                grounding_payload={},
+                model_metadata=_build_turn_metadata(
+                    metadata=None,
+                    client_turn_id=client_turn_id,
+                    turn_status="received",
+                ),
+            )
+
+            direct_status_response = _build_direct_operator_status_response(
+                snapshot=snapshot,
+                operator_content=content,
+                operator_memory=operator_memory,
+            )
+            if direct_status_response is None:
+                stream_messages = self._build_streaming_read_only_messages(
+                    thread_id=thread_id,
+                    content=content,
+                    grounding=grounding,
+                    snapshot=snapshot,
+                    operator_memory=operator_memory,
+                )
+                response_chunks: list[str] = []
+                for chunk in self._model_gateway.stream_complete(messages=stream_messages):
+                    response_chunks.append(chunk)
+                    yield ChatReadOnlyStreamEvent(
+                        event="delta",
+                        payload={"delta": chunk},
+                    )
+                assistant_response = "".join(response_chunks).strip()
+                if not assistant_response:
+                    raise ChatActionExecutionError(
+                        status_code=503,
+                        code=ChatActionExecutionErrorCode.PLANNING_FAILED,
+                        message="The model stream ended without an assistant response.",
+                    )
+                planner_mode = "streaming_read_only"
+            else:
+                assistant_response = direct_status_response
+                planner_mode = "deterministic_status"
+
+            assistant_content = _compose_assistant_content(
+                assistant_response=assistant_response,
+                handoff_message=None,
+                result_summary=None,
+                next_step=(
+                    None
+                    if _should_suppress_generic_next_step(
+                        operator_content=content,
+                        last_tool_name=None,
+                    )
+                    else _format_next_step(snapshot)
+                ),
+            )
+            assistant_message = self._chat_repo.create_message(
+                thread_id=thread_id,
+                role="assistant",
+                content=assistant_content,
+                message_type="analysis",
+                linked_action_id=None,
+                grounding_payload=self._build_grounding_payload(grounding),
+                model_metadata=_build_turn_metadata(
+                    metadata=self._build_trace_metadata(
+                        trace_id=trace_id,
+                        mode=planner_mode,
+                        tool_name=None,
+                        action_status="read_only",
+                        summary=snapshot.get("progress_summary")
+                        if isinstance(snapshot.get("progress_summary"), str)
+                        else None,
+                    ),
+                    client_turn_id=client_turn_id,
+                    turn_status="completed",
+                ),
+            )
+            self._update_thread_memory(
+                thread_id=thread_id,
+                existing_payload=thread.context_payload,
+                operator_message=content,
+                assistant_response=assistant_content,
+                tool_name=None,
+                tool_arguments=None,
+                action_status="read_only",
+                trace_id=trace_id,
+                snapshot=snapshot,
+            )
+            self._db_session.commit()
+            outcome = self._build_execution_outcome(
+                assistant_message_id=serialize_uuid(assistant_message.id),
+                assistant_content=assistant_message.content,
+                action_plan=None,
+                is_read_only=True,
+                thread=thread,
+            )
+            logger.info(
+                "chat_read_only_stream_completed",
+                entity_id=str(active_entity_id),
+                thread_id=str(thread_id),
+                planner_mode=planner_mode,
+                duration_ms=int((time.perf_counter() - started_at) * 1000),
+            )
+            yield ChatReadOnlyStreamEvent(
+                event="final",
+                payload={
+                    "response": self._build_read_only_stream_response_payload(
+                        outcome=outcome,
+                        client_turn_id=client_turn_id,
+                    ),
+                },
+            )
+        except ChatActionExecutionError as error:
+            self._db_session.rollback()
+            logger.warning(
+                "chat_read_only_stream_failed",
+                entity_id=str(active_entity_id),
+                thread_id=str(thread_id),
+                code=error.code.value,
+                duration_ms=int((time.perf_counter() - started_at) * 1000),
+            )
+            yield ChatReadOnlyStreamEvent(
+                event="error",
+                payload={"code": error.code.value, "message": error.message},
+            )
+        except Exception as error:
+            self._db_session.rollback()
+            logger.exception(
+                "chat_read_only_stream_failed",
+                entity_id=str(active_entity_id),
+                thread_id=str(thread_id),
+                duration_ms=int((time.perf_counter() - started_at) * 1000),
+            )
+            yield ChatReadOnlyStreamEvent(
+                event="error",
+                payload={
+                    "code": ChatActionExecutionErrorCode.EXECUTION_FAILED.value,
+                    "message": _build_unexpected_operator_failure_message(error=error),
+                },
+            )
+        finally:
+            if turn_lock_acquired:
+                self._release_thread_turn_lock(thread_id=thread_id)
+
+    def _build_read_only_stream_response_payload(
+        self,
+        *,
+        outcome: ChatExecutionOutcome,
+        client_turn_id: str | None,
+    ) -> dict[str, Any]:
+        """Build the canonical chat action response shape for streamed read-only turns."""
+
+        return {
+            "message_id": outcome.assistant_message_id,
+            "content": outcome.assistant_content,
+            "action_plan": None,
+            "is_read_only": True,
+            "thread_entity_id": outcome.thread_entity_id,
+            "thread_close_run_id": outcome.thread_close_run_id,
+            "operator_controls": [],
+            "turn_status": "completed",
+            "turn_job_id": None,
+            "client_turn_id": client_turn_id,
+            "stream_after_message_order": None,
+        }
+
+    def _build_streaming_read_only_messages(
+        self,
+        *,
+        thread_id: UUID,
+        content: str,
+        grounding: GroundingContextRecord,
+        snapshot: dict[str, Any],
+        operator_memory: AgentMemorySummary,
+    ) -> list[dict[str, str]]:
+        """Build the plain-text streaming prompt for read-only chat turns."""
+
+        thread_messages = self._chat_repo.list_messages_for_thread(thread_id=thread_id, limit=20)
+        conversation = [
+            {"role": message.role, "content": message.content}
+            for message in thread_messages
+            if message.role in {"user", "assistant", "system"}
+        ]
+        if not _conversation_already_includes_current_user_turn(
+            conversation=conversation,
+            content=content,
+        ):
+            conversation.append({"role": "user", "content": content})
+        memory_payload = operator_memory.model_dump(mode="json")
+        close_run_label = grounding.context.period_label or "workspace"
+        system_prompt = (
+            "You are the accounting operations assistant inside a production finance agent.\n"
+            "This response lane is read-only. Do not claim to create, edit, delete, approve, "
+            "upload, parse, reconcile, export, queue, or run background work. If the operator "
+            "asks for state-changing work, say that action must run through the agent workflow.\n"
+            "Answer the operator directly and concisely using only the grounded workspace "
+            "snapshot, operator memory, and conversation below. Ask one short clarification "
+            "question when the answer depends on missing facts.\n"
+            f"Current scope: {grounding.context.entity_name} / {close_run_label}.\n"
+            "Operator memory JSON:\n"
+            f"{json.dumps(_json_safe_payload(memory_payload), separators=(',', ':'))}\n"
+            "Workspace snapshot JSON:\n"
+            f"{json.dumps(_json_safe_payload(snapshot), separators=(',', ':'))}"
+        )
+        return [{"role": "system", "content": system_prompt}, *conversation]
 
     def resume_operator_turn(
         self,
@@ -714,6 +1358,7 @@ class ChatActionExecutor:
                     content=content,
                     grounding=grounding,
                     operator_memory=operator_memory,
+                    snapshot=last_snapshot,
                     loop_context=loop_context,
                 )
                 planning = self._hydrate_planning_result(
@@ -2183,12 +2828,21 @@ class ChatActionExecutor:
     ) -> dict[str, Any]:
         """Build the live workspace snapshot for one thread."""
 
-        return self._workspace_builder.build_snapshot(
+        started_at = time.perf_counter()
+        snapshot = self._workspace_builder.build_snapshot(
             actor=actor_user,
             entity_id=entity_id,
             close_run_id=close_run_id,
             thread_id=thread_id,
         )
+        logger.info(
+            "chat_workspace_snapshot_built",
+            entity_id=str(entity_id),
+            close_run_id=str(close_run_id) if close_run_id is not None else None,
+            thread_id=str(thread_id),
+            duration_ms=int((time.perf_counter() - started_at) * 1000),
+        )
+        return snapshot
 
     def _ensure_entity_coa_available(
         self,
@@ -3338,17 +3992,13 @@ class ChatActionExecutor:
         content: str,
         grounding: GroundingContextRecord,
         operator_memory: AgentMemorySummary,
+        snapshot: dict[str, Any],
         loop_context: _OperatorLoopContext | None = None,
     ) -> AgentPlanningResult:
         """Use the generic agent kernel to choose between analysis and a tool call."""
 
+        started_at = time.perf_counter()
         thread_messages = self._chat_repo.list_messages_for_thread(thread_id=thread_id, limit=20)
-        snapshot = self._workspace_builder.build_snapshot(
-            actor=actor_user,
-            entity_id=entity_id,
-            close_run_id=grounding.close_run.id if grounding.close_run is not None else None,
-            thread_id=thread_id,
-        )
         conversation = [
             {"role": message.role, "content": message.content}
             for message in thread_messages
@@ -3361,6 +4011,14 @@ class ChatActionExecutor:
             operator_memory=operator_memory,
         )
         if direct_status_response is not None:
+            logger.info(
+                "chat_planning_completed",
+                entity_id=str(entity_id),
+                thread_id=str(thread_id),
+                mode="read_only",
+                planner_path="deterministic_status",
+                duration_ms=int((time.perf_counter() - started_at) * 1000),
+            )
             return AgentPlanningResult(
                 mode="read_only",
                 assistant_response=direct_status_response,
@@ -3377,6 +4035,15 @@ class ChatActionExecutor:
             operator_content=content,
         )
         if correction_delete_planning is not None:
+            logger.info(
+                "chat_planning_completed",
+                entity_id=str(entity_id),
+                thread_id=str(thread_id),
+                mode=correction_delete_planning.mode,
+                tool_name=correction_delete_planning.tool_name,
+                planner_path="deterministic_correction_delete",
+                duration_ms=int((time.perf_counter() - started_at) * 1000),
+            )
             return correction_delete_planning
 
         open_close_run_planning = _build_open_close_run_intent_planning(
@@ -3384,6 +4051,15 @@ class ChatActionExecutor:
             operator_content=content,
         )
         if open_close_run_planning is not None:
+            logger.info(
+                "chat_planning_completed",
+                entity_id=str(entity_id),
+                thread_id=str(thread_id),
+                mode=open_close_run_planning.mode,
+                tool_name=open_close_run_planning.tool_name,
+                planner_path="deterministic_open_close_run",
+                duration_ms=int((time.perf_counter() - started_at) * 1000),
+            )
             return open_close_run_planning
 
         create_close_run_planning = _build_create_close_run_intent_planning(
@@ -3392,6 +4068,15 @@ class ChatActionExecutor:
             operator_memory=operator_memory,
         )
         if create_close_run_planning is not None:
+            logger.info(
+                "chat_planning_completed",
+                entity_id=str(entity_id),
+                thread_id=str(thread_id),
+                mode=create_close_run_planning.mode,
+                tool_name=create_close_run_planning.tool_name,
+                planner_path="deterministic_create_close_run",
+                duration_ms=int((time.perf_counter() - started_at) * 1000),
+            )
             return create_close_run_planning
 
         create_workspace_planning = _build_create_workspace_intent_planning(
@@ -3400,10 +4085,19 @@ class ChatActionExecutor:
             operator_memory=operator_memory,
         )
         if create_workspace_planning is not None:
+            logger.info(
+                "chat_planning_completed",
+                entity_id=str(entity_id),
+                thread_id=str(thread_id),
+                mode=create_workspace_planning.mode,
+                tool_name=create_workspace_planning.tool_name,
+                planner_path="deterministic_create_workspace",
+                duration_ms=int((time.perf_counter() - started_at) * 1000),
+            )
             return create_workspace_planning
 
         try:
-            return self._kernel.plan(
+            planning = self._kernel.plan(
                 instructions=self._build_planner_instructions(
                     grounding=grounding,
                     snapshot=snapshot,
@@ -3413,7 +4107,23 @@ class ChatActionExecutor:
                 conversation=conversation,
                 snapshot=snapshot,
             )
+            logger.info(
+                "chat_planning_completed",
+                entity_id=str(entity_id),
+                thread_id=str(thread_id),
+                mode=planning.mode,
+                tool_name=planning.tool_name,
+                planner_path="model_tool_call",
+                duration_ms=int((time.perf_counter() - started_at) * 1000),
+            )
+            return planning
         except AgentKernelError as error:
+            logger.warning(
+                "chat_planning_failed",
+                entity_id=str(entity_id),
+                thread_id=str(thread_id),
+                duration_ms=int((time.perf_counter() - started_at) * 1000),
+            )
             raise ChatActionExecutionError(
                 status_code=503,
                 code=ChatActionExecutionErrorCode.PLANNING_FAILED,
@@ -3684,6 +4394,13 @@ class ChatActionExecutor:
                     "implementation details."
                 ),
                 (
+                    "After one or more platform tools have run in the current turn, use "
+                    "answer_operator only when the next best response is a final status report, "
+                    "clarification, or blocker explanation. That final status should say what "
+                    "completed, what is still queued or waiting, and what is blocked or skipped "
+                    "when those facts are present."
+                ),
+                (
                     "You only have the capabilities listed in Available tools and the "
                     "workspace snapshot. Do not claim hidden abilities, external access, "
                     "or background jobs that are not represented there."
@@ -3776,6 +4493,10 @@ class ChatActionExecutor:
                         "If the main objective is now waiting on human approval, asynchronous "
                         "processing, missing inputs, ambiguity, or a blocker, call "
                         "answer_operator and explain the current state briefly."
+                    ),
+                    (
+                        "If the useful work for this turn is complete, call answer_operator with "
+                        "a concise completion/status report instead of selecting another tool."
                     ),
                     (
                         "Do not repeat an action already completed in this turn unless the "
@@ -5539,6 +6260,210 @@ def _build_direct_operator_status_response(
         if response is not None:
             return response
     return None
+
+
+_OPERATOR_ACTION_VERBS = frozenset(
+    {
+        "advance",
+        "apply",
+        "approve",
+        "archive",
+        "cancel",
+        "change",
+        "complete",
+        "correct",
+        "create",
+        "delete",
+        "distribute",
+        "execute",
+        "export",
+        "finish",
+        "fix",
+        "generate",
+        "ignore",
+        "import",
+        "move",
+        "open",
+        "package",
+        "parse",
+        "perform",
+        "post",
+        "prepare",
+        "process",
+        "queue",
+        "reconcile",
+        "reject",
+        "remove",
+        "rename",
+        "reopen",
+        "rerun",
+        "review",
+        "rewind",
+        "run",
+        "send",
+        "start",
+        "submit",
+        "switch",
+        "trigger",
+        "update",
+        "upload",
+    }
+)
+
+_AMBIGUOUS_ACTION_QUESTION_PHRASES = (
+    "can we",
+    "can you",
+    "could we",
+    "could you",
+    "should we",
+    "should you",
+    "would we",
+    "would you",
+    "will we",
+    "will you",
+    "may we",
+)
+
+
+def _is_fast_inline_read_only_candidate(value: str) -> bool:
+    """Return whether a turn is safe to plan inline as read-only-only."""
+
+    raw_value = value.strip().lower()
+    normalized = _searchable_text(value)
+    if not normalized:
+        return False
+    if _is_likely_operator_action_request(normalized):
+        return False
+    if _is_ambiguous_operator_action_question(normalized):
+        return False
+    if normalized in {
+        "hi",
+        "hello",
+        "hey",
+        "thanks",
+        "thank you",
+        "ok",
+        "okay",
+    }:
+        return True
+    if "?" in raw_value:
+        return True
+    return any(
+        phrase in normalized
+        for phrase in (
+            "what can you do",
+            "what are your capabilities",
+            "how can you help",
+            "help me understand",
+            "explain",
+            "summarize",
+            "summary",
+            "status",
+            "current state",
+            "progress",
+            "what is happening",
+            "what happened",
+            "what did you do",
+            "what have you done",
+            "what is blocking",
+            "what s blocking",
+            "why is",
+            "where is",
+            "which",
+            "tell me about",
+            "show me",
+            "list",
+        )
+    )
+
+
+def _is_ambiguous_operator_action_question(normalized_content: str) -> bool:
+    """Return whether a modal question may be asking the agent to run tool work."""
+
+    tokens = normalized_content.split()
+    if not tokens:
+        return False
+    if not any(
+        normalized_content.startswith(phrase) or f" {phrase} " in f" {normalized_content} "
+        for phrase in _AMBIGUOUS_ACTION_QUESTION_PHRASES
+    ):
+        return False
+    return any(token in _OPERATOR_ACTION_VERBS for token in tokens)
+
+
+def _conversation_already_includes_current_user_turn(
+    *,
+    conversation: list[dict[str, str]],
+    content: str,
+) -> bool:
+    """Return whether persisted history already ends with the current user turn."""
+
+    if not conversation:
+        return False
+    latest_message = conversation[-1]
+    if latest_message.get("role") != "user":
+        return False
+    return _searchable_text(latest_message.get("content")) == _searchable_text(content)
+
+
+def _is_likely_operator_action_request(normalized_content: str) -> bool:
+    """Return whether the operator is likely asking the agent to mutate or run work."""
+
+    if normalized_content in {
+        "confirm",
+        "confirmed",
+        "approve",
+        "approved",
+        "reject",
+        "rejected",
+        "cancel",
+        "proceed",
+        "go ahead",
+        "do it",
+        "yes do it",
+        "yes go ahead",
+    }:
+        return True
+
+    tokens = normalized_content.split()
+    if tokens and tokens[0] in _OPERATOR_ACTION_VERBS:
+        return True
+
+    directive_phrases = (
+        "can you",
+        "could you",
+        "please",
+        "pls",
+        "i need you to",
+        "i want you to",
+        "help me",
+        "go ahead and",
+        "let s",
+        "lets",
+    )
+    has_directive = any(phrase in normalized_content for phrase in directive_phrases)
+    if has_directive and any(token in _OPERATOR_ACTION_VERBS for token in tokens):
+        return True
+
+    return any(
+        phrase in normalized_content
+        for phrase in (
+            "start over",
+            "take this back",
+            "move this back",
+            "close this out",
+            "finish the close",
+            "process the close",
+            "run the close",
+            "generate report",
+            "generate reports",
+            "generate recommendations",
+            "create the export",
+            "package the export",
+            "approve all",
+            "review all",
+        )
+    )
 
 
 def _build_close_run_scope_status_response(
@@ -9964,7 +10889,8 @@ def _build_async_wait_message(*, applied_result: dict[str, Any]) -> str:
 
     summary = _humanize_applied_result(applied_result)
     return (
-        f"{summary} I'll keep going automatically as soon as that background work finishes."
+        f"{summary} I'll keep going automatically as soon as that background work finishes, "
+        "then report the status here."
     )
 
 
@@ -10007,7 +10933,8 @@ def _build_resume_operator_prompt(
         f"{continuation_note} Continue the same operator request using the updated workspace "
         "state. Do not ask the operator to repeat the request. If the original objective was "
         "autonomous or end-to-end close processing, continue to the next available workflow "
-        "step and report any completed, skipped, failed, or blocked work."
+        "step and report any completed, skipped, failed, or blocked work. If no further safe "
+        "workflow step remains, reply with a final status report instead of selecting a tool."
     )
 
 

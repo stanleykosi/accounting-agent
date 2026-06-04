@@ -10,7 +10,7 @@ from __future__ import annotations
 from typing import Any
 from uuid import UUID
 
-from apps.worker.app.celery_runtime import celery_app
+from apps.worker.app.celery_runtime import celery_app, observed_task
 from apps.worker.app.tasks.base import JobRuntimeContext, TrackedJobTask
 from services.chat.job_continuation import _build_chat_action_executor
 from services.db.models.audit import AuditSourceSurface
@@ -82,7 +82,7 @@ def _run_execute_chat_operator(
     }
 
 
-@celery_app.task(
+@observed_task(
     bind=True,
     base=TrackedJobTask,
     name=TaskName.CHAT_EXECUTE_OPERATOR_TURN.value,

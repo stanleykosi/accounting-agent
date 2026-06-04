@@ -44,6 +44,7 @@ from services.chat.proposed_changes import (
     ProposedChangesService,
 )
 from services.common.enums import AutonomyMode, DocumentType, WorkflowPhase
+from services.contracts.chat_models import GroundingContext
 
 # ---------------------------------------------------------------------------
 # Test doubles
@@ -59,6 +60,17 @@ class FakeGroundingContext:
     close_run: Any | None = None
     close_run_id: str | None = None
     period_label: str | None = None
+
+    @property
+    def context(self) -> GroundingContext:
+        return GroundingContext(
+            entity_id=self.entity_id,
+            entity_name=self.entity_name,
+            close_run_id=self.close_run_id,
+            period_label=self.period_label,
+            autonomy_mode=self.autonomy_mode,
+            base_currency=self.base_currency,
+        )
 
 
 @dataclass(frozen=True)

@@ -18,7 +18,7 @@ from decimal import Decimal, InvalidOperation
 from typing import Any, Protocol
 from uuid import UUID
 
-from apps.worker.app.celery_runtime import celery_app
+from apps.worker.app.celery_runtime import celery_app, observed_task
 from apps.worker.app.tasks.base import JobRuntimeContext, TrackedJobTask
 from apps.worker.app.tasks.document_quality_checks import run_document_quality_checks
 from services.common.enums import AutonomyMode, DocumentStatus, DocumentType
@@ -2324,7 +2324,7 @@ def _required_checkpoint_int(checkpoint_state: Mapping[str, object], key: str) -
     raise RuntimeError(f"Parse job checkpoint field {key} must be an integer.")
 
 
-@celery_app.task(  # type: ignore[untyped-decorator]
+@observed_task(
     bind=True,
     base=TrackedJobTask,
     name=TaskName.DOCUMENT_PARSE_AND_EXTRACT.value,
