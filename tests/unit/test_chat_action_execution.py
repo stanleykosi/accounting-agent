@@ -1418,6 +1418,88 @@ def test_hydrate_planning_result_does_not_treat_upload_followup_as_workspace_nam
     assert "new workspace" not in hydrated.assistant_response
 
 
+@pytest.mark.parametrize(
+    "operator_content",
+    [
+        "uploaded document",
+        "uploaded file",
+        "attached documents",
+    ],
+)
+def test_hydrate_planning_result_answers_terse_upload_status_fragments(
+    operator_content: str,
+) -> None:
+    """Terse upload fragments should still ground stale planner text in the snapshot."""
+
+    executor = ChatActionExecutor.__new__(ChatActionExecutor)
+
+    hydrated = executor._hydrate_planning_result(
+        planning=AgentPlanningResult(
+            mode="read_only",
+            assistant_response="What would you like to name the new workspace?",
+            reasoning="The model latched onto stale workspace memory.",
+            tool_name=None,
+            tool_arguments={},
+        ),
+        snapshot={
+            "close_run_id": str(uuid4()),
+            "documents": [
+                {
+                    "id": str(uuid4()),
+                    "filename": "invoice-ppw-4406.pdf",
+                    "status": "parsed",
+                    "document_type": "vendor_invoice",
+                    "open_issues": [],
+                }
+            ],
+        },
+        operator_content=operator_content,
+        operator_memory=executor._memory_from_context_payload(
+            {
+                "agent_memory": {
+                    "last_assistant_response": "What would you like to name the new workspace?",
+                    "working_subtask": "Create the new workspace",
+                }
+            }
+        ),
+    )
+
+    assert hydrated.mode == "read_only"
+    assert hydrated.tool_name is None
+    assert "invoice-ppw-4406.pdf" in hydrated.assistant_response
+    assert "new workspace" not in hydrated.assistant_response
+
+
+def test_hydrate_planning_result_keeps_upload_workflow_explanation_read_only() -> None:
+    """Upload workflow questions should not be mistaken for live upload status checks."""
+
+    executor = ChatActionExecutor.__new__(ChatActionExecutor)
+
+    hydrated = executor._hydrate_planning_result(
+        planning=AgentPlanningResult(
+            mode="read_only",
+            assistant_response=(
+                "After upload, the document is parsed, extracted, reviewed, and used as "
+                "evidence for reconciliation when the run is ready."
+            ),
+            reasoning="The model chose a read-only explanation instead of a tool call.",
+            tool_name=None,
+            tool_arguments={},
+        ),
+        snapshot={
+            "close_run_id": str(uuid4()),
+            "documents": [],
+        },
+        operator_content="After uploading a document what happens next?",
+        operator_memory=executor._memory_from_context_payload({}),
+    )
+
+    assert hydrated.mode == "read_only"
+    assert hydrated.tool_name is None
+    assert "document is parsed" in hydrated.assistant_response
+    assert "do not see any source documents" not in hydrated.assistant_response
+
+
 def test_hydrate_planning_result_treats_here_as_upload_followup_in_close_run() -> None:
     """A bare 'here' in close-run context should not revive stale workspace creation."""
 

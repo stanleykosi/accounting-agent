@@ -6803,6 +6803,17 @@ def _is_document_upload_status_request(value: str) -> bool:
         return False
     if normalized in {"here", "attached here", "uploaded here", "i uploaded it here"}:
         return True
+    if normalized in {
+        "attached document",
+        "attached documents",
+        "attached file",
+        "attached files",
+        "uploaded document",
+        "uploaded documents",
+        "uploaded file",
+        "uploaded files",
+    }:
+        return True
     if any(
         phrase in normalized
         for phrase in (
@@ -6816,16 +6827,6 @@ def _is_document_upload_status_request(value: str) -> bool:
             "what about the upload",
             "did the upload",
             "do you see the upload",
-            "source document",
-            "source documents",
-            "uploaded document",
-            "uploaded documents",
-            "attached document",
-            "attached documents",
-            "uploaded file",
-            "uploaded files",
-            "attached file",
-            "attached files",
             "all them parsed",
             "all parsed",
             "are they parsed",
@@ -6849,9 +6850,7 @@ def _is_document_upload_status_request(value: str) -> bool:
         )
     ):
         return True
-    return "upload" in normalized and any(
-        token in normalized for token in ("document", "file", "source", "already", "made")
-    )
+    return False
 
 
 def _document_status_counts(*, records: list[dict[str, Any]]) -> dict[str, int]:

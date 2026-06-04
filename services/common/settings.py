@@ -252,8 +252,17 @@ class ModelGatewaySettings(BaseModel):
     provider: str = Field(default="openrouter", min_length=1)
     base_url: str = Field(default="https://openrouter.ai/api/v1", min_length=1)
     api_key: SecretStr | None = Field(default=None, repr=False)
-    default_model: str = Field(default="anthropic/claude-opus-4.7", min_length=1)
+    default_model: str | None = Field(default=None, min_length=1)
     timeout_seconds: PositiveInteger = Field(default=60)
+
+    @field_validator("default_model", mode="before")
+    @classmethod
+    def empty_model_is_unconfigured(cls, value: object) -> object:
+        """Treat a blank env var as missing so model flows can fail with recovery steps."""
+
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
 
 
 class QuickBooksSettings(BaseModel):

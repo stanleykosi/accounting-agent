@@ -560,20 +560,31 @@ class TestModelGatewayHelpers:
         result = _strip_markdown_fences(partial)
         assert result == '{"key": "value"}'
 
-    def test_model_gateway_config_defaults(self) -> None:
+    def test_model_gateway_config_defaults(self, monkeypatch) -> None:
         """Config should have sensible defaults."""
-        config = ModelGatewayConfig()
-        assert config.temperature == 0.0
-        assert config.max_tokens == 4096
-        assert config.timeout_seconds == 60
+        monkeypatch.setenv("MODEL_GATEWAY_DEFAULT_MODEL", "deepseek/deepseek-v4-pro")
+        reset_settings_cache()
+        try:
+            config = ModelGatewayConfig()
+            assert config.model == "deepseek/deepseek-v4-pro"
+            assert config.temperature == 0.0
+            assert config.max_tokens == 4096
+            assert config.timeout_seconds == 60
+        finally:
+            reset_settings_cache()
 
-    def test_model_gateway_requires_api_key(self) -> None:
+    def test_model_gateway_requires_api_key(self, monkeypatch) -> None:
         """Gateway should fail fast when API key is not configured."""
         # Without MODEL_GATEWAY_API_KEY set, this should raise
         from services.model_gateway.client import ModelGatewayError
 
-        with pytest.raises(ModelGatewayError, match="API key is not configured"):
-            ModelGateway()
+        monkeypatch.setenv("MODEL_GATEWAY_DEFAULT_MODEL", "deepseek/deepseek-v4-pro")
+        reset_settings_cache()
+        try:
+            with pytest.raises(ModelGatewayError, match="API key is not configured"):
+                ModelGateway()
+        finally:
+            reset_settings_cache()
 
     def test_complete_structured_requires_schema_capable_provider(self, monkeypatch) -> None:
         """Structured completions should require providers that honor the schema contract."""
@@ -586,6 +597,7 @@ class TestModelGatewayHelpers:
                 return {"choices": [{"message": {"content": '{"answer":"ok"}'}}]}
 
         monkeypatch.setenv("MODEL_GATEWAY_API_KEY", "test-key")
+        monkeypatch.setenv("MODEL_GATEWAY_DEFAULT_MODEL", "deepseek/deepseek-v4-pro")
         reset_settings_cache()
         captured: dict[str, object] = {}
 
@@ -622,8 +634,8 @@ class TestModelGatewayHelpers:
         assert request_body_overrides["response_format"]["json_schema"]["strict"] is True
         assert request_body_overrides["response_format"]["json_schema"]["name"] == "StructuredReply"
 
-    def test_complete_tool_call_requires_native_tool_choice(self, monkeypatch) -> None:
-        """Native planning should force exactly one provider-level tool call."""
+    def test_complete_tool_call_lets_model_choose_native_tool_or_text(self, monkeypatch) -> None:
+        """Native planning should expose tools without excluding DeepSeek endpoints."""
 
         class FakeResponse:
             def json(self) -> dict[str, object]:
@@ -646,6 +658,7 @@ class TestModelGatewayHelpers:
                 }
 
         monkeypatch.setenv("MODEL_GATEWAY_API_KEY", "test-key")
+        monkeypatch.setenv("MODEL_GATEWAY_DEFAULT_MODEL", "deepseek/deepseek-v4-pro")
         reset_settings_cache()
         captured: dict[str, object] = {}
 
@@ -695,8 +708,8 @@ class TestModelGatewayHelpers:
         request_body_overrides = captured["request_body_overrides"]
         assert isinstance(request_body_overrides, dict)
         assert request_body_overrides["provider"]["require_parameters"] is True
-        assert request_body_overrides["parallel_tool_calls"] is False
-        assert request_body_overrides["tool_choice"] == "required"
+        assert "parallel_tool_calls" not in request_body_overrides
+        assert request_body_overrides["tool_choice"] == "auto"
         assert isinstance(request_body_overrides["tools"], list)
 
     def test_complete_tool_call_coerces_plain_text_to_read_only_tool(self, monkeypatch) -> None:
@@ -719,6 +732,7 @@ class TestModelGatewayHelpers:
                 }
 
         monkeypatch.setenv("MODEL_GATEWAY_API_KEY", "test-key")
+        monkeypatch.setenv("MODEL_GATEWAY_DEFAULT_MODEL", "deepseek/deepseek-v4-pro")
         reset_settings_cache()
 
         try:

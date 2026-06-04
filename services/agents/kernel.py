@@ -57,11 +57,13 @@ class AgentKernel:
             [
                 instructions,
                 (
-                    "Native planning protocol: call exactly one tool. Use "
-                    f"{_READ_ONLY_TOOL_NAME} when the best response is read-only. "
-                    "Use a concrete platform tool when the operator's request is "
-                    "actionable. Every tool call must include assistant_response "
-                    "and reasoning in its arguments."
+                    "Native planning protocol: decide whether the operator needs a "
+                    "state-changing platform action or a read-only answer. If the "
+                    "request is actionable, call exactly one concrete platform tool. "
+                    f"If the best response is read-only, call {_READ_ONLY_TOOL_NAME} "
+                    "or return plain assistant text; plain text is normalized into "
+                    f"{_READ_ONLY_TOOL_NAME}. Every tool call must include "
+                    "assistant_response and reasoning in its arguments."
                 ),
                 "Available tools:",
                 *self._tool_registry.describe_tools_for_prompt(),

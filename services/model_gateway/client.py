@@ -96,7 +96,13 @@ class ModelGatewayConfig:
             timeout_seconds: Override the default request timeout.
         """
         settings = get_settings()
-        self.model = model or settings.model_gateway.default_model
+        resolved_model = model if model is not None else settings.model_gateway.default_model
+        if resolved_model is None or not resolved_model.strip():
+            raise ModelGatewayError(
+                "OpenRouter model is not configured. Set MODEL_GATEWAY_DEFAULT_MODEL "
+                "to a tool-capable model slug such as deepseek/deepseek-v4-pro."
+            )
+        self.model = resolved_model.strip()
         self.temperature = temperature
         self.max_tokens = max_tokens
         self.top_p = top_p
@@ -119,9 +125,9 @@ class ModelGateway:
         Args:
             config: Optional invocation-scoped configuration override.
         """
-        self._config = config or ModelGatewayConfig()
         self._settings = get_settings()
         self._require_api_key()
+        self._config = config or ModelGatewayConfig()
 
     def _require_api_key(self) -> None:
         """Fail fast when the OpenRouter API key is not configured."""
@@ -461,8 +467,7 @@ class ModelGateway:
                     "provider": {
                         "require_parameters": True,
                     },
-                    "parallel_tool_calls": False,
-                    "tool_choice": "required",
+                    "tool_choice": "auto",
                     "tools": tools,
                 },
             )
